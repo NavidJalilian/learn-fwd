@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a News Feed</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0005', title:'Design a news feed', minutes:20, icon:'list',
+  goals:['Lay out the two flows of a news feed: publishing and building','Choose between fanout on write, fanout on read and a hybrid','Explain how a feed of IDs becomes a full screen of posts'],
+  parts:['Scope and flows','Fanout','Publishing','Reading'],
+  read:'Read chapter 11 of the book for its figures of the publishing and retrieval designs and the five cache layers.',
+  glossary:{
+    fanout:'Fanout: delivering one new post to all the friends or followers who should see it.',
+    'fanout-write':'Fanout on write (push model): copy a new post into each friend’s feed the moment it is published, so feeds are ready before anyone asks.',
+    'fanout-read':'Fanout on read (pull model): build a person’s feed only when they open it, by fetching recent posts from everyone they follow.',
+    hotkey:'Hotkey problem: one key (here, one user with a huge number of friends or followers) gets so much work at once that it overloads the system.',
+    'graph-db':'Graph database: a database built to store connections between things, such as who is friends with whom.',
+    hydrate:'Hydrate: fill a bare list of IDs with the full data behind them (names, photos, post text) so it can be shown.',
+    'auth-token':'Auth token: a string the app sends with each request to prove which signed-in user is making it.'
+  },
+  cheatsheet:[
+    'Two flows: <b>feed publishing</b> (write a post, spread it) and <b>news feed building</b> (read your feed). Two APIs: <b>POST</b> and <b>GET /v1/me/feed</b>.',
+    '<b>Fanout on write (push):</b> fast reads and real-time, but slow for users with many friends (the <b>hotkey problem</b>) and wasted on inactive users.',
+    '<b>Fanout on read (pull):</b> no waste and no hotkey problem, but slow to load the feed.',
+    '<b>Hybrid:</b> push for most users; followers <b>pull</b> celebrities’ posts on demand. Consistent hashing helps spread hot keys.',
+    'Fanout steps: friend IDs from a graph DB → filter by settings → message queue → fanout workers → store <b>&lt;post_id, user_id&gt;</b> in the news feed cache, with a size limit.',
+    'Reading: get post IDs from the news feed cache, then <b>hydrate</b> from the user and post caches. Media comes from a CDN.',
+    'Five cache layers: <b>news feed, content, social graph, action, counters</b>.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE AND FLOWS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird could build your home feed the moment you open the app, or prepare it in advance each time someone you follow posts. Which makes opening the app faster?</h1>');
+  L.mc(L.card,['Building it when you open the app','Preparing it in advance'],1,
+   'If the feed is ready before you ask, opening it is just a quick lookup. The catch is the work done in advance. That trade-off is the heart of this lesson.',
+   'Building on open means gathering posts while you wait. Preparing in advance makes opening fast, at the cost of work done earlier. That trade-off is the heart of this lesson.');}},
+{part:0,src:'Chapter 11 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','The book’s interview')+'<h1 class="q">What is a news feed, and how big?</h1>'+
+   L.prose('A news feed is the constantly updating list of posts in the middle of your home page. Interviewers ask it as “design Facebook’s news feed”, “Instagram feed” or “Twitter timeline”. The candidate pins down the scope:')+
+   L.list([['Platforms','Both web and mobile.'],
+     ['Features','A user can publish a post and see friends’ posts on the feed page.'],
+     ['Order','Newest first (reverse chronological), to keep it simple. No ranking.'],
+     ['Friends','Up to 5,000 per user.'],
+     ['Traffic','10 million '+L.g('dau','daily active users')+'.'],
+     ['Media','Posts can include images and videos.']],1));
+  L.done();}},
+{part:0,src:'Chapter 11 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','Two flows, two APIs')+'<h1 class="q">Writing a post and reading a feed are separate jobs</h1>'+
+   L.lanes([['pencil','Feed publishing','<b>POST /v1/me/feed</b> with the post’s content and an '+L.g('auth-token','auth token')+'.<br><br>Web servers pass it to the <b>post service</b> (saves it in DB and cache), the <b>fanout service</b> (pushes it into friends’ feeds) and the <b>notification service</b> (tells friends).',1],
+            ['list','News feed building','<b>GET /v1/me/feed</b> with the auth token.<br><br>Web servers pass it to the <b>news feed service</b>, which reads the feed from the <b>news feed cache</b>. That cache holds the post IDs needed to show the feed.',2]])+
+   '<p class="small" style="margin-top:12px">Both flows enter through a '+L.g('load-balancer','load balancer')+' that spreads traffic across web servers.</p>');
+  L.done();}},
+{part:0,src:'Chapter 11 · Feed publishing',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of Kitebird’s “Home feed”</h1>');
+  L.beats(L.card,[
+   ['Tamsin','“What are we building, and how big is it?”'],
+   ['Lior jumps in','“Easy: one SQL query that grabs everyone’s recent posts.” Tamsin: “For how many people? Sorted how? With video?”'],
+   ['You ask, Dario answers','Web, iOS and Android. Posts from <b>makers you follow</b>, newest first. Photos and short videos. About <b>4 million daily users</b>.'],
+   ['The awkward fact','Kitebird uses follows, not friends, so there is no 5,000 cap. <b>Yusuf, the Lathe Guy, has 3 million followers.</b>'],
+   ['The two flows','When Mira posts a quilt: <b>POST /v1/me/feed</b>. When Ben opens the app: <b>GET /v1/me/feed</b>. Two flows, designed separately.']],
+   'Scope first: platforms, features, order, how many connections, traffic, media. Then split the design into publishing and building.');}},
+{part:0,src:'Chapter 11 · Newsfeed APIs',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben opens the Kitebird app to see his home feed. Which request does the app send?</h1>');
+  L.mc(L.card,['POST /v1/me/feed with content','GET /v1/me/feed with his auth token','GET /v1/feed with his password'],1,
+   'Reading the feed is a GET to /v1/me/feed. The auth token says it’s Ben asking.',
+   'Reading is a <b>GET</b>, and requests carry an <b>auth token</b>, never the password. POST is for publishing a post.');}},
+{part:0,src:'Chapter 11 · Step 2 - Propose high-level design and get buy-in',pts:4,run(L){
+  L.h(L.kick('pr','Who does what?')+'<h1 class="q">Which service handles each job?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Post service','Fanout service','Notification service','News feed service'],[
+   ['Saves Mira’s new quilt post in the database and cache',0,'The post service persists the post itself.'],
+   ['Puts Mira’s new post into her followers’ feeds',1,'Fanout means delivering a post to everyone who should see it.'],
+   ['Tells Ben’s phone that new content is available',2,'The notification service informs friends and sends push notifications.'],
+   ['Reads Ben’s list of post IDs when he opens the app',3,'The news feed service serves the building flow, from the news feed cache.']],
+   'Three services on the publishing side, one on the reading side.');}},
+
+/* ---------- PART 2: FANOUT ---------- */
+{part:1,src:'Chapter 11 · Fanout service',run(L){
+  L.h(L.kick('learn','Push or pull?')+'<h1 class="q">Two ways to deliver a post to everyone</h1>'+
+   L.prose(L.g('fanout','Fanout')+' is delivering a post to all friends. There are two models:')+
+   L.lanes([['arrow','Fanout on write (push)','The feed is built <b>when the post is written</b>: it goes straight into every friend’s feed cache.<br><br><span style="color:var(--ok)">+ Real-time; feeds load fast.</span><br><span style="color:var(--no)">− Slow for users with many friends: the '+L.g('hotkey','hotkey problem')+'. Wasted on people who rarely log in.</span>',1],
+            ['down','Fanout on read (pull)','The feed is built <b>when someone opens it</b>, by pulling recent posts on demand.<br><br><span style="color:var(--ok)">+ No work wasted on inactive users. No hotkey problem.</span><br><span style="color:var(--no)">− Loading the feed is slow, since nothing is ready.</span>',2]]));
+  L.done();}},
+{part:1,src:'Chapter 11 · Fanout service',pts:1,
+ solve:async L=>{const g=L.$('#md').children;g[0].click();g[1].click();},
+ run(L){
+  const F=[['Ben',1],['Cleo',1],['Dev',1],['Eli',0],['Fay',1],['Gus',0]];const seen=new Set();
+  const R=[{w:'6 feed writes, 2 of them for people who haven’t logged in for months',r:'1 quick read of his ready-made list',c:'ok'},
+           {w:'1 write, to Mira’s own list of posts',r:'fetch recent posts from all 120 makers he follows, then merge and sort',c:'no'}];
+  L.h(L.kick('pr','Try both models')+'<h1 class="q">Mira posts a quilt. Then Ben opens the app. Run it both ways.</h1><div id="md"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0 6px"><div class="small" style="margin-bottom:8px">Mira’s 6 followers (grey = inactive for months)</div><div id="fl"></div><div id="out" class="small" style="margin-top:8px">Pick a model above.</div></div><div id="mq"></div>');
+  const drawF=(m)=>{L.$('#fl').innerHTML=F.map(f=>'<span class="chip static'+(m===0?' ok':'')+'" style="'+(f[1]?'':'opacity:.45')+'">'+(m===0?L.ic('check'):L.ic('person'))+f[0]+(m===0&&!f[1]?' · wasted':'')+'</span>').join('');};drawF(-1);
+  ['Fanout on write (push)','Fanout on read (pull)'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'down':'arrow')+n;b.onclick=()=>{[...L.$('#md').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);drawF(j);
+    L.$('#out').innerHTML='<b>When Mira posts:</b> '+R[j].w+'.<br><b>When Ben opens the app:</b> <span style="color:var(--'+R[j].c+')">'+R[j].r+'</span>.';
+    if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Now scale it up: Yusuf has 3 million followers. Which model makes <i>his</i> posts expensive?</h2>';
+      L.mc(q,['Fanout on write: 3 million feed writes per post','Fanout on read: 3 million reads per post'],0,
+       'Pushing one post into 3 million feeds is slow and heavy. That’s the hotkey problem.',
+       'With pull, Yusuf’s post is written once; followers fetch it when they open the app. It’s push that copies it 3 million times: the hotkey problem.');}};L.$('#md').appendChild(b);});}},
+{part:1,src:'Chapter 11 · Fanout service',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">The hybrid: push for most, pull for celebrities</h1>');
+  L.beats(L.card,[
+   ['The book’s pick','Fast feeds matter most, so use <b>push for the majority</b> of users. For celebrities and users with huge followings, followers <b>pull</b> their posts on demand.'],
+   ['Mira posts','Mira has 300 followers. Her post is pushed into 300 feed caches. Cheap and instant.'],
+   ['Yusuf posts','Yusuf has 3 million followers. His post is <b>not</b> pushed. It waits in his own post list.'],
+   ['Ben opens the app','Ben’s ready-made feed loads from cache. Because Ben follows Yusuf, the service also pulls Yusuf’s latest posts and merges them in.'],
+   ['Hana’s extra','The book adds that '+L.g('consistent-hashing','consistent hashing')+' helps with hot keys by spreading requests and data more evenly across servers.']],
+   'Most posts are pushed so feeds load fast; a few celebrity posts are pulled at read time to avoid overload.');}},
+{part:1,src:'Chapter 11 · Fanout service',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What is the hotkey problem?</h1>');
+  L.mc(L.card,['A user with many friends makes push fanout slow','A popular post gets too many likes to count','The feed cache runs out of space for old posts'],0,
+   'Fetching a huge friend list and writing into every feed takes a long time. That one “hot” user overloads the system.',
+   'The book’s hotkey problem is about fanout: a user with very many friends or followers makes pushing each post slow and heavy.');}},
+{part:1,src:'Chapter 11 · Fanout service',pts:6,run(L){
+  L.h(L.kick('pr','Sort the trade-offs')+'<h1 class="q">Is each statement true of fanout on write or fanout on read?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['On write (push)','On read (pull)'],[
+   ['The feed is already built when you open the app',0,'Push builds feeds at write time, so reading is a lookup.'],
+   ['No work is wasted on people who rarely log in',1,'Pull only builds a feed when someone asks for it.'],
+   ['Posting is slow for someone with millions of followers',0,'That’s the hotkey problem, and it comes from pushing.'],
+   ['Opening the feed is slow because nothing is ready',1,'Pull does the work while you wait.'],
+   ['Friends get the post in real time',0,'Push delivers the post into feeds immediately.'],
+   ['There is no hotkey problem',1,'Nothing is pushed to friends, so a big friend list costs nothing at write time.']],
+   'Push: fast reads and real-time, but hotkeys and waste. Pull: no waste and no hotkeys, but slow reads. The hybrid takes the best of each.');}},
+{part:1,src:'Chapter 11 · Fanout service',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Kitebird uses the hybrid. How is this author’s post delivered?',['Pushed into feeds','Pulled by followers'],[
+   ['Mira, a quilter with 300 followers, posts a finished quilt.',0,'An ordinary following: push keeps her followers’ feeds fast.'],
+   ['Yusuf, with 3 million followers, posts a new bowl.',1,'A celebrity: followers pull his posts on demand to avoid overload.'],
+   ['A brand-new maker with 12 followers posts a first sweater.',0,'Tiny fanout, so push it.'],
+   ['A craft-supply brand with 1.5 million followers posts a sale.',1,'Huge following: let followers pull it at read time.']]);}},
+
+/* ---------- PART 3: PUBLISHING ---------- */
+{part:2,src:'Chapter 11 · Feed publishing deep dive',run(L){
+  L.h(L.kick('learn','Inside the publishing flow')+'<h1 class="q">Guards at the door, then five fanout steps</h1>'+
+   L.prose('<b>Web servers</b> enforce authentication (only signed-in users with a valid auth token can post) and rate limiting (a cap on posts per period, to stop spam). Then the fanout service runs:')+
+   L.list([['Get friend IDs','From a '+L.g('graph-db','graph database')+', which suits friend relationships.'],
+     ['Get friend info and filter','From the user cache. Drop friends who muted the author, or who the post isn’t shared with.'],
+     ['Queue it','Send the friend list and the new post ID to a '+L.g('message-queue','message queue')+'.'],
+     ['Workers pick it up','Fanout workers take the job from the queue.'],
+     ['Store IDs in the feed cache','Each friend’s feed gets a <b>&lt;post_id, user_id&gt;</b> pair.']],2)+
+   L.note('<b>Only IDs, with a size limit.</b> Storing full posts and user objects would use huge memory. Most people only read the latest posts, so a capped list rarely misses.','layers'));
+  L.done();}},
+{part:2,src:'Chapter 11 · Fanout service',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Mira posts “Log cabin quilt, finally done!”</h1>');
+  L.beats(L.card,[
+   ['At the door','Her app sends POST /v1/me/feed with her auth token. Valid, and she’s far under the posting limit.'],
+   ['1 · Friend IDs','The graph database returns her 300 followers.'],
+   ['2 · Filter','The user cache shows Dev has <b>muted</b> Mira, so he’s dropped. She also chose not to share this one with her work colleagues, so they’re dropped too. 287 remain.'],
+   ['3 · Queue','The list of 287 and post ID p981 go into the message queue.'],
+   ['4–5 · Workers','Fanout workers write <b>&lt;p981, Mira&gt;</b> to the front of 287 feed caches. Each list is capped, so the oldest entry falls off the end.']],
+   'Check the request, find who should see it, filter by settings, queue it, and store just IDs.');}},
+{part:2,src:'Chapter 11 · Fanout service',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Dev still follows Mira but muted her. What happens to her new post?</h1>');
+  L.mc(L.card,['It goes into Dev’s feed but is shown greyed out','It is filtered out, so it skips his feed','It is pulled into his feed when he opens it'],1,
+   'Step 2 filters friends by user settings. Muted means her posts don’t show up, even though they’re still connected.',
+   'The fanout service filters by settings before queueing. A mute means the post never goes into Dev’s feed.');}},
+{part:2,src:'Chapter 11 · Fanout service',pts:1,run(L){
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Order the fanout service’s five steps.</h1>');
+  L.order(L.card,['Fetch friend IDs from the graph database','Get friend info from the user cache and filter by settings','Send the friend list and post ID to the message queue','Fanout workers fetch the job from the queue','Store <post_id, user_id> in the news feed cache'],
+   'Find who, filter who, queue it, let workers write it, store only IDs.');}},
+{part:2,src:'Chapter 11 · Fanout service',pts:1,run(L){
+  L.h(L.kick('pr','Defend the cache')+'<h1 class="q">Hana asks why the feed cache is so small. Build your answer.</h1>');
+  L.sentence(L.card,[['We store full posts and profiles','We store only post and user IDs'],['in each news feed cache,','in the graph database,'],['with a configurable size limit,','with no limit at all,'],['because old posts are read the most.','because few people scroll past the latest posts.']],[1,0,0,1],
+   [['Full objects would make memory use huge. The book stores only IDs.'],['Friend links live in the graph database. Feed entries live in the news feed cache.'],['Without a limit, memory keeps growing. The book sets a configurable cap.'],['It’s the other way round: most people only read the newest content, so the miss rate stays low.']],
+   'IDs only, a capped list, and a low miss rate because people read the newest posts.');}},
+
+/* ---------- PART 4: READING ---------- */
+{part:3,src:'Chapter 11 · Newsfeed retrieval deep dive',run(L){
+  L.h(L.kick('learn','Reading the feed')+'<h1 class="q">A list of IDs isn’t a feed yet</h1>'+
+   L.list([['Request','The app sends GET /v1/me/feed. The load balancer passes it to web servers, which call the news feed service.'],
+     ['Get IDs','The news feed service reads the list of post IDs from the news feed cache.'],
+     ['Hydrate','A feed needs names, profile pictures, post text and images. The service fetches full user and post objects from the <b>user cache</b> and <b>post cache</b>. The book calls the result a fully '+L.g('hydrate','hydrated')+' feed.'],
+     ['Return','The hydrated feed goes back as JSON for the app to show.']],3)+
+   L.note('Images and videos are stored on a '+L.g('cdn','CDN')+' for fast retrieval.','eye'));
+  L.done();}},
+{part:3,src:'Chapter 11 · Newsfeed retrieval deep dive',
+ solve:async L=>{L.$('#fu').click();L.$('#fp').click();},
+ run(L){
+  const P=[['p981','u7'],['p977','u3'],['p960','u7']],U={u7:'Mira Okafor',u3:'Yusuf Kalla'},T={p981:'Log cabin quilt, finally done!',p977:'New walnut bowl, 6 hours on the lathe',p960:'Which binding for a baby quilt?'};let gu=false,gp=false;
+  L.h(L.kick('ex','Hydrate Ben’s feed')+'<h1 class="q">The news feed cache gives Ben’s feed as bare IDs. Fill it in.</h1><div id="cards"></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" id="fu">'+L.ic('person')+'Fetch from user cache</button><button class="btn" id="fp">'+L.ic('box')+'Fetch from post cache</button></div>');
+  const draw=()=>{L.$('#cards').innerHTML=P.map(p=>'<div class="rung" style="margin-bottom:8px"><small>'+p[0]+' · '+p[1]+'</small>'+(gu?'<b>'+U[p[1]]+'</b> '+L.ic('person'):'<span class="small">who? ···</span>')+'<div>'+(gp?T[p[0]]+' <span class="small">(photo from CDN)</span>':'<span class="small">what? ···</span>')+'</div></div>').join('');
+    if(gu&&gp){L.sheet('info','Fully hydrated','Three IDs became three readable posts: names from the user cache, text from the post cache, photos from the CDN. Storing only IDs keeps the feed cache small; hydrating at read time fills in the rest.');L.done();}};draw();
+  L.$('#fu').onclick=function(){gu=true;this.disabled=true;draw();};
+  L.$('#fp').onclick=function(){gp=true;this.disabled=true;draw();};}},
+{part:3,src:'Chapter 11 · Cache architecture',run(L){
+  L.h(L.kick('learn','Five cache layers')+'<h1 class="q">The book splits the cache into five layers</h1>'+
+   L.tiers([['list','News feed','The IDs of each user’s feed.'],
+     ['box','Content','Every post’s data. Popular posts sit in a <b>hot cache</b>.'],
+     ['tree','Social graph','Who is connected to whom.'],
+     ['pointer','Action','Whether a user liked, replied to or otherwise acted on a post.'],
+     ['star','Counters','Counts of likes, replies, followers and following.']])+
+   '<p class="small">Caching is extremely important for a news feed, says the book.</p>');
+  L.done();}},
+{part:3,src:'Chapter 11 · Newsfeed retrieval deep dive',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben’s feed shows Yusuf’s new walnut bowl video. Where does the video itself come from?</h1>');
+  L.mc(L.card,['The news feed cache','The CDN','The graph database'],1,
+   'Media is stored on a CDN for fast retrieval. The feed cache only holds IDs.',
+   'The news feed cache holds only IDs, and the graph database holds connections. Images and videos come from the <b>CDN</b>.');}},
+{part:3,src:'Chapter 11 · Cache architecture',pts:6,run(L){
+  L.h(L.kick('pr','Find the layer')+'<h1 class="q">Which cache layer holds each piece of data?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['News feed','Content','Social graph','Action','Counters'],[
+   ['Ben’s list of post IDs to show',0,'The news feed layer stores feed IDs.'],
+   ['The text of Mira’s quilt post',1,'Post data lives in the content layer.'],
+   ['Yusuf’s viral bowl post, read millions of times',1,'Still content, kept in the hot cache because it’s popular.'],
+   ['The makers Ben follows',2,'Relationships are the social graph.'],
+   ['Whether Ben liked Mira’s post',3,'What a user did on a post is an action.'],
+   ['Mira’s post has 412 likes',4,'Totals live in the counters layer.']],
+   'IDs, content, connections, actions and counts: five layers, each cached separately.');}},
+{part:3,src:'Chapter 11 · Step 4 - Wrap up',run(L){
+  L.h(L.kick('learn','Wrap up')+'<h1 class="q">If time is left: talk about scaling</h1>'+
+   L.prose('The book stresses there is no perfect design, only trade-offs that fit a company’s limits. With minutes to spare, list scaling talking points:')+
+   L.lanes([['layers','Scaling the database','Vertical vs horizontal scaling · SQL vs NoSQL · primary and replicas (the book says master-slave) · read replicas · consistency models · '+L.g('sharding','sharding'),3],
+            ['list','Everything else','Keep the web tier '+L.g('stateless','stateless')+' · cache as much as you can · several data centers · decouple parts with message queues · monitor peak QPS and feed refresh latency',4]])+
+   L.note('<b>Beyond the book:</b> real feeds are usually ranked, not purely newest-first, and feed APIs return results a page at a time.','info'));
+  L.done();}},
+{part:3,src:'Chapter 11 · Step 4 - Wrap up',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Tamsin’s curveballs',['Hybrid fanout','Filter by settings','Hydrate from caches','Rate limit at web servers'],[
+   ['“Yusuf posts. Do 3 million feed writes happen?”',0,'No. Celebrities’ posts are pulled by followers at read time.'],
+   ['“A bot posts 500 times a minute and every post fans out.”',3,'Web servers cap how many posts a user can make in a period.'],
+   ['“The feed cache only holds IDs. How does Ben see names and photos?”',2,'The news feed service fills in users and posts from their caches.'],
+   ['“Dev muted Mira. Why doesn’t her quilt show up for him?”',1,'Fanout drops friends based on their settings before queueing.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

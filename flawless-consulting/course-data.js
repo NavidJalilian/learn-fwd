@@ -1,0 +1,42 @@
+Course.register({
+ slug:'flawless-consulting', book:'Flawless Consulting', author:'Peter Block', prefix:'fc',
+ tag:'Copperleaf course', castIcon:'home', castNote:'<b>Copperleaf Home</b> is the made-up furniture retailer where you help internal consultant Jordan all course long.',
+ lessons:[
+ {id:'0001',ch:'1',file:'0001-what-makes-a-consultant.html',title:'What makes someone a consultant',part:'Foundations'},
+ {id:'0002',ch:'2',file:'0002-techniques-are-not-enough.html',title:'Techniques are not enough',part:'Foundations'},
+ {id:'0003',ch:'3',file:'0003-flawless-consulting.html',title:'Flawless consulting',part:'Foundations'},
+ {id:'0004',ch:'4',file:'0004-contracting-overview.html',title:'Contracting overview',part:'Contracting'},
+ {id:'0005',ch:'5',chLabel:'Chapter 5, part 1',file:'0005-navigating-the-contracting-meeting.html',title:'Navigating the contracting meeting',part:'Contracting'},
+ {id:'0006',ch:'5',chLabel:'Chapter 5, part 2',file:'0006-when-contracting-gets-stuck.html',title:'When contracting gets stuck',part:'Contracting'},
+ {id:'0007',ch:'6',file:'0007-the-agonies-of-contracting.html',title:'The agonies of contracting',part:'Contracting'},
+ {id:'0008',ch:'7',file:'0008-the-internal-consultant.html',title:'The internal consultant',part:'Contracting'},
+ {id:'0009',ch:'8',file:'0009-understanding-resistance.html',title:'Understanding resistance',part:'Resistance'},
+ {id:'0010',ch:'9',file:'0010-dealing-with-resistance.html',title:'Dealing with resistance',part:'Resistance'},
+ {id:'0011',ch:'10',file:'0011-from-diagnosis-to-discovery.html',title:'From diagnosis to discovery',part:'Discovery'},
+ {id:'0012',ch:'11',file:'0012-whole-system-discovery.html',title:'Whole-system discovery',part:'Discovery'},
+ {id:'0013',ch:'12',file:'0013-discovering-gifts-and-possibilities.html',title:'Discovering gifts, capacities and possibilities',part:'Discovery'},
+ {id:'0014',ch:'13',file:'0014-get-the-picture.html',title:'Get the picture',part:'Discovery'},
+ {id:'0015',ch:'14',file:'0015-preparing-for-feedback.html',title:'Preparing for feedback',part:'Feedback and the decision to act'},
+ {id:'0016',ch:'15',file:'0016-managing-the-meeting-for-action.html',title:'Managing the meeting for action',part:'Feedback and the decision to act'},
+ {id:'0017',ch:'16',file:'0017-engagement-over-installation.html',title:'Engagement over installation',part:'Engagement and implementation'},
+ {id:'0018',ch:'17',file:'0018-the-elements-of-engagement.html',title:'The elements of engagement',part:'Engagement and implementation'},
+ {id:'0019',ch:'18',file:'0019-teacher-as-consultant.html',title:'Teacher as consultant',part:'The heart of the matter'},
+ {id:'0020',ch:'19',file:'0020-the-heart-of-the-matter.html',title:'The heart of the matter',part:'The heart of the matter'}
+ ],
+ glossary:{
+ consultant:'Consultant: someone who can influence a person, group or organization but has no direct power to make the change themselves.',
+ client:'Client: the person or group the consultant wants to influence. Inside a company this is usually a line manager.',
+ 'line-manager':'Line manager: a manager with direct control over the work and the people doing it. The usual client of a support person.',
+ flawless:'Flawless consulting: being authentic with the client and completing the business of whatever consulting phase you are in.',
+ authentic:'Authentic: putting into plain words what you are experiencing with the client, right as it happens.',
+ phases:'Five phases: entry and contracting; discovery and dialogue; analysis and the decision to act; engagement and implementation; extension, recycle or termination.',
+ contract:'Contract: a clear agreement, usually spoken, about what consultant and client expect from each other and how they will work together.',
+ 'expert-role':'Expert role: the client hands the problem to the consultant, who decides and acts alone. The client stays passive.',
+ 'pair-of-hands':'Pair-of-hands role: the client keeps control and uses the consultant as an extra worker to carry out the client’s plan.',
+ collaborative:'Collaborative role: client and consultant share the work and the responsibility 50/50, from defining the problem to acting on it.',
+ resistance:'Resistance: an emotional reaction against being helped and against facing a hard problem. It usually shows up indirectly.',
+ 'presenting-problem':'Presenting problem: the client’s first description of what is wrong. Usually a symptom, not the real cause.',
+ 'how-managed':'How the problem is being managed: the people side around a technical or business problem, like attitudes, the manager’s style and politics.',
+ engagement:'Engagement: bringing people together so they choose to commit to a change, rather than having it rolled out onto them.'
+ }
+});

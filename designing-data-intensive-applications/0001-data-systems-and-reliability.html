@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Systems and Reliability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0001', title:'Data systems and reliability', minutes:20, icon:'shield',
+  goals:['See an app as a data system stitched together from standard building blocks','Tell a fault from a failure, and say why we tolerate faults instead of hoping to prevent them','Match hardware, software and human faults to the defences that fit each one'],
+  parts:['Data systems','Faults and failures','Hardware and software','Humans and stakes'],
+  read:'Read the Preface and chapter 1 of the book, up to the start of “Scalability”, for the full discussion of reliability.',
+  glossary:{
+    'data-intensive':'Data-intensive application: an app whose main challenge is its data (how much there is, how complex it is, how fast it changes) rather than raw processing power.',
+    'fault-tolerant':'Fault-tolerant (or resilient): a system that expects certain kinds of faults and keeps serving users when they happen.',
+    'mttf':'Mean time to failure (MTTF): how long a part lasts on average before it breaks.',
+    'rolling-upgrade':'Rolling upgrade: updating a system one machine at a time, so the whole system never has to go down.',
+    'cascading':'Cascading failure: a small fault in one part causes a fault in another, which causes more, like falling dominoes.',
+    'telemetry':'Telemetry: detailed measurements, such as error rates and response times, sent continuously from a running system so people can see what it is doing.'
+  },
+  cheatsheet:[
+    '<b>Data-intensive</b> = the hard part is the data (volume, complexity, speed of change), not CPU power.',
+    'Apps are built from standard blocks: <b>database, cache, search index, stream processing, batch processing</b>. Glue them together and you are a data-system designer.',
+    'The book’s three concerns: <b>reliability, scalability, maintainability</b>.',
+    'A <b>fault</b> is one part going wrong. A <b>failure</b> is the whole system letting users down. Design so faults don’t become failures.',
+    'Inject faults on purpose to test your recovery code. But for security, prevention beats cure.',
+    '<b>Hardware faults</b> are random and independent: add redundancy, and tolerate losing whole machines. <b>Software errors</b> are correlated: test, isolate, restart, monitor, self-check.',
+    '<b>Human errors</b>: good interfaces, sandboxes, tests, fast rollback and gradual rollout, recompute tools, clear monitoring.',
+    'Cutting reliability corners can be fine (a prototype, a thin margin), but only on purpose.'
+  ],
+  steps:[
+/* ---------- PART 1: DATA SYSTEMS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">On Peak Week mornings, Otterpost’s tracking page crawls. Kwame checks the servers: their processors are mostly idle. Where would you look first?</h1>');
+  L.mc(L.card,['At how the data is stored, found and moved','At buying servers with faster processors'],0,
+   'If the processors are idle, raw computing power isn’t the bottleneck. The trouble is somewhere in the data: how much of it there is, how it’s laid out, how it moves. That’s what this whole course is about.',
+   'Idle processors mean computing power isn’t the limit. Faster chips would sit idle too. The trouble is in how the data is stored, found and moved.');}},
+{part:0,src:'Preface',run(L){
+  L.h(L.kick('learn','What “data-intensive” means')+'<h1 class="q">Most apps are limited by data, not by computing power</h1>'+
+   L.prose('The book calls an application '+L.g('data-intensive','data-intensive')+' when data is its main challenge. Three things make data hard:')+
+   L.flow([['layers','Quantity','How much data there is'],['tree','Complexity','How tangled and connected it is'],['cycle','Speed of change','How fast it keeps changing']],false)+
+   L.prose('The opposite is <b>compute-intensive</b>, where processor time is the bottleneck. For most apps, the book says, raw processor power is rarely the limit.')+
+   L.prose('The tools change fast and come wrapped in buzzwords. Behind them sit lasting principles. Learn those, and you can judge where each tool fits and how it can let you down.'));
+  L.done();}},
+{part:0,src:'Chapter 1 · Reliable, Scalable, and Maintainable Applications',run(L){
+  L.h(L.kick('learn','The building blocks')+'<h1 class="q">Five standard blocks most apps are made of</h1>'+
+   L.prose('Hardly anyone writes a storage engine from scratch. Instead, apps combine ready-made blocks. Here they are, with the Otterpost system that plays each role:')+
+   L.list([['box','Database','Store data so it can be found again later. <i>Otterpost: the Parcel DB.</i>'],
+     ['layers','Cache','Remember the result of an expensive operation to speed up reads. <i>The cache in front of the tracking page.</i>'],
+     ['eye','Search index','Let people search by keyword or filter in many ways. <i>Support search.</i>'],
+     ['chat','Stream processing','Send a message to another process, to be handled later. <i>The notification queue.</i>'],
+     ['cal','Batch processing','Regularly crunch a large pile of collected data. <i>Linh’s nightly jobs.</i>']],1)+
+   '<p class="small" style="margin-top:10px">These blocks feel obvious only because they work so well that we use them without thinking.</p>');
+  L.done();}},
+{part:0,src:'Chapter 1 · Reliable, Scalable, and Maintainable Applications',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Signe’s support team must find a parcel from part of a phone number or a misspelled name. Which building block does that job?</h1>');
+  L.mc(L.card,['A cache of recent results','A batch job run every night','A search index'],2,
+   'Finding records by keyword or loose filters is exactly what a search index is for.',
+   'A cache only speeds up reads you have already done, and a nightly batch job is far too slow for a live phone call. Searching by keyword or filter is a search index’s job.');}},
+{part:0,src:'Chapter 1 · Thinking About Data Systems',run(L){
+  L.h(L.kick('ex','Otterpost, years ago')+'<h1 class="q">How Femi became a data-system designer without noticing</h1>');
+  L.beats(L.card,[
+   ['Day one','Femi writes the first Otterpost as one app on one database. Simple.'],
+   ['A cache','The tracking page gets slow, so Femi adds a cache in front of it. Now the app must clear the cached page whenever a parcel’s status changes.'],
+   ['A search index','Signe’s team needs fuzzy search, so a separate search server is added. The app must also send every change there.'],
+   ['A queue','Recipients want texts, so a message queue goes in. The app drops a message on it for every status change.'],
+   ['The realisation','Merchants only see one clean API. Behind it sit four tools, glued together by Otterpost’s own code. That code now promises things, such as “the tracking page never shows an old status.”']],
+   'Combine several tools behind one API and you have built a new, special-purpose data system. You are no longer only an app developer. You are a data-system designer.');}},
+{part:0,src:'Chapter 1 · Thinking About Data Systems',pts:1,
+ solve:async L=>{L.$('#run').click();},
+ run(L){
+  const C=[['box','Parcel DB','Delivered','The new status is saved.',true],['layers','Tracking page cache','Out for delivery','Mrs. Okoro still sees her parcel “on its way” after it is on her doorstep.',false],
+           ['eye','Support search','Out for delivery','Signe’s team tells a caller the parcel hasn’t arrived.',false],['chat','Notification queue','(nothing sent)','No “delivered” text ever goes out.',false]];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias ships a quick change: when a courier scans “delivered”, the app saves it to the Parcel DB. Nothing else. Run it and see what everyone sees.</h1>'+
+   '<div id="sys">'+C.map((c,j)=>'<div class="lane" style="margin-bottom:8px"><div class="lh">'+L.ic(c[0])+c[1]+'</div><div class="small" id="s'+j+'">Waiting…</div></div>').join('')+'</div>'+
+   '<button class="btn pri" id="run" style="margin-top:6px">'+L.ic('play')+'Courier scans “delivered”</button><div id="sq"></div>');
+  L.$('#run').onclick=function(){this.remove();
+    C.forEach((c,j)=>{L.$('#s'+j).innerHTML='<b style="color:var('+(c[4]?'--ok':'--no')+')">'+c[2]+'</b> · '+c[3];});
+    const q=L.$('#sq');q.innerHTML='<h2 class="sub">Whose job was it to update the cache, the search index and the queue?</h2>';
+    L.mc(q,['The Parcel DB, automatically','Otterpost’s own application code','Each tool, by watching the others'],1,
+     'When you glue tools together yourself, keeping the cache and the index in step with the main database is normally your application code’s job. Here, nobody did it.',
+     'These tools don’t know about each other. When you combine them yourself, your application code has to keep the cache and the index in step with the database.');};}},
+{part:0,src:'Chapter 1 · Thinking About Data Systems',run(L){
+  L.h(L.kick('learn','Three concerns')+'<h1 class="q">The three words this book keeps coming back to</h1>'+
+   L.prose('Many things shape a data system: the team’s skills, old systems you depend on, deadlines, how much risk the company accepts, regulations. The book focuses on three concerns that matter in almost every system:')+
+   L.tiers([['shield','Reliability','The system keeps working correctly, even when hardware, software or people make mistakes.','Otterpost: a dead disk doesn’t lose anyone’s parcel'],
+            ['trend','Scalability','As data, traffic or complexity grows, there are reasonable ways to cope.','Otterpost: Peak Week triples the parcels'],
+            ['people','Maintainability','Over time, many different people can work on the system productively.','Otterpost: a new engineer can safely change billing']])+
+   '<p class="small" style="margin-top:10px">This lesson covers reliability. The next covers scalability and maintainability.</p>');
+  L.done();}},
+{part:0,src:'Chapter 1 · Thinking About Data Systems',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which concern is at stake?',['Reliability','Scalability','Maintainability'],[
+   ['A disk in the Parcel DB server dies. Will any parcel records be lost?',0,'Keeping data correct when a part breaks is reliability.'],
+   ['Bramble & Bolt plans a flash sale that could double bookings in an hour.',1,'Coping with a jump in load is scalability.'],
+   ['A new engineer needs three weeks to work out how billing really works.',2,'Letting people understand and change the system is maintainability.'],
+   ['An operator’s typo in a config file takes down the merchant API.',0,'A human mistake turning into an outage is a reliability problem.'],
+   ['Merchants want a new returns feature, but every change to the parcel code breaks something.',2,'Making change easy is part of maintainability.']]);}},
+
+/* ---------- PART 2: FAULTS AND FAILURES ---------- */
+{part:1,src:'Chapter 1 · Reliability',run(L){
+  L.h(L.kick('learn','Fault versus failure')+'<h1 class="q">Things will go wrong. The goal is that users don’t notice.</h1>'+
+   L.quote('continuing to work correctly, even when things go wrong','Martin Kleppmann, on what reliability roughly means')+
+   L.prose('“Working correctly” means the app does what users expect, copes with users’ mistakes, is fast enough for its load, and keeps out intruders.')+
+   L.flow([['alert','Fault','One part goes wrong: a disk, a process, a cable','',4],['shield','Tolerance','Redundancy, retries, a backup copy takes over','',2],['check','No failure','Users keep getting the service','',1]])+
+   L.prose('A '+L.g('fault','fault')+' is one component straying from its spec. A <b>failure</b> is the whole system no longer serving users. You can’t push the chance of faults to zero, so you design so that faults don’t turn into failures. A system that does this is '+L.g('fault-tolerant','fault-tolerant')+', but only for <i>certain kinds</i> of fault. Nothing survives everything.'));
+  L.done();}},
+{part:1,src:'Chapter 1 · Reliability',run(L){
+  L.h(L.kick('ex','Breaking things on purpose')+'<h1 class="q">Kwame’s quiet Tuesday experiment</h1>');
+  L.beats(L.card,[
+   ['The claim','Otterpost runs two notification workers. If one dies, the other takes over. Everyone believes it.'],
+   ['The test','On a quiet Tuesday morning, Kwame kills one worker at random, without warning anyone.'],
+   ['The surprise','The second worker does take over, but its error-handling code skips the messages that were half sent. About 200 recipients never get their “out for delivery” text.'],
+   ['The fix','Tobias fixes the error handling that afternoon. Kwame keeps killing a random worker every week.'],
+   ['Why it works','The book notes many serious bugs come from poor error handling. Triggering faults on purpose keeps the recovery code exercised, so it works when a real fault strikes. Netflix’s Chaos Monkey is the famous example.']],
+   'It sounds backwards, but raising the rate of faults on purpose can make a fault-tolerant system more reliable.');}},
+{part:1,src:'Chapter 1 · Reliability',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">One of the Parcel DB server’s two mirrored disks dies at 3 a.m. The other disk carries on, and no merchant or recipient notices. What happened?</h1>');
+  L.mc(L.card,['A failure, but no fault','A fault and a failure','A fault, but no failure'],2,
+   'A part broke (a fault), but the system kept serving users, so there was no failure. That’s fault tolerance doing its job.',
+   'A broken disk is a fault. A failure would mean users stopped getting the service, and nobody noticed anything. So: a fault, but no failure.');}},
+{part:1,src:'Chapter 1 · Reliability',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Fault only, or a failure too?',['Fault only','Failure too'],[
+   ['A notification worker crashes and restarts itself in two seconds. Every text still goes out.',0,'A part broke, but users got the full service.'],
+   ['The tracking page shows an error to every recipient for 20 minutes.',1,'The system as a whole stopped serving users. That’s a failure.'],
+   ['A network cable to one search server is unplugged. The other search server answers all of Signe’s searches.',0,'One part failed, the system carried on.'],
+   ['A bad deploy makes the merchant API reject every new booking for an hour.',1,'Merchants couldn’t get the service at all. A failure.']]);}},
+{part:1,src:'Chapter 1 · Reliability',pts:1,run(L){
+  L.h(L.kick('pr','Tolerate or prevent?')+'<h1 class="q">Tobias says: “We tolerate faults instead of preventing them. So if someone breaks in and copies recipients’ home addresses, we’ll just recover.” What’s wrong with that?</h1>');
+  L.mc(L.card,['Recovery would be too slow for a break-in','A stolen copy of data can’t be undone','Break-ins are hardware faults, not software ones'],1,
+   'Right. The book prefers tolerating faults in general, but some faults have no cure. Once an attacker has copied sensitive data, no recovery can take it back. There, prevention is the only option.',
+   'Speed and fault type aren’t the issue. Once an attacker has copied the addresses, nothing can undo it. When there’s no cure, prevention is better.');}},
+
+/* ---------- PART 3: HARDWARE AND SOFTWARE ---------- */
+{part:2,src:'Chapter 1 · Hardware Faults',run(L){
+  L.h(L.kick('learn','Hardware faults')+'<h1 class="q">With enough machines, something is always breaking</h1>'+
+   L.prose('Disks crash, memory goes bad, the power grid blacks out, someone unplugs the wrong cable. The book reports hard disks have a '+L.g('mttf','mean time to failure')+' of about 10 to 50 years. Sounds safe, until you have many disks: with 10,000 of them, expect about <b>one to die every day</b>.')+
+   L.lanes([['box','The old answer','Redundant parts inside each machine: mirrored disks (RAID), two power supplies, batteries and diesel generators. If a machine still dies, restore a backup onto a new one.',3],
+            ['layers','The newer answer','Software that tolerates losing a <b>whole machine</b>. Needed as apps use more machines, and as cloud machines can vanish without warning.',2]])+
+   L.prose('Bonus: a system that survives losing a machine can be patched one '+L.g('node','node')+' at a time, a '+L.g('rolling-upgrade','rolling upgrade')+', instead of taking planned downtime.'));
+  L.done();}},
+{part:2,src:'Chapter 1 · Hardware Faults',pts:1,
+ solve:async L=>{[...L.$('#dk').children].forEach(b=>b.click());},
+ run(L){
+  const S=[[100,'about every 100 days'],[1000,'about every 10 days'],[10000,'about every day']];const seen=new Set();
+  L.h(L.kick('try','See the numbers')+'<h1 class="q">Say each disk lasts about 10,000 days on average (some 27 years, inside the book’s range). Tap each fleet size.</h1><div id="dk"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:70px"><div class="small">One disk dies…</div><div class="week" id="dr">pick a size</div></div><div id="dq"></div>');
+  S.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0].toLocaleString('en-US')+' disks';
+    b.onclick=()=>{[...L.$('#dk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#dr').textContent=s[1];seen.add(j);
+      if(seen.size===3&&!L.$('#dq').innerHTML){const q=L.$('#dq');q.innerHTML='<h2 class="sub">Otterpost grows to 2,000 disks across all its servers. Roughly how often should Kwame expect one to die?</h2>';
+        L.mc(q,['About once a year','About every 5 days','About every 27 years'],1,
+         '10,000 days ÷ 2,000 disks = one death about every 5 days. Each disk is reliable; the fleet is not.',
+         'Divide the lifetime by the number of disks: 10,000 ÷ 2,000 = about 5 days. The more disks, the more often one dies.');}};
+    L.$('#dk').appendChild(b);});}},
+{part:2,src:'Chapter 1 · Software Errors',run(L){
+  L.h(L.kick('learn','Software errors')+'<h1 class="q">Bugs don’t strike one machine at a time. They strike all of them.</h1>'+
+   L.prose('Hardware faults are mostly <b>random and independent</b>: one dying disk says little about the next. Software errors are <b>systematic</b>. Every machine runs the same code, so they fail together, and they cause many more outages. The book’s examples:')+
+   L.list([['A bad input crashes every copy','A leap second on 30 June 2012 made many apps hang at once, because of a bug in the Linux kernel.'],
+     ['A runaway process','It eats a shared resource: processor time, memory, disk space or network.'],
+     ['A dependency misbehaves','A service you rely on slows down, stops answering, or returns corrupted replies.'],
+     ['A '+L.g('cascading','cascading failure'),'A small fault in one part sets off faults in the next, and the next.']],4)+
+   L.prose('Such bugs often sleep for years. The code assumed something about its world that was usually true, until one day it wasn’t.'));
+  L.done();}},
+{part:2,src:'Chapter 1 · Software Errors',pts:1,
+ solve:async L=>{L.$('#hw').click();L.$('#sw').click();},
+ run(L){
+  const N=8,seen=new Set();
+  const draw=dead=>L.$('#grid').innerHTML=Array.from({length:N},(_,j)=>'<span class="chip static '+(dead(j)?'no':'ok')+'" style="min-width:64px;justify-content:center">'+L.ic(dead(j)?'x':'check')+'S'+(j+1)+'</span>').join('');
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">The tracking page runs on 8 identical servers. Try both kinds of trouble.</h1>'+
+   '<div id="grid"></div><div class="small" id="st" style="margin:4px 0 10px">All 8 servers healthy.</div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="hw">'+L.ic('alert')+'A disk dies</button><button class="btn" id="sw">'+L.ic('alert')+'A strange address arrives</button></div><div id="gq"></div>');
+  draw(()=>false);
+  const ask=()=>{if(seen.size<2||L.$('#gq').innerHTML)return;const q=L.$('#gq');q.innerHTML='<h2 class="sub">Femi asks: “Would 8 more servers have saved us the second time?” What do you answer?</h2>';
+    L.mc(q,['Yes, extra servers share the load','No, every server runs the same code','Yes, if they sit in another datacenter'],1,
+     'Right. Extra copies help against random hardware faults, but a bug that crashes one copy crashes them all, wherever they are.',
+     'More copies help with random hardware faults. But each new server runs the same code, so the same address would crash it too, in any datacenter.');};
+  L.$('#hw').onclick=()=>{draw(j=>j===4);L.$('#st').innerHTML='<b style="color:var(--ok)">Site still up.</b> One server is down; the other 7 carry the load.';seen.add(0);ask();};
+  L.$('#sw').onclick=()=>{draw(()=>true);L.$('#st').innerHTML='<b style="color:var(--no)">Site down.</b> A parcel address with a character the code never expected crashes every server that tries to show it.';seen.add(1);ask();};}},
+{part:2,src:'Chapter 1 · Software Errors',pts:5,run(L){
+  L.h(L.kick('pr','Random or systematic?')+'<h1 class="q">Sort each Otterpost incident by the kind of fault behind it.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Hardware fault','Software error'],[
+   ['The power supply in one hub’s label printer server burns out.',0,'A single physical part wore out. Random and independent.'],
+   ['After a daylight-saving change, every route planner computes routes an hour off.',1,'Same code, same wrong assumption, everywhere at once.'],
+   ['The address-lookup service Otterpost depends on starts returning garbled postcodes.',1,'A dependency returning corrupted replies is a software error.'],
+   ['A runaway log file fills the disk on every app server.',1,'A runaway process eating a shared resource, on every copy of the code.'],
+   ['One server’s memory chip starts flipping bits.',0,'Faulty memory in one machine is a hardware fault.']],
+   'Hardware faults hit one part at random. Software errors are built into the code, so they hit every copy together.');}},
+{part:2,src:'Chapter 1 · Software Errors',pts:1,run(L){
+  L.h(L.kick('pr','Catch it early')+'<h1 class="q">There’s no quick fix for software errors, but small habits help. Linh wants the notification system to catch its own bugs while running. Which idea fits the book best?</h1>');
+  L.mc(L.card,['Check that messages in equal messages out, and alert if not','Rewrite it in a newer programming language','Turn off error logs so the dashboards stay quiet'],0,
+   'A system that promises something (every message that goes in comes out) can keep checking that promise while it runs and raise an alert on any gap. Testing, process isolation, letting processes crash and restart, and monitoring help too.',
+   'A new language doesn’t remove wrong assumptions, and hiding errors makes things worse. The book suggests a system check its own promises while it runs, such as messages in = messages out, and alert on any gap.');}},
+
+/* ---------- PART 4: HUMANS AND STAKES ---------- */
+{part:3,src:'Chapter 1 · Human Errors',run(L){
+  L.h(L.kick('learn','Human errors')+'<h1 class="q">People cause more outages than hardware</h1>'+
+   L.prose('One study of large internet services found that operators’ <b>configuration mistakes</b> were the leading cause of outages. Hardware played a part in only 10–25% of them. People mean well, but they slip. The best systems combine several defences:')+
+   L.list([['pencil','Make mistakes hard','Good interfaces make the right thing easy. But lock them down too far and people work around them.'],
+     ['flask','Give people a sandbox','A full non-production copy, with real data, to experiment without touching real users.'],
+     ['check','Test at every level','From small unit tests up to whole-system and manual tests.'],
+     ['cycle','Recover quickly','Fast config rollback, new code rolled out gradually, tools to recompute data.'],
+     ['eye','Monitor clearly','Performance and error-rate '+L.g('telemetry','telemetry')+' gives early warnings and helps diagnose.']],3)+
+   '<p class="small" style="margin-top:10px">Good management and training matter too, but the book leaves them out of scope.</p>');
+  L.done();}},
+{part:3,src:'Chapter 1 · Human Errors',run(L){
+  L.h(L.kick('ex','A Friday config change')+'<h1 class="q">How Kwame’s defences shrank one mistake</h1>');
+  L.beats(L.card,[
+   ['The slip','On a Friday, an operator changes the notification config. A typo points the text messages at the wrong template.'],
+   ['Gradual rollout','The change goes to 5% of recipients first, so only a small slice gets the odd text.'],
+   ['Monitoring','Within minutes, a dashboard shows replies of “what is this?” jumping. An alert pages Kwame.'],
+   ['Fast rollback','Kwame rolls the config back with one command. Ten minutes of trouble, not a weekend.'],
+   ['Recompute','A small tool re-sends the correct texts to everyone who got the wrong one.'],
+   ['After','The team adds the change to the sandbox test checklist, so next time it is caught before it ships.']],
+   'No single defence stopped the mistake. Together they kept it small, short and fixable.');}},
+{part:3,src:'Chapter 1 · Human Errors',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In Kwame’s story, which defence kept the number of recipients hit by the bad config small?</h1>');
+  L.mc(L.card,['The fast rollback','Rolling it out to 5% first','The tool that re-sent texts'],1,
+   'Releasing to a small slice first means a bad change only reaches a few users before anyone notices.',
+   'Rollback shortened the outage and the re-send tool repaired the damage. Limiting <i>how many</i> people were hit was the gradual rollout to 5%.');}},
+{part:3,src:'Chapter 1 · Human Errors',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which defence fits?',['Better interface','Sandbox','Fast recovery','Monitoring'],[
+   ['Tobias wants to try a new database index on real-looking parcel data without risking live bookings.',1,'A non-production copy with real data lets people experiment safely.'],
+   ['Operators keep deleting the wrong hub because the admin page puts “delete” right next to “edit”.',0,'A well-designed interface makes the wrong thing harder to do.'],
+   ['A pricing bug overcharged merchants for a week. Linh needs to work out what each should have paid.',2,'Tools to recompute data let you recover from an earlier wrong computation.'],
+   ['Nobody noticed that delivery-confirmation errors had been creeping up for days.',3,'Clear error-rate metrics give early warning signals.'],
+   ['The admin tool is so locked down that operators edit the database by hand to get anything done.',0,'Too-restrictive interfaces get worked around. The interface needs rebalancing.']]);}},
+{part:3,src:'Chapter 1 · How Important Is Reliability?',run(L){
+  L.h(L.kick('learn','How much reliability is enough?')+'<h1 class="q">Not only for power stations and air traffic control</h1>'+
+   L.prose('Ordinary apps need reliability too. Bugs in business software cost lost work, and legal risk if reported figures are wrong. An online shop that goes down loses sales and reputation.')+
+   L.prose('Even “unimportant” apps carry responsibility. The book imagines a parent who keeps every photo of their children in your photo app. How would they feel if it were corrupted? Would they know how to restore a backup?')+
+   L.note('Sometimes you may <b>choose</b> less reliability to save money: a prototype for an unproven market, or a service with a very thin profit margin. That’s allowed, as long as you know exactly where you are cutting corners.','scale'));
+  L.done();}},
+{part:3,src:'Chapter 1 · How Important Is Reliability?',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Otterpost wants to test parcel lockers at three Westport stations for six weeks. Tobias suggests skipping the backup copy of the locker data for the trial. What should Femi do?</h1>');
+  L.mc(L.card,['Refuse: every system must be as reliable as the Parcel DB','Accept, as nobody would care if a trial lost data','Accept for the trial, written down as a known shortcut'],2,
+   'A short trial in an unproven market is exactly where cutting corners can make sense. The book’s point is to do it knowingly, and to revisit it before the lockers go live.',
+   'Demanding full reliability for a six-week trial wastes effort, but saying nobody would care ignores the people with parcels in those lockers. Cut the corner, but knowingly, and write it down.');}}
+  ]
+});
+</script>
+</body>
+</html>

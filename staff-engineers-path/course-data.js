@@ -1,0 +1,42 @@
+Course.register({
+ slug:'staff-engineers-path', book:'The Staff Engineer’s Path', author:'Tanya Reilly', prefix:'sep',
+ tag:'Usherly course', castIcon:'star', castNote:'<b>Usherly</b> is the made-up event-ticketing company where you follow Quinn, its newest staff engineer, all course long.',
+ lessons:[
+ {id:'0001',ch:'1',chLabel:'Introduction + Chapter 1, part 1',file:'0001-what-staff-engineers-are-for.html',title:'What staff engineers are for',part:'The big picture'},
+ {id:'0002',ch:'1',chLabel:'Chapter 1, part 2',file:'0002-defining-your-role.html',title:'Defining your role',part:'The big picture'},
+ {id:'0003',ch:'2',chLabel:'Chapter 2, part 1',file:'0003-the-locator-map.html',title:'The locator map: getting perspective',part:'The big picture'},
+ {id:'0004',ch:'2',chLabel:'Chapter 2, part 2',file:'0004-terrain-and-treasure.html',title:'Navigating the terrain, finding the treasure',part:'The big picture'},
+ {id:'0005',ch:'3',chLabel:'Chapter 3, part 1',file:'0005-vision-strategy-and-setup.html',title:'Vision, strategy and getting set up',part:'The big picture'},
+ {id:'0006',ch:'3',chLabel:'Chapter 3, part 2',file:'0006-writing-and-launching-a-strategy.html',title:'Writing and launching a strategy',part:'The big picture'},
+ {id:'0007',ch:'3',chLabel:'Chapter 3, part 3',file:'0007-case-study-building-a-strategy.html',title:'Case study: building a strategy',part:'The big picture'},
+ {id:'0008',ch:'4',chLabel:'Chapter 4, part 1',file:'0008-finite-time-finite-resources.html',title:'Finite time, finite resources',part:'Execution'},
+ {id:'0009',ch:'4',chLabel:'Chapter 4, part 2',file:'0009-choosing-your-projects.html',title:'Choosing your projects',part:'Execution'},
+ {id:'0010',ch:'5',chLabel:'Chapter 5, part 1',file:'0010-starting-a-big-project.html',title:'Starting a big project',part:'Execution'},
+ {id:'0011',ch:'5',chLabel:'Chapter 5, part 2',file:'0011-giving-a-project-structure.html',title:'Giving a project structure',part:'Execution'},
+ {id:'0012',ch:'5',chLabel:'Chapter 5, part 3',file:'0012-designing-coding-communicating.html',title:'Designing, coding and communicating',part:'Execution'},
+ {id:'0013',ch:'6',chLabel:'Chapter 6, part 1',file:'0013-getting-unblocked.html',title:'Getting unblocked',part:'Execution'},
+ {id:'0014',ch:'6',chLabel:'Chapter 6, part 2',file:'0014-lost-done-or-stopped.html',title:'Lost, done or stopped',part:'Execution'},
+ {id:'0015',ch:'7',chLabel:'Chapter 7, part 1',file:'0015-competent-and-responsible.html',title:'Competent and responsible',part:'Leveling up'},
+ {id:'0016',ch:'7',chLabel:'Chapter 7, part 2',file:'0016-remember-the-goal-look-ahead.html',title:'Remember the goal, look ahead',part:'Leveling up'},
+ {id:'0017',ch:'8',chLabel:'Chapter 8, part 1',file:'0017-advice-and-teaching.html',title:'Advice and teaching',part:'Leveling up'},
+ {id:'0018',ch:'8',chLabel:'Chapter 8, part 2',file:'0018-guardrails-and-opportunities.html',title:'Guardrails and opportunities',part:'Leveling up'},
+ {id:'0019',ch:'9',chLabel:'Chapter 9, part 1',file:'0019-steering-your-career.html',title:'Steering your career',part:'Leveling up'},
+ {id:'0020',ch:'9',chLabel:'Chapter 9, part 2',file:'0020-paths-from-here.html',title:'Paths from here',part:'Leveling up'}
+ ],
+ glossary:{
+ 'staff-engineer':'Staff engineer: a senior engineer who leads without managing people. “Staff+” covers staff, principal and higher levels.',
+ 'pillars':'Three pillars: the book’s picture of the staff role: big-picture thinking, project execution and leveling up others, all resting on solid technical skill.',
+ 'scope':'Scope: the teams, systems or domain you pay close attention to and feel responsible for.',
+ 'primary-focus':'Primary focus: the one or two important things you deliberately spend most of your time on.',
+ 'local-max':'Local maximum: a choice that is best for one team but worse for the organization as a whole.',
+ 'locator-map':'Locator map: the “you are here” view of where you and your work sit in the bigger picture.',
+ 'topographic-map':'Topographical map: a picture of how your organization really works: its culture, its obstacles and its shortcuts.',
+ 'treasure-map':'Treasure map: the shared story of where everyone is heading and why it’s worth getting there.',
+ 'vision':'Technical vision: a description of the future state you want once the big problems are solved.',
+ 'strategy':'Technical strategy: a plan of action to reach a goal, built from a diagnosis, a guiding policy and coherent actions.',
+ 'sponsor':'Sponsor: a senior leader, such as a director or VP, who backs your work and can make it official.',
+ 'credibility':'Credibility: whether people believe you can do what you’re trying to do.',
+ 'social-capital':'Social capital: whether people want to help you do it; goodwill you build up and spend.',
+ 'catalyst':'Catalyst: influence that keeps working after you stop putting in effort, like a habit or culture you set up.'
+ }
+});

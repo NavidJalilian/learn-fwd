@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design YouTube</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0008', title:'Design YouTube', minutes:20, icon:'play',
+  goals:['Scope a video platform and size its storage and CDN bill','Trace a video from upload through transcoding to the CDN','Make it faster, safer and cheaper, and say what to do when parts fail'],
+  parts:['Scope and cost','Upload and stream','Transcoding','Faster, safer, cheaper'],
+  read:'Read chapter 14 of the book for the upload, transcoding and pre-signed URL diagrams.',
+  glossary:{
+    blob:'Blob storage: a cloud store for big files (“binary large objects”) such as whole videos, kept as single items.',
+    transcode:'Transcoding (also called encoding): converting a video into other formats, sizes and quality levels so it plays well on each device and connection.',
+    bitrate:'Bitrate: how many bits of video are processed per second. Higher bitrate usually means better picture, but needs more processing and a faster connection.',
+    dag:'DAG (directed acyclic graph): a map of tasks with arrows showing what must finish before what, with no loops. Tasks with no arrow between them can run at the same time.',
+    gop:'GOP (group of pictures): a short chunk of video frames, usually a few seconds long, that can be played on its own.',
+    presigned:'Pre-signed URL: a temporary upload link that grants permission for one specific file location, so only an authorised user can upload there.',
+    longtail:'Long-tail distribution: a few items get most of the views, while a long “tail” of many items gets few or none.'
+  },
+  cheatsheet:[
+    '<b>Scope:</b> upload and watch; mobile, web, smart TV; 5M DAU; international; most formats; encryption; videos up to 1 GB; use existing cloud services.',
+    '<b>Numbers:</b> 5M × 10% × 300 MB = <b>150 TB a day</b> of new video. CDN: 5M × 5 × 0.3 GB × $0.02 = <b>$150,000 a day</b>.',
+    '<b>Three boxes:</b> client, CDN (streams video), API servers (everything else). Buy blob storage and CDN; don’t build them.',
+    '<b>Upload:</b> original storage → transcoding servers → transcoded storage → CDN; a completion queue and handler update metadata. Metadata is sent in parallel.',
+    '<b>Transcode</b> for storage, compatibility, bandwidth and changing networks. Container = the basket (.mp4); codec = the compression (H.264).',
+    '<b>Pipeline:</b> preprocessor (GOP split, DAG from config, temp cache) → DAG scheduler (stages) → resource manager (task, worker, running queues) → task workers.',
+    '<b>Optimize:</b> GOP-chunk resumable uploads, upload centers near users, message queues; pre-signed URLs, DRM/AES/watermark; popular videos on the CDN, the long tail elsewhere.',
+    '<b>Errors:</b> recoverable → retry a few times; non-recoverable → stop and return an error code. Each component has its own playbook.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE AND COST ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tamsin opens the review: “Design YouTube.” You have 45 minutes. What’s your first move?</h1>');
+  L.mc(L.card,['Start sketching servers and storage','Ask which features and scale matter','List every YouTube feature to cover'],1,
+   'YouTube has comments, likes, playlists, subscriptions… You can’t design it all in 45 minutes, so narrow the scope first.',
+   'There’s far too much to cover, and sketching before you know the scope wastes time. Ask what matters first.');}},
+{part:0,src:'Chapter 14 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','Narrow it down')+'<h1 class="q">The book’s interview asks nine questions. Tap each to see the answer.</h1>');
+  L.flips(L.card,[
+   ['Which features?','Just two: <b>upload</b> a video and <b>watch</b> a video.'],
+   ['Which clients?','Mobile apps, web browsers and <b>smart TVs</b>.'],
+   ['How many users?','<b>5 million</b> '+L.g('dau','DAU')+', spending <b>30 minutes</b> a day.'],
+   ['International users?','<b>Yes</b>, a large share of users.'],
+   ['Which resolutions?','<b>Most</b> resolutions and formats are accepted.'],
+   ['Encryption?','<b>Yes</b>, required.'],
+   ['File size limit?','Small and medium videos. Max <b>1 GB</b>.'],
+   ['Use existing cloud?','<b>Yes.</b> Building everything from scratch is unrealistic, so use cloud services from Amazon, Google or Microsoft.']],
+   'So the design aims for: fast uploads, smooth streaming, changeable video quality, low infrastructure cost, and high availability, scalability and reliability.');}},
+{part:0,src:'Chapter 14 · Back of the envelope estimation',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Two numbers that shape the whole design</h1>');
+  L.beats(L.card,[
+   ['Assumptions','5 million DAU. Each watches <b>5 videos</b> a day. <b>10%</b> of users upload <b>1 video</b> a day. The average video is <b>300 MB</b>.'],
+   ['Storage','New video per day: 5M × 10% × 300 MB = <b>150 TB</b>. Every single day.'],
+   ['CDN price','A '+L.g('cdn','CDN')+' charges for data sent out. Using Amazon CloudFront, all traffic from the US: about <b>$0.02 per GB</b>.'],
+   ['CDN bill','Streaming only: 5M × 5 videos × 0.3 GB × $0.02 = <b>$150,000 a day</b>.'],
+   ['So what?','Even with big-customer discounts, serving video from the CDN is expensive. The deep dive comes back to cutting this bill.']],
+   'Storage grows by 150 TB a day, and the CDN costs $150,000 a day. Those two numbers drive the later optimizations.');}},
+{part:0,src:'Chapter 14 · Back of the envelope estimation',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why is daily storage 5M × 10% × 300 MB, and not 5M × 5 × 300 MB?</h1>');
+  L.mc(L.card,['Only 10% of users upload, one video each','Videos shrink to 10% after transcoding','Only 10% of videos are ever watched'],0,
+   'The 5 is videos <i>watched</i>, which drives the CDN bill. Storage depends on uploads: 10% of users, one video each.',
+   'The 10% is the share of users who upload one video a day. The 5 is videos watched, which belongs in the CDN sum, not storage.');}},
+{part:0,src:'Chapter 14 · Back of the envelope estimation',pts:1,run(L){
+  L.h(L.kick('pr','Kitebird numbers')+'<h1 class="q">Hana sizes Kitebird Classes: 2 million learners a day, 3 classes each, about 0.5 GB streamed per class, $0.02 per GB. What’s the daily CDN bill?</h1>');
+  L.mc(L.card,['About $600','About $6,000','About $60,000'],2,
+   '2M × 3 × 0.5 GB = 3 million GB a day. × $0.02 = $60,000 a day, over $20 million a year. Hana is right to be alarmed.',
+   'Multiply it out: 2M × 3 × 0.5 GB = 3,000,000 GB a day, then × $0.02 = $60,000 a day.');}},
+
+/* ---------- PART 2: UPLOAD AND STREAM ---------- */
+{part:1,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','Three boxes, and buy the hard parts')+'<h1 class="q">The high-level design has just three parts</h1>'+
+   L.flow([['person','Client','Computer, phone or smart TV',''],['play','CDN','Stores videos and streams them when you press play',''],['layers','API servers','Everything else: feed, upload URLs, metadata, sign-up','']],false)+
+   L.prose('Hana’s favourite question, “do we need to build this ourselves?”, gets a firm no for '+L.g('blob','blob storage')+' and the CDN. Two reasons:')+
+   L.list([['An interview tests choices','Picking the right technology matters more than explaining its insides. “Use blob storage” is enough.'],
+     ['They’re hard and costly to build','Even Netflix uses Amazon’s cloud, and Facebook uses Akamai’s CDN.']],2));
+  L.done();}},
+{part:1,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these requests does the CDN handle, not the API servers?</h1>');
+  L.mc(L.card,['Signing up for a new account','Getting a URL to upload a video','Playing the next part of a video'],2,
+   'Streaming video is the CDN’s only job. Everything else goes through the API servers.',
+   'Sign-up and upload URLs go through the API servers. The CDN does one thing: stream the video.');}},
+{part:1,src:'Chapter 14 · Video uploading flow',run(L){
+  L.h(L.kick('learn','The upload flow')+'<h1 class="q">An upload is two processes running in parallel</h1>'+
+   L.lanes([['box','a · Upload the video','The file goes to <b>original storage</b> (blob storage). <b>Transcoding servers</b> fetch it and convert it. Then, in parallel: the results go to <b>transcoded storage</b> and on to the CDN, and a “done” event goes into the <b>completion queue</b>.',1],
+            ['list','b · Update the metadata','While the file uploads, the client sends its metadata (file name, size, format…). API servers write it to the <b>metadata cache</b> and <b>metadata DB</b>.',2]])+
+   L.prose('The <b>completion handler</b> is a set of workers that pull events from the completion queue and update the metadata DB and cache. Then the API servers tell the client the video is ready to stream.')+
+   '<p class="small">The metadata DB is '+L.g('sharding','sharded')+' and '+L.g('replication','replicated')+' for speed and availability.</p>');
+  L.done();}},
+{part:1,src:'Chapter 14 · Flow a: upload the actual video',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#fq [data-r="1"]');if(!b)break;b.click();await L.sleep(5);}},
+ run(L){
+  const Q=[
+   ['Yusuf uploads a new woodturning class. Where does the file land first?',['CDN','Original storage','Transcoding servers'],1,'Raw uploads go to original storage, a blob store.'],
+   ['Who picks the file up next?',['Transcoding servers','Completion handler','Metadata DB'],0,'Transcoding servers fetch it from original storage and convert it.'],
+   ['Transcoding is done. Where do the converted files go?',['API servers','Original storage','Transcoded storage'],2,'Converted files go to transcoded storage. At the same moment, a completion event goes into the completion queue.'],
+   ['From transcoded storage, the files are sent to…',['The CDN','The metadata cache','The completion queue'],0,'They’re distributed to the CDN, ready for streaming.'],
+   ['Who reads the completion event and updates the metadata DB and cache?',['The load balancer','The completion handler','The transcoding servers'],1,'The completion handler’s workers keep pulling events from the queue.']];
+  let k=0,miss=0;const path=['Client'];
+  L.h(L.kick('pr','Follow the video')+'<h1 class="q">Route Yusuf’s class through the upload flow, one hop at a time.</h1>'+
+   '<div id="fp" style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:6px 0 12px"></div><div id="fq"></div><div id="ff"></div>');
+  const draw=()=>{L.$('#fp').innerHTML=path.map((p,j)=>(j?'<span style="color:var(--faint)"> → </span>':'')+'<span class="chip static ok" style="margin:0 2px 6px 0;font-size:13.5px;padding:5px 9px">'+p+'</span>').join('');
+    const fq=L.$('#fq');if(k>=Q.length){fq.innerHTML='';return;}
+    fq.innerHTML='<h2 class="sub">'+(k+1)+' of '+Q.length+' · '+Q[k][0]+'</h2>';const box=document.createElement('div');fq.appendChild(box);
+    Q[k][1].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;if(j===Q[k][2])b.dataset.r='1';
+      b.onclick=()=>{L.$('#ff').innerHTML='';
+        if(j!==Q[k][2]){miss++;b.classList.add('no');L.shake(b);L.fb(L.$('#ff'),'Not there. Think about what has to happen to the file before that.','no');return;}
+        path.push(o.replace(/^The /,''));L.fb(L.$('#ff'),Q[k][3],'ok');k++;draw();
+        if(k===Q.length){L.award(miss===0);L.sheet(miss===0?'ok':'info',miss===0?'Clean run!':'Video delivered','Original storage → transcoding servers → transcoded storage → CDN, while the completion queue and handler update the metadata. Finally the API servers tell Yusuf the class is ready.');L.done();}};
+      box.appendChild(b);});};
+  draw();}},
+{part:1,src:'Chapter 14 · Video streaming flow',run(L){
+  L.h(L.kick('learn','Stream, don’t download')+'<h1 class="q">Watching starts before the whole file arrives</h1>'+
+   L.lanes([['down','Downloading','The whole video is copied to your device first. You wait.',4],
+            ['play','Streaming','Your device keeps receiving small pieces from far away, so you can start watching right away.',2]])+
+   L.prose('A <b>streaming protocol</b> is a standard way to control that data transfer. Popular ones: MPEG-DASH, Apple HLS, Microsoft Smooth Streaming and Adobe HDS.')+
+   L.note('You don’t need to remember the names. What matters: different protocols support different video encodings and players, so pick one that fits your use case.','info')+
+   L.prose('Videos stream straight from the CDN. The <b>edge server</b> closest to you delivers it, so there’s very little delay.'));
+  L.done();}},
+{part:1,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',pts:5,run(L){
+  L.h(L.kick('pr','Which box?')+'<h1 class="q">Kitebird Classes gets five requests. Send each to the CDN or the API servers.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['CDN','API servers'],[
+   ['A learner on a smart TV plays minute 12 of “Bowl turning 101”.',0,'Video bytes stream from the nearest CDN edge.'],
+   ['Yusuf asks for a link to upload his next class.',1,'Generating upload URLs is an API server job.'],
+   ['Yusuf saves the class title and description.',1,'That’s metadata: API servers update the metadata cache and DB.'],
+   ['A phone on a slow train fetches the lower-quality version.',0,'Every version of the video streams from the CDN.'],
+   ['A new learner signs up for Kitebird.',1,'Sign-up is “everything else”, so it goes through the API servers.']],
+   'One rule: video bytes come from the CDN; everything else goes through the API servers.');}},
+
+/* ---------- PART 3: TRANSCODING ---------- */
+{part:2,src:'Chapter 14 · Video transcoding',run(L){
+  L.h(L.kick('learn','Why transcode?')+'<h1 class="q">A raw video must be converted before it plays well everywhere</h1>'+
+   L.prose('A phone or camera saves video in its own format. '+L.g('transcode','Transcoding')+' converts it into compatible formats and '+L.g('bitrate','bitrates')+'. Four reasons:')+
+   L.list([['box','Size','Raw video is huge: an hour of HD at 60 frames a second can take a few hundred GB.'],
+     ['check','Compatibility','Many devices and browsers support only certain formats.'],
+     ['trend','Bandwidth','Send higher resolution to fast connections, lower to slow ones.'],
+     ['cycle','Changing networks','Especially on phones. Switching quality, automatically or by hand, keeps playback smooth.']],1)+
+   L.lanes([['box','Container','The basket holding video, audio and metadata. You can tell it by the file extension: .avi, .mov, .mp4.',3],
+            ['lock','Codec','The compression method that shrinks video while keeping quality. Common ones: H.264, VP9, HEVC.',4]]));
+  L.done();}},
+{part:2,src:'Chapter 14 · Video transcoding',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Yusuf uploads <b>lathe-basics.mov</b>, compressed with H.264. Which part is the container?</h1>');
+  L.mc(L.card,['H.264, since it holds the video','.mov, the basket for video and audio','Both, since they mean the same thing'],1,
+   'The extension names the container: .mov is the basket. H.264 is the codec that compressed the video inside it.',
+   'A container is the basket you can spot by the extension (.mov). H.264 is the codec, the compression method. They’re different layers.');}},
+{part:2,src:'Chapter 14 · Directed acyclic graph (DAG) model',run(L){
+  const D='Original video\n ├─ Video ─┬─ Inspection\n │        ├─ Video encodings\n │        ├─ Thumbnail\n │        └─ Watermark\n ├─ Audio ─── Audio encoding\n └─ Metadata';
+  L.h(L.kick('learn','The DAG model')+'<h1 class="q">Let each creator’s needs become a graph of tasks</h1>'+
+   L.prose('Transcoding is slow and expensive, and creators differ: some want a watermark, some bring their own thumbnail, some upload HD. So the pipeline lets programmers <b>define the tasks</b> in a '+L.g('dag','DAG')+'. Tasks run in stages, one after another or in parallel. Facebook’s streaming video engine works this way.')+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:12px 0;overflow-x:auto"><div style="font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.6;white-space:pre">'+D+'</div></div>'+
+   L.list([['Inspection','Checks the video is good quality and not malformed.'],['Video encodings','Versions in different resolutions, codecs and bitrates.'],['Thumbnail','Uploaded by the user or generated.'],['Watermark','An image overlay that identifies the video.']],2));
+  L.done();}},
+{part:2,src:'Chapter 14 · Video transcoding architecture',run(L){
+  L.h(L.kick('learn','The transcoding architecture')+'<h1 class="q">Six parts turn one upload into many encoded files</h1>'+
+   L.list([['Preprocessor','Splits the video into '+L.g('gop','GOP')+' chunks (also for old clients that can’t split), builds the DAG from config files, and saves GOPs and metadata in temporary storage so a failed encode can be retried.'],
+     ['DAG scheduler','Splits the DAG into <b>stages</b> and puts their tasks in the task queue. Stage 1: video, audio, metadata. Stage 2: video encoding and thumbnail, plus audio encoding.'],
+     ['Resource manager','Three queues: a <b>task queue</b> (by priority), a <b>worker queue</b> (worker load, by priority) and a <b>running queue</b>. A task scheduler matches tasks to workers.'],
+     ['Task workers','Run the tasks. Different workers may run different tasks.'],
+     ['Temporary storage','Small, often-read metadata in memory; video and audio in blob storage. Freed when processing ends.'],
+     ['Encoded video','The final output, e.g. <code>funny_720p.mp4</code>.']],3));
+  L.done();}},
+{part:2,src:'Chapter 14 · Resource manager',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">The task scheduler handles one job from Yusuf’s class</h1>');
+  L.beats(L.card,[
+   ['Take a task','The scheduler takes the <b>highest-priority</b> task from the task queue: “encode chunk 7 at 720p”.'],
+   ['Pick a worker','It checks the worker queue and picks the <b>best worker</b> for that task, say an encoding worker that’s lightly loaded.'],
+   ['Run it','It tells that worker to run the task.'],
+   ['Track it','It binds the task and worker together and puts the pair in the <b>running queue</b>.'],
+   ['Clear it','When the job is done, it removes the pair from the running queue. Next task.']],
+   'Priority decides what runs next, worker load decides who runs it, and the running queue tracks what’s in flight.');}},
+{part:2,src:'Chapter 14 · Video transcoding architecture',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which part does this?',['Preprocessor','DAG scheduler','Resource manager','Task workers','Temporary storage'],[
+   ['Reads the config Kitebird engineers wrote for “classes with a watermark” and turns it into a task graph.',0,'Building the DAG from config files is one of the preprocessor’s four jobs.'],
+   ['Holds the GOP chunks so chunk 37 can be retried after its encode fails.',4,'The preprocessor saves GOPs there for retries, and the space is freed when processing ends.'],
+   ['Splits the graph into stage 1 and stage 2 and fills the task queue.',1,'Turning a DAG into stages of tasks is the DAG scheduler’s job.'],
+   ['Matches the highest-priority task to the best free worker.',2,'Its task scheduler pairs the task queue with the worker queue.'],
+   ['Actually stamps the Kitebird watermark onto the video.',3,'Task workers run the tasks the DAG defines.']]);}},
+
+/* ---------- PART 4: FASTER, SAFER, CHEAPER ---------- */
+{part:3,src:'Chapter 14 · System optimizations',run(L){
+  L.h(L.kick('learn','Faster and safer')+'<h1 class="q">Six upgrades for speed and safety</h1>'+
+   L.lanes([['clock','Speed','<b>Upload in GOP chunks.</b> The client can split the video, so uploads run in parallel and resume after a failure.<br><br><b>Upload centers near users.</b> Use CDNs as upload centers, e.g. North America and Asia.<br><br><b>'+L.g('message-queue','Message queues')+' between modules.</b> Encoding no longer waits for download to finish; it works on queued events in parallel.',1],
+            ['shield','Safety','<b>'+L.g('presigned','Pre-signed upload URL')+'.</b> 1) Client asks the API servers for one. 2) They return it. 3) Client uploads with it. (Azure calls it a Shared Access Signature.)<br><br><b>Protect videos:</b> DRM (Apple FairPlay, Google Widevine, Microsoft PlayReady), AES encryption with an authorisation policy, or a visual watermark.',2]]));
+  L.done();}},
+{part:3,src:'Chapter 14 · Speed optimization: parallelize video uploading',pts:1,
+ solve:async L=>{L.$('#rp').children[1].click();L.$('#rgo').click();await L.sleep(2800);},
+ run(L){
+  let p=null;const C=['Whole file','GOP chunks','They tie'];
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Two makers upload a 1 GB class on hotel wifi. The connection drops once, at about three-quarters. Who finishes first?</h1><div id="rp"></div>'+
+   '<div id="rr" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><div class="small">Simulated time</div><div class="week" id="rt">Minute 0</div></div><button class="btn pri" id="rgo">'+L.ic('play')+'Start uploads</button></div>'+
+   '<div class="meterrow"><div class="lb">Whole file</div><div class="meter"><div id="ra" style="background:var(--h3);transition:none"></div></div></div>'+
+   '<div class="meterrow"><div class="lb">GOP chunks</div><div class="meter"><div id="rb" style="background:var(--ok-strong);transition:none"></div></div></div><div id="rn" class="small"></div></div>');
+  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=c;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#rr').hidden=false;};L.$('#rp').appendChild(b);});
+  L.$('#rgo').onclick=function(){this.remove();let m=0,a=0,b=0,da=null,db=null;
+    const t=setInterval(()=>{if(!L.$('#rt')){clearInterval(t);return;}m++;
+      if(da===null)a=Math.min(100,a+7);if(db===null)b=Math.min(100,b+7);
+      if(m===11){a=0;b=70;L.$('#rn').innerHTML='<b style="color:var(--no)">Connection dropped at minute 11.</b> Whole file restarts from zero; chunks lose only the one in flight.';}
+      if(a>=100&&da===null)da=m;if(b>=100&&db===null)db=m;
+      L.$('#rt').textContent='Minute '+m;L.$('#ra').style.width=a+'%';L.$('#rb').style.width=b+'%';
+      if(da!==null&&db!==null){clearInterval(t);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'Chunks win':'Chunks finish first','GOP chunks finished at minute '+db+', the whole file at minute '+da+'. Splitting by GOP makes uploads resumable: a failure costs one chunk, not the whole file. Chunks can also upload in parallel.');L.done();}},90);};}},
+{part:3,src:'Chapter 14 · Cost-saving optimization',run(L){
+  L.h(L.kick('learn','Cut the CDN bill')+'<h1 class="q">A few videos get most of the views</h1>'+
+   L.prose('Research shows YouTube views follow a '+L.g('longtail','long-tail distribution')+': a few popular videos are watched constantly, and many get few or no viewers. The book builds four savings on that:')+
+   L.list([['star','Popular on the CDN only','Serve the most popular videos from the CDN, and the rest from high-capacity storage video servers.'],
+     ['cycle','Fewer versions for the tail','Less popular videos don’t need many encoded versions. Short ones can be encoded on demand.'],
+     ['map','Regional videos stay regional','A video popular in one region doesn’t need to go to others.'],
+     ['home','Your own CDN, with ISPs','A giant project, like Netflix’s, partnering with internet providers near users. Makes sense only for large streaming companies.']],4)+
+   L.note('Analyse historical viewing patterns before choosing any of these.','eye'));
+  L.done();}},
+{part:3,src:'Chapter 14 · Cost-saving optimization',pts:4,run(L){
+  L.h(L.kick('pr','Hana’s cost review')+'<h1 class="q">Four Kitebird classes. Which saving fits each?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Serve from CDN','Storage video servers','Encode on demand','Keep in one region'],[
+   ['Yusuf’s “Bowl turning 101”, watched thousands of times a day worldwide.',0,'Popular everywhere: exactly what the CDN is for.'],
+   ['A 2019 hour-long loom-repair class with three views last month.',1,'Long-tail video: serve it from cheaper high-capacity storage servers.'],
+   ['A 40-second tip clip that almost nobody watches.',2,'Short and unpopular: skip storing many versions, encode when asked.'],
+   ['A Portuguese class on Brazilian lace, watched almost only in Brazil.',3,'Popular in one region only, so don’t copy it to every region.']],
+   'Popularity, region and length decide where a video lives and how many versions it gets.');}},
+{part:3,src:'Chapter 14 · Error handling',run(L){
+  L.h(L.kick('learn','When things break')+'<h1 class="q">Two kinds of error, and a playbook per part</h1>'+
+   L.lanes([['cycle','Recoverable','E.g. a video segment fails to transcode. <b>Retry a few times</b>; if it keeps failing, return a proper error code to the client.',2],
+            ['x','Non-recoverable','E.g. a malformed video format. <b>Stop</b> the video’s running tasks and return a proper error code.',4]])+
+   L.list([['Upload, transcoding','Retry.'],['Split video','Old clients can’t split by GOP, so the server splits.'],['Preprocessor · DAG scheduler','Regenerate the DAG · reschedule the task.'],
+     ['Resource manager queue · task worker','Use a replica · retry the task on a new worker.'],['API server','They’re '+L.g('stateless','stateless')+', so send the request to another one.'],
+     ['Metadata cache · DB','Cache is replicated: read another node, start a new one. DB primary down: promote a replica (the book: “master” and “slave”).']],1));
+  L.done();}},
+{part:3,src:'Chapter 14 · Error handling',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Obi’s pager',['Retry it','Stop, return an error','Use another copy','Promote a replica'],[
+   ['Chunk 12 of a class fails to transcode once.',0,'A recoverable error: retry a few times before giving up.'],
+   ['A maker uploads a file in a broken, malformed format.',1,'Non-recoverable: stop the video’s tasks and return a clear error code.'],
+   ['One API server crashes during the evening rush.',2,'API servers are stateless, so the load balancer sends requests to another one.'],
+   ['The primary metadata database goes down.',3,'Promote one of the replicas to be the new primary.'],
+   ['A task worker dies halfway through an encode.',0,'Retry the same task on a new worker.'],
+   ['The resource manager’s queue server goes down.',2,'Use a replica of the queue.']]);}},
+{part:3,src:'Chapter 14 · Step 4 - Wrap up',pts:1,run(L){
+  L.h(L.kick('learn','Wrap-up points')+'<h1 class="q">If there’s time left at the end</h1>'+
+   L.list([['layers','Scale the API tier','Stateless servers scale out easily.'],['box','Scale the database','Talk about replication and sharding.'],
+     ['play','Live streaming','Same basics (upload, encode, stream), but needs lower latency (maybe another protocol), less parallelism (small chunks are processed in real time), and fast error handling.'],
+     ['alert','Video takedowns','Copyright, pornography or illegal videos are found during upload or through user flags.']],3)+
+   '<div id="lq"><h2 class="sub">Dario wants live Kitebird classes. Which is a real difference from your design?</h2></div>');
+  L.mc(L.$('#lq'),['Live needs more parallelism, as chunks are bigger','Live can afford slow error handling','Live needs lower latency, maybe another protocol'],2,
+   'Live viewers watch as it happens, so delay matters more, and a different streaming protocol may be needed.',
+   'The book says the opposite: live needs <i>less</i> parallelism, and slow error handling isn’t acceptable. The real difference is the tighter latency need.');}}
+  ]
+});
+</script>
+</body>
+</html>

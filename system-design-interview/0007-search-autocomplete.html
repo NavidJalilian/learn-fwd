@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design Search Autocomplete</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0007', title:'Design search autocomplete', minutes:20, icon:'tree',
+  goals:['Scope autocomplete and size it with the book’s numbers','Explain how a trie with a cached top 5 answers in O(1)','Trace the data from search logs to a sharded trie cache'],
+  parts:['Scope and numbers','The trie','Gather and serve','Scale and wrap up'],
+  read:'Read chapter 13 of the book for the trie figures, the log and aggregation tables, and the shard map diagram.',
+  glossary:{
+    trie:'Trie (say “try”): a tree for storing words. The root is the empty string, each node adds one letter, so every node stands for a prefix (the start of a word).',
+    bigo:'O(…) (“big O”): a rough measure of how the work grows as the data grows. O(1) means the work stays about the same, however big the data gets.',
+    topk:'Top k: the k most popular results. Here k = 5, the five most searched queries that start with what the user typed.',
+    ajax:'AJAX request: a small background request a web page sends without reloading the whole page.'
+  },
+  cheatsheet:[
+    '<b>Scope:</b> prefix match only, top 5 by past popularity, no spell check, English lowercase, 10M DAU, answers within about 100 ms.',
+    '<b>Numbers:</b> one request per keystroke, about 20 per search → ~24,000 QPS, peak ~48,000; ~0.4 GB of new data a day.',
+    '<b>Trie</b> with frequencies. Plain top k = find prefix + walk subtree + sort: too slow.',
+    '<b>Two fixes → O(1):</b> cap the prefix (say 50 characters) and cache the top 5 at every node. Trades memory for speed.',
+    '<b>Data gathering:</b> analytics logs → aggregators → aggregated data → workers build the trie weekly → trie DB → trie cache.',
+    '<b>Query service:</b> load balancer → API servers → trie cache (refill from DB on a miss). Plus AJAX, browser caching, 1-in-N sampling.',
+    '<b>Trie operations:</b> rebuild weekly; a single update touches the node and every ancestor; delete through a filter layer.',
+    '<b>Scale:</b> shard by first letter, then use a shard map manager built from history. Wrap-up: Unicode, per-country tries on CDNs, trending needs streaming.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE AND NUMBERS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird’s search box asks the server for suggestions after every letter. A maker types “sourdough”. How many requests reach the server?</h1>');
+  L.mc(L.card,['One, sent when they press Enter','Nine, one for each letter typed','Two, one at the start, one at the end'],1,
+   'Every letter changes the prefix, so every letter needs fresh suggestions. That one fact drives the whole design.',
+   'The box asks after <i>every</i> letter: “s”, “so”, “sou”… That’s nine requests for one word.');}},
+{part:0,src:'Chapter 13 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','Ask before you build')+'<h1 class="q">The book’s interview opens with seven questions. Tap each to see the answer.</h1>'+
+   L.prose('The interview question is often called “design top k”: return the k most searched queries for what the user typed so far.'));
+  L.flips(L.card,[
+   ['Match where?','Only at the <b>start</b> of the query (a prefix). Not in the middle.'],
+   ['How many suggestions?','<b>5.</b>'],
+   ['Which 5?','The most <b>popular</b>, judged by how often each query was searched in the past.'],
+   ['Spell check?','<b>No.</b> No spell check, no autocorrect.'],
+   ['Which language?','<b>English.</b> Other languages only if time allows at the end.'],
+   ['Capitals or symbols?','<b>No.</b> Every query is lowercase letters.'],
+   ['How many users?','<b>10 million</b> '+L.g('dau','daily active users')+'.']],
+   'Seven short answers shrink a huge problem: prefix only, top 5 by popularity, lowercase English, 10 million users a day.');}},
+{part:0,src:'Chapter 13 · Requirements',run(L){
+  L.h(L.kick('learn','What “good” means here')+'<h1 class="q">Five requirements the design must meet</h1>'+
+   L.list([['clock','Fast','Suggestions must keep up with typing. The book cites a Facebook article: within about <b>100 milliseconds</b>, or the box stutters.'],
+     ['target','Relevant','Suggestions must match what was typed.'],
+     ['list','Sorted','Ordered by popularity (or another ranking model).'],
+     ['trend','Scalable','Handles high traffic.'],
+     ['shield','Highly available','Keeps working when part of the system is down, slow or hit by network errors.']],1)+
+   '<p class="small" style="margin-top:10px">“Fast” is the one to watch. Most of the deep dive exists to hit it.</p>');
+  L.done();}},
+{part:0,src:'Chapter 13 · Back of the envelope estimation',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">The book’s '+L.g('estimate','back-of-the-envelope')+' sums, one line at a time</h1>');
+  L.beats(L.card,[
+   ['Users','<b>10 million</b> DAU, each doing <b>10 searches</b> a day.'],
+   ['Query size','A query is about 4 words of 5 letters: <b>20 characters</b>. In ASCII, 1 character = 1 byte, so <b>20 bytes</b>.'],
+   ['Requests','Every letter sends a request: <code>search?q=d</code>, <code>search?q=di</code> … <code>search?q=dinner</code>. So one search ≈ <b>20 requests</b>.'],
+   ['QPS','10M × 10 × 20 ÷ 86,400 seconds ≈ <b>24,000 '+L.g('qps','QPS')+'</b>. Peak is twice that: about <b>48,000</b>.'],
+   ['Storage','Say 20% of queries are new each day: 10M × 10 × 20 bytes × 20% = <b>0.4 GB</b> of new data a day.']],
+   'Huge traffic, small data. Every keystroke is a request, yet new data is under half a gigabyte a day. That’s why the deep dive is about making each lookup fast.');}},
+{part:0,src:'Chapter 13 · Back of the envelope estimation',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why does one search cost about 20 requests in the book’s sums?</h1>');
+  L.mc(L.card,['Each search is retried 20 times to be safe','A request goes out per character, and a query averages 20','Twenty servers are each asked for their own top 5'],1,
+   'One request per character, and the average query is 4 words × 5 letters = 20 characters.',
+   'Nothing is retried or spread over 20 servers. The client simply asks again after every character, and an average query has 20.');}},
+{part:0,src:'Chapter 13 · Back of the envelope estimation',pts:1,
+ solve:async L=>{L.$('#ty').click();await L.sleep(1300);},
+ run(L){
+  const W='sourdough';
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Press the button and watch the requests pile up as a maker types “sourdough”.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:6px 0 10px"><div class="small">Search box</div><div class="week" id="sb" style="font-size:22px;min-height:34px">|</div>'+
+   '<div class="small" style="margin:6px 0">Requests sent: <b id="sn">0</b></div><div id="sl" style="min-height:40px"></div></div>'+
+   '<button class="btn pri" id="ty">'+L.ic('play')+'Type it</button><div id="sq"></div>');
+  L.$('#ty').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const sb=L.$('#sb');if(!sb){clearInterval(t);return;}k++;const p=W.slice(0,k);sb.textContent=p+'|';L.$('#sn').textContent=k;
+      L.$('#sl').insertAdjacentHTML('beforeend','<span class="chip static" style="font-size:13px;padding:5px 9px">q='+p+'</span>');
+      if(k>=W.length){clearInterval(t);const q=L.$('#sq');
+        q.innerHTML='<h2 class="sub">Kitebird has 4 million DAU. Each makes 5 searches a day at about 20 requests each. Roughly what is the average QPS?</h2>';
+        L.mc(q,['About 460','About 4,600','About 46,000'],1,
+         '4M × 5 × 20 = 400 million requests a day. Divide by 86,400 seconds: about 4,600. Peak, twice that: about 9,300.',
+         'Multiply first: 4M × 5 × 20 = 400 million requests a day. Then divide by 86,400 seconds: about 4,600.');}},120);};}},
+{part:0,src:'Chapter 13 · Step 1 - Understand the problem and establish design scope',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Inside the book’s scope?',['In scope','Out of scope'],[
+   ['A maker types “sock h” and sees “sock heel”.',0,'Matching the start of the query is exactly what the design does.'],
+   ['A maker types “heel” and expects to see “sock heel”.',1,'“heel” is in the middle of “sock heel”. The scope is prefix match only.'],
+   ['A maker types “sourdoh” and expects “sourdough”.',1,'That needs spell check or autocorrect, which the interviewer ruled out.'],
+   ['Suggestions are ordered by how often each query was searched.',0,'Ranking by past search frequency is the agreed rule for picking the 5.'],
+   ['A maker types “Sock-Heel!” with capitals and a dash.',1,'The scope assumes lowercase letters only, no capitals or special characters.']]);}},
+
+/* ---------- PART 2: THE TRIE ---------- */
+{part:1,src:'Chapter 13 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','The first-cut design')+'<h1 class="q">Two services and one table</h1>'+
+   L.lanes([['box','Data gathering service','Collects what users search and keeps a count for each query.',1],
+            ['eye','Query service','Given a prefix, returns the 5 most searched queries that start with it.',2]])+
+   L.prose('Behind both sits a <b>frequency table</b> with two fields: the query and how many times it was searched. If users search “twitch”, “twitter”, “twitter”, “twillo”, the table ends up with twitter 2, twitch 1, twillo 1.')+
+   L.prose('To answer “tw”, the query service asks the database for rows that start with “tw”, sorted by frequency, top 5.')+
+   L.note('Fine while the data is small. Once it grows, hitting the database on every keystroke becomes the <b>bottleneck</b>.','alert'));
+  L.done();}},
+{part:1,src:'Chapter 13 · Trie data structure',run(L){
+  const T='(root)\n├─ t\n│  ├─ tr\n│  │  ├─ tre ─ <b>tree</b> 10\n│  │  ├─ tru ─ <b>true</b> 35\n│  │  └─ <b>try</b> 29\n│  └─ to ─ <b>toy</b>\n└─ w ─ wi\n       ├─ wis ─ <b>wish</b>\n       └─ <b>win</b>';
+  L.h(L.kick('learn','A better shape for prefixes')+'<h1 class="q">The trie: a tree where every node is a prefix</h1>'+
+   L.prose('A '+L.g('trie','trie')+' (say “try”, from re<i>trie</i>val) stores strings compactly. The root is the empty string. Each node adds one letter and could have up to 26 children, one per letter.')+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:12px 0;overflow-x:auto"><div style="font-family:ui-monospace,Menlo,monospace;font-size:13.5px;line-height:1.55;white-space:pre">'+T+'</div></div>'+
+   '<p class="small">Bold nodes are full queries. The numbers are search counts from the book’s example.</p>'+
+   L.prose('To rank results, each query node also stores its <b>frequency</b>: how often it was searched.'));
+  L.done();}},
+{part:1,src:'Chapter 13 · Trie data structure',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Getting the top 2 for “tr” the plain way</h1>');
+  L.beats(L.card,[
+   ['Step 1 · Find the prefix','Walk down t → tr. That takes one step per letter typed: '+L.g('bigo','O(p)')+', where p is the prefix length.'],
+   ['Step 2 · Walk the subtree','Visit everything under “tr” and keep the full queries: tree 10, true 35, try 29. That’s O(c), where c is the number of nodes below.'],
+   ['Step 3 · Sort, take top k','Sort them by count and keep 2: <b>true 35, try 29</b>. Sorting costs O(c log c).'],
+   ['The problem','Total: O(p) + O(c) + O(c log c). For a short prefix like “t”, the subtree can be most of the trie. In the worst case you walk the <b>whole trie</b> on every keystroke.']],
+   'The plain method is simple but slow: the work grows with everything stored under the prefix.');}},
+{part:1,src:'Chapter 13 · Trie data structure',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">On a huge trie, a user types just “s”. Which step of the plain method does the most work?</h1>');
+  L.mc(L.card,['Finding the node for “s”','Sending the 5 results back','Walking and sorting all under “s”'],2,
+   'Everything that starts with “s” sits under that node. Visiting it all and sorting it is what makes the plain method slow.',
+   'Finding “s” is one step, and sending 5 results is tiny. The cost is walking and sorting everything under “s”.');}},
+{part:1,src:'Chapter 13 · Trie data structure',run(L){
+  L.h(L.kick('learn','Two fixes that buy O(1)')+'<h1 class="q">Cap the prefix, and cache the answer at every node</h1>'+
+   L.lanes([['lock','1 · Limit prefix length','Users rarely type long queries, so cap p at a small number, say <b>50</b>. Finding the prefix becomes a small constant: O(1).',1],
+            ['layers','2 · Cache top k at each node','Store the top 5 queries <b>inside every node</b>. Now there’s nothing to walk or sort: just read the list. O(1).',2]])+
+   L.prose('In the book’s example the “be” node stores <b>best 35, bet 29, bee 20, be 15, beer 10</b>. Typing “be” returns that list straight away.')+
+   L.note('<b>The price:</b> a lot of extra memory, since every node keeps its own list. The book judges it worth it, because a fast response matters most.','scale'));
+  L.done();}},
+{part:1,src:'Chapter 13 · Trie data structure',pts:1,
+ solve:async L=>{L.$('#ta').click();L.$('#tb').click();L.$('#run').click();},
+ run(L){
+  const on={a:false,b:false};let asked=false;
+  const fmt=n=>n.toLocaleString('en-US');
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Kitebird’s trie has 180,000 queries under “s”. Switch the fixes on and off, and run the same two lookups.</h1>'+
+   '<div><button class="chip" id="ta">'+L.ic('lock')+'Cap prefix at 50</button><button class="chip" id="tb">'+L.ic('layers')+'Cache top 5 per node</button></div>'+
+   '<button class="btn pri" id="run" style="margin:6px 0 10px">'+L.ic('play')+'Run lookups</button>'+
+   '<div id="out"></div><p class="small">Kitebird numbers are made up. A “step” is one node visited or one comparison.</p><div id="oq"></div>');
+  const tog=(k,id)=>{on[k]=!on[k];L.$(id).classList.toggle('sel',on[k]);};
+  L.$('#ta').onclick=()=>tog('a','#ta');L.$('#tb').onclick=()=>tog('b','#tb');
+  L.$('#run').onclick=()=>{
+    const find1=1,find2=on.a?50:2000,walk=on.b?1:180000,sort=on.b?0:3150000;
+    const row=(lab,f,w,s)=>{const tot=f+w+s;return '<div style="background:var(--soft);border-radius:14px;padding:10px 12px;margin:0 0 8px"><b>'+lab+'</b><div class="small" style="margin:4px 0 0">Find: '+fmt(f)+' · Walk: '+fmt(w)+' · Sort: '+fmt(s)+'</div><div style="font-weight:700;color:'+(tot<100?'var(--ok)':'var(--no)')+'">≈ '+fmt(tot)+' steps</div></div>';};
+    L.$('#out').innerHTML=row('Prefix “s”',find1,walk,sort)+row('A pasted 2,000-character prefix',find2,on.b?1:0,0);
+    if(on.a&&on.b&&!asked){asked=true;const q=L.$('#oq');q.innerHTML='<h2 class="sub">Both lookups now take a handful of steps. Hana asks what Kitebird paid for that. What’s the answer?</h2>';
+      L.mc(q,['Fewer suggestions for each prefix','Much more memory for stored lists','Slower writes to the search log'],1,
+       'Every node keeps its own top 5, so the trie gets much bigger. Space traded for time.',
+       'Users still get 5 suggestions, and the logs are untouched. The cost is memory: every node now stores its own top 5.');}};}},
+
+/* ---------- PART 3: GATHER AND SERVE ---------- */
+{part:2,src:'Chapter 13 · Data gathering service',run(L){
+  L.h(L.kick('learn','Don’t update on every search')+'<h1 class="q">Build the trie in batches, from logs</h1>'+
+   L.prose('Updating the trie live on every search is impractical: billions of queries a day would slow down the query service, and the top suggestions barely change once the trie is built.')+
+   L.list([['Analytics logs','Raw records of every search. Append-only, not indexed.'],
+     ['Aggregators','Squash the huge logs into counts. Real-time products aggregate often; for many, <b>once a week</b> is enough.'],
+     ['Aggregated data','One row per query per week: the query, the week’s start, and its count.'],
+     ['Workers','Servers that run jobs on a schedule. They <b>build the trie</b> and store it.'],
+     ['Trie DB','Persistent storage: a document store holding a weekly snapshot, or a key-value store (key = prefix, value = that node’s data).'],
+     ['Trie cache','A distributed '+L.g('cache','cache')+' holding the trie in memory for fast reads. Takes a weekly snapshot of the DB.']],3)+
+   '<p class="small" style="margin-top:10px">In an interview, ask whether real-time results matter. The book assumes a weekly rebuild.</p>');
+  L.done();}},
+{part:2,src:'Chapter 13 · Data gathering service',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tap the parts in the order a search flows through them, from typed to suggested.</h1>');
+  L.order(L.card,['Analytics logs','Aggregators','Aggregated data','Workers','Trie DB','Trie cache'],
+   'Raw logs get squashed into weekly counts, workers build the trie from them, it’s stored in the DB and loaded into the cache for reads.');}},
+{part:2,src:'Chapter 13 · Query service',run(L){
+  L.h(L.kick('learn','Serving a keystroke')+'<h1 class="q">The query service reads from memory, not the database</h1>'+
+   L.flow([['pointer','Load balancer','Spreads requests across servers',''],['layers','API servers','Build the 5 suggestions',''],['bowl','Trie cache','In-memory trie, the normal answer',''],['box','Trie DB','Only on a miss; the cache refills','']])+
+   L.prose('A cache miss happens when a cache server runs out of memory or goes offline. After a refill, later requests for that prefix come from the cache again. Three more speed tricks:')+
+   L.list([['pointer','AJAX requests','The page fetches suggestions in the background, without reloading.'],
+     ['clock','Browser caching','Suggestions barely change in a short time, so the browser keeps them. Google keeps them for one hour (“private, max-age=3600”).'],
+     ['eye','Data sampling','Logging every query costs a lot of processing and storage, so log only 1 in every N.']],2));
+  L.done();}},
+{part:2,src:'Chapter 13 · Trie operations',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Create, update, delete: three things you do to a trie</h1>');
+  L.beats(L.card,[
+   ['Create','Workers build the trie from the aggregated data, which comes from the analytics logs.'],
+   ['Update, option 1','Rebuild weekly. The new trie simply <b>replaces</b> the old one.'],
+   ['Update, option 2','Change one node directly. It’s slow, so avoid it unless the trie is small. And it’s never just one node: every <b>ancestor</b> up to the root stores top queries from below, so they change too.'],
+   ['The “beer” case','“beer” goes from 10 to 30 searches. The node “beer” and its ancestors “bee”, “be”, “b” and the root all get the new value of 30.'],
+   ['Delete','Hateful, violent, sexually explicit or dangerous suggestions must go. A <b>filter layer</b> in front of the trie cache drops them at once, by rule. They’re removed from the database later, so the next weekly build is clean.']],
+   'Weekly rebuild is the normal path. A direct update touches a whole chain of ancestors. Deletes go through a filter first.');}},
+{part:2,src:'Chapter 13 · Trie operations',pts:1,
+ solve:async L=>{['root','b','be','bee','beer'].forEach(k=>L.$('[data-n="'+k+'"]').click());L.$('#chk').click();},
+ run(L){
+  const N=['root','b','be','bes','bet','bee','best','beer'],R=['root','b','be','bee','beer'];const pick=new Set();let done=false;
+  L.h(L.kick('pr','Patch the trie')+'<h1 class="q">“beer” jumps from 10 to 30 searches. You patch the trie directly. Tap every node whose cached top 5 must change.</h1>'+
+   '<div id="nd" style="margin:6px 0 4px"></div><button class="btn pri" id="chk">'+L.ic('check')+'Check</button><div id="nf"></div>');
+  N.forEach(n=>{const b=document.createElement('button');b.className='chip';b.dataset.n=n;b.textContent=n==='root'?'(root)':n;
+    b.onclick=()=>{if(done)return;pick.has(n)?pick.delete(n):pick.add(n);b.classList.toggle('sel',pick.has(n));};L.$('#nd').appendChild(b);});
+  L.$('#chk').onclick=()=>{if(done)return;if(!pick.size){L.err('Tap at least one node');return;}done=true;
+    const ok=R.every(n=>pick.has(n))&&pick.size===R.length;
+    [...L.$('#nd').children].forEach(b=>{const n=b.dataset.n,r=R.includes(n);b.classList.remove('sel');if(r)b.classList.add('ok');else if(pick.has(n))b.classList.add('no');});
+    L.$('#chk').remove();L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Every ancestor patched':'Not quite',
+     'The path is root → b → be → bee → beer. Each of those nodes may hold “beer” in its cached list, so all five change. “bes”, “bet” and “best” sit on other branches; “beer” doesn’t start with them, so their lists never include it.');L.done();};}},
+{part:2,src:'Chapter 13 · Query service',pts:5,run(L){
+  L.h(L.kick('pr','Pick the fix')+'<h1 class="q">Kitebird’s search team hits five problems. Which part of the book’s design fixes each?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Browser caching','Data sampling','Filter layer','Weekly rebuild'],[
+   ['Makers type “sour…” many times a day, and every keystroke reaches the servers again.',0,'Suggestions barely change in an hour, so the browser can answer repeats itself.'],
+   ['Logging every single search is filling Kitebird’s disks.',1,'Log only 1 in every N searches. The counts still show what’s popular.'],
+   ['An offensive phrase starts showing up as a suggestion.',2,'The filter layer in front of the trie cache drops it at once, by rule.'],
+   ['Lior’s prototype updates the trie on every search, and lookups slow down.',3,'Build the trie in batches from aggregated logs instead of on every search.'],
+   ['Legal asks for a dangerous “how to” query to vanish today.',2,'Filter it now; it’s removed from the database later so the next build is clean.']],
+   'Browser caching cuts repeat traffic, sampling cuts log volume, the filter handles deletes, and batch rebuilds keep writes away from reads.');}},
+
+/* ---------- PART 4: SCALE AND WRAP UP ---------- */
+{part:3,src:'Chapter 13 · Scale the storage',run(L){
+  L.h(L.kick('learn','When the trie outgrows one server')+'<h1 class="q">'+L.g('sharding','Shard')+' by first letter, then fix the uneven letters</h1>'+
+   L.prose('Since queries are English letters, the simple split is by <b>first character</b>. Two servers: a–m and n–z. Three: a–i, j–r and s–z. That goes up to 26 servers. Past 26, split on the second or third letter, e.g. “a” across aa–ag, ah–an, ao–au, av–az.')+
+   L.prose('The catch: far more words start with “c” than with “x”, so the shards fill unevenly.')+
+   L.note('<b>Shard map manager:</b> a lookup database that says which shard holds which letters, built from <b>historical</b> query counts. If “s” gets about as many queries as u–z combined, give “s” one shard and u–z another.','map'));
+  L.done();}},
+{part:3,src:'Chapter 13 · Scale the storage',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kitebird shards its trie by first letter on two servers, a–m and n–z. Where do queries for “quilt binding” live?</h1>');
+  L.mc(L.card,['On the a–m server','On the n–z server'],1,
+   'First-level sharding only looks at the first character, and “q” falls in n–z.',
+   'Only the first character counts, and “q” comes after “m”, so it lives on the n–z server.');}},
+{part:3,src:'Chapter 13 · Scale the storage',pts:1,
+ solve:async L=>{L.$('#pp').children[2].click();L.$('#gorun').click();L.$('#fix').click();},
+ run(L){
+  const A=[['a–i',34],['j–r',21],['s–z',45]],B=[['s only',31],['a–i',34],['j–r + t–z',35]];let p=null;
+  const meters=(set)=>set.map((x,j)=>'<div class="meterrow"><div class="lb">Shard '+(j+1)+' · '+x[0]+'</div><div class="meter"><div id="m'+j+'" style="background:'+(x[1]>40?'var(--no-strong)':'var(--ok-strong)')+'"></div></div><b style="width:40px;text-align:right">'+x[1]+'%</b></div>').join('');
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Kitebird’s top searches: sourdough starter, sock heel, spoon carving, sewing machine, stitch markers, crochet hat. Three shards split by letter. Which will be busiest?</h1>'+
+   '<div id="pp"></div><div id="sh" hidden><button class="btn pri" id="gorun">'+L.ic('play')+'Send a week of searches</button><div id="mt"></div></div><div id="fx"></div>');
+  A.forEach((x,j)=>{const b=document.createElement('button');b.className='chip';b.textContent='Shard '+(j+1)+' · '+x[0];b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sh').hidden=false;};L.$('#pp').appendChild(b);});
+  const fill=set=>requestAnimationFrame(()=>requestAnimationFrame(()=>set.forEach((x,j)=>{const m=L.$('#m'+j);if(m)m.style.width=x[1]*2+'%';})));
+  L.$('#gorun').onclick=function(){this.remove();L.$('#mt').innerHTML='<p class="small" style="margin:8px 0 0">Share of Kitebird’s queries (made-up numbers)</p>'+meters(A);fill(A);L.award(p===2);
+    L.fb(L.$('#mt'),(p===2?'<b>You called it.</b> ':'<b>It’s shard 3.</b> ')+'Kitebird’s popular queries cluster on “s”, so s–z carries 45% while j–r idles at 21%.',p===2?'ok':'no');
+    L.$('#fx').innerHTML='<button class="btn" id="fix" style="margin-top:10px">'+L.ic('map')+'Rebalance with a shard map manager</button>';
+    L.$('#fix').onclick=function(){this.remove();L.$('#mt').innerHTML='<p class="small" style="margin:8px 0 0">After the shard map manager, from last year’s counts</p>'+meters(B);fill(B);
+      L.sheet('info','Balanced by history','The lookup table gives “s” a shard of its own and puts j–r and t–z together. Shards don’t have to be neat letter ranges; they follow where the queries actually are.');L.done();};};}},
+{part:3,src:'Chapter 13 · Step 4 - Wrap up',run(L){
+  L.h(L.kick('learn','Follow-up questions')+'<h1 class="q">Three curveballs the interviewer may throw at the end</h1>'+
+   L.tiers([['compass','Other languages?','Store <b>Unicode</b> characters in trie nodes. Unicode is a standard that covers the characters of every writing system.'],
+     ['map','Different top queries per country?','Build a <b>separate trie per country</b>, and store tries in '+L.g('cdn','CDNs')+' to cut response time.'],
+     ['flame','Trending queries?','The design breaks: workers run weekly, and building a trie takes too long anyway. The book only sketches ideas: shard to shrink the working set, weigh recent queries more in ranking, and process data as streams (e.g. Kafka, Spark Streaming). Details are beyond its scope.']])+
+   L.note('<b>Beyond the book:</b> a weekly rebuild plus an hour of browser caching means suggestions can be up to about a week old. Fine for “sourdough”, not for a news spike.','info'));
+  L.done();}},
+{part:3,src:'Chapter 13 · Step 4 - Wrap up',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Dario’s follow-ups',['Unicode in trie nodes','A trie per country, on CDNs','Streaming and recent weighting','Shard map manager'],[
+   ['Kitebird launches in Japan, and makers search in Japanese.',0,'Japanese isn’t lowercase a–z. Store Unicode characters in the nodes.'],
+   ['Brazilian makers’ top searches look nothing like American ones.',1,'Different countries, different popular queries: build a trie for each.'],
+   ['During the viral #SockSprint week, Dario wants “sock sprint” suggested the same day.',2,'A weekly rebuild can’t catch a spike. Trending needs streaming data and more weight on recent searches.'],
+   ['The “s” shard stores far more queries than all of t–z.',3,'Rebalance from historical counts with a lookup table, not by even letter ranges.'],
+   ['Makers in Australia wait too long for suggestions from US servers.',1,'The book stores per-country tries in CDNs, close to the users, to improve response time.']]);}},
+{part:3,src:'Chapter 13 · Step 3 - Design deep dive',pts:1,run(L){
+  L.h(L.kick('pr','Say it in one sentence')+'<h1 class="q">Tamsin asks for your design in one sentence. Tap each piece until it matches the book’s final design.</h1>');
+  L.sentence(L.card,[
+   ['Store queries in a sorted SQL table','Store queries in a trie'],
+   ['and walk the subtree on each request','with the top 5 cached at every node'],
+   ['rebuilt weekly from aggregated logs','updated live on every keystroke'],
+   ['served from an in-memory trie cache','served by scanning the analytics logs']],[1,1,0,0],
+   [['The SQL table was the first cut. It becomes the bottleneck as data grows.'],
+    ['Walking the subtree is the slow plain method. Cache the top 5 at each node instead.'],
+    ['Live updates on billions of searches would slow the query service. Rebuild in batches.'],
+    ['Logs are append-only and unindexed: far too slow to read per keystroke. Serve from the cache.']],
+   'A trie, top 5 cached per node, rebuilt weekly from aggregated logs, read from an in-memory cache. That’s the chapter in one line.');}}
+  ]
+});
+</script>
+</body>
+</html>

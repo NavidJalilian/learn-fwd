@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a Notification System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0004', title:'Design a notification system', minutes:20, icon:'alert',
+  goals:['Explain how a push, an SMS and an email each reach a person','Turn a one-server design into one with queues and workers','Keep notifications from being lost, doubled or annoying'],
+  parts:['Scope','The design','Reliability','Extras'],
+  read:'Read chapter 10 of the book for its figures: the full designs, the contact-info tables and the event-tracking example.',
+  glossary:{
+    'soft-rt':'Soft real-time: deliver as fast as possible, but a short delay is acceptable when the system is very busy.',
+    'device-token':'Device token: a unique ID for one app on one phone. Apple or Google need it to know which phone a push goes to.',
+    'third-party':'Third-party service: a company’s service you pay to use instead of building it yourself, such as an SMS or email sender.',
+    worker:'Worker: a server whose only job is to take jobs from a queue and carry them out, here: hand each notification to the right outside service.',
+    'notif-log':'Notification log: a database where every notification is saved before it is sent, so nothing is lost if a step fails and it can be retried.',
+    dedupe:'Dedupe (short for de-duplicate): spotting a repeat of something already handled and dropping it.',
+    'rate-limit':'Rate limiting: capping how many requests or messages are allowed in a period of time, here how many notifications one person can receive.'
+  },
+  cheatsheet:[
+    '<b>Three formats:</b> mobile push (APNs for iOS, FCM for Android), SMS and email, the last two through outside services.',
+    'To send an iOS push you need a <b>device token</b> and a <b>payload</b>. Collect tokens, emails and phone numbers at install or sign-up; one user can have many devices.',
+    'One notification server = <b>single point of failure</b>, hard to scale, and a performance bottleneck.',
+    'Fix: DB and cache moved out, <b>more notification servers</b> that scale automatically, and <b>one message queue per notification type</b> read by workers.',
+    'Notifications may be delayed or reordered, but <b>never lost</b>: save them in a notification log and retry.',
+    'Exactly-once is not guaranteed, so <b>dedupe by event ID</b>.',
+    'Extras: templates, opt-in check before sending, rate limit per user, retry then alert, appKey/appSecret, watch queue size, track opens and clicks.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird’s email provider goes down for an hour. Should that stop the “new follower” pushes on people’s phones?</h1>');
+  L.mc(L.card,['Yes, every kind of ping should wait together','No, push has nothing to do with email'],1,
+   'Push and email go out through different outside services. One failing shouldn’t block the other. This lesson shows how to build a system where it doesn’t.',
+   'Push goes through Apple and Google; email goes through an email service. If one breaks, the other should keep working. Most of this lesson is about making that true.');}},
+{part:0,src:'Chapter 10 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','The book’s interview')+'<h1 class="q">A notification is more than a phone buzz</h1>'+
+   L.prose('A notification tells a person something important: breaking news, a product update, an event. The book counts <b>three formats</b>: mobile push, SMS text messages and email.')+
+   L.prose('The interview question is left vague on purpose, so the candidate asks. Here is what the interviewer answers:')+
+   L.list([['Types','Push notification, SMS and email.'],
+     ['Speed','<b>'+L.g('soft-rt','Soft real-time')+'</b>: as soon as possible, but a slight delay under heavy load is fine.'],
+     ['Devices','iOS, Android, and laptop or desktop.'],
+     ['Triggers','Client apps can trigger them, and the server can schedule them.'],
+     ['Opt-out','Yes. People who opt out get no more notifications.'],
+     ['Volume','10 million pushes, 1 million SMS and 5 million emails a day.']],1));
+  L.done();}},
+{part:0,src:'Chapter 10 · Different types of notifications',run(L){
+  L.h(L.kick('learn','How each one travels')+'<h1 class="q">You don’t deliver notifications yourself. Someone else does.</h1>'+
+   L.prose('For an iOS push, your system is the <b>provider</b>. It builds a request and sends it to Apple’s push service (APNs), which delivers it to the iPhone. The request needs two things:')+
+   L.flow([['box','Provider','Your system','sends token + payload',1],['layers','APNs','Apple’s service','finds the phone',2],['person','iPhone','The person','sees the push',3]])+
+   L.list([['Device token','A unique ID that tells Apple which phone and app to reach. See '+L.g('device-token','device token')+'.'],
+     ['Payload','A small JSON bundle with the message itself.']],2)+
+   L.prose('Android works the same way through <b>Firebase Cloud Messaging (FCM)</b>. SMS goes through '+L.g('third-party','third-party')+' services like Twilio or Nexmo. Email usually goes through a commercial service like Sendgrid or Mailchimp, which deliver more reliably and give analytics.')+
+   L.note('<b>Plan to swap services.</b> A service may be missing in a new market. FCM isn’t available in China, so apps there use others such as Jpush or PushY. The book calls this <b>extensibility</b>: plug a service in or out easily.','cycle'));
+  L.done();}},
+{part:0,src:'Chapter 10 · Contact info gathering flow',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of “Kitebird pings”</h1>');
+  L.beats(L.card,[
+   ['Tamsin','“What are we building, and how big is it?”'],
+   ['You ask, Dario answers','Pushes for a new follower, a new comment, or a class about to start. A <b>weekly email digest</b>. <b>SMS login codes</b>. Users must be able to turn each kind off.'],
+   ['The numbers','Kitebird sends about <b>6 million pushes, 300,000 SMS and 2 million emails</b> a day. Small next to the book’s numbers, but growing fast.'],
+   ['Obi','“Remember the day the email provider went down? Our one notification box choked on retries and the pushes stopped too.”'],
+   ['First, addresses','You can’t ping anyone without an address. When Mira installs the app or signs up, API servers save her <b>email and phone number</b> in the user table and her phone’s <b>device token</b> in a device table.'],
+   ['One person, many devices','Mira also uses Kitebird on her iPad, so she has <b>two rows</b> in the device table. A push can go to both.']],
+   'Ask the book’s scope questions, then collect contact info first: email and phone per user, one device token per device.');}},
+{part:0,src:'Chapter 10 · iOS push notification',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kitebird wants to tell Ben, on his iPhone, that Mira followed him. What must Kitebird send to APNs?</h1>');
+  L.mc(L.card,['Ben’s email address and the message text','Ben’s phone number and the message text','Ben’s device token and the payload'],2,
+   'The device token says which phone and app to reach; the payload carries the message.',
+   'APNs doesn’t use emails or phone numbers. It needs the <b>device token</b> (which phone) and the <b>payload</b> (what to show).');}},
+{part:0,src:'Chapter 10 · Different types of notifications',pts:5,run(L){
+  L.h(L.kick('pr','Route each ping')+'<h1 class="q">Which outside service delivers each Kitebird notification?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['APNs','FCM','SMS service','Email service'],[
+   ['Ben’s iPhone: “Mira started following you”',0,'iPhones get pushes through Apple’s push service.'],
+   ['A login code texted to Hana’s phone number',2,'A text message goes through an SMS service such as Twilio.'],
+   ['The weekly digest of projects you might like',3,'Emails usually go through a commercial email service.'],
+   ['A Pixel phone: “Your sourdough class starts in 10 minutes”',1,'Android phones get pushes through Firebase Cloud Messaging.'],
+   ['Mira’s iPad: “Ben commented on your quilt”',0,'The iPad is an Apple device, so it uses APNs, with its own device token.']],
+   'Every format leans on an outside service. Your system builds the request; they deliver it.');}},
+{part:0,src:'Chapter 10 · Third-party services',pts:1,run(L){
+  L.h(L.kick('pr','Design decision')+'<h1 class="q">Dario wants to launch Kitebird in a country where FCM isn’t available. What should the design already allow?</h1>');
+  L.mc(L.card,['Plugging in a local push service for that market','Sending every Android ping by email instead','Building Kitebird’s own push network first'],0,
+   'That’s extensibility. Like FCM in China, a service can be missing somewhere, so the design should let you swap in another, such as Jpush.',
+   'The book’s answer is extensibility: design so a third-party service can be plugged in or out, and use a local one where FCM is missing.');}},
+
+/* ---------- PART 2: THE DESIGN ---------- */
+{part:1,src:'Chapter 10 · Notification sending/receiving flow',run(L){
+  L.h(L.kick('learn','The first design')+'<h1 class="q">Start simple: one notification server</h1>'+
+   L.flow([['list','Service 1 to N','Anything that needs to notify','billing, shipping, a timed job',1],['box','Notification server','One box','builds requests',2],['layers','Third parties','APNs, FCM, SMS, email','deliver',3]])+
+   L.prose('<b>Services 1 to N</b> are the parts of the business that want to send something: a billing service emails a payment reminder, a shop texts “your package arrives tomorrow”. The single <b>notification server</b> gives them APIs and builds each request for the outside services.')+
+   L.prose('It works, but the book names three problems:')+
+   L.list([['alert','Single point of failure','One server. If it dies, nothing goes out. See '+L.g('spof','single point of failure')+'.'],
+     ['layers','Hard to scale','Database, cache and sending all live in one box, so you can’t grow one part on its own.'],
+     ['clock','Performance bottleneck','Building HTML emails and waiting for outside services is slow. At peak hours the box overloads.']],3));
+  L.done();}},
+{part:1,src:'Chapter 10 · High-level design (improved)',run(L){
+  L.h(L.kick('learn','The improved design')+'<h1 class="q">Three changes fix the three problems</h1>'+
+   L.list([['Move the database and cache out','They become their own parts, so each can grow separately.'],
+     ['Add more notification servers','With automatic horizontal scaling: more copies of the server when traffic rises. No single box to lose.'],
+     ['Add message queues','A '+L.g('message-queue','message queue')+' decouples the parts. Each notification type gets <b>its own queue</b>, and '+L.g('worker','workers')+' take jobs from it and call the outside service.']],1)+
+   L.flow([['box','Notification servers','check, look up, enqueue','',1],['layers','Queues','iOS · Android · SMS · email','one per type',2],['cycle','Workers','pull and send','',3],['people','Third parties','deliver','',4]])+
+   '<p class="small">The notification servers also check emails and phone numbers, and only accept calls from internal or verified clients, to stop spam. The cache holds user info, device info and templates.</p>');
+  L.done();}},
+{part:1,src:'Chapter 10 · High-level design (improved)',pts:1,
+ solve:async L=>{L.$('#po').children[0].click();L.$('#run').click();},
+ run(L){
+  let p=null;const T=['iOS push','Android push','SMS','Email'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Obi’s outage again: the email provider goes down. With <b>one queue per type</b>, which pings pile up?</h1><div id="po"></div>'+
+   '<div id="sim" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px"><div><div class="small">Minutes into the outage</div><div class="week" id="wk">0 min</div></div><button class="btn pri" id="run">'+L.ic('play')+'Run the outage</button></div>'+
+   '<h2 class="sub">Old setup: one shared line</h2><div class="meterrow"><div class="lb">Everything</div><div class="meter"><div id="s0" style="background:var(--no-strong)"></div></div></div>'+
+   '<h2 class="sub">New setup: one queue per type</h2>'+T.map((t,j)=>'<div class="meterrow"><div class="lb">'+t+'</div><div class="meter"><div id="q'+j+'" style="background:var(--h'+(j+1)+')"></div></div></div>').join('')+'</div>');
+  ['Only the emails','Every kind of ping','None of them'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#run').onclick=function(){this.remove();let t=0;
+    const tm=setInterval(()=>{t++;const wk=L.$('#wk');if(!wk){clearInterval(tm);return;}wk.textContent=(t*6)+' min';
+      const set=(id,v)=>{const el=L.$('#'+id);if(el)el.style.width=Math.round(v)+'%';};
+      set('s0',Math.min(100,t*10));set('q3',Math.min(100,t*10));[0,1,2].forEach(j=>set('q'+j,8+((t+j)%3)*4));
+      if(t>=10){clearInterval(tm);L.award(p===0);
+        L.sheet(p===0?'ok':'no',p===0?'Only the emails':'Only the email queue piles up','In the shared line, pushes and login codes get stuck behind emails that can’t go out. With one queue per type, only the email queue grows; workers keep sending pushes and SMS. The book gives exactly this reason: an outage in one outside service shouldn’t affect the other types.');L.done();}},200);};}},
+{part:1,src:'Chapter 10 · High-level design (improved)',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why does each notification type get its own queue?</h1>');
+  L.mc(L.card,['So each type can use a different database','So one service’s outage doesn’t block the rest','So users can choose which type they prefer'],1,
+   'Right. Separate queues keep a failure in one outside service from holding up the other types.',
+   'The book’s reason is isolation: if the SMS or email service is down, its queue grows, and the other types keep flowing.');}},
+{part:1,src:'Chapter 10 · High-level design (improved)',pts:1,run(L){
+  L.h(L.kick('pr','Follow the ping')+'<h1 class="q">The comment service wants to tell Mira that Ben commented. Put the six steps in order.</h1>');
+  L.order(L.card,['The comment service calls the notification servers’ API','Notification servers fetch Mira’s settings and device token from cache or DB','A push event goes into the iOS push queue','A worker pulls the event from the queue','The worker sends it to APNs','APNs delivers the push to Mira’s iPhone'],
+   'Service → notification servers (look up data) → queue → worker → third party → device. The queue sits in the middle so each side can work at its own speed.');}},
+{part:1,src:'Chapter 10 · Notification sending/receiving flow',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which problem of the one-server design is this?',['Single point of failure','Hard to scale','Performance bottleneck'],[
+   ['Kitebird’s only notification server reboots for an update. For ten minutes, no pings go out at all.',0,'One server, and nothing works without it. That’s a single point of failure.'],
+   ['Sunday night: building two million digest emails and waiting on the email service slows the box, so login codes arrive late.',2,'Slow, heavy work overloads the one box at peak time. That’s the performance bottleneck.'],
+   ['The cache needs more memory but the senders don’t. Hana can only buy a bigger machine for all of it.',1,'Everything lives in one server, so you can’t grow one part on its own. That’s “hard to scale”.'],
+   ['Obi wants to add capacity only for email sending, but the database shares the same machine.',1,'Again, the parts can’t grow separately. Moving DB and cache out fixes this.']]);}},
+
+/* ---------- PART 3: RELIABILITY ---------- */
+{part:2,src:'Chapter 10 · Reliability',run(L){
+  L.h(L.kick('learn','Never lose a notification')+'<h1 class="q">Late is fine. Lost is not.</h1>'+
+   L.quote('Notifications can usually be delayed or re-ordered, but never lost.','Alex Xu, chapter 10')+
+   L.prose('To keep that promise, the system saves each notification in a '+L.g('notif-log','notification log')+' database and has a <b>retry</b> mechanism. If sending fails, the saved copy is tried again.')+
+   L.prose('<b>Will each person get it exactly once?</b> Most of the time, yes, but the book is clear the answer is no: in a system spread over many machines, duplicates can happen.')+
+   L.flow([['pointer','Event arrives','with an event ID','',1],['eye','Seen this ID?','check before sending','',2],['check','New: send it','Seen: discard it','',3]])+
+   '<p class="small">That simple '+L.g('dedupe','dedupe')+' check makes duplicates rare.</p>');
+  L.done();}},
+{part:2,src:'Chapter 10 · Reliability',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Why Mira almost got the same ping twice</h1>');
+  L.beats(L.card,[
+   ['9:00:00','Ben comments on Mira’s quilt. The comment service sends event <b>evt-501</b>: “Ben commented on your quilt.”'],
+   ['9:00:02','The call is slow, so the comment service gives up waiting and sends <b>evt-501</b> again. Both copies reach the notification system.'],
+   ['First copy','The gate has never seen evt-501. It records the ID, saves the notification in the log and sends it.'],
+   ['Second copy','The gate has seen evt-501, so it <b>discards</b> it. Mira’s phone buzzes once.'],
+   ['Later that day','APNs times out on a class-starting ping. Because it’s saved in the notification log, a worker retries it. Cleo gets it a minute late, but she gets it.']],
+   'Save first and retry, so nothing is lost. Check the event ID, so repeats are dropped.');}},
+{part:2,src:'Chapter 10 · Reliability',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">How does the book decide whether an incoming event is a duplicate?</h1>');
+  L.mc(L.card,['It compares the message text with recent ones','It checks whether that event ID was seen before','It asks the user’s phone if it already buzzed'],1,
+   'The event ID is the key. Seen before means discard; new means send.',
+   'Two different pings can have the same text. The book checks the <b>event ID</b>: seen before, discard; otherwise send.');}},
+{part:2,src:'Chapter 10 · Reliability',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#gate').querySelector('[data-r="1"]');if(b)b.click();await L.sleep(5);}},
+ run(L){
+  const E=[['evt-601','Comment ping for Mira'],['evt-602','New follower ping for Ben'],['evt-601','Comment ping for Mira'],['evt-603','Class starting ping for Cleo'],['evt-602','New follower ping for Ben'],['evt-604','Comment ping for Ben']];
+  const seen=[];let k=0,miss=0;
+  L.h(L.kick('pr','Be the dedupe gate')+'<h1 class="q">Events arrive one by one. Send each new one, drop each repeat.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0"><div class="small">Seen event IDs</div><div id="seen" style="min-height:40px;margin-top:6px"></div></div>'+
+   '<div id="gate"></div><div id="gf"></div>');
+  const draw=()=>{L.$('#seen').innerHTML=seen.length?seen.map(s=>'<span class="chip static">'+s+'</span>').join(''):'<span class="small">none yet</span>';
+    if(k>=E.length)return;const isNew=!seen.includes(E[k][0]);
+    L.$('#gate').innerHTML='<div class="rung cur"><small>Event '+(k+1)+' of '+E.length+'</small>'+E[k][0]+' · '+E[k][1]+'</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn pri" data-a="send" data-r="'+(isNew?1:0)+'">'+L.ic('check')+'Send</button><button class="btn" data-a="drop" data-r="'+(isNew?0:1)+'">'+L.ic('x')+'Drop</button></div>';
+    L.$('#gate').querySelectorAll('button').forEach(b=>b.onclick=()=>{const ok=b.dataset.r==='1';const id=E[k][0];L.$('#gf').innerHTML='';
+      if(!ok){miss++;L.fb(L.$('#gf'),isNew?'<b>'+id+'</b> was new, so it should go out. The gate sends it.':'<b>'+id+'</b> is already in the seen list, so this is a repeat. The gate drops it.','no');}
+      if(isNew)seen.push(id);k++;
+      if(k>=E.length){draw();L.$('#gate').innerHTML='';L.award(miss===0);L.sheet(miss===0?'ok':'info',miss===0?'Perfect gate':'Gate finished','Four pings went out and two repeats were dropped. Each person got each ping once, because the gate checked the event ID first.');L.done();}
+      else draw();});};
+  draw();}},
+{part:2,src:'Chapter 10 · Reliability',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Does this break the book’s rules?',['Acceptable','Not acceptable'],[
+   ['At peak, a login code reaches Hana 20 seconds later than usual.',0,'It’s soft real-time: a slight delay under heavy load is fine.'],
+   ['Two comment pings reach Ben in the opposite order to when they happened.',0,'Notifications may be re-ordered. They just must not be lost.'],
+   ['A worker crashes mid-send and the class-starting ping for Cleo is gone for good.',1,'That’s a lost notification. The log and retry exist to stop exactly this.'],
+   ['The system promises Kitebird that no one will ever get a duplicate ping.',1,'The book says exactly-once can’t be guaranteed. Dedupe makes repeats rare, not impossible.']]);}},
+
+/* ---------- PART 4: EXTRAS ---------- */
+{part:3,src:'Chapter 10 · Additional components and considerations',run(L){
+  L.h(L.kick('learn','More than sending')+'<h1 class="q">Seven extras a real notification system needs</h1><p class="small">Tap each card.</p>');
+  L.flips(L.card,[
+   ['Templates','A pre-written message with blanks to fill in. Keeps the format consistent, cuts errors and saves time.'],
+   ['Notification settings','A table of user, channel (push, email or SMS) and opt-in yes/no. Check it <b>before</b> sending anything.'],
+   ['Rate limiting','Cap how many notifications one person gets. Send too many and they may turn them all off.'],
+   ['Retry, then alert','If an outside service fails, put the notification back in the queue to retry. If it keeps failing, alert the developers.'],
+   ['Security','An <b>appKey and appSecret</b> pair, so only verified clients can send pushes through your APIs.'],
+   ['Watch the queues','Track how many notifications are waiting. A big number means workers are too slow: add more workers.'],
+   ['Event tracking','Measure opens, clicks and engagement, through an analytics service.']],
+   'In the final design, notification servers gain authentication and rate limiting, workers retry a set number of times, and monitoring and tracking are added.');}},
+{part:3,src:'Chapter 10 · Notification template',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Dario says users complain about too many pings</h1>');
+  L.beats(L.card,[
+   ['The complaint','Some makers get eight pings an hour on a busy day. A few have turned off notifications entirely.'],
+   ['Respect settings','Before any ping goes out, the system checks Ben’s settings. He switched email off, so his digest is skipped.'],
+   ['Cap the rate','A per-user '+L.g('rate-limit','rate limit')+' caps how many pings Mira can get. Fewer pings, so fewer people mute them all.'],
+   ['One template','The “class starting” ping becomes a template: <i>“[CLASS] with [MAKER] starts in [MINUTES] minutes.”</i> Every class team fills in the blanks and every ping looks the same.'],
+   ['Obi’s dashboard','Obi charts the number of queued notifications per queue. When the email queue climbs on Sunday nights, he adds workers.']],
+   'Settings checked first, a cap per user, templates for consistency, and a watch on the queues.');}},
+{part:3,src:'Chapter 10 · Notification setting',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Hana turned off SMS in her settings. A promotion service asks to text her a discount code. What happens?</h1>');
+  L.mc(L.card,['It’s sent, then logged as an opt-out','It’s sent by email instead','It isn’t sent; her setting is checked first'],2,
+   'The system checks the notification settings before sending. She opted out of SMS, so no text.',
+   'The book checks the opt-in setting <b>before</b> sending. Switching her to email wasn’t asked for either.');}},
+{part:3,src:'Chapter 10 · Additional components and considerations',pts:5,run(L){
+  L.h(L.kick('pr','Pick the fix')+'<h1 class="q">Which extra fixes each Kitebird problem?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Template','Rate limit','appKey/appSecret','More workers'],[
+   ['A bug fires 40 “makers you may like” pings at Mira in an hour',1,'A per-user cap stops one person being flooded.'],
+   ['A leaked endpoint lets an unknown script send pushes to everyone',2,'Only verified clients with the key pair should be able to send.'],
+   ['Each team writes “class starting” pings its own way, with typos',0,'A shared template gives one consistent, checked format.'],
+   ['The email queue holds 900,000 waiting emails and keeps growing',3,'A growing queue means workers can’t keep up. Add workers.'],
+   ['Ben gets eight comment pings during a busy hour and mutes everything',1,'Capping notifications per user keeps people from switching them all off.']],
+   'Each extra matches one risk: rate limits protect people, keys protect the API, templates protect the format, and queue size tells you when to add workers.');}},
+{part:3,src:'Chapter 10 · Retry mechanism',pts:1,run(L){
+  L.h(L.kick('pr','Say it like the book')+'<h1 class="q">Build the retry rule Obi will put in the on-call notes.</h1>');
+  L.sentence(L.card,[['When a third-party service fails,','When a user opts out,'],['the notification is dropped','the notification goes back in the queue','the notification is sent by SMS'],['and workers retry a set number of times;','and workers retry until it works;'],['if it still fails, alert the developers.','if it still fails, delete the user’s token.']],[0,1,0,0],
+   [['Opting out means don’t send at all. Retrying is for failures.'],['Dropping it loses the notification, which the book forbids.','Switching channel isn’t the book’s retry. It goes back into the same queue.'],['Retrying forever can hide a real problem. The book retries a set number of times.'],['The book’s last step is to alert developers so a person looks at it.']],
+   'Back into the queue, retry a set number of times, then alert a person. That’s the book’s retry mechanism.');}},
+{part:3,src:'Chapter 10 · Step 4 - Wrap up',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Tamsin’s last questions',['Notification log + retry','Event ID dedupe','Device table','One queue per type'],[
+   ['“Mira logs in on a new tablet. How will pushes reach it too?”',2,'Each device gets its own token in the device table. One user, many devices.'],
+   ['“SMS is down in one region. Does that delay pushes?”',3,'No. The SMS queue grows; the push queues keep flowing.'],
+   ['“A worker dies holding a ping. Is it gone?”',0,'It was saved in the notification log before sending, so it’s retried.'],
+   ['“The billing service sent the same event twice. Does Ben get two emails?”',1,'The gate sees the event ID again and discards the second copy.']]);
+  L.$('#qk').insertAdjacentHTML('afterend',L.note('<b>Beyond the book:</b> the message queues themselves need copies on several machines. Otherwise the queue becomes the new single point of failure.','info'));}}
+  ]
+});
+</script>
+</body>
+</html>
