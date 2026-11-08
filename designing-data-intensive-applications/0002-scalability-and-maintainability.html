@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scalability and Maintainability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0002', title:'Scalability and maintainability', minutes:20, icon:'trend',
+  goals:['Describe load with the right load parameters and decide where to do the work','Measure performance with percentiles instead of averages','Judge scaling and maintainability choices: up or out, operability, simplicity, evolvability'],
+  parts:['Describing load','Measuring performance','Coping with load','Maintainability'],
+  read:'Read chapter 1 of the book from “Scalability” to the end for the Twitter case, percentiles and the three maintainability principles.',
+  glossary:{
+    'load-parameter':'Load parameter: one of a few numbers that describe the load on your system, such as requests per second, the ratio of reads to writes, or a cache’s hit rate. Which ones matter depends on your design.',
+    'fan-out':'Fan-out: how many places one piece of work has to reach. For Twitter, one new tweet has to be copied into the timeline of every follower.',
+    'throughput':'Throughput: how much work a system gets through per second, such as records processed. Batch jobs usually care most about it.',
+    'response-time':'Response time: what the client sees, from sending a request to getting the answer. It includes network delays, time waiting in a queue and the actual work.',
+    'latency':'Latency: the part of a request’s life spent waiting to be handled. Often used loosely to mean response time, but the book keeps them apart.',
+    'percentile':'Percentile: sort all response times from fastest to slowest; the 95th percentile (p95) is the time that 95% of requests beat. The median is p50.',
+    'tail-latency':'Tail latency: the response times at high percentiles (p99, p999): the slowest requests.',
+    'head-of-line':'Head-of-line blocking: a few slow requests at the front of a queue hold up the fast requests behind them.',
+    'sla':'Service level agreement (SLA): a contract saying how fast and how available a service must be, often stated in percentiles. Service level objectives (SLOs) set the same kind of targets.',
+    'shared-nothing':'Shared-nothing architecture: spreading the load over several machines, each with its own processor, memory and disks, that coordinate only over the network.',
+    'elastic':'Elastic system: one that adds computing resources by itself when it detects more load.',
+    'accidental-complexity':'Accidental complexity: complexity that isn’t part of the problem users see, but comes only from how the software was built.'
+  },
+  cheatsheet:[
+    '“Is it scalable?” means nothing alone. Ask: <b>if load grows this way, what are our options?</b>',
+    'Describe load with <b>load parameters</b>. For Twitter, the follower distribution (fan-out) mattered more than tweets per second.',
+    'Reads far outnumber writes? Do more work <b>at write time</b>. Exempt the huge cases (Twitter’s celebrities) and merge them <b>at read time</b>.',
+    'Measure <b>response time</b> as a distribution. Use the median for typical, <b>p95/p99/p999</b> for the tail; the mean hides how many users suffered.',
+    'Queues make the tail: measure at the client, load-test without waiting for answers, and <b>add histograms</b>, never average percentiles.',
+    '<b>Scale up</b> (bigger machine) or <b>scale out</b> (more machines, shared-nothing). Stateless is easy to spread; stateful is hard. No magic scaling sauce.',
+    'Most software cost is maintenance. Design for <b>operability</b>, <b>simplicity</b> (remove accidental complexity with good abstractions) and <b>evolvability</b>.'
+  ],
+  steps:[
+/* ---------- PART 1: DESCRIBING LOAD ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Before Peak Week, Femi asks Kwame one question: “Is the Parcel DB scalable?” What’s the most useful reply?</h1>');
+  L.mc(L.card,['“Yes, it handles today’s traffic fine.”','“Scalable to which kind of growth?”'],1,
+   'Handling today fine says nothing about tomorrow. Growth comes in different shapes (more bookings, more page views, bigger merchants), and each can break a different part.',
+   'Coping today doesn’t mean coping with three times the parcels. The useful question is which kind of growth, and what you could do about it.');}},
+{part:0,src:'Chapter 1 · Scalability',run(L){
+  L.h(L.kick('learn','Scalability and load')+'<h1 class="q">“Scalable” is not a label you can stick on a system</h1>'+
+   L.prose('<b>Scalability</b> is a system’s ability to cope with more load. Saying “X is scalable” or “Y doesn’t scale” is meaningless on its own. The real questions are: <i>if the system grows in this particular way, what are our options?</i> And <i>how can we add computing resources to handle it?</i>')+
+   L.prose('First, describe today’s load with a few numbers, called '+L.g('load-parameter','load parameters')+'. Which ones fit depends on your design:')+
+   L.list([['pointer','Requests per second','e.g. tracking-page views per second'],
+     ['scale','Ratio of reads to writes','e.g. how often a parcel is viewed versus changed'],
+     ['people','Active users at once','e.g. couriers on shift sending GPS pings'],
+     ['layers','Cache hit rate','e.g. how often the tracking-page cache already has the answer']],1)+
+   '<p class="small" style="margin-top:10px">Sometimes the average case matters. Sometimes a few extreme cases dominate.</p>');
+  L.done();}},
+{part:0,src:'Chapter 1 · Describing Load',run(L){
+  L.h(L.kick('ex','The book’s case: Twitter in 2012')+'<h1 class="q">Where should the work happen: when you write, or when you read?</h1>');
+  L.beats(L.card,[
+   ['The load','Two main operations. <b>Post tweet</b>: about 4.6k per second on average, over 12k at peak. <b>Home timeline</b> (see tweets from people you follow): about 300k reads per second.'],
+   ['Approach 1','Posting just stores the tweet. Reading a timeline looks up everyone you follow, finds their tweets and merges them by time. Twitter started here, and the timeline reads couldn’t keep up.'],
+   ['Approach 2','Keep a ready-made timeline per user, like a mailbox. Posting a tweet copies it into every follower’s mailbox. Reading becomes cheap. Twitter switched to this.'],
+   ['The cost','A tweet reaches about 75 followers on average, so 4.6k tweets a second become 345k mailbox writes. But some users have over 30 million followers: one tweet, 30 million writes, and Twitter aims to deliver within five seconds.'],
+   ['The hybrid','So Twitter moved to a mix: most tweets are copied on write, but celebrities’ tweets are skipped and merged in when a follower reads, as in approach 1.']],
+   'The key '+L.g('load-parameter','load parameter')+' was not tweets per second but how followers are spread across users, because that sets the '+L.g('fan-out','fan-out')+'.');}},
+{part:0,src:'Chapter 1 · Describing Load',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why did Twitter do better with approach 2, copying tweets into mailboxes when they are posted?</h1>');
+  L.mc(L.card,['Posting a tweet became cheaper to do','Timeline reads far outnumbered new tweets','The table of followers became much smaller'],1,
+   'Tweets were posted almost a hundred times less often than timelines were read. Doing extra work on the rare operation made the common one cheap.',
+   'Posting actually got <i>more</i> expensive, and the follower data didn’t shrink. It paid off because reads outnumbered posts by almost a hundred to one.');}},
+{part:0,src:'Chapter 1 · Describing Load',pts:1,
+ solve:async L=>{[...L.$('#ev').children].forEach(b=>b.click());},
+ run(L){
+  const D=[['Look it up on every view',['1 write. But every tracking-page view must also check for notices: extra lookups on ~1,000 views a second, all day.','1 write. The same extra lookups on every view, all day.'],[0,0]],
+           ['Push to each parcel’s page',['150 page updates, done in a second. Views stay cheap.','40,000 page updates at once. Recipients wait many minutes before the notice shows up.'],[1,-1]],
+           ['Hybrid: push small, merge big',['150 page updates, as in the push design.','1 write. Each page merges in its hub’s notice when viewed: one small lookup.'],[1,1]]];
+  const E=['A van breaks down · 150 parcels','A hub shuts for snow · 40,000 parcels'];const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Otterpost’s version. Each tracking page shows a parcel’s status plus any delay notice. Notices come in two sizes. Pick one.</h1><div id="ev"></div>'+
+   D.map((d,j)=>'<div class="lane" style="margin-bottom:8px"><div class="lh">'+L.ic(['eye','arrow','scale'][j])+d[0]+'</div><div class="small" id="d'+j+'">Pick a notice above.</div></div>').join('')+'<div id="eq"></div>');
+  E.forEach((e,k)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('alert')+e;
+    b.onclick=()=>{[...L.$('#ev').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(k);
+      D.forEach((d,j)=>{const c=d[2][k];L.$('#d'+j).innerHTML='<span style="color:var('+(c>0?'--ok':c<0?'--no':'--ink')+')">'+d[1][k]+'</span>';});
+      if(seen.size===2&&!L.$('#eq').innerHTML){const q=L.$('#eq');q.innerHTML='<h2 class="sub">Tracking-page views far outnumber delay notices. Which design fits best?</h2>';
+        L.mc(q,['Look it up on every view','Push to each parcel’s page','Hybrid: push small, merge big'],2,
+         'Just like Twitter’s celebrities: push the common small notices so reads stay cheap, but skip the rare giant ones and merge them in at read time.',
+         'Looking up on every view piles work onto the operation that happens most. Pushing everything chokes on the rare giant notice. The hybrid avoids both, like Twitter’s celebrity exception.');}};
+    L.$('#ev').appendChild(b);});}},
+{part:0,src:'Chapter 1 · Describing Load',pts:1,run(L){
+  L.h(L.kick('pr','Watch the average')+'<h1 class="q">Tobias measures that a delay notice touches 150 parcels on average, and wants to drop the hybrid and push everything. What does the Twitter case warn?</h1>');
+  L.mc(L.card,['Push designs only fail when reads are rare','Averages are fine if taken over a whole year','The average hides the rare huge notices that hurt'],2,
+   'Twitter’s average was only 75 followers, yet a few users with millions of followers set the real cost. The spread of notice sizes is the load parameter, not the average.',
+   'Twitter’s average of 75 followers hid users with 30 million. A longer average hides them just as well. What matters is the spread, including the rare giant cases.');}},
+
+/* ---------- PART 2: MEASURING PERFORMANCE ---------- */
+{part:1,src:'Chapter 1 · Describing Performance',run(L){
+  L.h(L.kick('learn','Describing performance')+'<h1 class="q">Two questions, and what to measure for each</h1>'+
+   L.lanes([['trend','Same machines, more load','How does performance change?',1],['layers','Same performance, more load','How many more resources do you need?',2]])+
+   L.prose('Batch jobs care most about '+L.g('throughput','throughput')+': records processed per second, or how long a job takes. Online systems, like the tracking page, care about '+L.g('response-time','response time')+'.')+
+   L.flow([['arrow','Network','travel to and from'],['clock','Queue','waiting to be handled'],['box','Service','the actual work']])+
+   L.prose('Response time is the whole trip the client sees. '+L.g('latency','Latency')+' is only the waiting part: the time a request is “latent”, waiting for service. People often mix the two up.'));
+  L.done();}},
+{part:1,src:'Chapter 1 · Describing Performance',run(L){
+  L.h(L.kick('learn','Percentiles, not averages')+'<h1 class="q">Response time is a spread of values, not one number</h1>'+
+   L.prose('Send the same request again and again and each one takes a slightly different time. Causes include a background process grabbing the processor, a lost network packet that must be resent, a garbage-collection pause, a read from disk, even vibrations in the server rack.')+
+   L.prose('The <b>mean</b> (add up, divide by the count) is often reported, but it doesn’t tell you how many users actually waited that long. Use '+L.g('percentile','percentiles')+' instead: sort the times from fastest to slowest.')+
+   L.tiers([['person','Median (p50)','Half the requests are faster, half slower. Your typical wait.'],
+            ['alert','p95, p99, p999','The time that 95%, 99% or 99.9% of requests beat. If p95 is 1.5 s, 5 in 100 requests take 1.5 s or longer.']])+
+   '<p class="small" style="margin-top:10px">Careful: the median is about one request. A user who makes several requests is far more than 50% likely to hit at least one slower than the median.</p>');
+  L.done();}},
+{part:1,src:'Chapter 1 · Describing Performance',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The tracking page’s p99 response time is 800 ms. What does that tell Kwame?</h1>');
+  L.mc(L.card,['99 in 100 views are faster than 800 ms','The average view takes about 800 ms','Almost every view takes 800 ms exactly'],0,
+   'p99 is the threshold that 99% of requests beat. The slowest 1 in 100 take 800 ms or more.',
+   'A percentile isn’t an average or a typical value. p99 = 800 ms means 99 in 100 views finish faster than 800 ms, and 1 in 100 takes that long or longer.');}},
+{part:1,src:'Chapter 1 · Describing Performance',pts:1,
+ solve:async L=>{L.$('#so').click();L.$('#me').click();L.$('#md').click();},
+ run(L){
+  const V=[110,95,2400,130,100,85,160,120,90,300,105,140,80,110,900,120,150,100,200,90],H=v=>Math.round(Math.sqrt(v/2400)*140);let cur=V.slice();const shown=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Twenty tracking-page requests, in the order they arrived. Sort them, then show the mean and the median.</h1>'+
+   '<div id="ch" style="position:relative;height:150px;display:flex;align-items:flex-end;gap:3px;border-bottom:2px solid var(--line);margin:6px 0 4px"></div>'+
+   '<div class="small" id="cl" style="margin-bottom:10px">Bar heights are squashed so the small ones stay visible.</div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="so">Sort fastest to slowest</button><button class="btn" id="me">Show mean</button><button class="btn" id="md">Show median</button></div><div id="cq"></div>');
+  const line=(id,v,col,txt,side)=>'<div id="'+id+'" style="position:absolute;left:0;right:0;bottom:'+H(v)+'px;border-top:2px dashed '+col+'"><span style="position:absolute;'+side+':0;top:-20px;background:var(--card);padding:0 3px;font-size:12px;font-weight:600;color:'+col+'">'+txt+'</span></div>';
+  const draw=()=>{L.$('#ch').innerHTML=cur.map(v=>'<div title="'+v+' ms" style="flex:1;height:'+H(v)+'px;background:'+(v>279?'var(--no-line)':'var(--line2)')+';border-radius:3px 3px 0 0"></div>').join('')+
+    (shown.has('me')?line('lm',279,'var(--no)','mean 279 ms','right'):'')+(shown.has('md')?line('ld',115,'var(--ok)','median 115 ms','left'):'');};draw();
+  const ask=()=>{if(!(shown.has('me')&&shown.has('md'))||L.$('#cq').innerHTML)return;const q=L.$('#cq');q.innerHTML='<h2 class="sub">How many of the 20 requests were slower than the mean?</h2>';
+    L.mc(q,['17 of them','10 of them','3 of them'],2,
+     'Only 3 (300 ms, 900 ms and 2.4 s). Two outliers pulled the mean up to 279 ms, more than double the typical wait. The median, 115 ms, is much closer to a typical recipient’s wait.',
+     'Count the red bars: only 3 are slower than the mean. A couple of huge outliers drag the mean up, so it describes almost nobody’s real wait. The median does.');};
+  L.$('#so').onclick=()=>{cur=V.slice().sort((a,b)=>a-b);draw();};
+  L.$('#me').onclick=()=>{shown.add('me');draw();ask();};
+  L.$('#md').onclick=()=>{shown.add('md');draw();ask();};}},
+{part:1,src:'Chapter 1 · Describing Performance',run(L){
+  L.h(L.kick('learn','Why the tail matters')+'<h1 class="q">The slowest requests often belong to your best customers</h1>'+
+   L.prose('High percentiles are called '+L.g('tail-latency','tail latencies')+'. The book’s example: Amazon sets response-time targets for internal services at p999, even though that affects only 1 request in 1,000. The slowest requests often come from customers with the most data on their accounts, who have bought the most: the most valuable customers.')+
+   L.prose('Amazon also saw that 100 ms of extra response time cut sales by 1%. But it judged p9999 (1 in 10,000) too costly to optimize: random events beyond your control dominate there, and the gains shrink.')+
+   L.note('Percentiles often appear in an '+L.g('sla','SLA')+'. Example: the service counts as “up” if the median is under 200 ms and p99 under 1 s, and it must be up at least 99.9% of the time. Miss it, and customers can ask for a refund.','shield')+
+   '<p class="small" style="margin-top:12px">At Otterpost, Bramble & Bolt has by far the most parcels, so its dashboard pages are likely the slowest. That’s the tail worth watching.</p>');
+  L.done();}},
+{part:1,src:'Chapter 1 · Describing Performance',run(L){
+  L.h(L.kick('ex','Peak Week, day one')+'<h1 class="q">The server says 40 ms. Recipients say 3 seconds. Who’s right?</h1>');
+  L.beats(L.card,[
+   ['The puzzle','Server logs say tracking requests take about 40 ms. Recipients complain that the page takes 3 seconds.'],
+   ['The queue','Each server works on only a few requests at once, limited by its processor cores. A few heavy requests, such as huge merchant reports, hold up the quick ones waiting behind them. This is '+L.g('head-of-line','head-of-line blocking')+'.'],
+   ['The blind spot','The server’s timer starts only when it picks a request up. The time spent waiting in the queue never shows. So Kwame starts measuring response time on the <b>client</b> side.'],
+   ['The test that lied','Last month’s load test said all was fine. But its test client waited for each answer before sending the next request, so queues never built up the way they do with real recipients.'],
+   ['The fix','Kwame reruns the test with a client that keeps sending requests on schedule, whatever the response times. Now the 3-second tail shows up before real users find it.']],
+   'Queueing delays make up much of the time at high percentiles. Measure where the user is, and test with load that doesn’t politely wait.');}},
+{part:1,src:'Chapter 1 · Percentiles in Practice',run(L){
+  L.h(L.kick('learn','Percentiles in practice')+'<h1 class="q">One slow call makes the whole page slow</h1>'+
+   L.prose('Many pages need several backend calls. Even if they run in parallel, the page waits for the <b>slowest</b> one.')+
+   L.flow([['pointer','Tracking page','asks 4 services at once'],['layers','4 backend calls','3 fast, 1 slow','',4],['clock','Page is slow','it waits for the slowest','',4]])+
+   L.prose('So even if only a small share of backend calls are slow, a larger share of pages end up slow. The book calls this <b>tail latency amplification</b>.')+
+   L.list([['Track a rolling window','e.g. the last 10 minutes of response times, with percentiles recomputed every minute. Sorting the whole list works; approximation algorithms such as t-digest or HdrHistogram are cheaper.'],
+     ['Never average percentiles','Averaging p99s across machines or time periods is meaningless. Add up the histograms (counts per time bucket) instead.']],2));
+  L.done();}},
+{part:1,src:'Chapter 1 · Percentiles in Practice',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Sound practice or mistake?',['Sound practice','Mistake'],[
+   ['To get one Otterpost-wide p99, Kwame averages the p99 of each of the six web servers.',1,'Averaging percentiles is meaningless. Add the six histograms, then read the p99 off the total.'],
+   ['The page calls 5 services at once, each slow 1% of the time. Tobias says 1% of pages will be slow.',1,'The page waits for the slowest call, so about 5% of pages hit at least one slow call. That’s tail latency amplification.'],
+   ['Zainab tracks p50, p95 and p99 over the last 10 minutes, recomputed every minute.',0,'A rolling window keeps the dashboard current without storing everything forever.'],
+   ['The load tester waits for each response before sending its next request.',1,'That keeps queues artificially short. The tester should send independently of response times.'],
+   ['Femi judges the merchant dashboard by its p999, since the biggest merchants have the slowest pages.',0,'Like Amazon’s p999 targets: the tail is where the most valuable customers are.']]);}},
+
+/* ---------- PART 3: COPING WITH LOAD ---------- */
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',run(L){
+  L.h(L.kick('learn','Scaling up or scaling out')+'<h1 class="q">Expect to rethink your design at every tenfold jump in load</h1>'+
+   L.prose('A design that fits one level of load is unlikely to cope with ten times that. A fast-growing service may need to rethink its architecture at every order of magnitude, or even more often.')+
+   L.lanes([['box','Scaling up (vertical)','Move to a more powerful machine. Simpler to run, but high-end machines get very expensive.',1],
+            ['layers','Scaling out (horizontal)','Spread the load over several smaller machines, a '+L.g('shared-nothing','shared-nothing')+' design. Hard to avoid for very heavy work.',2]])+
+   L.prose('Real systems mix both. A few fairly powerful machines can be simpler and cheaper than many tiny ones.')+
+   L.note('Some systems are '+L.g('elastic','elastic')+' and add machines by themselves when load rises. Useful when load is very unpredictable. Scaling by hand is simpler and brings fewer surprises.','cycle'));
+  L.done();}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',run(L){
+  L.h(L.kick('learn','No magic scaling sauce')+'<h1 class="q">Every scalable design is built for its own load</h1>'+
+   L.prose('Spreading <b>stateless</b> services (ones that keep no data between requests, like web servers) over many machines is fairly easy. Spreading a <b>stateful</b> data system adds a lot of complexity. So the common wisdom has been: keep your database on one '+L.g('node','node')+' and scale it up, until cost or availability needs force you to distribute it.')+
+   L.quote('there is no such thing as a generic, one-size-fits-all scalable architecture','Martin Kleppmann, chapter 1')+
+   L.prose('The problem might be read volume, write volume, data size, data complexity, response-time needs or access patterns, usually a mix. A design that scales is built on assumptions about which operations are common and which are rare. Get those wrong and the scaling work is wasted, or even harmful.')+
+   '<p class="small">For an early-stage product, the book says, moving fast on features usually matters more than scaling for some imagined future load.</p>');
+  L.done();}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias compares two systems from a blog post. One handles 100,000 requests a second, each 1 kB. The other handles 3 requests a minute, each 2 GB. “Same data per second, so same design,” they say. Are they right?</h1>');
+  L.mc(L.card,['Yes, data per second is what drives the design','Yes, as long as both use the same database','No, the shapes of the load are very different'],2,
+   'Both move about 100 MB a second, but tiny frequent requests and huge rare files need very different systems. That’s the book’s own example.',
+   'Equal throughput doesn’t mean equal design, and sharing a database doesn’t fix it. Many tiny requests and a few huge files stress completely different things.');}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:5,run(L){
+  L.h(L.kick('pr','Name the move')+'<h1 class="q">Otterpost prepares for Peak Week. Sort each change.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Scale up','Scale out by hand','Elastic'],[
+   ['Move the Parcel DB to a server with four times the memory.',0,'One more powerful machine is scaling up.'],
+   ['Kwame adds four more tracking-page web servers before the rush.',1,'More machines, added by a person: scaling out by hand.'],
+   ['The web tier adds servers by itself when Bramble & Bolt’s flash sale starts.',2,'Adding resources automatically when load rises is elastic.'],
+   ['Run Linh’s nightly batch on one 64-core machine instead of an 8-core one.',0,'A bigger single machine: scaling up.'],
+   ['Spread GPS pings over six machines, each storing some of the couriers.',1,'Splitting the work across several machines is scaling out.']],
+   'Up = a bigger machine. Out = more machines. Elastic = more machines, added automatically.');}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s plan')+'<h1 class="q">Peak Week will triple traffic. The tracking-page web servers keep no data; the Parcel DB holds it all. Which plan follows the common wisdom the book describes?</h1>');
+  L.mc(L.card,['Scale up the web servers; leave the Parcel DB','Split the Parcel DB across many small machines now','Scale out the web servers; scale up the Parcel DB'],2,
+   'Stateless web servers are easy to spread out. The stateful database is the hard part, so the common wisdom keeps it on one bigger machine until cost or availability forces a split.',
+   'Stateless web servers are the easy part to spread across machines. Splitting the stateful Parcel DB adds lots of complexity, so the usual advice is to scale it up first.');}},
+
+/* ---------- PART 4: MAINTAINABILITY ---------- */
+{part:3,src:'Chapter 1 · Maintainability',run(L){
+  L.h(L.kick('learn','Maintainability')+'<h1 class="q">Most of software’s cost comes after it ships</h1>'+
+   L.prose('Fixing bugs, keeping systems running, investigating failures, moving to new platforms, adapting to new uses, paying off technical debt, adding features: that ongoing work is where most of the money goes. Many people dislike “legacy” systems, so the aim is to design software that won’t become one.')+
+   L.tiers([['eye','Operability','Make it easy for operations teams to keep the system running smoothly.'],
+            ['leaf','Simplicity','Make it easy for new engineers to understand the system, by removing complexity. Not the same as a simple user interface.'],
+            ['cycle','Evolvability','Make it easy to change the system for needs nobody foresaw. Also called extensibility or modifiability.']]));
+  L.done();}},
+{part:3,src:'Chapter 1 · Operability: Making Life Easy for Operations',run(L){
+  L.h(L.kick('learn','Operability')+'<h1 class="q">Good operations can rescue weak software, but not the reverse</h1>'+
+   L.prose('Operations teams watch system health, track down causes of trouble, apply security patches, plan capacity, set up deployment tools and keep knowledge alive as people come and go. A data system can make their routine work easy by:')+
+   L.list([['eye','Showing what’s going on','Good monitoring of the system’s behaviour and internals.'],
+     ['layers','Not depending on one machine','Any machine can go down for maintenance while the rest keeps running.'],
+     ['book','Being easy to predict','Clear docs and a simple model: “if I do X, Y will happen.” Few surprises.'],
+     ['scale','Good defaults, with override','Sensible behaviour out of the box, self-healing where it fits, but manual control when admins need it.']],1)+
+   '<p class="small" style="margin-top:10px">Support for automation and standard tools is on the book’s list too.</p>');
+  L.done();}},
+{part:3,src:'Chapter 1 · Simplicity: Managing Complexity',run(L){
+  L.h(L.kick('learn','Simplicity')+'<h1 class="q">Remove the complexity users never asked for</h1>'+
+   L.prose('Small projects can be simple. Big ones drift into a “big ball of mud”: tangled dependencies, tightly coupled modules, inconsistent names, performance hacks, special cases working around problems elsewhere. Every change gets slower and riskier.')+
+   L.prose('Simpler doesn’t mean fewer features. It means removing '+L.g('accidental-complexity','accidental complexity')+': complexity that isn’t part of the problem users see, only of how it was built.')+
+   L.note('The best tool is a good <b>abstraction</b>: a clean surface that hides messy details and can be reused. SQL is one: it hides on-disk data structures, other users’ requests running at the same time, and the mess left by crashes. Good abstractions for distributed systems are much harder to find.','layers'));
+  L.done();}},
+{part:3,src:'Chapter 1 · Evolvability: Making Change Easy',run(L){
+  L.h(L.kick('learn','Evolvability')+'<h1 class="q">Requirements never stand still</h1>'+
+   L.prose('You learn new facts, new uses appear, priorities shift, laws change, growth forces new designs. Agile methods, test-driven development and refactoring help, but usually at the scale of a few source files.')+
+   L.prose('The book looks for the same agility at the level of a whole <b>data system</b>. Its example: how would you “refactor” Twitter’s timelines from approach 1 to approach 2? It calls this ease of change <b>evolvability</b>.')+
+   L.flow([['leaf','Simple','easy to understand','',1],['cycle','Evolvable','easy to change','',2]])+
+   L.prose('The two go together: simple, well-abstracted systems are usually easier to change than complex ones.'));
+  L.done();}},
+{part:3,src:'Chapter 1 · Simplicity: Managing Complexity',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab lists what makes the parcel code hard to work on. Which item is accidental complexity?</h1>');
+  L.mc(L.card,['Prices that vary by parcel size and zone','Three different names for the parcel ID','Rules for when a recipient isn’t home'],1,
+   'Users never see what the ID field is called. Three names for one thing exist only because of how the code grew, so it can be removed.',
+   'Pricing rules and missed-delivery rules are part of the real problem merchants and recipients see. Three names for one ID come only from the implementation: that’s accidental.');}},
+{part:3,src:'Chapter 1 · Maintainability',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which principle does it serve?',['Operability','Simplicity','Evolvability'],[
+   ['Kwame can reboot any one web server for a security patch without merchants noticing.',0,'Not depending on any single machine makes operations easier.'],
+   ['Tobias removes a two-year-old performance hack that special-cases Bramble & Bolt in five places.',1,'Hacks and special cases are accidental complexity.'],
+   ['Adding Nordhaven’s different address format takes one small change, not a rewrite.',2,'Adapting to a new, unforeseen need is evolvability.'],
+   ['The admin tool tells operators exactly what will happen before they pause a hub.',0,'A predictable “if I do X, Y happens” model is part of operability.'],
+   ['Zainab hides the messy courier-shift rules behind one clean function every screen reuses.',1,'A good abstraction hides detail and removes duplicated complexity.'],
+   ['Linh plans how to move the tracking page from look-up-on-view to push-on-write without downtime.',2,'Refactoring a whole data system’s design is evolvability.']]);}},
+{part:3,src:'Chapter 1 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Put it together')+'<h1 class="q">The book separates what a system does (<b>functional</b> requirements) from general qualities like reliability and scalability (<b>nonfunctional</b>). Tap the pieces until the sentence is right.</h1>');
+  L.sentence(L.card,[['Letting merchants book a parcel','Keeping p99 under 1 s in Peak Week'],['is a functional requirement','is a nonfunctional requirement'],['about scalability:','about maintainability:'],['add capacity as load grows.','make the code easy to change.']],[1,1,0,0],
+   [['Booking a parcel is something the system does, so it’s functional. Pick the requirement about speed under load.'],['A response-time target under heavy load isn’t a feature; it’s a quality the system must keep.'],['This is about coping with load, not about people working on the code.'],['Easy-to-change code is maintainability. Coping with Peak Week load means adding capacity.']],
+   'A scalable system keeps performance good as load grows, by letting you add processing capacity.');}}
+  ]
+});
+</script>
+</body>
+</html>

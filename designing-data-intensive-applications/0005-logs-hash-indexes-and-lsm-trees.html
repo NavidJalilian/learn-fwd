@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Logs, Hash Indexes and LSM-Trees</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+const LOGBOX='font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;background:var(--soft);border-radius:14px;padding:12px 14px;line-height:1.75;overflow-wrap:anywhere;margin:12px 0';
+Course.lesson({
+  id:'0005', title:'Logs, hash indexes and LSM-trees', minutes:20, icon:'layers',
+  goals:['Explain why every index speeds up reads but slows down writes','Trace how a hash index and an LSM-tree store and find a key','Pick the right log-structured design for an Otterpost workload'],
+  parts:['The simplest database','Hash indexes','SSTables and LSM-trees','LSM in practice'],
+  read:'Read the first part of chapter 3 (up to “B-Trees”) for the book’s two-line shell database and its cat-video counter.',
+  glossary:{
+    'storage-engine':'Storage engine: the part of a database that decides how data is laid out on disk and in memory, and how it is found again.',
+    'hashmap':'Hash map: an in-memory lookup table (a “dictionary”) that jumps straight from a key to its entry without searching.',
+    'segment':'Segment: one file of a log. When it reaches a set size it is closed, never changed again, and new writes go to a fresh segment.',
+    'compaction':'Compaction: rewriting log segments to throw away values that were overwritten or deleted, keeping only the latest value for each key.',
+    'tombstone':'Tombstone: a special record appended to say “this key was deleted.” When segments are merged, it tells the merge to drop the key’s older values.',
+    'checksum':'Checksum: a short fingerprint computed from a record. If the record is cut off or damaged, the fingerprint no longer matches.',
+    'range-query':'Range query: a request for every key between a minimum and a maximum, such as all courier IDs from C-0100 to C-0199.',
+    'sstable':'SSTable (Sorted String Table): a segment file whose key-value pairs are sorted by key, with each key appearing only once.',
+    'memtable':'Memtable: the sorted tree in memory where an LSM storage engine collects new writes before writing them out as an SSTable.',
+    'lsm':'LSM-tree (Log-Structured Merge-Tree): a storage engine design that keeps a memtable plus a cascade of SSTables on disk, merged in the background.',
+    'bloom':'Bloom filter: a small in-memory structure that can tell for certain that a key is not in a set, so the engine can skip disk reads for missing keys.'
+  },
+  cheatsheet:[
+    '<b>The index trade-off:</b> well-chosen indexes speed up reads, but every index slows down writes. Choose them from the queries you actually run.',
+    '<b>Simplest database:</b> an append-only log. Writes are cheap appends; without an index, every read scans the whole file.',
+    '<b>Hash index:</b> an in-memory map from each key to its byte offset. Fast, but every key must fit in memory and range queries are slow.',
+    '<b>Segments and compaction:</b> close files at a set size, keep only the latest value per key, merge in the background. Deletes are tombstones.',
+    '<b>SSTable:</b> a segment sorted by key. Merging works like mergesort, a sparse index is enough, and blocks can be compressed.',
+    '<b>LSM-tree:</b> writes go to a memtable (and a crash log), get flushed as SSTables, then merged. Reads check the newest data first.',
+    '<b>Tuning:</b> Bloom filters skip lookups for keys that don’t exist; compaction is size-tiered or leveled.'
+  ],
+  steps:[
+/* ---------- PART 1: THE SIMPLEST DATABASE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost writes every parcel scan as a new line at the end of one long file. Nothing is ever erased. Which line says where parcel OP-4471 is now?</h1>');
+  L.mc(L.card,['The first line that mentions OP-4471','The last line that mentions OP-4471'],1,
+   'New lines only ever go on the end, so the newest news about a parcel is its last line. That one rule is the heart of the simplest database there is.',
+   'The first line is the oldest news: where the parcel was at pickup. Lines only go on the end, so the last mention is the newest.');}},
+{part:0,src:'Chapter 3 · Storage and Retrieval',run(L){
+  L.h(L.kick('learn','Why look under the hood?')+'<h1 class="q">You won’t build a storage engine, but you will pick one</h1>'+
+   L.prose('At heart a database does two jobs: it stores the data you give it, and it hands that data back when you ask. Chapter 2 looked at this from your side. This chapter looks from the database’s side: how it lays the data out, and how it finds it again.')+
+   L.prose('Why should an app developer care? You will probably never write a '+L.g('storage-engine','storage engine')+', but you will choose one and tune it for your workload. That needs a rough picture of what it does inside. The chapter looks at two families:')+
+   L.flow([['layers','Log-structured','Only ever appends to files. Old files get merged and thrown away.','this lesson',1],['box','Page-oriented','Splits the disk into fixed-size pages and overwrites them in place, like B-trees.','next lesson',2]],false)+
+   '<p class="small">Engines built for quick reads and writes by users also differ a lot from engines built for analytics. Lesson 7 covers that split.</p>');
+  L.done();}},
+{part:0,src:'Chapter 3 · Data Structures That Power Your Database',run(L){
+  L.h(L.kick('learn','The world’s simplest database')+'<h1 class="q">Two tiny functions make a key-value store</h1>'+
+   L.prose('The book opens with a database made of two short shell functions. <b>set</b> appends one line, <i>key,value</i>, to the end of a text file. <b>get</b> returns the value on the <i>last</i> line with that key.')+
+   '<div style="'+LOGBOX+'">C-0017,Zone W2<br>C-0230,Hub W1<br><b>C-0017,Zone W4</b> <span style="color:var(--muted)">← get C-0017</span></div>'+
+   L.prose('Updating a key overwrites nothing: the old line stays, and the newest one wins. Writing is about as fast as it gets, because appending to a file is cheap. Many real databases use a '+L.g('log','log')+' like this inside. Here “log” means any append-only list of records, not the debug messages an app prints.')+
+   L.prose('Reading is the problem. To find one key, <b>get</b> must scan the whole file from start to end. Double the records and every lookup takes twice as long.'));
+  L.done();}},
+{part:0,src:'Chapter 3 · Data Structures That Power Your Database',pts:1,
+ solve:async L=>{L.$('#grow').click();L.$('#grow').click();L.$('#idx').click();},
+ run(L){
+  let n=10,idx=false,grows=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias keeps each courier’s latest position in a log like this. Grow the file, then add an index. Watch what one lookup costs.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:8px 0 12px">'+
+   '<div class="small">Records in the file</div><div class="week" id="nn"></div>'+
+   '<div class="meterrow"><div class="lb">Lines read to get C-0017</div><div class="meter"><div id="mr" style="background:var(--h3)"></div></div></div>'+
+   '<p class="small" id="rd" style="margin:0 0 10px"></p>'+
+   '<div class="small">Work done on every write</div><p id="wr" style="margin:2px 0 0;font-weight:600"></p></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="grow">'+L.ic('trend')+'Add 10× more records</button><button class="btn pri" id="idx">'+L.ic('list')+'Add an index</button></div><div id="q"></div>');
+  const draw=()=>{L.$('#nn').textContent=n.toLocaleString('en-US');
+    L.$('#mr').style.width=idx?'4%':Math.round(Math.log10(n)/5*100)+'%';
+    L.$('#rd').innerHTML=idx?'<b>1 jump</b>: the index says where the newest C-0017 line is.':'<b>'+n.toLocaleString('en-US')+' lines</b>: the whole file, to be sure of the last match.';
+    L.$('#wr').innerHTML=idx?'Append one line <span style="color:var(--no)">+ update the index</span>':'Append one line';
+    if(n>=100000)L.$('#grow').disabled=true;
+    if(grows>=2&&idx&&!L.$('#q').innerHTML){const q=L.$('#q');q.innerHTML='<h2 class="sub">What did the index cost?</h2>';
+      L.mc(q,['Each lookup now reads the file twice','The file must now be sorted by key','Each write now also updates the index'],2,
+       'That’s the trade-off. Lookups became one quick jump, and in return every write does a little extra work to keep the index up to date.',
+       'Look at the write line: with the index on, every write also updates it. Lookups got far cheaper, and nothing needed sorting.');}};
+  L.$('#grow').onclick=()=>{if(n<100000){n*=10;grows++;draw();}};
+  L.$('#idx').onclick=function(){idx=true;this.disabled=true;this.innerHTML=L.ic('check')+'Index on';draw();};
+  draw();}},
+{part:0,src:'Chapter 3 · Data Structures That Power Your Database',run(L){
+  L.h(L.kick('learn','The index trade-off')+'<h1 class="q">An index is a signpost, and signposts need upkeep</h1>'+
+   L.prose('An '+L.g('index','index')+' is extra data kept on the side that points to where things are. It is built from the main data, so adding or dropping an index never changes what the database holds. It only changes how fast queries run.')+
+   L.quote('Well-chosen indexes speed up read queries, but every index slows down writes.','Martin Kleppmann, chapter 3')+
+   L.prose('Every write has to update every index too, and nothing beats a plain append for speed. So databases don’t index everything by default. You choose the indexes, based on the queries your app actually runs.')+
+   L.note('Need to search the same data in several different ways? You may need several indexes, each with its own cost on writes.','info'));
+  L.done();}},
+{part:0,src:'Chapter 3 · Data Structures That Power Your Database',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants an index on all 40 columns of the scan-events table, “just in case.” Couriers write millions of scans a day. What happens?</h1>');
+  L.mc(L.card,['Writing scans gets slower, for little gain','Nothing changes until someone runs a query','Reads get slower, since there’s more to search'],0,
+   'Every scan would now update 40 indexes, and most would never help a real query. Index the columns your queries actually search on.',
+   'Indexes are updated on every write, not later at query time, and they make reads faster, not slower. The cost lands on writes: each scan would update 40 indexes.');}},
+
+/* ---------- PART 2: HASH INDEXES ---------- */
+{part:1,src:'Chapter 3 · Hash Indexes',run(L){
+  L.h(L.kick('learn','Hash indexes')+'<h1 class="q">Keep a map from each key to where its value sits</h1>'+
+   L.prose('Most programming languages have a '+L.g('hashmap','hash map')+'. The simplest index for an append-only file is one of these, kept in memory: each key maps to the <b>byte offset</b> (the position in the file) where its newest value starts.')+
+   L.flow([['list','In memory','The hash map says C-0017 is at byte 64.','one entry per key',1],['pointer','One seek','Jump straight to byte 64 in the file.','no scanning',2],['box','On disk','Read the value there.','the append-only file',3]])+
+   L.prose('Each write appends to the file and updates the map. Each read looks up the offset and reads from there. This is roughly what Bitcask, the default storage engine in Riak, does.')+
+   L.note('<b>The catch:</b> every key must fit in memory. The values don’t have to, because each one is a single disk seek away. It suits data where a modest number of keys get updated very often, like the book’s count of how many times each cat video was played.','alert'));
+  L.done();}},
+{part:1,src:'Chapter 3 · Hash Indexes',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Tobias’s latest-position store, step by step</h1>');
+  L.beats(L.card,[
+   ['The data','About 3,000 couriers are on shift, and each phone sends a GPS ping every few seconds. Tobias only needs each courier’s <b>latest</b> position.'],
+   ['A write','A ping from C-0017 arrives. The store appends <b>C-0017, Zone W4</b> at byte 6,120 of the file and sets C-0017 → 6,120 in the hash map.'],
+   ['Another write','Ten seconds later C-0017 pings again. A new line goes on the end at byte 9,880, and the map now says 9,880. The old line is still in the file, but nothing points to it.'],
+   ['A read','Dispatch asks where C-0017 is. One map lookup gives 9,880, and one disk seek reads the line. No scanning.'],
+   ['Why it fits','Only about 3,000 keys, so the map is tiny. But each key is written thousands of times a day. Many writes per key, few keys: exactly the shape this index suits.']],
+   'A hash index turns a lookup by key into one jump instead of a scan. It works as long as all the keys fit in memory.');}},
+{part:1,src:'Chapter 3 · Hash Indexes',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which Otterpost data suits a hash index kept in memory best?</h1>');
+  L.mc(L.card,['Every scan event ever, searched by time range','Each hub’s running count of parcels handled today','All parcels, listed in order of delivery postcode'],1,
+   'A few dozen hubs, each counter bumped thousands of times a day: few keys, many writes per key. Just like the cat-video play counter.',
+   'A hash map keeps no order, so “by time range” or “in postcode order” means checking keys one by one. The hub counters are few keys with many writes, the perfect fit.');}},
+{part:1,src:'Chapter 3 · Hash Indexes',run(L){
+  const seg=(xs,dim)=>'<div style="margin:6px 0 2px">'+xs.map(x=>'<span class="chip static'+(dim&&dim.includes(x)?'':' ok')+'" style="'+(dim&&dim.includes(x)?'opacity:.4;text-decoration:line-through':'')+'">'+x+'</span>').join('')+'</div>';
+  const raw=['C-0017 W2','C-0230 W1','C-0017 W3','C-0230 W5','C-0017 W4'];
+  L.h(L.kick('learn','Segments and compaction')+'<h1 class="q">An append-only file would fill the disk, so cut it into segments</h1>'+
+   L.prose('If you only ever append, the file grows forever. The fix: close the file once it reaches a set size and start a new '+L.g('segment','segment')+'. A closed segment is never changed again.')+
+   L.prose(L.g('compaction','Compaction')+' rewrites closed segments, keeping only the latest value for each key:')+
+   '<div class="small">Segment before compaction</div>'+seg(raw,['C-0017 W2','C-0230 W1','C-0017 W3'])+
+   '<div class="small">After: one value per key</div>'+seg(['C-0230 W5','C-0017 W4'])+
+   L.list([['Merge too','Compacted segments are small, so several can be merged into one new file at the same time.'],
+     ['In the background','A background thread does the merging. Reads and writes carry on using the old files. When the new file is ready, reads switch to it and the old files are deleted.'],
+     ['Newest first','Each segment has its own hash map. A lookup checks the newest segment’s map, then the next-older one. Merging keeps the number of segments small.']],2));
+  L.done();}},
+{part:1,src:'Chapter 3 · Hash Indexes',run(L){
+  L.h(L.kick('learn','Making it real')+'<h1 class="q">Five details that turn the idea into a real engine. Tap each one.</h1>');
+  L.flips(L.card,[
+   ['File format','CSV is a poor fit. A binary format that writes each string’s length in bytes, then the raw bytes, needs no escaping.'],
+   ['Deleting a key','Append a special deletion record, a '+L.g('tombstone','tombstone')+'. When segments are merged, it tells the merge to drop all older values for that key.'],
+   ['Crash recovery','A restart wipes the in-memory hash maps. Rebuilding them means reading every segment, which can be slow. Bitcask saves a snapshot of each map on disk to load quickly.'],
+   ['Half-written records','A crash can cut a record off mid-append. Bitcask files include '+L.g('checksum','checksums')+', so a damaged record is spotted and ignored.'],
+   ['Concurrency','Writes go on the end in strict order, so a common choice is one single writer thread. Segments never change, so many threads can read them at once.']],
+   'See the pattern? Because finished files never change, crashes and concurrency become much simpler to handle.');}},
+{part:1,src:'Chapter 3 · Hash Indexes',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which fix?',['Tombstone','Checksum','Snapshot of the map','Segments + compaction','Length-prefixed format'],[
+   ['A courier leaves Otterpost, and their key must disappear from the store.',0,'Append a tombstone. When segments merge, every older value for that key is dropped.'],
+   ['The power fails halfway through appending a ping. On restart, the last record is cut short.',1,'Each record’s checksum shows that the cut-off one doesn’t match, so it is skipped.'],
+   ['After a reboot, the server spends 20 minutes reading every segment before it can answer.',2,'Rebuilding every hash map from scratch is slow. Loading a saved snapshot of each map is much faster.'],
+   ['The disk keeps filling with old pings that no one will ever read again.',3,'Close segments at a set size, then compact and merge them so only the latest value per key survives.'],
+   ['A value contains a comma and a line break, and the reader splits it in the wrong place.',4,'Write each value’s length first, then the raw bytes. The reader never has to guess where a value ends.']]);}},
+{part:1,src:'Chapter 3 · Hash Indexes',run(L){
+  L.h(L.kick('learn','Wasteful or wise?')+'<h1 class="q">Why not just overwrite the old value in place?</h1>'+
+   L.lanes([['check','Why append-only wins','<p style="margin:0 0 8px">Appending and merging are <b>sequential writes</b>, much faster than writing to random spots, especially on spinning hard disks and to some extent on SSDs.</p><p style="margin:0 0 8px">Crashes are simpler: you never end up with a value that is half old and half new.</p><p style="margin:0">Merging stops the data files from getting fragmented over time.</p>',2],
+            ['alert','Where hash indexes fall short','<p style="margin:0 0 8px">The map must <b>fit in memory</b>. A hash map on disk needs lots of random reads, is costly to grow, and handles collisions awkwardly.</p><p style="margin:0"><b>'+L.g('range-query','Range queries')+'</b> are slow: to get every courier from C-0100 to C-0199, you look up each key one by one.</p>',4]])+
+   '<p class="small" style="margin-top:12px">The next part fixes both limits with one small change.</p>');
+  L.done();}},
+{part:1,src:'Chapter 3 · Hash Indexes',pts:1,run(L){
+  L.h(L.kick('pr','Spot the limit')+'<h1 class="q">Zainab is asked to keep every parcel since launch, about 900 million tracking codes, in a hash-indexed log on a server with 16 GB of memory. What is the real problem?</h1>');
+  L.mc(L.card,['The map of all the keys may not fit in memory','Appending 400,000 new records a day is too slow','The parcel records won’t fit in memory'],0,
+   'Right. Values live on disk and cost one seek each, so their size is fine. It’s the in-memory map of every key that runs out of room.',
+   'Appends are the cheapest write there is, and records stay on disk, one seek away. The limit is the in-memory map: with hundreds of millions of keys, it may not fit.');}},
+
+/* ---------- PART 3: SSTABLES AND LSM-TREES ---------- */
+{part:2,src:'Chapter 3 · SSTables and LSM-Trees',run(L){
+  L.h(L.kick('learn','SSTables')+'<h1 class="q">One small change: keep each segment sorted by key</h1>'+
+   L.prose('Now require every segment file to be sorted by key, with each key appearing only once in a merged segment. This format is called a '+L.g('sstable','Sorted String Table, or SSTable')+'. It brings three big wins:')+
+   L.list([['Easy merging','Merge files the way mergesort does: read them side by side and copy the smallest key each time. This works even when the files are bigger than memory. If a key is in several files, keep the value from the newest one.'],
+     ['A sparse index','You no longer need every key in memory. One key for every few kilobytes of file is enough: any other key must lie between two of these signposts, and a few kilobytes scan quickly.'],
+     ['Compressed blocks','The records between two signposts can be grouped into a block and compressed. That saves disk space and the bandwidth needed to read them.']],3)+
+   '<p class="small" style="margin-top:10px">But writes arrive in any order. How do they end up sorted? That comes in a few screens.</p>');
+  L.done();}},
+{part:2,src:'Chapter 3 · SSTables and LSM-Trees',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Finding courier C-0217 with a sparse index</h1>');
+  L.beats(L.card,[
+   ['The file','An SSTable of courier keys, sorted. The index in memory holds only some keys: C-0150 at byte 8,000, C-0300 at byte 12,000, and so on.'],
+   ['Narrow it down','C-0217 sorts after C-0150 and before C-0300. If it is in the file at all, it lies between bytes 8,000 and 12,000.'],
+   ['Read one block','Jump to byte 8,000 and read forward. That stretch was stored as one compressed block, so it is one small read.'],
+   ['Stop early','The keys are sorted. Once the scan passes a key bigger than C-0217, the engine knows C-0217 isn’t in this file.']],
+   'Sorting lets a small set of signposts do the job of a full index.');}},
+{part:2,src:'Chapter 3 · SSTables and LSM-Trees',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The sparse index has C-0400 at byte 20,000 and C-0520 at byte 26,000. Where does the search for C-0488 start?</h1>');
+  L.mc(L.card,['At byte 26,000, reading backward','At byte 20,000, reading forward','At byte 0, the start of the file'],1,
+   'C-0488 sorts between C-0400 and C-0520, so it can only be in that stretch. Start at the lower signpost and scan forward.',
+   'The keys are sorted, so C-0488 can only sit between the C-0400 and C-0520 signposts. Jump to byte 20,000 and scan forward. No need to start from the beginning.');}},
+{part:2,src:'Chapter 3 · SSTables and LSM-Trees',pts:1,
+ solve:async L=>{for(let k=0;k<10;k++){const b=L.$('#mg [data-right="1"]');if(!b)break;b.click();await L.sleep(5);}},
+ run(L){
+  const A=[['C-0002','Westport North'],['C-0005','Zone W3'],['C-0009','Zone W1']],B=[['C-0003','Zone W2'],['C-0005','Zone W4'],['C-0011','Eastvale Depot']];
+  let a=0,b=0,miss=0,fin=false;const out=[];
+  L.h(L.kick('pr','Merge by hand')+'<h1 class="q">Merge two SSTables into one. Tap the entry that goes next into the new file.</h1><div id="mg"></div><div id="mm"></div>');
+  const right=()=>a>=A.length?'b':b>=B.length?'a':A[a][0]<B[b][0]?'a':A[a][0]>B[b][0]?'b':'b';
+  const col=(name,xs,k,side)=>'<div class="lane"><div class="lh">'+L.ic(side==='a'?'clock':'star')+name+'</div>'+
+    (k>=xs.length?'<p class="small" style="margin:0">Empty</p>':xs.slice(k).map((x,j)=>j===0?'<button class="chip" data-side="'+side+'"'+(right()===side?' data-right="1"':'')+'>'+x[0]+' · '+x[1]+'</button>':'<span class="chip static" style="opacity:.55">'+x[0]+' · '+x[1]+'</span>').join(''))+'</div>';
+  const draw=()=>{L.$('#mg').innerHTML='<div class="two">'+col('Older SSTable',A,a,'a')+col('Newer SSTable',B,b,'b')+'</div>'+
+    '<div class="small" style="margin-top:14px">New merged SSTable</div><div style="'+LOGBOX+'">'+(out.length?out.map(x=>x[0]+' · '+x[1]).join('<br>'):'<span style="color:var(--muted)">(empty)</span>')+'</div>';
+    L.$$('#mg button').forEach(btn=>btn.onclick=()=>take(btn.dataset.side));};
+  const take=s=>{if(fin)return;const r=right();L.$('#mm').innerHTML='';
+    if(s!==r){miss++;const tie=a<A.length&&b<B.length&&A[a][0]===B[b][0];
+      L.fb(L.$('#mm'),tie?'<b>Same key in both files.</b> Which value is more recent?':'<b>Not yet.</b> The new file must stay sorted. Which key comes first?','no');return;}
+    if(s==='b'){if(a<A.length&&A[a][0]===B[b][0]){L.fb(L.$('#mm'),'C-0005 was in both files. The newer value wins, and the older one is dropped.','ok');a++;}out.push(B[b]);b++;}
+    else{out.push(A[a]);a++;}
+    draw();
+    if(a>=A.length&&b>=B.length){fin=true;L.award(miss===0);
+      L.sheet(miss===0?'ok':'info',miss===0?'Perfect merge':'Merged','Smallest key first, and when both files hold the same key, the newer file wins. The engine only ever looks at the front of each file, which is why this works even for files bigger than memory.');L.done();}};
+  draw();}},
+{part:2,src:'Chapter 3 · Constructing and maintaining SSTables',run(L){
+  L.h(L.kick('learn','Memtables')+'<h1 class="q">Writes arrive in any order, so sort them in memory first</h1>'+
+   L.prose('Keeping data sorted on disk is hard. In memory it’s easy, with a balanced tree such as a red-black tree: insert keys in any order, read them back sorted. So the engine works like this:')+
+   L.flow([['pencil','1 · Memtable','Each write goes into a sorted tree in memory, the '+L.g('memtable','memtable')+'.','',1],['down','2 · Flush','At a few megabytes, it’s written out as a new SSTable. A fresh memtable takes new writes meanwhile.','',2],['layers','3 · Merge','In the background, SSTables are merged and old or deleted values dropped.','',3]])+
+   L.prose('Reads check the memtable first, then the newest SSTable, then older ones. One risk: a crash wipes the memtable. So every write is also appended straight away to a separate log on disk. That log isn’t sorted and doesn’t need to be: its only job is to rebuild the memtable. After a flush, it’s thrown away.')+
+   '<p class="small">This design is the '+L.g('lsm','LSM-tree')+' (Log-Structured Merge-Tree), first described by Patrick O’Neil and others. LevelDB and RocksDB work this way, and Cassandra and HBase use similar engines, inspired by Google’s Bigtable paper.</p>');
+  L.done();}},
+{part:2,src:'Chapter 3 · Making an LSM-tree out of SSTables',pts:1,run(L){
+  L.h(L.kick('pr','Follow a read')+'<h1 class="q">Tobias rebuilds the ping store as an LSM-tree. Dispatch asks it for key C-0042. Tap the places it checks, in order.</h1>');
+  L.order(L.card,['The memtable in memory','The newest SSTable on disk','The next-older SSTable','The oldest SSTable'],
+   'Newest first, because a newer value for a key always overrides an older one. Only when every place says “not here” does the engine know the key doesn’t exist.');}},
+{part:2,src:'Chapter 3 · Constructing and maintaining SSTables',pts:1,run(L){
+  L.h(L.kick('pr','Crash test')+'<h1 class="q">Tobias’s LSM store crashes. Its memtable held 3 MB of pings that were not yet flushed. What brings them back?</h1>');
+  L.mc(L.card,['The newest SSTable on disk','The sparse index in memory','The unsorted log on disk'],2,
+   'Every write was appended to that log the moment it arrived. Replaying it rebuilds the memtable.',
+   'Those pings never reached an SSTable, and anything in memory is gone after a crash. The unsorted log on disk was written first, exactly for this.');}},
+
+/* ---------- PART 4: LSM IN PRACTICE ---------- */
+{part:3,src:'Chapter 3 · Performance optimizations',run(L){
+  L.h(L.kick('learn','Two tuning knobs')+'<h1 class="q">Bloom filters and the style of compaction</h1>'+
+   L.prose('Looking up a key that <i>doesn’t</i> exist is slow in an LSM-tree. The engine checks the memtable, then every segment back to the oldest, maybe reading disk each time. So engines often add a '+L.g('bloom','Bloom filter')+': a small structure in memory that can say “this key is definitely not here” and skip those reads.')+
+   L.prose('Engines also differ in when and how SSTables get merged. The two most common styles:')+
+   L.tiers([['layers','Size-tiered compaction','Newer, smaller SSTables are merged into older, larger ones.','HBase uses it. Cassandra supports both styles.'],
+            ['list','Leveled compaction','The key range is split into smaller SSTables, and older data moves into separate “levels.” Compaction goes in smaller steps and uses less disk space.','LevelDB (hence the name) and RocksDB use it.']]));
+  L.done();}},
+{part:3,src:'Chapter 3 · Making an LSM-tree out of SSTables',run(L){
+  L.h(L.kick('learn','Why LSM-trees caught on')+'<h1 class="q">A cascade of sorted files, merged in the background, is simple and effective</h1>'+
+   L.list([['layers','Bigger than memory','It keeps working well even when the data is far larger than the available memory.'],
+     ['list','Range queries','The data is stored sorted, so scanning all keys between a minimum and a maximum is efficient.'],
+     ['trend','Fast writes','Disk writes are sequential, so it can take a remarkably high rate of writes.']],1)+
+   L.prose('The same idea powers full-text search. Lucene, the indexing engine behind Elasticsearch and Solr, keeps its <b>term dictionary</b> in SSTable-like sorted files, merged in the background. The key is a word (a term). The value is the list of IDs of every document that contains it, called the <b>postings list</b>.'));
+  L.done();}},
+{part:3,src:'Chapter 3 · Making an LSM-tree out of SSTables',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Signe’s support team searches recipient names. In a full-text index like Lucene’s, what is the key and what is the value?</h1>');
+  L.mc(L.card,['Key: a word. Value: IDs of parcels that mention it','Key: a parcel ID. Value: every word on that parcel','Key: a past search. Value: the results it returned'],0,
+   'Look up “Okoro” as one key and get back the list of matching parcels in one go. That list is the postings list.',
+   'A search starts from a word, so the word is the key. Its value is the postings list: the IDs of every parcel that mentions it.');}},
+{part:3,src:'Chapter 3 · Data Structures That Power Your Database',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Hash index or LSM-tree?',['Hash-indexed log','LSM-tree','Both of them'],[
+   ['Needs every single key to fit in memory.',0,'The hash map holds every key. An LSM-tree only needs a sparse index in memory.'],
+   ['Can scan all couriers from C-0100 to C-0199 efficiently.',1,'SSTables are sorted by key, so a range is one sequential scan. A hash map keeps no order.'],
+   ['Only ever appends to files, and merges old segments in the background.',2,'Both are log-structured: neither ever modifies a file once it is written.'],
+   ['Collects writes in a sorted memtable, then flushes it to disk.',1,'The memtable is how an LSM-tree gets random writes sorted before writing them out.'],
+   ['Often uses a Bloom filter to skip disk reads for missing keys.',1,'A missing key forces an LSM-tree to check every segment. A Bloom filter avoids that.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

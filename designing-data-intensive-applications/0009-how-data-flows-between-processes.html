@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Data Flows Between Processes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0009', title:'How data flows between processes', minutes:20, icon:'arrow',
+  goals:['Say who encodes and who decodes in databases, service calls and message brokers','Explain why a network call is not a local function call, and what a timeout really tells you','Plan an API or message change that old and new code can both survive'],
+  parts:['Through databases','Through services','Remote calls','Through messages'],
+  read:'Read chapter 4 of the book, from “Modes of Dataflow” to the end of the chapter, for the full discussion of REST, RPC and message brokers.',
+  glossary:{
+    'encoding':'Encoding: turning data held in memory (objects, lists, pointers) into a self-contained sequence of bytes that can be saved or sent over the network. Also called serialization or marshalling. Decoding is the reverse.',
+    'backward-compat':'Backward compatibility: newer code can read data that was written by older code.',
+    'forward-compat':'Forward compatibility: older code can read data that was written by newer code, by ignoring the parts it doesn’t know.',
+    'rolling-upgrade':'Rolling upgrade: updating a system one machine at a time, so the whole system never has to go down.',
+    'service':'Service: the API a server offers over the network. Clients send it requests and get responses, but can only ask for what the service’s code allows.',
+    'rest':'REST: a design style for web APIs built on HTTP’s own ideas: URLs name resources, and HTTP features handle caching, authentication and content types. An API built this way is called RESTful.',
+    'rpc':'Remote procedure call (RPC): a way of making a request to a service on another machine look like an ordinary function call in your code.',
+    'idempotence':'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
+    'broker':'Message broker (or message queue): an intermediary that receives messages from senders, stores them for a while, and delivers them to one or more recipients.',
+    'actor':'Actor: a unit of program logic with its own private state that talks to other actors only by sending and receiving messages, one message at a time.'
+  },
+  cheatsheet:[
+    'Data that leaves a process gets <b>encoded</b> by one process and <b>decoded</b> by another. Compatibility is about that pair.',
+    '<b>Databases</b>: the writer encodes, a later reader decodes. Need backward (your future self reads it) and forward (old code during a rolling upgrade). Old code must keep fields it doesn’t understand.',
+    '<b>Data outlives code</b>: rows from years ago keep their old encoding. Snapshots usually re-encode everything with the latest schema.',
+    '<b>Services</b>: client encodes request, server decodes it and encodes a response, client decodes. REST builds on HTTP; SOAP is a heavy XML protocol.',
+    '<b>RPC</b> pretends a network call is a local one. It isn’t: lost messages, timeouts that tell you nothing, retries that run twice (need <b>idempotence</b>), wild latency, encoded arguments.',
+    'Servers usually upgrade first: <b>backward</b> compatibility on requests, <b>forward</b> on responses. Across organizations, keep old API versions alive, with the version in the URL, a header or a per-key setting.',
+    '<b>Message brokers</b>: buffer, redeliver, no addresses needed, one-to-many, decoupled. Usually one-way. The broker just moves bytes, so use a compatible encoding.',
+    '<b>Actors</b> assume messages can be lost, so location transparency fits better. Rolling upgrades still need forward and backward compatibility.'
+  ],
+  steps:[
+/* ---------- PART 1: THROUGH DATABASES ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s oldest parcel rows were written six years ago by Femi’s first version of the app. Which code reads them today?</h1>');
+  L.mc(L.card,['Today’s code, many versions later','Only the version that wrote them'],0,
+   'The first version of the code is long gone, but its data is still in the Parcel DB. Today’s code has to understand it.',
+   'That version stopped running years ago. The rows are still there, so today’s code must read them.');}},
+{part:0,src:'Chapter 4 · Modes of Dataflow',run(L){
+  L.h(L.kick('learn','Modes of dataflow')+'<h1 class="q">Who encodes, and who decodes?</h1>'+
+   L.prose('Whenever data goes to a process you don’t share memory with, such as over the network or into a file, it must be '+L.g('encoding','encoded')+' as bytes. Compatibility is a relationship between two processes: the one that encodes the data and the one that decodes it.')+
+   L.prose('The book looks at the three most common ways data travels between processes:')+
+   L.flow([['layers','Through databases','one process writes, another reads later','',1],['chat','Through services','REST and RPC: request, then response','',2],['arrow','Through messages','sent via a broker, without waiting','',3]],false)+
+   '<p class="small" style="margin-top:10px">Each one asks for compatibility in a slightly different way.</p>');
+  L.done();}},
+{part:0,src:'Chapter 4 · Dataflow Through Databases',run(L){
+  L.h(L.kick('learn','Through databases')+'<h1 class="q">Writing to a database is a message to your future self</h1>'+
+   L.prose('The process that writes to the database encodes the data; the process that reads it decodes it. If only one program uses the database, the reader is just a later version of the same program. It must read what its earlier self wrote, so '+L.g('backward-compat','<b>backward compatibility</b>')+' is clearly needed.')+
+   L.prose('Usually many processes share a database: different services, or several copies of one service. During a '+L.g('rolling-upgrade','rolling upgrade')+', some run new code and some run old code. So a row written by new code may be read by old code: '+L.g('forward-compat','<b>forward compatibility</b>')+' is often needed too.')+
+   L.note('There’s one more snag: old code that reads a record, changes it and writes it back must not wipe out fields it doesn’t understand.','alert'));
+  L.done();}},
+{part:0,src:'Chapter 4 · Dataflow Through Databases',run(L){
+  L.h(L.kick('ex','A bug at Otterpost')+'<h1 class="q">The safe place that disappeared</h1>');
+  L.beats(L.card,[
+   ['The record','Each parcel’s delivery preferences (phone number, doorbell note and so on) are stored in the Parcel DB as one encoded record.'],
+   ['A new field','The new merchant dashboard adds <code>safePlace</code>. Mrs. Okoro sets theirs to “behind the green bin”.'],
+   ['Old code','Signe’s support tool still runs the older code. An agent updates Mrs. Okoro’s phone number.'],
+   ['Decode','The tool decodes the record into its own model object. That object has no slot for <code>safePlace</code>, so the value is dropped right there.'],
+   ['Write back','The tool encodes the object and writes the whole record back. The safe place is gone, and the next parcel is left on the doorstep.']],
+   'The encoding format could have kept the unknown field. It was lost when the app turned the record into its own objects and back. Not hard to fix, but you have to know about it.');}},
+{part:0,src:'Chapter 4 · Dataflow Through Databases',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame is rolling out a new dashboard version, a few servers at a time. All of them read and write the Parcel DB. Which compatibility do its records need?</h1>');
+  L.mc(L.card,['Backward only: new code reads old rows','Both: old servers also read new rows','Forward only: old code reads new rows'],1,
+   'New servers read rows old servers wrote, and old servers read rows new ones wrote. During a rolling upgrade you need both.',
+   'Mid-rollout, old and new servers share the same rows, so data flows both ways. You need backward and forward compatibility.');}},
+{part:0,src:'Chapter 4 · Dataflow Through Databases',pts:1,
+ solve:async L=>{const g=L.$('#mode').children;g[0].click();g[1].click();},
+ run(L){
+  const M=['Old tool rebuilds the record from its model','Old tool keeps fields it doesn’t know'],seen=new Set();
+  const R=['phone <b>07700 900123</b> · doorbell “ring twice” · <span style="color:var(--no)"><b>safePlace: gone</b></span>',
+           'phone <b>07700 900123</b> · doorbell “ring twice” · <span style="color:var(--ok)"><b>safePlace: behind the green bin</b></span>'];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">The old support tool changes Mrs. Okoro’s phone number. Try both ways of writing the record back.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0"><div class="small" style="margin-bottom:4px">Before (written by the new dashboard)</div><div class="small">phone 07700 900456 · doorbell “ring twice” · safePlace: behind the green bin</div></div>'+
+   '<div id="mode"></div><div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:64px"><div class="small" style="margin-bottom:4px">After the old tool saves</div><div id="out" class="small">Pick a way above.</div></div><div id="mq"></div>');
+  M.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{[...L.$('#mode').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);L.$('#out').innerHTML=R[j];
+    if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">What should the support tool’s code do?</h2>';
+      L.mc(q,['Refuse to save records that have new fields','Strip unknown fields before saving a record','Keep fields it doesn’t know and write them back'],2,
+       'Old code should carry unknown fields through untouched. The encoding formats support this; the app’s own model objects must not throw them away.',
+       'Refusing to save would block support work, and stripping fields is the bug itself. The fix is to keep unknown fields and write them back unchanged.');}};L.$('#mode').appendChild(b);});}},
+{part:0,src:'Chapter 4 · Different values written at different times',pts:1,run(L){
+  L.h(L.kick('learn','Data outlives code')+'<h1 class="q">A new deploy replaces the code, not the data</h1>'+
+   L.quote('Data outlives code.','a saying the book cites in chapter 4')+
+   L.prose('One database can hold values written five milliseconds ago and values written five years ago. You can replace all the code in minutes, but old rows keep their original encoding unless someone rewrites them. Rewriting (migrating) a big dataset is expensive, so most databases avoid it.')+
+   L.prose('For example, most relational databases can add a column with a null default without touching old rows: they fill in null when an old row is read. So the database <i>looks</i> as if it uses one schema, though its storage holds many past versions.')+
+   L.note('<b>Snapshots are different.</b> A backup or a copy for the warehouse is usually written all at once with the <b>latest</b> schema. It never changes afterwards, so formats like Avro files, or column-oriented Parquet, fit well.','layers')+
+   '<div id="aq"><h2 class="sub">Kwame takes a monthly snapshot of the Parcel DB, whose rows span six years of schema versions. How is it usually encoded?</h2></div>');
+  L.mc(L.$('#aq'),['All rows in the latest schema','Each row in its original encoding','As plain text with no schema'],0,
+   'You’re copying everything anyway, so you might as well encode the copy consistently with the latest schema.',
+   'The snapshot is written in one go, so it is usually re-encoded consistently with the latest schema, not left in a mix of old encodings.');}},
+
+/* ---------- PART 2: THROUGH SERVICES ---------- */
+{part:1,src:'Chapter 4 · Dataflow Through Services: REST and RPC',run(L){
+  L.h(L.kick('learn','Clients and servers')+'<h1 class="q">A service is an API with rules</h1>'+
+   L.prose('Servers expose an API over the network, and clients make requests to it. That API is a '+L.g('service','<b>service</b>')+'. Browsers are clients, but so are phone apps and JavaScript apps in a web page, which usually get JSON back rather than HTML.')+
+   L.flow([['person','Courier app','client','',1],['chat','Scan service','server, and also a client…','',2],['layers','Parcel DB','…of the database','',3]])+
+   L.prose('A server can itself be a client of another service. Splitting an app into services this way is called service-oriented architecture, or more recently <b>microservices</b>. Unlike a database, which accepts any query, a service allows only the inputs and outputs its code allows.')+
+   L.note('The goal: each team can release its service often, without waiting for other teams. So old and new versions of clients and servers <b>will</b> run at the same time, and their encodings must be compatible.','cycle'));
+  L.done();}},
+{part:1,src:'Chapter 4 · Web services',run(L){
+  L.h(L.kick('learn','Web services: REST and SOAP')+'<h1 class="q">Two very different philosophies</h1>'+
+   L.prose('When a service talks HTTP, it’s called a <b>web service</b>, even when it has nothing to do with the web. Two approaches are popular, and their fans argue a lot:')+
+   L.lanes([['leaf','REST','Not a protocol but a <b>design style</b> built on HTTP: simple data formats, URLs to name resources, and HTTP’s own caching, authentication and content types. Common for APIs between organizations. OpenAPI (Swagger) can describe it.',2],
+            ['box','SOAP','An <b>XML-based protocol</b> that tries to be independent of HTTP, with a sprawling family of standards (WS-*). Described in WSDL, which generates code. Hard without tools, and different vendors don’t always work together.',4]])+
+   '<p class="small" style="margin-top:12px">SOAP is still used in many large enterprises but has fallen out of favor in smaller companies. Despite the name, SOAP is not required for service-oriented architecture (SOA).</p>');
+  L.done();}},
+{part:1,src:'Chapter 4 · Web services',run(L){
+  L.h(L.kick('ex','Otterpost’s web services')+'<h1 class="q">The same HTTP, three different settings</h1>');
+  L.beats(L.card,[
+   ['Phone to server','The courier app sends scans to Otterpost’s API over the public internet.'],
+   ['Service to service','Inside Otterpost’s Westport datacenter, the dispatch service asks the ETA service for a delivery window. Software for this is sometimes called middleware.'],
+   ['Between organizations','When a parcel is delivered, Otterpost calls Bramble & Bolt’s server with a status webhook. Bramble & Bolt’s own systems call Otterpost’s merchant API to book parcels.'],
+   ['What they share','All three are web services, since they use HTTP. In each, the two sides are released separately, so the encoding must survive version mismatches.']],
+   'A “web service” is any service spoken over HTTP: phone apps, internal services and other companies all use them.');}},
+{part:1,src:'Chapter 4 · Web services',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which description fits REST?</h1>');
+  L.mc(L.card,['An XML protocol described with WSDL','A design style built on HTTP’s features','A binary encoding that uses field tags'],1,
+   'REST isn’t a protocol at all. It’s a philosophy that leans on HTTP: URLs, caching, authentication, content types.',
+   'The XML protocol with WSDL is SOAP, and field tags belong to Thrift and Protocol Buffers. REST is a design style built on HTTP.');}},
+{part:1,src:'Chapter 4 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Follow the bytes')+'<h1 class="q">Bramble & Bolt’s server asks Otterpost’s merchant API for a parcel’s status. Tap the steps in order.</h1>');
+  L.order(L.card,['Client encodes the request','Server decodes the request','Server encodes the response','Client decodes the response'],
+   'One service call means two encodings and two decodings. Both the request and the response must stay compatible across versions.');}},
+{part:1,src:'Chapter 4 · Web services',pts:6,run(L){
+  L.h(L.kick('pr','REST or SOAP?')+'<h1 class="q">Sort each trait.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['REST','SOAP'],[
+   ['Uses URLs to identify resources',0,'Naming resources with URLs is a core REST principle.'],
+   ['Described in WSDL, an XML language',1,'WSDL describes SOAP services and is used to generate client code.'],
+   ['Uses HTTP’s own caching and content types',0,'REST builds on HTTP’s features; SOAP avoids most of them.'],
+   ['Comes with the WS-* family of standards',1,'SOAP’s many add-on standards are known as WS-*.'],
+   ['Hard to use from a language its vendors don’t support',1,'SOAP relies heavily on vendor tools and generated code.'],
+   ['Can be described with OpenAPI (Swagger)',0,'OpenAPI is a way to describe RESTful APIs and produce documentation.']],
+   'REST stays close to HTTP and needs little tooling. SOAP is a large XML protocol that leans on tools and code generation.');}},
+
+/* ---------- PART 3: REMOTE CALLS ---------- */
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',run(L){
+  L.h(L.kick('learn','The problem with RPC')+'<h1 class="q">A network call only looks like a function call</h1>'+
+   L.prose('Since the 1970s, '+L.g('rpc','remote procedure calls')+' have tried to make a request to another machine look like calling a local function. The book argues the idea is deeply flawed, because a network request differs from a local call in six ways:')+
+   L.list([['Unpredictable','The request or reply can be lost, or the other machine can be slow or down. None of that is in your control.'],
+     ['Timeouts tell you nothing','If no reply comes, you can’t know whether the request got through.'],
+     ['Retries can run twice','If only the reply was lost, a retry does the work again, unless you build in deduplication ('+L.g('idempotence','idempotence')+').'],
+     ['Latency varies wildly','Under a millisecond at good times; many seconds when the network or service is overloaded.'],
+     ['Arguments must be encoded','You can’t pass pointers. Numbers are fine; large objects get awkward.'],
+     ['Languages differ','Types must be translated between languages, like JavaScript’s trouble with numbers above 2<sup>53</sup>.']],1)+
+   '<p class="small" style="margin-top:8px">Older RPC systems (Java’s RMI, Microsoft’s DCOM, CORBA) also had other limits. Part of REST’s appeal is that it doesn’t pretend the network isn’t there.</p>');
+  L.done();}},
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',pts:1,
+ solve:async L=>{L.$('#pd').children[2].click();L.$('#rp').click();},
+ run(L){
+  let p=null;const P=['Yes, the parcel was booked','No, the booking failed','There’s no way to tell'];
+  const S=[['arrow','The request reaches Otterpost.'],['check','Otterpost books parcel OP-48213 and takes $4.20 from Bramble & Bolt’s credit.'],['x','The reply is lost on the way back.'],['clock','Bramble & Bolt’s server sees only a timeout.']];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt’s server calls Otterpost’s merchant API to book a parcel. Ten seconds pass with no reply: timeout. Did the booking happen?</h1><div id="pd"></div>'+
+   '<div id="tl" hidden><button class="btn pri" id="rp" style="margin-top:12px">'+L.ic('play')+'Replay what really happened</button><div id="lines" style="margin-top:12px"></div></div>');
+  P.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#tl').hidden=false;};L.$('#pd').appendChild(b);});
+  L.$('#rp').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const box=L.$('#lines');if(!box){clearInterval(t);return;}
+      box.insertAdjacentHTML('beforeend','<div class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0">'+L.ic(S[k][0])+'<span>'+S[k][1]+'</span></div>');k++;
+      if(k>=S.length){clearInterval(t);L.award(p===2);
+        L.sheet(p===2?'ok':'no',p===2?'Exactly: you can’t tell':'From their side, you can’t tell','This time the booking happened; another time the request itself might have been lost. A timeout looks the same either way. If Bramble & Bolt simply retries, Otterpost books a second parcel and charges twice, unless the API can spot the repeat (idempotence). The book returns to this in later chapters.');L.done();}},450);};}},
+{part:2,src:'Chapter 4 · Current directions for RPC',run(L){
+  L.h(L.kick('learn','RPC today')+'<h1 class="q">RPC isn’t going away, but it’s more honest now</h1>'+
+   L.prose('RPC frameworks exist for every encoding from the last lesson: gRPC uses Protocol Buffers, Thrift and Avro have RPC built in, and others use JSON over HTTP. The newer ones admit that a remote call is different:')+
+   L.list([['clock','Futures (promises)','wrap a call that may fail later, and make it easy to call several services in parallel and combine the results.'],
+     ['cycle','Streams','in gRPC, one call can be a series of requests and responses over time.'],
+     ['compass','Service discovery','lets a client find out at which address and port a service lives.']],2)+
+   L.lanes([['flame','Custom binary RPC','Can be faster. Mostly used between services of the <b>same</b> organization, in one datacenter.',3],
+            ['leaf','REST','Easy to try from a browser or curl, works in every language, huge ecosystem of tools. The usual choice for <b>public</b> APIs.',2]]));
+  L.done();}},
+{part:2,src:'Chapter 4 · Current directions for RPC',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Otterpost’s merchant API is used by about 2,000 shops, written in many languages. Which style fits it best?</h1>');
+  L.mc(L.card,['Java RMI, so calls look like local ones','A custom binary RPC protocol for speed','A RESTful API that sends JSON'],2,
+   'Public APIs favour REST: any language can call it, merchants can try it from a browser or curl, and the tools are everywhere.',
+   'RMI is Java-only, and custom binary RPC suits services inside one organization. For a public API, REST’s reach and easy debugging matter more than raw speed.');}},
+{part:2,src:'Chapter 4 · Data encoding and evolution for RPC',run(L){
+  L.h(L.kick('learn','Evolving an API')+'<h1 class="q">Servers first, clients second</h1>'+
+   L.prose('It’s reasonable to assume all servers are updated before all clients. That simplifies things: you need '+L.g('backward-compat','<b>backward</b>')+' compatibility on <b>requests</b> (new servers read old clients’ requests) and '+L.g('forward-compat','<b>forward</b>')+' compatibility on <b>responses</b> (old clients read new servers’ responses).')+
+   L.prose('An API inherits its rules from its encoding. For JSON REST APIs, adding an optional request parameter or a new response field usually keeps compatibility.')+
+   L.note('Across organizations it gets harder: the provider can’t force clients to upgrade, so compatibility may be needed for years. A breaking change often means running <b>several API versions side by side</b>.','alert')+
+   L.prose('There’s no agreed way to pick a version. Common choices: a version number in the URL, in the HTTP Accept header, or a version stored per API key on the server, changed in an admin page.'));
+  L.done();}},
+{part:2,src:'Chapter 4 · Data encoding and evolution for RPC',run(L){
+  L.h(L.kick('ex','Otterpost versions its merchant API')+'<h1 class="q">Some changes ride along; one needs a new version</h1>');
+  L.beats(L.card,[
+   ['The wish','Femi wants status responses to show a delivery window (from–to) instead of a single <code>eta</code> time, and bookings to include the parcel’s size.'],
+   ['Who upgrades','Otterpost updates its servers in an afternoon. Bramble & Bolt takes months to change its code, and some small shops never will.'],
+   ['Safe','Adding <code>etaWindow</code> to responses while keeping <code>eta</code> is fine: old merchant code ignores the new field (forward compatibility on responses).'],
+   ['Also safe','Adding <code>parcelSize</code> as an <b>optional</b> booking parameter is fine: old requests without it still work (backward compatibility on requests).'],
+   ['Breaking','Dropping <code>eta</code> would break every old client that reads it. So Zainab puts that change in <code>/v2/</code>, keeps <code>/v1/</code> running alongside, and merchants move when they’re ready.']],
+   'Add, don’t take away. When something must be taken away, run the old version alongside the new one.');}},
+{part:2,src:'Chapter 4 · Data encoding and evolution for RPC',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Safe in v2, or v3 needed?',['Safe to add to v2','Needs a new version'],[
+   ['Add a <code>courierFirstName</code> field to the parcel-status response.',0,'Old clients ignore fields they don’t know. New response fields keep compatibility.'],
+   ['Add an optional <code>giftMessage</code> parameter to the booking request.',0,'Old clients simply don’t send it. Optional request parameters keep compatibility.'],
+   ['Remove the <code>labelUrl</code> field that old clients read from booking responses.',1,'Old clients expect it in the response, so removing it breaks forward compatibility.'],
+   ['Make a new <code>customsCode</code> parameter required on every booking.',1,'Old clients never send it, so new servers would reject their requests. That breaks backward compatibility on requests.'],
+   ['Rename the request parameter <code>postcode</code> to <code>postalCode</code>.',1,'Old clients keep sending <code>postcode</code>, which the new server no longer reads.']]);}},
+
+/* ---------- PART 4: THROUGH MESSAGES ---------- */
+{part:3,src:'Chapter 4 · Message-Passing Dataflow',run(L){
+  L.h(L.kick('learn','Message brokers')+'<h1 class="q">Halfway between a phone call and a letter in a database</h1>'+
+   L.prose('Asynchronous message passing sits between RPC and databases. Like RPC, a message reaches another process quickly. Like a database, it doesn’t go directly: it goes through a '+L.g('broker','<b>message broker</b>')+' (message queue) that stores it for a while.')+
+   L.list([['shield','A buffer','If the recipient is down or overloaded, messages wait.'],['cycle','Redelivery','A message is redelivered to a process that crashed, so it isn’t lost.'],['compass','No addresses','The sender needn’t know the recipient’s IP address and port.'],['people','One to many','One message can reach several recipients.'],['leaf','Decoupled','The sender just publishes and doesn’t care who consumes.']],3)+
+   '<p class="small" style="margin-top:8px">The catch: it’s usually <b>one-way</b>. The sender sends and forgets. A reply, if any, goes on a separate channel.</p>');
+  L.done();}},
+{part:3,src:'Chapter 4 · Message brokers',run(L){
+  L.h(L.kick('ex','Otterpost’s notification queue')+'<h1 class="q">A day in the life of a status message</h1>');
+  L.beats(L.card,[
+   ['Publish','A courier scans a parcel “out for delivery”. The scan service sends a message to the <b>topic</b> for status changes and moves on. Many producers and consumers can share one topic.'],
+   ['A buffer','The notification sender is restarted for ten minutes. Messages wait in the broker and go out when it’s back.'],
+   ['Redelivery','The sender crashes halfway through one message. The broker hands that message to the restarted process.'],
+   ['A second consumer','Linh adds a consumer that counts deliveries per zone. The scan service doesn’t change at all.'],
+   ['Just bytes','The broker doesn’t care about the data: a message is bytes plus a little metadata. Otterpost uses its scan-event schema, so producers and consumers can upgrade in any order.'],
+   ['Re-publishing','One consumer adds the recipient’s language and re-publishes to another topic. Like the support tool, it must keep fields it doesn’t understand.']],
+   'A broker buffers, redelivers and fans out, but it only moves bytes. Compatibility is still your encoding’s job.');}},
+{part:3,src:'Chapter 4 · Message brokers',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias asks why the scan service never gets an answer back from the notification sender. What’s the answer?</h1>');
+  L.mc(L.card,['Messaging is usually one-way; replies go on a separate queue','The broker deletes replies to save space and time','The notification sender is broken and needs fixing'],0,
+   'Message passing is asynchronous: the sender sends and forgets. If a reply is needed, the recipient publishes it to a reply queue.',
+   'Nothing is broken and nothing is deleted. Messages flow one way; a reply would need its own queue that the sender reads.');}},
+{part:3,src:'Chapter 4 · Distributed actor frameworks',run(L){
+  L.h(L.kick('learn','Distributed actors')+'<h1 class="q">Messages all the way down</h1>'+
+   L.prose('The <b>actor model</b> handles concurrency in one program without threads and locks. Logic lives in '+L.g('actor','actors')+': each has its own private state, handles one message at a time, and talks to others only by asynchronous messages, which may be lost.')+
+   L.prose('A <b>distributed</b> actor framework spreads actors over many nodes. Sending works the same either way; a message to another node is encoded, sent and decoded behind the scenes. Making remote look local fits better here than in RPC, because actors already expect lost messages.')+
+   L.note('Rolling upgrades still need both directions of compatibility. Akka uses Java’s built-in encoding by default (no compatibility; swap in Protocol Buffers). Orleans’s default format can’t do rolling upgrades at all. In Erlang OTP, changing record schemas is surprisingly hard.','alert'));
+  L.done();}},
+{part:3,src:'Chapter 4 · Modes of Dataflow',pts:5,run(L){
+  L.h(L.kick('pr','Name the dataflow')+'<h1 class="q">How does the data travel in each case?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Database','Service call','Message'],[
+   ['The courier app asks the server for today’s route and waits for the answer.',1,'A request with a response it waits for: a service call.'],
+   ['The scan service records a delivery attempt that the billing batch job reads at month end.',0,'One process writes now, another reads later: dataflow through a database.'],
+   ['The scan service publishes “delivered” and moves on; the notification sender picks it up.',2,'Sent through a broker without waiting: message passing.'],
+   ['Otterpost calls Bramble & Bolt’s webhook URL when a parcel’s status changes.',1,'An HTTP request to another organization’s server: a web service call.'],
+   ['Signe’s support tool reads a parcel row the dashboard wrote last year.',0,'Written once, read much later: through the database.']],
+   'Waiting for a reply means a service call. Writing for someone to read later means a database. Sending and moving on means a message.');}},
+{part:3,src:'Chapter 4 · Summary',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which compatibility is needed?',['Backward','Forward','Both directions'],[
+   ['A program reads back records it wrote to its own database last year.',0,'Today’s code reads its earlier self’s data: new code, old data.'],
+   ['Servers upgrade first. An old merchant integration reads a response from a new server.',1,'Old client code reads data written by new server code.'],
+   ['Servers upgrade first. A new server reads a request from an old merchant integration.',0,'New server code reads data written by old client code.'],
+   ['Mid-rollout, old and new dashboard servers read and write the same Parcel DB rows.',2,'Each side reads the other’s rows, so both directions are needed.'],
+   ['Producers and consumers on a broker topic are upgraded in any order.',2,'Any version may read any other version’s messages, so you need both.'],
+   ['During a rolling upgrade, actors on old and new nodes send each other messages.',2,'Messages go from new to old nodes and back, so both directions matter.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

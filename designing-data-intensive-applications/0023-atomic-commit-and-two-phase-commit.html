@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Atomic Commit and Two-Phase Commit</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0023', title:'Atomic commit and two-phase commit', minutes:20, icon:'lock',
+  goals:['Explain why a transaction across two databases needs every node to agree','Walk through two-phase commit and its two points of no return','Spot what goes wrong when the coordinator fails, and why XA hurts in practice'],
+  parts:['Why agree','Two phases','In doubt','In practice'],
+  read:'Read chapter 9 from “Distributed Transactions and Consensus” to the end of “Distributed Transactions in Practice” for the full story, including the marriage analogy and the XA details.',
+  glossary:{
+    'atomic-commit':'Atomic commit: making a transaction that touches several nodes end the same way on all of them. Every node commits, or every node aborts.',
+    'twopc':'Two-phase commit (2PC): an algorithm for atomic commit across nodes. A coordinator first asks every participant “can you commit?” (prepare), and only if all say yes tells them all to commit.',
+    'coordinator':'Coordinator (transaction manager): the part of two-phase commit that sends the prepare requests, writes the decision to its own log and tells every participant the outcome.',
+    'in-doubt':'In doubt (uncertain): the state of a participant that has voted yes but has not yet heard whether the transaction committed or aborted. It can only wait.',
+    'flp':'FLP result: a proof by Fischer, Lynch and Paterson that no algorithm can always reach consensus if a node may crash, in a model with no clocks or timeouts.',
+    'xa':'XA (X/Open eXtended Architecture): a 1991 standard for running two-phase commit across different products. It is a C programming interface to a coordinator, not a network protocol.',
+    'heuristic':'Heuristic decision: an emergency switch that lets a participant commit or abort an in-doubt transaction on its own, without the coordinator. It probably breaks atomicity.',
+    'compensating':'Compensating transaction: a new, separate transaction that undoes the effects of an earlier committed one. To the database it is just another transaction.'
+  },
+  cheatsheet:[
+    '<b>Atomic commit</b>: a transaction across several nodes must commit everywhere or abort everywhere. A commit can never be taken back.',
+    '<b>2PC</b>: the coordinator sends <b>prepare</b>. All yes → commit. Any no, or no answer → abort.',
+    'Two points of no return: a participant’s <b>yes</b> (it gives up the right to abort) and the coordinator’s <b>logged decision</b> (the commit point).',
+    'Coordinator dies after a yes → the participant is <b>in doubt</b>: it must wait, and keeps holding its locks.',
+    '<b>2PC is not 2PL.</b> 3PC needs bounded delays, so 2PC is still used. FLP says consensus is impossible only without timeouts.',
+    'Database-internal distributed transactions often work well. <b>Heterogeneous</b> ones (XA) are much harder.',
+    'Orphaned in-doubt transactions need a human. <b>Heuristic decisions</b> probably break atomicity.',
+    'The coordinator is a database too: single point of failure, stateful app servers, lowest common denominator, amplified failures.'
+  ],
+  steps:[
+/* ---------- PART 1: WHY AGREE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt books a parcel. Otterpost saves the parcel in one database and charges the merchant’s credit in another. The parcel saves, but the charge fails. Is that fine?</h1>');
+  L.mc(L.card,['Fine: the totals even out on the invoice','No: the two databases now disagree'],1,
+   'A parcel nobody paid for is exactly the half-done state this lesson is about. The two writes must succeed together or fail together.',
+   'Invoices are built from the charges, so this parcel would never be billed. The two writes must succeed together or fail together.');}},
+{part:0,src:'Chapter 9 · Distributed Transactions and Consensus',run(L){
+  L.h(L.kick('learn','Why nodes must agree')+'<h1 class="q">Getting nodes to agree sounds easy. It isn’t.</h1>'+
+   L.prose(L.g('consensus','Consensus')+' means getting several nodes to agree on something. It sounds simple. The book warns that many broken systems were built by people who believed it was.')+
+   L.list([['people','Leader election','In single-leader replication, every node must agree who the leader is. If a network fault splits them, two nodes may both think they lead (split brain). Both accept writes, and the data drifts apart.'],
+     ['check','Atomic commit','A transaction that spans several nodes may succeed on some and fail on others. To keep it atomic, all nodes must agree on one outcome: everyone commits, or everyone aborts.']],1)+
+   L.prose('This lesson is about the second one, '+L.g('atomic-commit','atomic commit')+'. Its classic answer, two-phase commit, turns out to be a kind of consensus algorithm, though not a very good one. The next lesson covers better ones.'));
+  L.done();}},
+{part:0,src:'Chapter 9 · The Impossibility of Consensus',run(L){
+  L.h(L.kick('learn','A famous proof')+'<h1 class="q">A proof says consensus is impossible. So why does anyone use it?</h1>'+
+   L.prose('The '+L.g('flp','FLP result')+', named after its authors Fischer, Lynch and Paterson, proves that no algorithm can <i>always</i> reach consensus if there’s a risk that a node may crash.')+
+   L.lanes([['lock','In the proof','The algorithm is deterministic and lives in the <b>asynchronous model</b>: no clocks, no timeouts, no way to suspect that a node has crashed.',3],
+            ['clock','In real systems','Algorithms use <b>timeouts</b> to suspect crashed nodes, even if the suspicion is sometimes wrong. Then consensus becomes solvable. Even <b>random numbers</b> are enough to escape the proof.',2]])+
+   L.prose('So FLP matters a lot in theory, but distributed systems can usually reach consensus in practice.'));
+  L.done();}},
+{part:0,src:'Chapter 9 · The Impossibility of Consensus',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias reads about FLP and posts in the team chat: “Consensus is proven impossible, so anything built on it is broken.” What’s the right reply?</h1>');
+  L.mc(L.card,['Only for nodes that lie on purpose, not crashes','The proof assumes no timeouts; real systems use them','Agreed: avoid any system that relies on consensus'],1,
+   'FLP holds in a model with no clocks or timeouts. Allow timeouts (or random numbers) and consensus becomes solvable.',
+   'FLP is about a node that may <i>crash</i>, in a model with no clocks or timeouts. Real algorithms use timeouts, which takes them outside the proof.');}},
+
+/* ---------- PART 2: TWO PHASES ---------- */
+{part:1,src:'Chapter 9 · From single-node to distributed atomic commit',run(L){
+  L.h(L.kick('learn','Commit on one node')+'<h1 class="q">On one node, a single disk write decides</h1>'+
+   L.prose('Atomicity means a transaction either <b>commits</b>, keeping all its writes, or <b>aborts</b>, undoing all of them. Nothing half-finished is left behind.')+
+   L.flow([['pencil','1 · Data','The transaction’s writes go to the write-ahead log on disk'],['check','2 · Commit record','Appended to the log after the data'],['shield','After a crash','Commit record on disk? Committed. Missing? Rolled back.']])+
+   L.prose('The deciding moment is when the disk finishes writing the commit record. Before it, a crash means abort. After it, the transaction is committed. One device on one node makes the decision.'));
+  L.done();}},
+{part:1,src:'Chapter 9 · From single-node to distributed atomic commit',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Billing gets its own database, and booking gets harder</h1>');
+  L.beats(L.card,[
+   ['The change','The finance team wants its own <b>billing ledger</b>, separate from the Parcel DB. They pick a different database product. Merchants’ credit balances move there.'],
+   ['The new problem','Booking a parcel now writes to two databases: the parcel row in the Parcel DB, and the charge against the merchant’s credit in the ledger. One '+L.g('transaction','transaction')+', two nodes.'],
+   ['Tobias’s plan','“Easy. When the booking is done, send <b>commit</b> to both databases.”'],
+   ['What can go wrong','The ledger sees Bramble & Bolt’s credit would drop below zero and aborts, while the Parcel DB commits. Or the commit to the ledger is lost in the network and times out. Or the ledger crashes before its commit record reaches the disk.'],
+   ['Why it can’t be undone','Once the Parcel DB commits, the parcel is visible. Dispatch may already have put it on a route. A commit must be <b>irrevocable</b>, or everything that read the parcel would have to be reverted too.'],
+   ['The rule','A node may only commit once it is sure every other node in the transaction will commit too.']],
+   'You can undo a committed write later only with a '+L.g('compensating','compensating transaction')+'. To the database that’s a separate transaction, so keeping the two in step is the application’s problem.');}},
+{part:1,src:'Chapter 9 · From single-node to distributed atomic commit',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The ledger aborted, but the Parcel DB already committed the parcel. Why can’t the Parcel DB just quietly roll it back?</h1>');
+  L.mc(L.card,['Other transactions may already have read the parcel and used it','A database can only roll back before the data reaches the disk','The Parcel DB has no way to find the parcel row again'],0,
+   'Committed data is visible to everyone. Taking it back would leave other work built on a parcel that “never existed.”',
+   'The problem isn’t technical. Once committed, the parcel is visible and others may rely on it, so a commit must never be taken back.');}},
+{part:1,src:'Chapter 9 · Introduction to two-phase commit',run(L){
+  L.h(L.kick('learn','Two-phase commit')+'<h1 class="q">Ask first, then decide</h1>'+
+   L.prose(L.g('twopc','Two-phase commit (2PC)')+' splits the commit into two phases. It adds a new piece: a '+L.g('coordinator','coordinator')+', also called the transaction manager. It’s often a library inside the application process, but can be a separate service. The databases in the transaction are the <b>participants</b>.')+
+   L.flow([['chat','Phase 1 · Prepare','The coordinator asks each participant: can you commit?'],['check','All say yes','Phase 2: commit, sent to all'],['x','Anyone says no','Phase 2: abort, sent to all']],false)+
+   L.prose('The book compares it to a wedding. The officiant asks each partner separately, and declares them married only after both say “I do.” If either says no, it’s off.')+
+   L.note('<b>Don’t confuse 2PC with 2PL.</b> Two-phase <i>commit</i> gives atomic commit across nodes. Two-phase <i>locking</i>, from the serializability lesson, gives serializable isolation. Despite the names, they’re unrelated.','alert'));
+  L.done();}},
+{part:1,src:'Chapter 9 · Introduction to two-phase commit',pts:1,
+ solve:async L=>{L.$('#prep').click();await L.sleep(900);L.$$('.chip[data-r="1"]').forEach(b=>b.click());},
+ run(L){
+  const S=[['Booking A','yes','yes'],['Booking B','yes','no: credit would go below zero'],['Booking C','yes','no reply: timed out']];
+  const O=['Commit to both','Abort to both','Commit Parcel DB only'],R=[0,1,1];
+  const W=[['Every participant promised it can commit, so the coordinator commits everywhere.','Nobody said no. When all participants vote yes, 2PC sends commit.','Never commit only some participants. The ledger would never get its commit, and the charge would be lost.'],
+           ['One “no” is enough to block the commit. The ledger never promised anything.','A single no means abort for everyone.','That’s the half-done booking 2PC exists to prevent: a parcel with no charge.'],
+           ['No answer is not a yes. If a prepare request fails or times out, the coordinator aborts.','If a prepare request fails or times out, the coordinator aborts everywhere.','Committing one side leaves a parcel with no charge. A timeout on prepare means abort for all.']];
+  let n=0,all=true;
+  L.h(L.kick('pr','Play the coordinator')+'<h1 class="q">Three bookings, two participants each. Send the prepare requests, read the votes, then choose what phase 2 sends.</h1>'+
+   '<button class="btn pri" id="prep">'+L.ic('play')+'Send prepare requests</button><div id="scs"></div><div id="cf"></div>');
+  L.$('#prep').onclick=function(){this.remove();const box=L.$('#scs');
+    S.forEach((s,k)=>{box.insertAdjacentHTML('beforeend','<div class="lane" style="margin-top:12px" id="sc'+k+'"><div class="lh">'+L.ic('box')+s[0]+'</div><div class="small" id="v'+k+'">Waiting for votes…</div><div id="o'+k+'" style="margin-top:8px"></div></div>');});
+    setTimeout(()=>{if(!L.$('#scs'))return;S.forEach((s,k)=>{const v=L.$('#v'+k);if(!v)return;
+      v.innerHTML='Parcel DB: <b>'+s[1]+'</b> · Ledger: <b>'+s[2]+'</b>';
+      const ob=L.$('#o'+k);O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;if(j===R[k])b.dataset.r='1';
+        b.onclick=()=>{if(ob.dataset.done)return;ob.dataset.done='1';const ok=j===R[k];if(!ok)all=false;
+          b.classList.add(ok?'ok':'no');if(!ok)ob.children[R[k]].classList.add('ok');L.fb(L.$('#sc'+k),W[k][j],ok?'ok':'no');
+          if(++n===S.length){L.award(all);L.sheet(all?'ok':'info',all?'Spot on':'Now you’ve seen all three','Commit needs a <b>yes from every participant</b>. A no, or no answer at all, means abort for everyone.');L.done();}};
+        ob.appendChild(b);});});},600);};}},
+{part:1,src:'Chapter 9 · A system of promises',run(L){
+  L.h(L.kick('learn','A system of promises')+'<h1 class="q">Why two phases work when one doesn’t</h1>'+
+   L.prose('Prepare and commit messages can get lost too. What makes 2PC safe is what each side <i>promises</i>, and writes to disk, before it answers.')+
+   L.list([['A global ID','The app gets a globally unique transaction ID from the coordinator.'],
+     ['Normal work','Reads and writes run on each participant in an ordinary single-node transaction tagged with that ID. If anything fails here, anyone may abort.'],
+     ['Prepare','The coordinator sends prepare to all. If any request fails or times out, it aborts.'],
+     ['Yes is a promise','Before voting yes, a participant writes everything to disk and checks constraints. A crash or a full disk is no excuse later. It gives up the right to abort.'],
+     ['Commit point','With all answers in, the coordinator decides and writes the decision to its own log on disk.'],
+     ['No going back','It sends the decision and retries forever until every participant has it, even one that crashed and came back.']],2)+
+   '<p class="small" style="margin-top:10px">Two points of no return: a participant’s yes, and the coordinator’s logged decision. On a single node, both happen in one moment: writing the commit record.</p>');
+  L.done();}},
+{part:1,src:'Chapter 9 · A system of promises',pts:1,run(L){
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Bramble & Bolt books parcel OP-7Q2. Put the steps of its two-phase commit in order.</h1><div id="od"></div>');
+  L.order(L.$('#od'),['Merchant API gets transaction ID T-881','Parcel row and ledger charge are written, tagged T-881','Coordinator asks both databases to prepare T-881','Both save T-881 to disk and answer yes','Coordinator writes “commit T-881” to its log','Coordinator sends commit, retrying until both confirm'],
+   'Work first, then prepare, then the promises, then the commit point, then enforcement. The decision is on disk <i>before</i> anyone is told.');}},
+{part:1,src:'Chapter 9 · A system of promises',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Can it still back out?',['Free to abort','Bound by a promise'],[
+   ['The ledger is halfway through writing the charge. No prepare request has arrived yet.',0,'Before the prepare, anything can still abort.'],
+   ['The Parcel DB has voted yes. Then its disk fills up.',1,'Voting yes meant it had already written everything to disk. A full disk is no excuse to refuse later.'],
+   ['The coordinator has both yes votes but hasn’t written its decision yet.',0,'Before the commit point, the coordinator may still choose to abort.'],
+   ['The coordinator has written “commit” to its log, but the ledger is unreachable.',1,'The decision is final. The coordinator must keep retrying until the ledger gets it.'],
+   ['The ledger voted yes, then crashed, and is now restarting.',1,'It promised. When it recovers, it must commit if the coordinator decided commit.']]);}},
+
+/* ---------- PART 3: IN DOUBT ---------- */
+{part:2,src:'Chapter 9 · Coordinator failure',run(L){
+  L.h(L.kick('learn','Coordinator failure')+'<h1 class="q">The hard case: the coordinator crashes</h1>'+
+   L.prose('Participant and network failures are handled: a failed prepare means abort, and a failed commit is retried forever. But what if the <b>coordinator</b> dies?')+
+   L.lanes([['check','Before voting yes','A participant that hasn’t promised anything can safely abort on its own.',2],
+            ['clock','After voting yes','It can’t abort or commit on its own. It must wait to hear from the coordinator. Its transaction is '+L.g('in-doubt','in doubt')+'.',4]])+
+   L.prose('A timeout doesn’t help. Abort alone, and you may disagree with a participant that already committed. Commit alone, and you may disagree with one that aborted. Participants could compare notes with each other, but that isn’t part of 2PC.'));
+  L.done();}},
+{part:2,src:'Chapter 9 · Coordinator failure',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">A crash between two commits</h1>');
+  L.beats(L.card,[
+   ['10:02:00','The merchant API server running the coordinator gets yes votes from the Parcel DB and the ledger for transaction T-904.'],
+   ['10:02:01','It writes “commit T-904” to its log (the commit point) and sends commit to the ledger. The ledger commits: Bramble & Bolt is charged.'],
+   ['10:02:01','The server crashes before sending commit to the Parcel DB. The parcel row is now <b>in doubt</b>.'],
+   ['Why wait?','If the Parcel DB gave up and aborted after a timeout, Bramble & Bolt would be charged for a parcel that doesn’t exist. It has to wait.'],
+   ['10:06','Kwame restarts the server. The coordinator reads its log, finds “commit T-904” and sends commit to the Parcel DB. The two agree again.']],
+   'On recovery the coordinator reads its log. A commit record means commit; no commit record means abort. So 2PC’s whole decision rests on one ordinary single-node commit, on the coordinator’s disk.');}},
+{part:2,src:'Chapter 9 · Coordinator failure',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">After a restart, the coordinator finds transaction T-911 in doubt at both databases. Its log has no decision for T-911. What happens?</h1>');
+  L.mc(L.card,['It sends commit, since both voted yes','It asks the merchant to send the booking again','It sends abort to both participants'],2,
+   'No commit record means the coordinator never reached the commit point, so the transaction aborts everywhere.',
+   'Votes alone commit nothing. Without a commit record in the coordinator’s log, the rule is abort.');}},
+{part:2,src:'Chapter 9 · Coordinator failure',pts:5,run(L){
+  L.h(L.kick('pr','Wait or walk away?')+'<h1 class="q">The coordinator crashes at different moments. What may the Parcel DB do?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Abort on its own','Must wait'],[
+   ['Crash before any prepare request was sent',0,'It hasn’t promised anything, so it can safely abort.'],
+   ['Crash after the Parcel DB voted yes, before any decision',1,'It voted yes, so it gave up the right to abort. It’s in doubt.'],
+   ['The prepare reached the Parcel DB, but it hasn’t voted yet',0,'No vote, no promise. It can still abort.'],
+   ['Crash after “commit” was logged, before anything was sent',1,'The decision is commit, but the Parcel DB can’t know that. It waits for recovery.'],
+   ['Crash after the ledger got commit, but the Parcel DB didn’t',1,'Aborting now would split the outcome. It must wait.']],
+   'The line is the participant’s own <b>yes</b>. Before it, abort freely. After it, wait for the coordinator.');}},
+{part:2,src:'Chapter 9 · Three-phase commit',run(L){
+  L.h(L.kick('learn','Three-phase commit')+'<h1 class="q">Why not a protocol that never gets stuck?</h1>'+
+   L.prose('2PC is a <b>blocking</b> atomic commit protocol: it can get stuck waiting for the coordinator to recover. A <b>nonblocking</b> one would be nicer, but it’s hard to make work in practice.')+
+   L.prose('<b>Three-phase commit (3PC)</b> has been proposed. But it assumes a network with bounded delays and nodes that respond within bounded time. Real networks have unbounded delays and process pauses, as lessons 0018 and 0019 showed, so 3PC can’t guarantee atomicity there.')+
+   L.note('Nonblocking atomic commit needs a <b>perfect failure detector</b>: a reliable way to tell whether a node has crashed. A timeout isn’t one, because a request can time out on a slow network while the node is fine. That’s why 2PC is still used.','info'));
+  L.done();}},
+{part:2,src:'Chapter 9 · Three-phase commit',pts:1,run(L){
+  L.h(L.kick('pr','Advise the team')+'<h1 class="q">Merchant API servers sometimes crash mid-booking and leave rows in doubt. Tobias suggests: “Let’s switch to three-phase commit so nothing ever blocks.” What should Zainab say?</h1>');
+  L.mc(L.card,['Good idea, since 3PC has no coordinator to crash','3PC only works inside a single database','3PC assumes bounded delays, which our network lacks'],2,
+   'Delays between Otterpost’s servers have no upper limit. 3PC’s guarantee rests on assuming they do, so it could break atomicity.',
+   '3PC isn’t limited to one database, and it isn’t coordinator-free. Its catch is assuming bounded network delays and response times, which real networks don’t give.');}},
+
+/* ---------- PART 4: IN PRACTICE ---------- */
+{part:3,src:'Chapter 9 · Distributed Transactions in Practice',run(L){
+  L.h(L.kick('learn','Two kinds of distributed transaction')+'<h1 class="q">One name, two very different things</h1>'+
+   L.prose('Distributed transactions have a mixed reputation. They give a safety guarantee that’s hard to get otherwise, but they’re blamed for operational pain and slowness. In MySQL they’re reported to be over 10 times slower than single-node transactions. Much of 2PC’s cost is extra forced disk writes (fsync) for crash recovery, plus extra network round-trips.')+
+   L.lanes([['layers','Database-internal','All participants run the same database software (VoltDB and MySQL Cluster’s NDB engine are examples). It can use its own protocol and optimizations, so it often works quite well.',2],
+            ['box','Heterogeneous','Participants are different technologies: two vendors’ databases, or a database plus a message broker. Atomic commit must work across all of them. Much harder.',4]])+
+   '<p class="small" style="margin-top:10px">Otterpost’s booking spans the Parcel DB and a ledger built on a different product: the heterogeneous kind.</p>');
+  L.done();}},
+{part:3,src:'Chapter 9 · Exactly-once message processing',run(L){
+  L.h(L.kick('ex','What it buys you')+'<h1 class="q">Exactly-once processing of a queue message</h1>'+
+   L.prose('Otterpost’s notification worker takes “parcel delivered” messages from the message queue.')+
+   L.flow([['list','Take message','“OP-7Q2 delivered”'],['pencil','Write','Record it in the Parcel DB'],['check','Acknowledge','Tell the broker it’s done']])+
+   L.prose('If the database write and the acknowledgment commit <b>atomically</b> in one distributed transaction, any failure aborts both. The broker redelivers the message, and the worker retries as if nothing happened. The message is effectively processed <b>exactly once</b>, even after a few retries.')+
+   L.note('The catch: every system the processing touches must speak the same atomic commit protocol. If the worker also sends a text through a provider that doesn’t support 2PC, a retry can send that text twice.','alert'));
+  L.done();}},
+{part:3,src:'Chapter 9 · XA transactions',run(L){
+  L.h(L.kick('learn','XA transactions')+'<h1 class="q">The standard for 2PC across products. Tap each card.</h1>');
+  L.flips(L.card,[
+   ['What it is',L.g('xa','X/Open XA')+', from 1991, is the standard for two-phase commit across different technologies.'],
+   ['Who supports it','Many relational databases (PostgreSQL, MySQL, DB2, SQL Server, Oracle) and message brokers (ActiveMQ, HornetQ, MSMQ, IBM MQ).'],
+   ['Not a network protocol','It’s a C API for talking to a coordinator. In Java it appears as JTA, used by JDBC database drivers and JMS broker drivers.'],
+   ['Where the coordinator lives','Often just a library inside the application process. It logs each commit or abort decision on the app server’s local disk.'],
+   ['If the app server dies','The coordinator dies with it. Prepared participants stay in doubt until the server restarts and the library reads its log.'],
+   ['Who can call whom','The database can’t contact the coordinator. All communication goes through the client library.']],
+   'XA puts a critical piece of your system, the coordinator and its log, inside your application servers.');}},
+{part:3,src:'Chapter 9 · Holding locks while in doubt',pts:1,
+ solve:async L=>{L.$('#k2').click();},
+ run(L){
+  const C=[['1 minute',200,'About 200 bookings wait a minute, then go through.'],['20 minutes',4000,'About 4,000 bookings stall. Merchants see timeouts.'],['Its log is lost',null,'The count never stops. The lock is held until a human steps in.']];
+  let t=null;
+  L.h(L.kick('pr','See it happen')+L.prose('Transactions lock the rows they change, so nobody overwrites uncommitted data. Under two-phase locking they also lock rows they read. Locks are released only at commit or abort.')+
+   '<h1 class="q">Flash sale. An in-doubt booking holds the lock on Bramble & Bolt’s credit balance. Pick how long its coordinator stays down.</h1><div id="ks"></div>'+
+   '<div class="lane" style="margin-top:6px"><div class="small">Bramble & Bolt bookings stuck behind the lock (about 200 a minute)</div><div class="week" id="cnt">0</div><div class="meter"><div id="mb" style="background:var(--no-strong)"></div></div><div class="small" id="ct" style="margin-top:8px">Choose a downtime above.</div></div><div id="kq"></div>');
+  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.id='k'+j;b.innerHTML=L.ic('clock')+c[0];
+    b.onclick=()=>{[...L.$('#ks').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');clearInterval(t);let s=0;const end=c[1]||9999;
+      t=setInterval(()=>{s++;const el=L.$('#cnt');if(!el){clearInterval(t);return;}const v=Math.round(end*s/12);el.textContent=(c[1]?v.toLocaleString('en-US'):v.toLocaleString('en-US')+'+');
+        L.$('#mb').style.width=Math.min(100,Math.round(v/100))+'%';if(s>=12){clearInterval(t);L.$('#ct').textContent=c[2];}},80);
+      if(j===2&&!L.$('#kq').innerHTML){const q=L.$('#kq');q.innerHTML='<h2 class="sub">The coordinator’s log is gone. What will release the lock?</h2>';
+        L.mc(q,['Rebooting the Parcel DB and the ledger','An admin who resolves it by hand','The lock timing out after a while'],1,
+         'Nothing automatic can. An administrator must check the participants and choose the outcome. A reboot keeps in-doubt locks, because releasing them could break atomicity.',
+         'A correct 2PC database keeps an in-doubt transaction’s locks, even across restarts, since letting go could break atomicity. A person has to decide.');}};
+    L.$('#ks').appendChild(b);});}},
+{part:3,src:'Chapter 9 · Recovering from coordinator failure',run(L){
+  L.h(L.kick('learn','Recovering from coordinator failure')+'<h1 class="q">When the log is gone, a human decides</h1>'+
+   L.prose('In theory a restarted coordinator resolves everything from its log. In practice, <b>orphaned</b> in-doubt transactions happen: the log is lost or corrupted, for example by a software bug. They sit in the database forever, holding locks. Rebooting doesn’t help.')+
+   L.prose('The way out is manual. An administrator checks each participant, finds out whether any has already committed or aborted, and applies the same outcome to the others. Usually under stress, in the middle of an outage.')+
+   L.quote('heuristic here is a euphemism for probably breaking atomicity','Chapter 9, on XA’s emergency escape hatch')+
+   L.prose('Many XA implementations offer '+L.g('heuristic','heuristic decisions')+': a participant decides alone, without the coordinator. That breaks 2PC’s promises, so it’s for catastrophes only.'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Limitations of distributed transactions',run(L){
+  L.h(L.kick('learn','Limitations')+'<h1 class="q">The coordinator is a database too</h1>'+
+   L.prose('The coordinator stores transaction outcomes, so it is itself a kind of database, and needs the same care. That brings four limits:')+
+   L.list([['Single point of failure','On one machine, its crash blocks other app servers on in-doubt locks. Many coordinators aren’t highly available by default.'],
+     ['App servers stop being stateless','With the coordinator inside the app server, its log is as vital as the databases. You can’t add and remove servers at will anymore.'],
+     ['Lowest common denominator','XA must suit every system, so it can’t detect deadlocks across systems and doesn’t work with SSI.'],
+     ['Failures get amplified','2PC needs every participant to answer. If any part is broken, the transaction fails. Database-internal transactions avoid some XA limits (a distributed SSI is possible), but not this one.']],3)+
+   '<p class="small" style="margin-top:10px">Part III of the course shows other ways to keep systems in step without heterogeneous distributed transactions.</p>');
+  L.done();}},
+{part:3,src:'Chapter 9 · Limitations of distributed transactions',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which limit is this?',['Single point of failure','App servers become stateful','Lowest common denominator','Failures get amplified'],[
+   ['During Peak Week the autoscaler removes a merchant API server. In-doubt bookings it was coordinating can no longer be resolved.',1,'The coordinator’s log lived on that server, so the server was no longer disposable.'],
+   ['The ledger is down for maintenance, so no merchant can book a parcel at all.',3,'2PC needs every participant. One broken part fails the whole transaction.'],
+   ['Two bookings wait for each other’s locks, one in the Parcel DB and one in the ledger. Neither database sees the cycle.',2,'XA has no standard way to share lock information, so it can’t detect deadlocks across systems.'],
+   ['All bookings use one central coordinator machine. It dies, and app servers across Otterpost stall on locked rows.',0,'One unreplicated coordinator blocks everyone holding in-doubt locks.'],
+   ['Zainab wants serializable snapshot isolation across both databases. XA can’t offer it.',2,'SSI would need a protocol for spotting conflicts across systems, which XA doesn’t have.']]);}},
+{part:3,src:'Chapter 9 · Exactly-once message processing',pts:1,run(L){
+  L.h(L.kick('pr','Exactly once?')+'<h1 class="q">The notification worker commits its Parcel DB write and the queue acknowledgment in one XA transaction. It also sends a status webhook to the merchant’s server, which knows nothing about 2PC. It crashes once and retries. What can happen twice?</h1>');
+  L.mc(L.card,['The Parcel DB write','The queue acknowledgment','The status webhook to the merchant'],2,
+   'The webhook is outside the atomic commit, so an abort can’t take it back, and the retry sends it again. The other two were rolled back and done once on the retry.',
+   'The database write and the acknowledgment are inside the transaction, so an abort discards them and the retry does them once. The webhook isn’t covered, so it can arrive twice.');}}
+  ]
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linearizability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* timeline helper: rows = [label, [[start%, end%, text, color 'h1'..'h4', buttonId?], ...]] */
+function TL(rows){
+  return '<div style="margin:10px 0 6px">'+rows.map(r=>'<div style="margin:0 0 8px"><div class="small" style="font-weight:600;line-height:1.3;margin-bottom:3px">'+r[0]+'</div><div style="position:relative;height:34px;background:var(--soft);border-radius:10px">'+
+    r[1].map(b=>{const t=b[4]?'button':'div',c=b[3]||'h2';
+      return '<'+t+(b[4]?' id="'+b[4]+'" type="button"':'')+' style="position:absolute;left:'+b[0]+'%;width:'+(b[1]-b[0])+'%;top:4px;bottom:4px;border-radius:8px;background:var(--'+c+'-bg);border:2px solid var(--'+c+');color:var(--ink);font:600 12px var(--sans);display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;padding:0 2px">'+b[2]+'</'+t+'>';}).join('')+
+    '</div></div>').join('')+'<div class="small" style="text-align:right;margin-top:-2px">time '+'→</div></div>';
+}
+Course.lesson({
+  id:'0021', title:'Linearizability', minutes:20, icon:'layers',
+  goals:['Say what linearizability promises, and spot a read that breaks it','Tell when an app truly needs it: locks, uniqueness, two channels','Explain which setups can provide it, and what it costs'],
+  parts:['One copy','The rules','When it matters','The cost'],
+  read:'Read chapter 9 of the book, from the start to the end of “The Cost of Linearizability”, for the timing diagrams this lesson rebuilds.',
+  glossary:{
+    eventual:'Eventual consistency: if writes stop and you wait, every copy will end up the same. Until then, copies can disagree, and there is no limit on how long “eventually” takes.',
+    register:'Register: the textbook name for one piece of data you can read and write, such as one key, one row or one document.',
+    cas:'Compare-and-set: a single-object write that only happens if the value is still what you read earlier. If someone changed it, the write does nothing and you try again.',
+    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the result is the same as if they had run one after another.',
+    cap:'CAP theorem: the observation that when the network cuts replicas off from each other, a system must choose between staying linearizable and staying available.',
+    'split-brain':'Split brain: two nodes both believe they are the leader and both accept writes, which can lose or corrupt data.'
+  },
+  cheatsheet:[
+    '<b>Eventual consistency</b> only promises replicas agree <i>eventually</i>, once writes stop. It says nothing about when.',
+    '<b>Linearizability</b> = behave as if there is one copy. Once any read has seen a new value, every later read must see it too.',
+    'A read that overlaps a write may return old or new. A read that starts after another read <i>finished</i> can never be older.',
+    '<b>Linearizable ≠ serializable.</b> One is recency on single objects; the other is transactions in some serial order. Both together = strict serializability.',
+    'You need it for <b>locks and leader election</b>, <b>hard uniqueness constraints</b> and <b>timing across two channels</b>.',
+    'Single-leader: potentially. Consensus: yes. Multi-leader: no. Leaderless: assume no, even with strict quorums.',
+    '<b>CAP</b>, better put: when the network is partitioned, choose linearizable <i>or</i> available. Beyond that it says little.',
+    'Linearizability is slow <b>all the time</b>, not only during faults. Most systems that drop it do so for speed.'
+  ],
+  steps:[
+/* ---------- PART 1: ONE COPY ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mrs. Okoro refreshes Otterpost’s tracking page and sees “Delivered.” They call out to their son Dayo, who then refreshes on their own phone and sees “Out for delivery.” Is that OK?</h1>');
+  L.mc(L.card,['Yes, two phones can always disagree','No, Dayo looked after Mrs. Okoro saw it'],1,
+   'Dayo knows they refreshed <i>after</i> their mother saw the new status, so they expect news at least as fresh as what their mother saw. This lesson names that expectation.',
+   'If they had refreshed at the same instant, different answers would be less surprising. But Dayo looked <i>after</i> Mrs. Okoro saw “Delivered,” so an older answer feels wrong. This lesson names that expectation.');}},
+{part:0,src:'Chapter 9 · Consistency and Consensus',run(L){
+  L.h(L.kick('learn','The plan for this chapter')+'<h1 class="q">Build one tool with a promise, then let every app lean on it</h1>'+
+   L.prose('Chapter 8 listed everything that goes wrong: lost and delayed messages, wrong clocks, paused and crashed '+L.g('node','nodes')+'. You could just fail and show an error. If that isn’t acceptable, you need to keep working correctly <i>despite</i> faults.')+
+   L.flow([['alert','Messy reality','Crashes, delays, races','',4],['shield','An abstraction','A tool with a simple promise','built once, carefully',2],['check','The app','Can ignore those problems','',1]])+
+   L.prose('Transactions did this in chapter 7: the app pretends nothing crashes, nobody else is writing, and disks never fail. This chapter looks for similar promises for distributed systems. The most important is '+L.g('consensus','consensus')+': getting all nodes to agree on something, such as who the leader is, so you never get '+L.g('split-brain','split brain')+'.'));
+  L.done();}},
+{part:0,src:'Chapter 9 · Consistency Guarantees',run(L){
+  L.h(L.kick('learn','The weak promise you already have')+'<h1 class="q">“Eventually” doesn’t say when</h1>'+
+   L.prose('Look at two replicas at the same moment and they often hold different data. Most replicated databases promise at least '+L.g('eventual','eventual consistency')+': stop writing, wait, and all replicas will end up returning the same value. A better name would be <b>convergence</b>.')+
+   L.prose('That’s a weak promise. Until replicas converge, a read could return anything or nothing. Write a value, read it straight back, and you may not see it. A database looks like a variable in your program, but it doesn’t behave like one.')+
+   L.note('The bugs hide well. The app works most of the time; the edge cases show up only during a fault, like a network cut, or under heavy concurrency.','alert')+
+   L.prose('Stronger models are easier to use correctly, but they may be slower or less fault-tolerant. They are also a <b>different topic from isolation levels</b>: isolation is about concurrent transactions racing; distributed consistency is about keeping replicas in step despite delays and faults.'));
+  L.done();}},
+{part:0,src:'Chapter 9 · Consistency Guarantees',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias writes a parcel’s new address, then reads it straight back from Otterpost’s eventually consistent store. What is Tobias guaranteed to see?</h1>');
+  L.mc(L.card,['Nothing yet; it only converges later','The new address they just wrote','The new address within one second'],0,
+   'Eventual consistency only promises the replicas will agree <i>at some point</i> once writes stop. His read may hit a replica that hasn’t caught up.',
+   'Eventual consistency gives no timing at all. Their read may go to a replica that hasn’t received the write yet, so they could see the old address or nothing.');}},
+{part:0,src:'Chapter 9 · Linearizability',run(L){
+  L.h(L.kick('learn','The strong promise')+'<h1 class="q">Linearizability: act as if there is only one copy</h1>'+
+   L.prose('What if the database could hide its replicas and look like a single copy of the data, with every operation atomic? Every client would see the same thing, and you could forget about replication lag. That is '+L.g('linearizability','linearizability')+', also called atomic, strong, immediate or external consistency.')+
+   L.prose('The core of it is a <b>recency guarantee</b>: as soon as one client’s write completes, every client that reads must see that value, not something older from a stale cache or replica.')+
+   L.note('<b>The book’s example.</b> Two friends in one room check a sports site for the final score of the 2014 World Cup. One refreshes, sees the result and says so out loud. The other refreshes <i>afterwards</i>, but hits a lagging replica and sees the game still running. That is a violation of linearizability.','book')+
+   L.prose('Mrs. Okoro and Dayo are the same story on Otterpost’s tracking page, which reads from followers that lag.'));
+  L.done();}},
+{part:0,src:'Chapter 9 · Linearizability',pts:1,run(L){
+  L.h(L.kick('pr','Apply it')+'<h1 class="q">Kwame shrugs at the Okoro case: “Our tracking page is eventually consistent. Nothing is broken.” What is the most accurate reply?</h1>');
+  L.mc(L.card,['Eventual consistency forbids that; it’s a bug','It’s allowed by eventual consistency, not by linearizability','It breaks both, since Dayo asked after their mother'],1,
+   'Kwame is right that the store kept its weak promise. It just doesn’t make the stronger, recency promise that Dayo was expecting.',
+   'Eventual consistency allows any stale read until replicas converge, so the store kept its promise. Only linearizability would rule out Dayo’s older answer.');}},
+
+/* ---------- PART 2: THE RULES ---------- */
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',run(L){
+  L.h(L.kick('learn','Reading a timing diagram')+'<h1 class="q">Each request is a bar; the database acts somewhere inside it</h1>'+
+   L.prose('Take one '+L.g('register','register')+': parcel P-311’s status, which starts at “hub”. Ravi’s courier app writes “out”. Each bar runs from when a request is sent to when its reply arrives. The client can’t tell exactly when inside the bar the database handled it.')+
+   TL([['Ravi’s app',[[30,70,'write out','h3']]],['Reader',[[4,22,'→ hub','h2'],[38,56,'→ ?','h4'],[78,96,'→ out','h1']]]])+
+   L.list([['Read ends before the write starts','Must return the old value, “hub”.'],
+     ['Read starts after the write ends','Must return the new value, “out”. The write happened before the read did.'],
+     ['Read overlaps the write','May return either. These two are <b>concurrent</b>: we don’t know if the write has taken effect yet.']],2));
+  L.done();}},
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',run(L){
+  L.h(L.kick('ex','The extra rule, step by step')+'<h1 class="q">Overlapping reads may return either value, but not in just any pattern</h1>'+
+   TL([['Ravi’s app',[[10,90,'write out','h3']]],['Mrs. Okoro',[[22,40,'→ out','h1']]],['Dayo',[[50,68,'→ ?','h4']]]]));
+  L.beats(L.card,[
+   ['The worry','If overlapping reads could return either value freely, a reader could watch the status flip hub, out, hub, out while the write is in progress. One copy of the data would never do that.'],
+   ['The rule','Imagine the value flips from old to new at <b>one instant</b> somewhere inside the write bar. So once <i>any</i> read has returned the new value, every read that starts later must return it too.'],
+   ['Apply it','Mrs. Okoro’s read returns “out”. Dayo’s read starts after Mrs. Okoro’s ended. So Dayo’s must return “out” as well, even though Ravi’s write hasn’t finished.'],
+   ['Odd but fine','Reads may see “out” before Ravi’s app gets its “ok”. That only means the reply to Ravi was slow on the network.'],
+   ['Odd but fine, too','Requests that overlap may be handled in a different order from the one they were sent in. A request may have been delayed on the way.'],
+   ['The test','Mark the moment each operation took effect. Join the marks in order. The line must <b>always move forward in time</b>, and every read must return the latest write before it.']],
+   'Once a new value has been written or read, all later reads see it, until it is overwritten again.');}},
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The write is still going. Reader A’s read returned “out” and finished. Reader B starts after that. What may B’s read return?</h1>'+
+   TL([['Write',[[8,92,'write out','h3']]],['Reader A',[[24,44,'→ out','h1']]],['Reader B',[[56,76,'→ ?','h4']]]]));
+  L.mc(L.card,['It must return “out”','It may return either value','It must return “hub”'],0,
+   'B overlaps the write, but it started after A had already seen “out”. In a linearizable store it can’t go back in time.',
+   'On its own, B overlaps the write, so either value would be fine. But A already saw “out” before B started, so B must see “out” too.');}},
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,
+ solve:async L=>{L.$('#r3').click();},
+ run(L){
+  const why=['It overlaps the write, and nobody had seen “out” yet. The old value is allowed.',
+             'It overlaps the write, so the new value is allowed. It’s the first read to see “out”.',
+             'It started before Mrs. Okoro’s “out” read finished, so the two overlap. The old value is still allowed.',
+             '',
+             'It overlaps the write and returns the new value. Nothing wrong there.'];
+  let first=true,doneYet=false;
+  L.h(L.kick('pr','Spot the violation')+'<h1 class="q">Ravi’s app writes “out”. Five reads come in. Tap the one read that breaks linearizability.</h1>'+
+   TL([['Ravi’s app',[[10,86,'write out','h3']]],['Mrs. Okoro',[[2,18,'hub','h2','r0'],[30,46,'out','h1','r1']]],['Dayo',[[24,40,'hub','h2','r2'],[52,68,'hub','h2','r3']]],['Signe (support)',[[72,88,'out','h1','r4']]]])+
+   '<div id="sv"></div>');
+  [0,1,2,3,4].forEach(k=>{L.$('#r'+k).onclick=()=>{if(doneYet)return;L.$('#sv').innerHTML='';
+    if(k===3){doneYet=true;if(first)L.award(true);L.$('#r3').style.borderColor='var(--no)';
+      L.sheet(first?'ok':'info',first?'You found it':'There it is','Dayo’s second read started <i>after</i> Mrs. Okoro’s read had already returned “out”. It overlaps the write, but it still can’t be older than a read that finished before it began.');L.done();}
+    else{if(first)L.award(false);first=false;L.fb(L.$('#sv'),'<b>That one is allowed.</b> '+why[k]+' Try another.','no');}};});}},
+{part:1,src:'Chapter 9 · Linearizability Versus Serializability',run(L){
+  L.h(L.kick('learn','Two words that sound alike')+'<h1 class="q">Linearizable is not the same as serializable</h1>'+
+   L.prose('Both sound like “can be put in a sequential order”. They are quite different promises.')+
+   L.lanes([['list','Serializability','About <b>transactions</b> that read and write many objects. They behave as if run one at a time, in <i>some</i> order. That order may differ from the order they really ran.',3],
+            ['clock','Linearizability','About <b>reads and writes of one object</b>. A recency promise. It doesn’t group operations, so on its own it doesn’t stop write skew.',2]])+
+   L.prose('A database can offer both: that combination is called <b>strict serializability</b> (or strong one-copy serializability). Two-phase locking and actual serial execution are usually linearizable. ')+
+   L.note('<b>Serializable snapshot isolation is not linearizable</b>, by design. It reads from a consistent snapshot, and the whole point of a snapshot is that it leaves out writes newer than the snapshot.','alert'));
+  L.done();}},
+{part:1,src:'Chapter 9 · Linearizability Versus Serializability',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which promise is this?',['Linearizability','Serializability','Both at once'],[
+   ['Two slot-booking transactions each check, then book. The outcome must match running them one after the other.',1,'Groups of reads and writes, as if run one at a time: serializability.'],
+   ['Once one reader sees a parcel as “Delivered”, nobody who reads later may see an older status.',0,'Recency on one object: linearizability.'],
+   ['The database may pretend transaction B ran before A, even though A really started first.',1,'Serializability only needs <i>some</i> serial order, not the real one.'],
+   ['Zainab wants transactions in a serial order <i>and</i> every read up to date.',2,'Both together is called strict serializability.'],
+   ['It talks about single reads and writes of one register, not transactions.',0,'Linearizability is a single-object guarantee.']]);}},
+{part:1,src:'Chapter 9 · Linearizability Versus Serializability',pts:1,run(L){
+  L.h(L.kick('pr','Apply it')+'<h1 class="q">The Parcel DB runs serializable snapshot isolation. A merchant’s credit top-up has just committed, but a report transaction that started a moment earlier doesn’t see it. Which promise is missing?</h1>');
+  L.mc(L.card,['Serializability','Durability','Linearizability'],2,
+   'The report reads its snapshot, which can leave out newer writes. That stays serializable, but it isn’t a recency guarantee, so it isn’t linearizable.',
+   'SSI is fully serializable, and the top-up is safely stored. What’s missing is recency: a snapshot read can miss a newer committed write, so it isn’t linearizable.');}},
+
+/* ---------- PART 3: WHEN IT MATTERS ---------- */
+{part:2,src:'Chapter 9 · Relying on Linearizability',run(L){
+  L.h(L.kick('learn','When stale is not OK')+'<h1 class="q">A score a few seconds old harms no one. These cases are different.</h1>'+
+   L.list([['lock','Locks and leader election','Only one route planner per region may write routes. One way: each planner tries to grab a lock, and the winner leads. The lock must be linearizable, or nodes disagree on who holds it and it’s useless. Coordination services such as ZooKeeper and etcd provide this using consensus. Details like fencing still matter.'],
+     ['shield','Uniqueness constraints','No two parcels may share a tracking code. To reject the second of two simultaneous claims as it’s written, you need linearizability. It works like taking a lock on the code, or a '+L.g('cas','compare-and-set')+' from “free” to “parcel P-311”.'],
+     ['scale','One up-to-date value','A credit balance that must never go negative, stock you can’t oversell, a seat that can’t be double-booked: all need one value every node agrees on.']],1)+
+   L.note('Not every rule is hard. If you can fix a breach afterwards, like moving an overbooked passenger and paying compensation, you may not need linearizability. Foreign key and attribute constraints don’t need it either.','info'));
+  L.done();}},
+{part:2,src:'Chapter 9 · Cross-channel timing dependencies',run(L){
+  L.h(L.kick('ex','A race between two channels')+'<h1 class="q">Proof-of-delivery photos at Otterpost</h1>');
+  L.beats(L.card,[
+   ['Setup','When Ravi delivers a parcel, their app uploads a photo to Otterpost’s web server. A background worker makes a small preview for the tracking page.'],
+   ['Two channels','Photos are megabytes; queues are built for small messages. So the server first <b>writes the photo to file storage</b>, then puts a short “make a preview of photo 88” message <b>on a queue</b>.'],
+   ['The race','The queue is faster than replication inside the file storage. The worker gets the message and asks a replica for photo 88, which hasn’t arrived there yet.'],
+   ['The damage','The worker sees no photo, or an older one. If it previews an older photo, the full photo and the preview disagree <b>for good</b>.'],
+   ['The link','Same as the friends and the football score: one channel (the queue, or a voice across the room) outran the other (replication).'],
+   ['Fixes','Linearizable file storage fixes it simply. Because Otterpost controls the queue, it could instead use tricks like the read-your-writes fixes from replication lag, at the cost of more complexity.']],
+   'Without a second channel, nobody notices a stale read; they’d just refresh later. Two channels turn lag into a real bug.');}},
+{part:2,src:'Chapter 9 · Cross-channel timing dependencies',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In the photo story, what made the stale read turn into a real bug?</h1>');
+  L.mc(L.card,['The photos were too large for the file storage','The worker had a slow clock and read too early','A second channel told the worker to act right away'],2,
+   'The queue message raced ahead of replication. Without that second channel, the worker would never have known to look yet.',
+   'File storage was fine, and no clocks were involved. The queue was a second channel that raced ahead of replication, so the worker looked before the photo had arrived.');}},
+{part:2,src:'Chapter 9 · Relying on Linearizability',pts:6,run(L){
+  L.h(L.kick('pr','Needs it or not?')+'<h1 class="q">For each Otterpost feature, does a stale read break it, or is a slightly old value fine?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Needs linearizability','Stale is fine'],[
+   ['Only one route planner per region may hold the region’s lock',0,'If two planners both think they hold it, they both write routes: split brain.'],
+   ['Every new parcel gets a tracking code no other parcel has',0,'A hard uniqueness rule, enforced as the code is written.'],
+   ['The dashboard chart of parcels delivered this month',1,'A chart a few seconds behind hurts nobody.'],
+   ['A merchant’s prepaid credit must never drop below zero',0,'One up-to-date balance that every node agrees on.'],
+   ['The courier’s dot on the tracking page map',1,'A position a few seconds old is fine; it moves again soon.'],
+   ['A rare overbooked delivery slot is fixed by moving a parcel and apologising',1,'A loosely interpreted rule, fixed afterwards, may not need linearizability.']],
+   'Linearizability earns its cost where two parties must not both “win”: locks, unique codes and balances.');}},
+
+/* ---------- PART 4: THE COST ---------- */
+{part:3,src:'Chapter 9 · Implementing Linearizable Systems',run(L){
+  L.h(L.kick('learn','Which setups can provide it?')+'<h1 class="q">One copy would do it, but one copy can’t survive a crash</h1>'+
+   L.prose('The simplest way to look like one copy is to <i>have</i> one copy. Lose that node and the data is gone or unreachable. So we replicate, and ask which replication methods from chapter 5 can still be linearizable.')+
+   L.tiers([['person','Single-leader: potentially','Reads from the leader, or from synchronously updated followers, can be. But a node may wrongly think it’s still leader, failover with async replication can lose writes, and some databases aren’t linearizable by design.','Partitioning with one leader per partition doesn’t change this.'],
+            ['check','Consensus algorithms: yes','Look a bit like single-leader, but with rules that stop split brain and stale replicas. ZooKeeper and etcd work this way.','',true,'Safe'],
+            ['people','Multi-leader: no','Several nodes take writes at once and replicate later, which creates conflicts. There never was one copy.'],
+            ['layers','Leaderless: probably not','Last-write-wins on clocks breaks it, sloppy quorums break it, and even strict quorums can fail, as the next screen shows.']]));
+  L.done();}},
+{part:3,src:'Chapter 9 · Linearizability and quorums',pts:1,
+ solve:async L=>{for(let k=0;k<5&&L.$('#qs');k++){L.$('#qs').click();await L.sleep(5);}},
+ run(L){
+  const S=[
+   {v:[0,0,0],t:'The courier location store holds x = 0 on three replicas (n = 3). A writer sends x = 1 to all three and waits for all of them (w = 3).'},
+   {v:[1,0,0],t:'The write reaches replica 1 first. The other two copies are delayed on the network.',hi:[0]},
+   {v:[1,0,0],t:'Reader A asks replicas 1 and 2 (r = 2). It gets 1 and 0, takes the newer one and returns <b>1</b>. A is done.',hi:[0,1]},
+   {v:[1,0,0],t:'Reader B starts <i>after</i> A finished. It asks replicas 2 and 3, gets 0 and 0, and returns <b>0</b>.',hi:[1,2]},
+   {v:[1,1,1],t:'The write finally reaches replicas 2 and 3, and the writer gets its ok.',hi:[1,2]}];
+  let k=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Strict quorum: w + r = 3 + 2 is more than n = 3. Step through and watch.</h1>'+
+   '<div id="reps" style="display:flex;gap:8px;margin:8px 0"></div><div class="fb info" id="qt" style="min-height:64px"></div>'+
+   '<button class="btn pri" id="qs" style="margin-top:12px">'+L.ic('play')+'Next moment</button><div id="qq"></div>');
+  const draw=()=>{const s=S[k];L.$('#reps').innerHTML=s.v.map((v,j)=>'<div style="flex:1;text-align:center;border-radius:14px;padding:10px 4px;border:2px solid '+((s.hi||[]).includes(j)?'var(--pri)':'var(--line)')+';background:'+(v?'var(--ok-bg)':'var(--card)')+'"><div class="small">Replica '+(j+1)+'</div><div class="week" style="margin:2px 0 0">x = '+v+'</div></div>').join('');
+    L.$('#qt').innerHTML='<b>Moment '+(k+1)+' of '+S.length+'.</b> '+s.t;};
+  draw();
+  L.$('#qs').onclick=function(){k++;draw();if(k===S.length-1){this.remove();const q=L.$('#qq');q.innerHTML='<h2 class="sub">The quorum rule held. Was this run linearizable?</h2>';
+    L.mc(q,['Yes, because w + r > n held throughout','No, B started after A but saw older data','No, because the writer lost its write'],1,
+     'B began after A had returned 1, yet B returned 0. With variable network delays, strict quorums don’t prevent this. Synchronous read repair plus a writer that first reads a quorum’s state can fix it, at a performance cost, and still can’t give you compare-and-set.',
+     'The write wasn’t lost; it reached every replica in the end. The problem is B: it began after A had returned 1, yet it returned 0. Quorums alone don’t stop that.');}};}},
+{part:3,src:'Chapter 9 · The Cost of Linearizability',
+ solve:async L=>{L.$('#c0').click();L.$('#c1').click();},
+ run(L){
+  const R=[['Writes and fresh reads work; the leader is here.','Can’t reach the leader. No writes, no fresh reads. Only possibly stale reads from the local follower.'],
+           ['Keeps taking writes and serving reads.','Keeps taking writes too. Writes queue up and are exchanged when the link returns. Nothing is linearizable meanwhile.']];
+  const seen=new Set();
+  L.h(L.kick('ex','Cut the link')+'<h1 class="q">The link between Westport and Eastvale goes down. Both datacenters still reach their own clients. Try both setups.</h1>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" id="c0">'+L.ic('person')+'Single leader in Westport</button><button class="chip" id="c1">'+L.ic('people')+'A leader in each</button></div>'+
+   L.lanes([['home','Westport clients','<div class="res" id="w0">Pick a setup.</div>',1],['home','Eastvale clients','<div class="res" id="w1">Pick a setup.</div>',2]]));
+  [0,1].forEach(j=>{L.$('#c'+j).onclick=()=>{L.$('#c0').classList.toggle('sel',j===0);L.$('#c1').classList.toggle('sel',j===1);seen.add(j);
+    L.$('#w0').innerHTML=R[j][0];L.$('#w1').innerHTML=R[j][1];
+    if(seen.size===2){L.sheet('info','The trade-off','With one leader, the side cut off from it becomes unavailable for anything linearizable. With a leader on each side, both stay up, but the data is no longer one copy.');L.done();}};});}},
+{part:3,src:'Chapter 9 · The CAP theorem',run(L){
+  L.h(L.kick('learn','The CAP theorem, and why it’s unhelpful')+'<h1 class="q">When the network is cut, choose: linearizable or available</h1>'+
+   L.quote('Is it better to be alive and wrong or right and dead?','Jay Kreps, quoted at the start of chapter 9')+
+   L.prose('This isn’t only about datacenters. <b>Any</b> linearizable system on <b>any</b> unreliable network faces it: replicas cut off must wait or return errors. Drop linearizability and each replica can carry on alone. This is popularly called the '+L.g('cap','CAP theorem')+'.')+
+   L.list([['“Pick 2 of 3” misleads','Network partitions are faults. They happen whether you choose them or not. A better phrasing: <b>consistent or available when partitioned</b>. When the network works, you can have both.'],
+     ['Very narrow','It covers one consistency model and one kind of fault. It says nothing about delays or dead nodes, and its “availability” doesn’t match the everyday meaning.'],
+     ['Mostly history','It pushed engineers toward shared-nothing systems and helped spark NoSQL. Today the book says it’s best avoided; even the CP/AP labels are flawed.']],3));
+  L.done();}},
+{part:3,src:'Chapter 9 · Linearizability and network delays',run(L){
+  L.h(L.kick('learn','The cost you pay every day')+'<h1 class="q">Linearizability is slow even when nothing is broken</h1>'+
+   L.prose('Even the RAM in a multi-core computer isn’t linearizable. Each core has its own cache and buffers, written back to main memory later. A thread on another core may read an old value. Nobody blames CAP for that: one core can’t keep going cut off from the rest. The reason is <b>speed</b>.')+
+   L.prose('Many distributed databases skip linearizability for the same reason: performance, not fault tolerance.')+
+   L.note('Can a cleverer algorithm fix it? No. Researchers Attiya and Welch proved that linearizable reads and writes take time at least proportional to how <b>uncertain</b> network delays are. On networks with very variable delays, linearizable operations will be slow.','scale')+
+   '<p class="small" style="margin-top:12px">Weaker models can be much faster, which matters for latency-sensitive systems. Chapter 12 returns to avoiding linearizability without losing correctness.</p>');
+  L.done();}},
+{part:3,src:'Chapter 9 · The Unhelpful CAP Theorem',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The link between Westport and Eastvale is working fine today. What does CAP force Otterpost to give up?</h1>');
+  L.mc(L.card,['Nothing; the choice only comes during a cut','Availability, to stay linearizable','Partition tolerance, to keep both others'],0,
+   'With a healthy network you can have linearizability and full availability. CAP’s choice only bites when replicas are cut off. (Linearizability is still slow, but that’s a separate cost.)',
+   'CAP only forces a choice while the network is partitioned. On a healthy network you can have both. And partitions aren’t optional, so you can’t “give up” tolerating them.');}},
+{part:3,src:'Chapter 9 · The Cost of Linearizability',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Keep or bust?',['Keep: it’s true','Bust: it’s wrong'],[
+   ['“Our Parcel DB is a CA system: consistent and available, so we skip partition tolerance.”',1,'Partitions are faults that happen anyway. You only choose how to behave when they do.'],
+   ['“During a cut, Eastvale clients of a Westport-led database can still read, but maybe stale data.”',0,'They can read the local follower, but not linearizably, and they can’t write.'],
+   ['“Most systems drop linearizability mainly to survive network faults.”',1,'The main reason is speed, and the slowness is there all the time.'],
+   ['“With a smarter algorithm, linearizable writes could be as fast as weak ones.”',1,'Attiya and Welch proved the delay grows with network uncertainty. No faster algorithm exists.'],
+   ['“Clients that can reach the leader’s datacenter keep working normally during the cut.”',0,'Only the side cut off from the leader loses linearizable service.']]);}},
+{part:3,src:'Chapter 9 · The Cost of Linearizability',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Nordhaven is overseas, and every request from there to Westport takes a long trip. Which design should Femi choose?</h1>');
+  L.mc(L.card,['Send every read and write to Westport, so all is linearizable','Make nothing linearizable, tracking codes included','Only tracking codes, credit and the route lock pay for it'],2,
+   'Pay the slow, partition-sensitive price only where two parties must never both win. Tracking-page reads can come from a nearby replica.',
+   'All-linearizable makes every Nordhaven request slow and fails during any cut. Nothing-linearizable lets two parcels share a code. Pay the cost only where it’s needed.');}}
+  ]
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Beyond MapReduce</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0027', title:'Beyond MapReduce', minutes:20, icon:'cycle',
+  goals:['Explain what writing every intermediate result to disk costs, and how dataflow engines avoid it','Make a batch job safe to recompute by keeping its operators deterministic','Choose between a Pregel-style graph job and a single machine'],
+  parts:['Intermediate state','Dataflow engines','Graphs','High-level APIs'],
+  read:'Read “Beyond MapReduce” and the summary at the end of chapter 10 for the full comparison of execution engines.',
+  glossary:{
+    materialize:'Materialization: computing a result eagerly and writing it out (for example to files), instead of computing it on demand or streaming it straight to the next step.',
+    dataflow:'Dataflow engine: a batch engine such as Spark, Tez or Flink that runs a whole workflow as one job, passing data between flexible processing steps called operators.',
+    deterministic:'Deterministic: given the same input, it always produces exactly the same output. Random numbers, clocks and outside lookups break this.',
+    pregel:'Pregel model (bulk synchronous parallel): a way to process a whole graph in rounds. In each round every vertex reads the messages sent to it, updates its own state and sends messages to other vertices.'
+  },
+  cheatsheet:[
+    'MapReduce <b>materializes</b> every intermediate result to the distributed filesystem: each job waits for all of the previous one, extra map steps repeat work, and temporary files get replicated.',
+    'Keep outputs that many teams reuse on the filesystem. Data that only passes from one step to the next is <b>intermediate state</b>.',
+    '<b>Dataflow engines</b> (Spark, Tez, Flink) run a whole workflow as one job of operators, connected by repartition-and-sort, partition-only or broadcast, and sort only where needed.',
+    'They recover by <b>recomputing</b> lost data from earlier stages, so make operators <b>deterministic</b>: no unseeded randomness, clock reads, outside lookups or hash-table ordering.',
+    'Sorting must see its whole input; most other steps can be <b>pipelined</b>. Inputs and final outputs still live on the distributed filesystem.',
+    '<b>Pregel</b>: each vertex keeps its state and exchanges messages in fixed rounds; checkpoints make it fault-tolerant. If the graph fits on one machine, one machine is likely faster.',
+    'High-level APIs add <b>declarative</b> joins and filters, so optimizers choose join algorithms and read only the needed columns, while still allowing arbitrary code.',
+    'Batch input is <b>bounded</b>, so a job finishes. Streams (next chapter) never do.'
+  ],
+  steps:[
+/* ---------- PART 1: INTERMEDIATE STATE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Linh’s nightly workflow chains 12 MapReduce jobs. Most in-between results are read once, by the next job, and never again. Is it worth storing each one as three copies on the distributed filesystem?</h1>');
+  L.mc(L.card,['Yes, every result deserves full protection','Probably not: they are only passing through'],1,
+   'Data that only passes from one step to the next hardly needs three durable copies. This lesson is about engines that skip that cost.',
+   'Three durable copies make sense for data people rely on. For results that only pass from one step to the next, it’s mostly overhead, and this lesson shows engines that skip it.');}},
+{part:0,src:'Chapter 10 · Beyond MapReduce',run(L){
+  L.h(L.kick('learn','Beyond MapReduce')+'<h1 class="q">Easy to understand, hard to use, sometimes slow</h1>'+
+   L.prose('MapReduce is just one of many ways to program distributed systems. The book spends time on it because it is a clear, simple abstraction on top of a distributed filesystem. Simple to <i>understand</i>, that is, not simple to <i>use</i>: with the raw API you would write every join algorithm yourself.')+
+   L.prose('Higher-level tools such as Pig, Hive, Cascading and Crunch were built on top to make common batch tasks much easier. But some problems sit in the MapReduce <b>execution model itself</b>, and another layer of abstraction can’t fix them.')+
+   L.lanes([['shield','Its strength','Very robust: it can process almost any amount of data on an unreliable, shared cluster where tasks are often killed, and still finish.',2],
+            ['clock','Its cost','Other tools are sometimes <b>orders of magnitude</b> faster for some kinds of processing.',4]])+
+   '<p class="small" style="margin-top:10px">Chapter 11’s stream processing can be seen as one more way to speed batch processing up.</p>');
+  L.done();}},
+{part:0,src:'Chapter 10 · Materialization of Intermediate State',run(L){
+  L.h(L.kick('learn','Materialization of intermediate state')+'<h1 class="q">Every MapReduce job writes everything out</h1>'+
+   L.prose('MapReduce jobs only meet through directories: job 2 reads the directory job 1 wrote, once a scheduler sees job 1 is done. That suits a dataset you want to <b>publish</b> for many teams to reuse by name. But often an output is only ever read by one next job of the same team. Then those files are just <b>intermediate state</b>.')+
+   L.prose('Writing intermediate state out to files is called '+L.g('materialize','materialization')+'. Unix pipes don’t do this: they stream output to the next command through a small memory buffer. Fully materializing has three downsides:')+
+   L.list([['clock','Waiting for stragglers','A job can only start when <b>every</b> task of the job before it is done. Skew or busy machines leave a few slow tasks that hold everything up.'],
+     ['cycle','Redundant mappers','Mappers often just read back the file a reducer wrote and prepare it for the next sort. That work could have been part of the reducer.'],
+     ['layers','Over-protected temp files','Files on the distributed filesystem are replicated to several machines, which is overkill for temporary data.']],4));
+  L.done();}},
+{part:0,src:'Chapter 10 · Materialization of Intermediate State',pts:1,
+ solve:async L=>{const c=L.$('#md').children;c[0].click();c[1].click();},
+ run(L){
+  const M=[['Write to files between jobs',[[0,3],[0,3],[0,3],[0,7]],[[7,3],[7,3],[7,3],[7,3]],'Step 2 can’t start until the straggler finishes: <b>10 time units</b>.'],
+           ['Pipe between operators',[[0,3],[0,3],[0,3],[0,7]],[[1,3],[1,3],[1,3],[1,7]],'Step 2 consumes output as it appears: <b>8 time units</b>.']];
+  const seen=new Set();
+  const bar=(s,w,c,t)=>'<div style="position:relative;height:20px;margin:3px 0;background:var(--soft2);border-radius:6px"><div style="position:absolute;left:'+s*10+'%;width:'+w*10+'%;top:0;bottom:0;background:'+c+';border-radius:6px;font-size:11px;color:#fff;padding-left:6px;line-height:20px;overflow:hidden;white-space:nowrap">'+t+'</div></div>';
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Step 1 cleans scans in four tasks, and one is a straggler. Step 2 converts the cleaned scans. Try both ways of connecting them.</h1><div id="md"></div><div id="tl" style="margin:10px 0"></div><p class="small" id="tt">Pick a way to connect the steps.</p><div id="mq"></div>');
+  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=m[0];
+    b.onclick=()=>{[...L.$('#md').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#tl').innerHTML='<div class="small"><b>Step 1</b></div>'+m[1].map((x,k)=>bar(x[0],x[1],'var(--h2)',k===3?'straggler':'task '+(k+1))).join('')+'<div class="small" style="margin-top:6px"><b>Step 2</b></div>'+m[2].map((x,k)=>bar(x[0],x[1],'var(--h3)','task '+(k+1))).join('');
+      L.$('#tt').innerHTML=m[3];
+      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Even with a faster engine, which of Linh’s results should still be written to the distributed filesystem?</h2>';
+        L.mc(q,['The sorted pairs passed from job 4 to job 5 only','The cleaned scans that three teams read each morning','Every result, so that nothing is ever recomputed'],1,
+         'A dataset other teams read by name is worth publishing to a well-known place. Results that only pass between two steps are intermediate state.',
+         'Writing everything out is exactly the cost we want to avoid, and results passed only between two steps are intermediate state. The cleaned scans are read by three teams, so publish them.');}};
+    L.$('#md').appendChild(b);});}},
+
+/* ---------- PART 2: DATAFLOW ENGINES ---------- */
+{part:1,src:'Chapter 10 · Dataflow engines',run(L){
+  L.h(L.kick('learn','Dataflow engines')+'<h1 class="q">One job for the whole workflow</h1>'+
+   L.prose('Spark, Tez and Flink are the best-known engines built to fix these problems. They differ in design, but share one idea: they treat an <b>entire workflow as one job</b> instead of a chain of separate jobs. Because they model the flow of data through the stages, they are called '+L.g('dataflow','dataflow engines')+'.')+
+   L.prose('Like MapReduce, they call your function on one record at a time, split work by partitioning the input and copy output over the network. Unlike MapReduce, the functions, called <b>operators</b>, don’t have to alternate map and reduce. You can connect one operator to the next in three ways:')+
+   L.flow([['list','Repartition and sort','By key, like MapReduce’s shuffle. For sort-merge joins and grouping.','',1],['layers','Partition, no sort','Saves work for partitioned hash joins, where order doesn’t matter.','',2],['box','Broadcast','Send the same output to every partition. For broadcast hash joins.','',3]],false));
+  L.done();}},
+{part:1,src:'Chapter 10 · Dataflow engines',run(L){
+  L.h(L.kick('learn','What dataflow engines gain')+'<h1 class="q">Six advantages over MapReduce. Tap each one.</h1>');
+  L.flips(L.card,[
+   ['Sort only where needed','Expensive sorting happens only where a step needs it, not between every map and reduce by default.'],
+   ['No pointless map tasks','A mapper’s work can often be folded into the reduce operator before it, since a mapper doesn’t change the partitioning.'],
+   ['Smarter placement','The scheduler sees every join and dependency, so it can put a consumer on the same machine as its producer and pass data through memory.'],
+   ['Lighter intermediate state','Data between operators can stay in memory or on local disk, not written and replicated on the distributed filesystem.'],
+   ['No waiting for whole stages','An operator can start as soon as its input is ready.'],
+   ['Reused processes','Existing Java processes can run new operators, avoiding MapReduce’s startup cost of a new process per task.']],
+   'The same computations usually run much faster. Workflows written in Pig, Hive or Cascading can switch from MapReduce to Tez or Spark with a configuration change, no code changes.');}},
+{part:1,src:'Chapter 10 · Dataflow engines',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In Linh’s new workflow, one operator joins every scan with Otterpost’s small table of hubs. How should the engine deliver the hub table to that operator?</h1>');
+  L.mc(L.card,['Repartition and sort it by hub name','Send the same copy to every partition','Partition it by hub name, without sorting'],1,
+   'That is a broadcast hash join: every partition of the scans gets the whole small hub table and builds a hash table from it.',
+   'The hub table is tiny, so there is no need to split or sort it. Broadcasting the same copy to every partition of the scans gives a broadcast hash join.');}},
+{part:1,src:'Chapter 10 · Dataflow engines',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'How should these operators be connected?',['Repartition and sort','Partition, no sort','Broadcast'],[
+   ['Group each courier’s scans, in time order, to rebuild their route.',0,'Grouping with an order inside each group needs records repartitioned by key and sorted.'],
+   ['A partitioned hash join of parcels and delivery attempts by parcel ID.',1,'Partitioning matters, but the hash table scrambles the order anyway, so sorting would be wasted.'],
+   ['Join every GPS ping with the small table of delivery zones.',2,'A small table sent whole to every partition: a broadcast hash join.'],
+   ['A sort-merge join of parcels with merchant records.',0,'Sort-merge joins need both sides partitioned and sorted by the key, as in MapReduce’s shuffle.']]);}},
+{part:1,src:'Chapter 10 · Fault tolerance',run(L){
+  L.h(L.kick('learn','Fault tolerance')+'<h1 class="q">No durable copy, so recompute instead</h1>'+
+   L.prose('MapReduce’s materialized files make recovery easy: a failed task restarts elsewhere and reads the same input again. Spark, Flink and Tez don’t write intermediate state to the distributed filesystem. If a machine dies and its intermediate data is lost, they <b>recompute</b> it from what is still available: an earlier stage if possible, otherwise the original input.')+
+   L.prose('To do that, the framework tracks how each piece of data was computed: which input partitions and which operators. Spark tracks this ancestry with its resilient distributed dataset (RDD) abstraction; Flink checkpoints operator state.')+
+   L.note('<b>Determinism matters.</b> If lost data has already been sent downstream and the recomputed version comes out different, the downstream operators face contradictions. The usual fix is to kill and rerun them too. Better to make operators '+L.g('deterministic','deterministic')+'.','alert')+
+   L.prose('Nondeterminism creeps in easily: iterating over a hash table in no guaranteed order, using random numbers (use a fixed seed instead), reading the system clock, or calling outside data sources. And recomputing isn’t always best: if the intermediate data is much smaller than the source, or very CPU-heavy to compute, writing it out is cheaper.'));
+  L.done();}},
+{part:1,src:'Chapter 10 · Fault tolerance',pts:1,
+ solve:async L=>{const c=L.$('#sd').children;c[0].click();L.$('#cr').click();c[1].click();L.$('#cr').click();},
+ run(L){
+  let mode=null;const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh’s job samples 1% of GPS pings, then averages speed per zone. Zone W4’s average, 14.2 km/h, has already gone downstream. Then a machine dies. Try it both ways.</h1>'+
+   '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px"><span class="chip static" style="margin:0">Read pings</span>'+L.ic('arrow')+'<span class="chip static" style="margin:0">Sample 1% at random</span>'+L.ic('arrow')+'<span class="chip static" style="margin:0">Average speed per zone</span></div>'+
+   '<div id="sd" style="margin-top:12px"></div><button class="btn pri" id="cr" style="margin-top:10px">'+L.ic('alert')+'Machine 3 dies</button><div id="cres"></div><div id="cq"></div>');
+  ['Random sample, no fixed seed','Random sample, fixed seed'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{[...L.$('#sd').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');mode=j;L.$('#cres').innerHTML='';};L.$('#sd').appendChild(b);});
+  L.$('#cr').onclick=()=>{const r=L.$('#cres');r.innerHTML='';
+    if(mode===null){L.fb(r,'Pick a sampling setting first.','info');return;}
+    seen.add(mode);
+    if(mode===0)L.fb(r,'<b>Recomputed Zone W4: 13.6 km/h.</b> A different random sample was drawn. Downstream already used 14.2, so it can’t reconcile the two: the downstream operators must be killed and rerun too.','no');
+    else L.fb(r,'<b>Recomputed Zone W4: 14.2 km/h.</b> The same seed drew the same sample. Only the lost partition was recomputed; nothing downstream had to change.','ok');
+    if(seen.size===2&&!L.$('#cq').innerHTML){const q=L.$('#cq');q.innerHTML='<h2 class="sub">Why was recovery cheap with the fixed seed?</h2>';
+      L.mc(q,['The machine no longer lost its state','The sample no longer needed recomputing','The recomputed data matched what was sent'],2,
+       'Deterministic operators recompute exactly the same data, so the rest of the job can carry on untouched.',
+       'The machine still died and the sample was still recomputed. What changed is that the recomputed data came out identical, so downstream didn’t need to be rerun.');}};}},
+{part:1,src:'Chapter 10 · Fault tolerance',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Safe to recompute?',['Deterministic','Not deterministic'],[
+   ['An operator adds up delivered scans per zone.',0,'Same scans in, same totals out, every time.'],
+   ['An operator stamps each record with the machine’s current clock time.',1,'Run it again and the clock reads differently. Use a time from the data instead.'],
+   ['An operator looks up each courier’s vehicle in the live Parcel DB.',1,'Outside data can change between runs. A copy taken into the job’s input avoids that.'],
+   ['An operator picks a random 1% sample using a fixed seed.',0,'A fixed seed produces the same pseudorandom numbers each run.'],
+   ['An operator loops over a hash table and outputs the first entry it finds.',1,'Many languages don’t guarantee the order of a hash table, so the “first” entry can differ.']]);}},
+{part:1,src:'Chapter 10 · Discussion of materialization',run(L){
+  L.h(L.kick('learn','Pipes, not temp files')+'<h1 class="q">Back to the Unix analogy</h1>'+
+   L.lanes([['box','MapReduce','Like writing each command’s output to a temporary file before the next command starts.',1],
+            ['arrow','Dataflow engines','Much more like Unix pipes. Flink especially is built around <b>pipelined execution</b>: passing output on bit by bit, without waiting for the input to be complete.',2]])+
+   L.note('<b>Sorting is the exception.</b> A sort must read its entire input before it can output anything: the very last record might have the lowest key and need to come out first. Any operator that sorts must hold state for a while. Most other steps can be pipelined.','list')+
+   L.prose('When the job finishes, its output still has to go somewhere durable, usually the distributed filesystem again. So inputs and final outputs are still materialized files, inputs stay immutable and outputs are replaced. What you save is writing all the intermediate state.'));
+  L.done();}},
+{part:1,src:'Chapter 10 · Discussion of materialization',pts:1,run(L){
+  L.h(L.kick('pr','Spot the blocker')+'<h1 class="q">Which of these operators must read its entire input before it can produce its first output?</h1>');
+  L.mc(L.card,['Drop scans that have no hub name','Convert each timestamp to local time','Sort all scans by tracking code'],2,
+   'The last scan read might have the smallest tracking code, so the sort can’t emit anything until it has seen everything.',
+   'Dropping or converting records works one record at a time, so it can pass results on immediately. Only the sort has to wait for the whole input.');}},
+
+/* ---------- PART 3: GRAPHS ---------- */
+{part:2,src:'Chapter 10 · Graphs and Iterative Processing',run(L){
+  L.h(L.kick('learn','Graphs in batch jobs')+'<h1 class="q">Processing a whole graph, round after round</h1>'+
+   L.prose('Chapter 2 used graphs for quick queries that find a few matching vertices. Batch jobs instead analyse an <b>entire</b> graph, often for recommendations or ranking. The famous example is PageRank, which estimates a web page’s popularity from the pages that link to it.')+
+   L.note('Naming trap: dataflow engines arrange their <i>operators</i> as a directed acyclic graph (DAG). That is not graph processing. In graph processing, the <i>data itself</i> is a graph.','alert')+
+   L.prose('Many graph algorithms follow one edge at a time, passing information from a vertex to its neighbours, and repeat until done: no edges left to follow, or the numbers stop changing. Plain MapReduce makes just one pass, so this is run as a loop: a scheduler runs one batch step, checks whether the algorithm has finished, and if not, runs another.')+
+   L.prose('That works, but it is very inefficient: every round reads the whole graph and writes a whole new copy, even if only a small part changed. Otterpost’s case: Linh wants the travel time from Westport Central hub to every other hub in the hub network.'));
+  L.done();}},
+{part:2,src:'Chapter 10 · The Pregel processing model',run(L){
+  L.h(L.kick('learn','The Pregel model')+'<h1 class="q">Vertices that send each other messages</h1>'+
+   L.prose('A popular optimization is the <b>bulk synchronous parallel</b> (BSP) model, also called the '+L.g('pregel','Pregel model')+' after the Google paper that made it known. Apache Giraph, Spark’s GraphX and Flink’s Gelly implement it.')+
+   L.list([['chat','Messages along edges','Recall that MapReduce mappers in effect send messages to a reducer. In Pregel, one vertex sends a message to another, usually along an edge of the graph.'],
+     ['cycle','One call per vertex per round','In each round, a function is called for every vertex with all the messages sent to it, much like a call to the reducer.'],
+     ['layers','State stays put','Unlike MapReduce, a vertex keeps its state in memory from one round to the next, so it only handles new messages. Where no messages arrive, no work is done.']],2)+
+   '<p class="small" style="margin-top:10px">It resembles the actor model, with each vertex as an actor. But vertex state and messages are fault-tolerant and durable, and communication happens in fixed rounds: each round delivers every message sent in the round before.</p>');
+  L.done();}},
+{part:2,src:'Chapter 10 · The Pregel processing model',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#rn');if(b)b.click();}},
+ run(L){
+  const V=['Westport Central','North hub','South hub','Harbour hub','Docks hub','Eastvale gateway'];
+  const R=[[[0,null,null,null,null,null],[0],[0],'Start: Westport Central is 0 minutes from itself. It sends “10 min” to North and “15 min” to South.'],
+           [[0,10,15,null,null,null],[1,2],[1,2],'Round 1: North and South get their first messages and update. They pass on their time plus each road’s length.'],
+           [[0,10,15,19,24,null],[0,3,4],[3,4],'Round 2: Harbour hears 22 and 19 and keeps 19; Docks takes 24. Westport Central gets messages too, but nothing shorter, so it sends nothing.'],
+           [[0,10,15,19,24,32],[1,2,5],[5],'Round 3: Eastvale gateway hears 39 and 32 and keeps 32. North and South hear nothing shorter.'],
+           [[0,10,15,19,24,32],[3,4],[],'Round 4: Harbour and Docks hear nothing shorter. Nobody improved, so no new messages are sent.'],
+           [[0,10,15,19,24,32],[],[],'Round 5: no messages at all. The computation is finished.']];
+  let k=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh computes travel minutes from Westport Central to every hub, Pregel-style. Step through the rounds.</h1><div id="gv" style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0"></div><p class="small" id="gt"></p><button class="btn pri" id="rn">'+L.ic('play')+'Next round</button><div id="gq"></div>');
+  const draw=()=>{const r=R[k];L.$('#gv').innerHTML=V.map((v,j)=>{const got=r[1].includes(j),up=r[2].includes(j);
+      return '<span class="chip static'+(up?' ok':'')+'" style="margin:0;'+(got?'':'opacity:.45')+'">'+(got?L.ic('chat'):'')+v+': <b style="margin-left:4px">'+(r[0][j]===null?'∞':r[0][j]+' min')+'</b></span>';}).join('');
+    L.$('#gt').innerHTML=r[3]+'<br><span style="opacity:.8">Faded = no messages this round, so no work.</span>';};
+  draw();
+  L.$('#rn').onclick=function(){if(k>=R.length-1)return;k++;draw();
+    if(k===R.length-1){this.remove();const q=L.$('#gq');q.innerHTML='<h2 class="sub">In round 3, Westport Central received no messages. How much work did it do that round?</h2>';
+      L.mc(q,['It re-read all its roads to check for changes','None at all: no messages means no work','It recomputed its travel time from scratch'],1,
+       'Each vertex keeps its state between rounds and only reacts to new messages. Unlike rerunning MapReduce each round, quiet parts of the graph cost nothing.',
+       'In the Pregel model a vertex remembers its state and only processes incoming messages. No messages, no work. That is exactly what plain MapReduce rounds can’t do.');}};}},
+{part:2,src:'Chapter 10 · Fault tolerance',run(L){
+  L.h(L.kick('learn','Faults and machines')+'<h1 class="q">How Pregel survives crashes, and where it struggles</h1>'+
+   L.lanes([['shield','Fault tolerance','Vertices only talk through messages, so messages can be batched. The only waiting is between rounds. Even though the network may drop, duplicate or delay messages, Pregel guarantees each one is processed exactly once in the next round. At the end of a round it can <b>checkpoint</b> every vertex’s state to durable storage. After a crash, roll the whole graph back to the last checkpoint, or, if the algorithm is deterministic and messages are logged, recover only the lost partition.',2],
+            ['layers','Parallel execution','A vertex sends messages to a vertex ID; the framework decides which machine holds which vertex. Because you write code from one vertex’s point of view, “thinking like a vertex,” the graph can be split any way. In practice it is often split by arbitrary vertex ID, so lots of messages cross machines, and they can outgrow the graph itself.',3]])+
+   L.note('<b>The rule of thumb:</b> if the graph fits in one computer’s memory, a single-machine (even single-threaded) program will quite likely beat a distributed one. If it fits on one machine’s disks, tools such as GraphChi work. Only beyond that is a distributed approach like Pregel unavoidable.','info'));
+  L.done();}},
+{part:2,src:'Chapter 10 · Parallel execution',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias proposes a 40-machine Pregel cluster to compute travel times across Otterpost’s hub network: a few hundred hubs and zones. What should Linh say?</h1>');
+  L.mc(L.card,['Use plain MapReduce, which suits repeated rounds','Add more machines, since graphs need lots of messages','Run it on one machine: the graph easily fits in memory'],2,
+   'A graph this small fits in one machine’s memory, where a simple program avoids all the cross-machine messaging.',
+   'Plain MapReduce rereads the whole graph every round, and more machines mean more messages crossing the network. A few hundred vertices fit in one machine’s memory, where a single-machine program is likely faster.');}},
+{part:2,src:'Chapter 10 · Fault tolerance',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap the pieces until the sentence describes how a Pregel job recovers from a crash.</h1>');
+  L.sentence(L.card,[['At the end of each round,','After every single message,','Once the whole job is done,'],['Pregel saves every vertex’s state,','Pregel saves only the messages,','Pregel saves the input graph again,'],['so after a crash it rolls back to that checkpoint.','so after a crash it restarts from the raw input.','so after a crash it skips the lost vertices.']],[0,0,0],
+   [['Checkpoints are taken at the end of a round, when every vertex’s state is settled, not after each message.','A checkpoint taken only at the end can’t help a crash in the middle of the job.'],
+    ['Messages alone don’t capture each vertex’s accumulated state.','The input graph is already stored; it doesn’t hold the progress made so far.'],
+    ['Restarting from the raw input would throw away every finished round. That is what checkpoints avoid.','Skipping vertices would give wrong answers. Pregel recovers them instead.']],
+   'Checkpoints at round boundaries mean a crash costs at most the rounds since the last checkpoint. With a deterministic algorithm and logged messages, even just the lost partition can be recovered.');}},
+
+/* ---------- PART 4: HIGH-LEVEL APIS ---------- */
+{part:3,src:'Chapter 10 · High-Level APIs and Languages',run(L){
+  L.h(L.kick('learn','High-level APIs')+'<h1 class="q">Less code for humans, faster jobs for machines</h1>'+
+   L.prose('Batch infrastructure has matured: it can store and process many petabytes on clusters of over 10,000 machines. With that roughly solved, attention moved to the programming model, efficiency, and the range of problems these tools can tackle.')+
+   L.prose('Hive, Pig, Cascading and Crunch caught on because writing MapReduce by hand is laborious, and when Tez arrived they could move to it without rewriting job code. Spark and Flink have their own high-level dataflow APIs, often inspired by FlumeJava.')+
+   L.flow([['layers','Join','Datasets on a shared field'],['list','Group','Tuples by key'],['eye','Filter','By some condition'],['check','Aggregate','Count, sum and more']],false)+
+   L.prose('These relational-style building blocks run on the join and grouping algorithms from this chapter. They also allow <b>interactive</b> use: write analysis code bit by bit in a shell and run it often to see what it does, much in the spirit of the Unix philosophy.'));
+  L.done();}},
+{part:3,src:'Chapter 10 · The move toward declarative query languages',run(L){
+  L.h(L.kick('learn','The move toward declarative')+'<h1 class="q">Say what you want, and still run any code you like</h1>'+
+   L.lanes([['target','Declarative operators','State <i>which</i> joins you need, and a cost-based optimizer (Hive, Spark and Flink have one) picks the join algorithm and even the join order. Simple filters and field selections, declared rather than coded, let the engine read only the needed columns from column storage and use fast vectorized loops. Spark generates JVM bytecode; Impala generates native code with LLVM.',2],
+            ['pencil','Arbitrary code','MapReduce’s heritage is the callback: your function can call any library for parsing, language or image analysis, or statistics. Databases offer user-defined functions, but they are often clumsy and don’t fit package managers like Maven, npm or Rubygems.',3]])+
+   L.note('Mixing the two, batch frameworks start to look like MPP databases, with comparable performance, while keeping the freedom to run any code over data in any format.','scale'));
+  L.done();}},
+{part:3,src:'Chapter 10 · The move toward declarative query languages',pts:4,run(L){
+  L.h(L.kick('pr','Which side helps?')+'<h1 class="q">For each need in Linh’s jobs, which helps more: a declarative operator or arbitrary code?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Declarative operator','Arbitrary code'],[
+   ['Choose between a broadcast and a sort-merge join for scans and couriers',0,'State the join; the optimizer looks at the inputs and picks the algorithm.'],
+   ['Parse odd courier-app log lines with an existing open-source library',1,'Callbacks can call any library from the language’s ecosystem.'],
+   ['Keep only Eastvale scans, reading just 2 of 40 columns',0,'A declared filter and field selection lets the engine read only those columns.'],
+   ['Run an image-analysis library over proof-of-delivery photos',1,'Image analysis needs real code, not a query.']],
+   'Declarative pieces give the optimizer room to work; callbacks keep the door open to any code. Modern engines offer both.');}},
+{part:3,src:'Chapter 10 · Specialization for different domains',run(L){
+  L.h(L.kick('learn','Specialization, then the summary')+'<h1 class="q">Where batch processing ends up</h1>'+
+   L.prose('Some patterns recur so often that reusable building blocks pay off: machine-learning algorithms (Mahout runs on MapReduce, Spark and Flink; MADlib runs inside an MPP database), spatial algorithms such as k-nearest neighbours, and approximate string matching for genome analysis. As batch engines gain declarative operators and MPP databases become more programmable, the two look more alike.')+
+   L.tiers([['layers','Partitioning','Bring related data, such as all records with one key, to the same place. MapReduce partitions by input block, then repartitions, sorts and merges for reducers. Dataflow engines avoid sorting unless needed.'],
+            ['shield','Fault tolerance','MapReduce writes to disk often: easy recovery from a failed task, but slower when nothing fails. Dataflow engines keep more in memory and recompute more after a failure; deterministic operators reduce that.'],
+            ['check','A restricted model','Callbacks are assumed stateless, with no side effects beyond their output. So the framework can retry tasks and discard failed output, and the final output is the same as if no faults had happened.',true,'The payoff']])+
+   '<p class="small" style="margin-top:10px">Finally, batch input is <b>bounded</b>: a fixed set of files or a snapshot. So a job knows when it has read everything, and it finishes. Chapter 11 takes away that boundary.</p>');
+  L.done();}},
+{part:3,src:'Chapter 10 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Looking ahead')+'<h1 class="q">Linh’s nightly job always knows when it is done. Next month Linh starts processing the scan stream as it arrives. What changes?</h1>');
+  L.mc(L.card,['Nothing: it still finishes once all scans are read','It must keep every result in memory to stay fast','Its input never ends, so the job never completes'],2,
+   'Batch input is bounded, so a batch job finishes. A stream is unbounded: there may always be more scans coming, so the job never completes. That is chapter 11.',
+   'A batch job finishes because its input is a fixed size. A stream of scans never ends, so a stream job is never complete. Memory isn’t the defining difference.');}}
+  ]
+});
+</script>
+</body>
+</html>

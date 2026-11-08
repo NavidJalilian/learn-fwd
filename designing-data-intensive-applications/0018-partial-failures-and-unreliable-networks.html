@@ -1,0 +1,248 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partial Failures and Unreliable Networks</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0018', title:'Partial failures and unreliable networks', minutes:20, icon:'alert',
+  goals:['Explain why “partly down” is the normal state of a distributed system','Say what a missing reply can and can’t tell you','Pick a timeout knowing what it costs either way'],
+  parts:['Partial failure','Lost in the network','Timeouts','Circuits vs packets'],
+  read:'Read the first half of chapter 8 of the book for the network-fault studies and the telephone-network comparison.',
+  glossary:{
+    'partial-failure':'Partial failure: some parts of a distributed system are broken while the rest work fine. It is unpredictable: the same action may work one time and fail the next.',
+    'shared-nothing':'Shared-nothing architecture: spreading the load over several machines, each with its own processor, memory and disks, that coordinate only over the network.',
+    'netfault':'Network fault (also called a network partition or netsplit): part of the network is cut off from the rest. The book says “network fault” so it isn’t confused with partitions of data.',
+    'timeout':'Timeout: giving up on a reply after a set time and assuming it won’t come. It can’t tell you why the reply didn’t come.',
+    'unbounded':'Unbounded delay: there is no upper limit on how long a packet may take to arrive. The network tries to be quick but promises nothing.'
+  },
+  cheatsheet:[
+    'One computer is <b>working or broken</b>. A distributed system is often <b>partly broken</b>, and unpredictably so.',
+    'Supercomputers stop everything and restart from a checkpoint. Online services must <b>keep running</b> and build reliability from unreliable parts.',
+    'No reply can mean: request lost, request queued, node down, node paused, reply lost or reply late. <b>You can’t tell which.</b>',
+    'Network faults are common, even in one company’s datacenter. Redundant gear doesn’t stop human misconfiguration.',
+    'A TCP acknowledgement isn’t proof. Only a <b>reply from the application</b> says the work was done.',
+    '<b>Short timeout</b>: false alarms, duplicate work, cascading failure. <b>Long timeout</b>: slow recovery. Measure, or let the system adapt.',
+    'Delays come from <b>queues</b>: switches, the OS, virtual machines, TCP flow control.',
+    'Packet networks trade bounded delay for <b>cheaper, fuller use of the wire</b>. That’s a cost choice, not a law of nature.'
+  ],
+  steps:[
+/* ---------- PART 1: PARTIAL FAILURE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt books a parcel through Otterpost’s merchant API. After 30 seconds there’s still no reply. Was the parcel booked?</h1>');
+  L.mc(L.card,['No, a missing reply means it failed','There’s no way to tell from here'],1,
+   'Silence tells you almost nothing. The booking may have failed, or it may have worked and only the reply went missing. This whole lesson is about living with that doubt.',
+   'Not necessarily. The booking may have worked and only the reply got lost or stuck. Silence alone can’t tell you which.');}},
+{part:0,src:'Chapter 8 · Faults and Partial Failures',run(L){
+  L.h(L.kick('learn','One machine vs many')+'<h1 class="q">A single computer is either working or broken. A distributed system can be both at once.</h1>'+
+   L.prose('On one computer, the same operation gives the same result every time. If the hardware goes wrong, computers are designed to crash completely rather than return a wrong answer, because wrong answers are confusing and hard to handle.')+
+   L.prose('Spread the software over many machines joined by a network, and that tidy picture is gone. Some parts can break while others carry on. The book calls this a '+L.g('partial-failure','partial failure')+'.')+
+   L.lanes([['box','One computer','Fully working or fully broken. Same input, same result.',1],
+            ['layers','Many computers','Some parts broken, others fine. The same request may work now and fail a second later.',4]])+
+   '<p class="small" style="margin-top:12px">Worse, you may not even know <i>whether</i> something worked, because the time a message takes to cross the network is unpredictable too.</p>');
+  L.done();}},
+{part:0,src:'Chapter 8 · Faults and Partial Failures',run(L){
+  L.h(L.kick('ex','A morning at Otterpost')+'<h1 class="q">“Not down, just partly down”</h1>');
+  L.beats(L.card,[
+   ['8:02','Peak Week Monday. Kwame’s dashboard shows the tracking page loading fine for recipients in Westport.'],
+   ['8:05','Merchants report that booking a parcel <b>sometimes</b> hangs. Retrying a few times usually works.'],
+   ['8:09','Scanners at one Eastvale hub can’t reach the Parcel DB at all. Every other hub is fine.'],
+   ['8:12','Tobias asks: “Is Otterpost down?” Kwame: “Not down. Just partly down.” Some parts work, some don’t, and it changes from minute to minute.'],
+   ['8:20','The hardest part: for some hanging bookings, nobody can say yet whether the parcel was booked or not.']],
+   'In a distributed system, failures are partial and unpredictable. Your software must expect them, not just a clean crash.');}},
+{part:0,src:'Chapter 8 · Cloud Computing and Supercomputing',run(L){
+  L.h(L.kick('learn','Two ways to handle faults')+'<h1 class="q">Stop everything, or keep running?</h1>'+
+   L.lanes([['flask','Supercomputer','Saves its progress (a checkpoint) from time to time. If one node fails, it stops the whole job, fixes the node and restarts from the checkpoint. A partial failure is turned into a total one.',3],
+            ['people','Internet service','Must serve users with low latency at any time, so stopping for repairs isn’t allowed. Built from cheap commodity machines, where with thousands of nodes something is always broken.',2]])+
+   L.prose('This book is about the second kind. If the system can keep working with failed nodes, you can also upgrade it one node at a time, or swap a slow virtual machine for a new one, while users notice nothing.')+
+   L.quote('In distributed systems, suspicion, pessimism, and paranoia pay off.','Martin Kleppmann, chapter 8'));
+  L.done();}},
+{part:0,src:'Chapter 8 · Cloud Computing and Supercomputing',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which Otterpost system could reasonably use the supercomputer approach: stop everything and restart from a checkpoint?</h1>');
+  L.mc(L.card,['The public tracking page','The merchant booking API','Linh’s nightly ETA training job'],2,
+   'An offline batch job can be stopped and restarted with little harm. Nobody is waiting on it second by second.',
+   'Recipients and merchants use that at any moment, so it can’t stop for repairs. Only the offline batch job can afford “stop and restart from a checkpoint”.');}},
+{part:0,src:'Chapter 8 · Building a Reliable System from Unreliable Components',pts:5,run(L){
+  L.h(L.kick('pr','Reliable from unreliable')+'<h1 class="q">IP, the internet’s base layer, may drop, delay, duplicate or reorder packets. TCP is built on top to be more reliable. Which problems can TCP hide from Otterpost’s software?</h1>'+
+   '<p class="small">It’s an old idea: build a more reliable system on a less reliable base. But there’s always a limit.</p><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['TCP hides it','TCP can’t hide it'],[
+   ['A packet with a scan event is lost on the way',0,'TCP notices the gap and sends the packet again.'],
+   ['The same packet arrives twice',0,'TCP throws away the duplicate.'],
+   ['Packets arrive in a different order than sent',0,'TCP puts them back in the order they were sent.'],
+   ['A congested link makes every packet slow',1,'TCP can’t remove network delay. Resending a lost packet even adds delay.'],
+   ['The Parcel DB server loses power',1,'No transport protocol can make a dead machine answer.']],
+   'A more reliable layer handles the tricky low-level faults, so the ones left are easier to reason about. But it can’t make delays or dead machines disappear.');}},
+
+/* ---------- PART 2: LOST IN THE NETWORK ---------- */
+{part:1,src:'Chapter 8 · Unreliable Networks',run(L){
+  L.h(L.kick('learn','Six ways a request can go wrong')+'<h1 class="q">You send a request and hear nothing back. What happened?</h1>'+
+   L.prose('Otterpost’s machines are '+L.g('shared-nothing','shared-nothing')+': the network is their only way to talk. That network is an <b>asynchronous packet network</b>: it promises neither <i>when</i> a message arrives nor <i>whether</i> it arrives.')+
+   L.list([['Request lost','Someone unplugged a cable.'],['Request queued','It’s waiting somewhere and will arrive later.'],['Remote node failed','It crashed or lost power.'],['Remote node paused','A long pause; it will answer later.'],['Reply lost','The work was done, but the reply vanished.'],['Reply delayed','The work was done, and the reply is on its way.']],1)+
+   '<p class="small" style="margin-top:10px">From the sender’s side, all six look exactly the same: no reply yet.</p>');
+  L.done();}},
+{part:1,src:'Chapter 8 · Unreliable Networks',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#send');if(b)b.click();}},
+ run(L){
+  const F=[['Request lost','A cable was pulled. The booking never arrived.','Not booked',0],
+   ['Request queued','The network is overloaded. The booking is waiting in a queue.','Will be booked later',1],
+   ['Server crashed','The Parcel DB server lost power before it saw the booking.','Not booked',0],
+   ['Server paused','A long pause froze the server. It will handle the booking when it wakes.','Will be booked later',1],
+   ['Reply lost','The booking was saved. A misconfigured switch dropped the reply.','Booked',1],
+   ['Reply delayed','The booking was saved. The reply is stuck and will arrive late.','Booked',1]];
+  let k=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Send the same booking six times. The sender always sees the same thing. Each time, see what really happened.</h1>'+
+   '<button class="btn pri" id="send">'+L.ic('play')+'Send booking</button><div id="log" style="margin-top:12px"></div><div id="fq"></div>');
+  L.$('#send').onclick=function(){if(k>=F.length)return;const f=F[k];k++;
+    const d=document.createElement('div');d.style.cssText='background:var(--soft);border-radius:14px;padding:10px 12px;margin:0 0 8px;font-size:14.5px;line-height:1.5';
+    d.innerHTML='<div class="small">#'+k+' · Sender sees: <b>no reply after 30 s</b></div><b>'+f[0]+'.</b> '+f[1]+'<div style="margin-top:6px"><span class="chip static '+(f[3]?'ok':'no')+'" style="margin:0">'+f[2]+'</span></div>';
+    L.$('#log').appendChild(d);
+    if(k===F.length){this.remove();const q=L.$('#fq');q.innerHTML='<h2 class="sub">Tobias’s code retries every booking that gets no reply. In how many of these six cases could the retry create a second parcel?</h2>';
+      L.mc(q,['None of them','Two of them','Four of them'],2,
+       'Two bookings were already saved, and two more will be saved later. A blind retry doubles all four. Later lessons show how to make retries safe.',
+       'Count the ones marked “Booked” <i>and</i> “Will be booked later”. A queued or paused request still gets processed after the sender gives up, so a blind retry doubles four bookings.');}};}},
+{part:1,src:'Chapter 8 · Unreliable Networks',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The usual answer to silence is a '+L.g('timeout','timeout')+'. Kwame’s booking service waits 30 seconds, then gives up. What does it know at that moment?</h1>');
+  L.mc(L.card,['Only that no reply has come yet','That the Parcel DB server is down','That the booking was never saved'],0,
+   'Right. A timeout doesn’t say why. The request might even still be in a queue and arrive after the sender has given up.',
+   'A timeout can’t tell you why. The server could be fine and the reply lost, or the request could still be queued and arrive later.');}},
+{part:1,src:'Chapter 8 · Network Faults in Practice',run(L){
+  L.h(L.kick('learn','Network faults in practice')+'<h1 class="q">Even a well-run datacenter has network trouble</h1>'+
+   L.list([['alert','It happens a lot','One study of a medium-sized datacenter counted about 12 network faults a month. Half cut off one machine, half cut off a whole rack.'],
+     ['person','Spare hardware isn’t enough','Redundant switches don’t help much against human error, such as a misconfigured switch, which is a major cause of outages.'],
+     ['cycle','Strange faults','A switch software upgrade delayed packets for over a minute. Sharks have bitten undersea cables. One network card dropped every incoming packet while sending fine: a link can work in one direction only.']],3)+
+   L.note('When part of the network is cut off from the rest, that’s often called a <b>network partition</b>. The book says '+L.g('netfault','network fault')+' instead, to avoid mixing it up with partitions of data.','info')+
+   '<p class="prose" style="margin-top:14px">If nobody has defined and tested what happens during a network fault, almost anything can follow: a cluster stuck for good, even lost data.</p>');
+  L.done();}},
+{part:1,src:'Chapter 8 · Network Faults in Practice',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Otterpost’s internal network is usually reliable. Femi asks: “Must the merchant dashboard keep fully working during a network fault?”</h1>');
+  L.mc(L.card,['Yes, it must tolerate every network fault','No, faults are rare enough to ignore','No, but we must know and test how it reacts'],2,
+   'Handling a fault doesn’t have to mean tolerating it. Showing merchants an error can be fine, as long as you know how the software behaves and that it recovers. You can even trigger network faults on purpose to test it.',
+   'The book’s middle path: handling doesn’t have to mean tolerating, so an error message can be fine. But ignoring faults isn’t, because untested software can do arbitrarily bad things. Know and test how it reacts.');}},
+
+/* ---------- PART 3: TIMEOUTS ---------- */
+{part:2,src:'Chapter 8 · Detecting Faults',run(L){
+  L.h(L.kick('learn','Detecting faults')+'<h1 class="q">Sometimes you get a clear signal that something is broken. Tap each card.</h1>'+
+   L.prose('A load balancer must stop sending traffic to dead nodes. A replicated database must notice a dead leader and promote a follower. Both need to detect faults, but signals are rare.'));
+  L.flips(L.card,[
+   ['Nothing listening on the port','The machine is up but the process crashed, so the operating system refuses the connection. But if it crashed <i>while</i> handling your request, you don’t know how much it did.'],
+   ['A script reports the crash','If a process dies but the machine’s OS is still running, a script can tell other nodes right away, so they don’t wait for a timeout.'],
+   ['Ask the network switches','If you can reach your switches’ management interface, it can show link failures. Not over the internet, not in a shared datacenter, and not if you can’t reach it.'],
+   ['A router says “unreachable”','A router may reply that an address can’t be reached. But routers can’t see failures any better than anyone else.']],
+   'These signals are useful but you can’t count on them. Even a TCP acknowledgement only means the packet arrived; the application may crash before acting on it. Usually you get <b>no response at all</b>, so you retry, wait for a timeout, and then declare the node dead.');}},
+{part:2,src:'Chapter 8 · Detecting Faults',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Otterpost sends a status webhook to Bramble & Bolt’s server. TCP confirms the data arrived, then the connection drops before any HTTP reply. Did Bramble & Bolt record the new status?</h1>');
+  L.mc(L.card,['Yes, TCP confirmed delivery','Unknown, there was no app reply','No, the connection dropped'],1,
+   'TCP only says the bytes reached the machine. To be sure the work was done, you need a positive reply from the application itself.',
+   'Neither TCP nor a dropped connection settles it. The bytes arrived, but their application may have crashed before acting. Only an application-level reply proves the status was recorded.');}},
+{part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',run(L){
+  L.h(L.kick('learn','How long should a timeout be?')+'<h1 class="q">There’s no simple answer. Both directions cost something.</h1>'+
+   L.lanes([['clock','Long timeout','A dead node stays “alive” for a long time. Meanwhile users wait or see errors.',3],
+            ['alert','Short timeout','Faster detection, but a node that is only slow gets declared dead.',4]])+
+   L.prose('Declaring a live node dead is risky. If it was halfway through an action, like sending an email, another node takes over and the action may happen <b>twice</b>. Its work also moves to other nodes. If they were already overloaded, they slow down and get declared dead too: a <b>cascading failure</b>. In the extreme, every node declares the others dead.')+
+   L.note('If the network promised a maximum delay <i>d</i> and nodes always answered within time <i>r</i>, a timeout of 2<i>d</i> + <i>r</i> would be perfect. Real networks have '+L.g('unbounded','unbounded delays')+', and most servers can’t promise <i>r</i>.','info'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',pts:1,
+ solve:async L=>{L.$$('#tc .chip').forEach(b=>b.click());},
+ run(L){
+  const R=[90,110,85,1800,95,120,100,2400,90,105,88,130],T=[[150,'150 ms'],[5000,'5 s'],[60000,'60 s']];const seen=new Set();
+  L.h(L.kick('pr','Tune the timeout')+'<h1 class="q">Here are the Parcel DB leader’s last 12 reply times, then it crashes. Try each timeout and compare.</h1>'+
+   '<div id="tc"></div><div id="rt" style="margin:6px 0 4px"></div><div id="tr" class="res" style="min-height:48px"></div><div id="tq"></div>');
+  const draw=t=>{L.$('#rt').innerHTML=R.map(v=>'<span class="chip static '+(t&&v>t?'no':'')+'" style="padding:5px 9px;font-size:13px">'+(v>=1000?(v/1000)+' s':v+' ms')+'</span>').join('')+'<span class="chip static no" style="padding:5px 9px;font-size:13px">'+L.ic('x')+'crash</span>';};draw(0);
+  T.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('clock')+t[1];
+    b.onclick=()=>{[...L.$('#tc').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);draw(t[0]);
+      const fd=R.filter(v=>v>t[0]).length;
+      L.$('#tr').innerHTML='<b>False alarms:</b> '+fd+(fd?' (a healthy leader declared dead, so a needless failover)':' ')+'<br><b>Real crash noticed after:</b> '+t[1]+(t[0]>=60000?' (a full minute of failed bookings)':'');
+      if(seen.size===T.length&&!L.$('#tq').innerHTML){const q=L.$('#tq');q.innerHTML='<h2 class="sub">Peak Week: load triples and slow spikes get longer. Kwame is tempted by 150 ms to fail over fast. What’s the danger?</h2>';
+        L.mc(q,['A slower failover, since short timeouts detect less','Slow but healthy nodes declared dead, overloading the rest','No danger, since a shorter timeout is always safer'],1,
+         'Exactly. Under heavy load, slow isn’t dead. Moving a “dead” node’s work onto busy neighbours can push them over too: a cascading failure.',
+         'A short timeout detects faster, not slower, and it’s never automatically safer. Under heavy load it mistakes slow nodes for dead ones, and moving their work can topple the rest.');}};
+    L.$('#tc').appendChild(b);});}},
+{part:2,src:'Chapter 8 · Network congestion and queueing',run(L){
+  L.h(L.kick('learn','Where delays come from')+'<h1 class="q">Like traffic jams on roads, network delays mostly come from queues</h1>'+
+   L.list([['layers','At the switch','Many machines send to one destination at once, so the switch queues their packets. If the queue fills up, packets are dropped and must be resent, even though nothing is broken.'],
+     ['box','In the operating system','If every CPU core on the receiving machine is busy, the request waits until the application is ready.'],
+     ['pointer','In virtual machines','A virtual machine is often paused for tens of milliseconds while another uses the CPU. Incoming data waits.'],
+     ['scale','At the sender','TCP’s flow control slows a sender down to avoid overloading the network, so data waits before it even leaves. Resending lost packets adds more delay.']],2)+
+   L.prose('Queues grow fastest when a system is close to full capacity. In shared clouds, a <b>noisy neighbour</b> (another customer using lots of network) can add delay you can’t see or control.')+
+   L.note('Video calls often use UDP instead of TCP: no flow control and no resending. A late piece of audio is worthless anyway, so the app plays silence and moves on. The retry happens between the humans: “Sorry, could you repeat that?”','chat'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Network congestion and queueing',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which queue is it?',['Switch queue','OS queue','Virtual machine pause','TCP flow control'],[
+   ['Bramble & Bolt’s flash sale starts. Thousands of merchant API calls head for the same booking server at the same moment.',0,'Many senders, one destination: the switch must feed packets onto that one link one by one.'],
+   ['The booking server receives the requests, but every CPU core is busy with earlier ones.',1,'The operating system holds the requests until the application can take them.'],
+   ['Another customer’s virtual machine on the same physical host is using the CPU, so Otterpost’s machine is frozen for a moment.',2,'While a VM is paused, its incoming data is buffered by the layer that runs the VMs.'],
+   ['Linh’s backup job slows its own sending rate so it doesn’t overload the link to Eastvale.',3,'That’s flow control: the sender limits itself, so data queues before entering the network.']]);}},
+{part:2,src:'Chapter 8 · Network congestion and queueing',run(L){
+  L.h(L.kick('learn','So how do you choose?')+'<h1 class="q">Measure first. Better still, let the system adjust itself.</h1>'+
+   L.flow([['eye','Measure','Record round-trip times for a long period, on many machines, to see how much they vary.','',1],
+           ['scale','Decide','Weigh slower detection against more false alarms, for this application.','',2],
+           ['cycle','Or adapt','Keep measuring reply times and their jitter, and adjust the timeout automatically.','',3]])+
+   L.prose('The adaptive approach is what a <b>Phi Accrual failure detector</b> does. Akka and Cassandra use one, and TCP’s own resend timer works in a similar way.')+
+   '<p class="small">A fixed number copied from an example config is a guess, not a measurement.</p>');
+  L.done();}},
+{part:2,src:'Chapter 8 · Network congestion and queueing',pts:1,run(L){
+  L.h(L.kick('pr','Tobias’s timeout')+'<h1 class="q">Tobias sets the courier location store’s timeout to 500 ms, “because the example config uses 500.” What should Kwame suggest?</h1>');
+  L.mc(L.card,['Measure reply times over weeks and many machines, or use an adaptive detector','Keep 500 ms, since example configs are tuned by experts','Use 50 ms so that dead nodes are found ten times faster'],0,
+   'There is no universally correct timeout. It has to come from this system’s own delays, ideally adjusted as they change.',
+   'An example config knows nothing about Otterpost’s network, and a tiny timeout means a flood of false alarms. Measure this system’s delays, or let a detector adapt to them.');}},
+
+/* ---------- PART 4: CIRCUITS VS PACKETS ---------- */
+{part:3,src:'Chapter 8 · Synchronous Versus Asynchronous Networks',run(L){
+  L.h(L.kick('learn','Why not just fix the network?')+'<h1 class="q">The old telephone network almost never drops or delays a call. How?</h1>'+
+   L.lanes([['lock','Circuit (phone call)','When a call starts, a fixed slice of bandwidth is reserved along the whole route until it ends. Nothing queues, so the maximum delay is fixed: a <b>bounded delay</b>.',2],
+            ['layers','Packets (TCP/IP)','No reservation. Packets grab whatever bandwidth is free right now and send as fast as possible. An idle connection uses nothing.',1]])+
+   L.prose('Ethernet and IP use packets, so they queue, and their delays are unbounded. Why? They are built for <b>bursty</b> traffic. A call needs a steady flow of bits. A web page, an email or a file just needs to finish as fast as possible.')+
+   '<p class="small">Over a circuit you’d have to guess the bandwidth: too low and the transfer crawls while capacity sits idle; too high and the circuit can’t be set up at all.</p>');
+  L.done();}},
+{part:3,src:'Chapter 8 · Latency and Resource Utilization',pts:1,
+ solve:async L=>{L.$('#mA').click();L.$('#mB').click();},
+ run(L){
+  const M={A:{u:35,d:5,dl:'5 ms, every time',t:'Every user has a fixed slice. Delay never changes, but Linh’s bursty backup crawls in its slice while most of the wire sits empty.'},
+           B:{u:90,d:85,dl:'anywhere from 1 ms to 400 ms',t:'Everyone shares the whole wire. It’s kept busy, so each byte is cheaper, but packets sometimes wait in long queues.'}};const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">The link between Westport and Eastvale carries bookings, tracking reads and Linh’s backups. Try both ways of sharing it.</h1>'+
+   '<div><button class="chip" id="mA">'+L.ic('lock')+'Reserved slices</button><button class="chip" id="mB">'+L.ic('layers')+'Shared wire</button></div>'+
+   '<div class="meterrow"><div class="lb">Wire in use</div><div class="meter"><div id="mu" style="background:var(--ok-strong)"></div></div></div>'+
+   '<div class="meterrow"><div class="lb">Delay varies</div><div class="meter"><div id="md" style="background:var(--no-strong)"></div></div></div>'+
+   '<div class="res" id="mt" style="min-height:44px"><span class="small">Pick a mode. (Illustrative numbers.)</span></div><div id="mq"></div>');
+  const pick=k=>{['A','B'].forEach(x=>L.$('#m'+x).classList.toggle('sel',x===k));seen.add(k);const m=M[k];
+    L.$('#mu').style.width=m.u+'%';L.$('#md').style.width=m.d+'%';L.$('#mt').innerHTML='<b>Wire in use: '+m.u+'%. Delay: '+m.dl+'.</b> '+m.t;
+    if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">So why do datacenter networks have unpredictable delays?</h2>';
+      L.mc(q,['Physics makes a delay limit impossible on any network','Engineers haven’t yet worked out how to queue packets','Sharing the wire on the fly is cheaper, at the price of queues'],2,
+       'Variable delay isn’t a law of nature. It’s a cost trade-off: dynamic sharing keeps the wire busy, so each byte costs less.',
+       'Circuits prove a fixed delay limit is possible. Packet networks choose not to reserve, because sharing the wire on the fly uses it better and costs less. Queues are the price.');}};
+  L.$('#mA').onclick=()=>pick('A');L.$('#mB').onclick=()=>pick('B');}},
+{part:3,src:'Chapter 8 · Latency and Resource Utilization',run(L){
+  L.h(L.kick('learn','Cheap and variable, or costly and predictable')+'<h1 class="q">The same trade-off shows up everywhere</h1>'+
+   L.tiers([['lock','Static sharing','A fixed slice per user: dedicated hardware, reserved bandwidth, fixed CPU time. Delays can be guaranteed, but slices sit idle, so it’s expensive.'],
+            ['layers','Dynamic sharing','Users jostle for whatever is free: shared links, threads queued for a CPU core, virtual machines. Better use of hardware, so cheaper, but delays vary.']])+
+   L.prose('It’s possible to fake circuits on a packet network using packet priorities and rate limits. But that isn’t switched on in shared datacenters, public clouds or the internet.')+
+   L.note('So you must assume congestion, queueing and unbounded delay will happen. There is no “correct” timeout. It has to be found by experiment.','info'));
+  L.done();}},
+{part:3,src:'Chapter 8 · Latency and Resource Utilization',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence explains Otterpost’s network.</h1>');
+  L.sentence(L.card,[['Circuit networks','Packet networks'],['share the wire as needed','reserve a fixed slice'],['so delays have a fixed limit','so delays have no fixed limit'],['and timeouts must be measured','and one correct timeout exists']],[1,0,1,0],
+   [['Circuits aren’t what Otterpost’s datacenters and the internet use.'],['Reserving a fixed slice is what circuits do.'],['A fixed limit needs reserved capacity. Shared wires queue.'],['With unbounded delays there’s no single correct value.']],
+   'Packet networks trade predictable delay for cheaper, fuller use of the wire. That’s why timeouts must come from measurement.');}},
+{part:3,src:'Chapter 8 · Unreliable Networks',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Mixed review',['True','False'],[
+   ['“TCP acknowledged our write, so the Parcel DB has stored the scan.”',1,'TCP only says the bytes arrived. The application may crash before storing them.'],
+   ['“If we got no reply, the request might still be processed later.”',0,'It may be sitting in a queue, or the server may be paused, and it can still arrive after you give up.'],
+   ['“Doubling every switch will remove most of our network faults.”',1,'Redundant gear doesn’t prevent human misconfiguration, a major cause of outages.'],
+   ['“The tracking page could stop and restart from a checkpoint whenever a node fails.”',1,'That’s the supercomputer approach. An online service has to keep serving users.'],
+   ['“A link can carry traffic one way while failing the other way.”',0,'Faults can be one-directional, like a network card that drops incoming packets but sends fine.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Serializability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0017', title:'Serializability', minutes:20, icon:'lock',
+  goals:['Explain the three ways databases reach serializability: serial execution, two-phase locking and SSI','Predict when each one slows down or stops working','Match each race condition to the weakest isolation level that stops it'],
+  parts:['Serial execution','Two-phase locking','Optimistic: SSI','The whole map'],
+  read:'Read the “Serializability” section and the summary of chapter 7 for the figures on stored procedures and on how SSI detects conflicts.',
+  glossary:{
+    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the result is the same as if they had run one after another.',
+    'stored-proc':'Stored procedure: transaction code handed to the database ahead of time, so the database runs the whole thing in one go instead of waiting for the app between steps.',
+    deadlock:'Deadlock: transaction A waits for a lock held by B while B waits for a lock held by A. Neither can move until the database aborts one of them.',
+    'predicate-lock':'Predicate lock: a lock on every row that matches a search condition, including rows that don’t exist yet.',
+    'index-range':'Index-range lock (next-key lock): a cheaper stand-in for a predicate lock. It locks a wider range in an index, such as a whole room or a whole time window.',
+    ssi:'Serializable snapshot isolation (SSI): transactions read from a snapshot and never wait for locks. At commit, the database aborts any transaction whose reads have gone out of date.',
+    contention:'Contention: many transactions wanting the same rows at the same time.',
+    'write-skew':'Write skew: two transactions read the same data, each decides it is safe to go ahead, and each writes something different. Together they break a rule neither broke alone.'
+  },
+  cheatsheet:[
+    '<b>Serializable</b>: the result is as if transactions ran one at a time. If each transaction is correct alone, they stay correct together.',
+    '<b>Actual serial execution</b>: one thread, data in memory, whole transactions sent as stored procedures. Transactions must be short; throughput is one CPU core per partition; cross-partition transactions are slow.',
+    '<b>Two-phase locking</b>: shared locks to read, exclusive locks to write, all held until commit. Readers and writers block each other. Safe, but slow, with unstable high-percentile latency and frequent deadlocks.',
+    '<b>Predicate locks</b> also cover rows that don’t exist yet (phantoms). In practice databases use <b>index-range locks</b>: wider, cheaper approximations.',
+    '2PL (two-phase locking) has nothing to do with 2PC (two-phase commit).',
+    '<b>SSI</b> is optimistic: read from a snapshot without blocking, then abort at commit if the premise changed. Keep read-write transactions short; it suffers under high contention.',
+    'Weakest level that stops each race: dirty reads and writes → read committed; read skew → snapshot isolation; lost updates → some snapshot implementations or a lock; write skew → serializable only.'
+  ],
+  steps:[
+/* ---------- PART 1: SERIAL EXECUTION ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A hub counter has one clerk who serves one customer at a time. Can two customers ever be sold the last place in the same delivery slot?</h1>');
+  L.mc(L.card,['No: the second customer sees it’s gone','Yes, if both arrive at the same moment'],0,
+   'One at a time means no races at all. That’s the simplest road to serializability, and the first one in this lesson.',
+   'The clerk serves one person completely before the next. The second customer sees the slot already taken. No overlap, no race.');}},
+{part:0,src:'Chapter 7 · Serializability',run(L){
+  L.h(L.kick('learn','The researchers’ answer')+'<h1 class="q">Weak isolation is a mess. Why not just be serializable?</h1>'+
+   L.prose('Since the 1970s, the situation has been the same: isolation levels are hard to understand and differ between databases, it’s hard to tell whether your code is safe at a given level, and there are no good tools to find race conditions. Researchers have always answered: use '+L.g('serializable','serializable isolation')+'.')+
+   L.prose('Serializable isolation guarantees that the result is the same as if transactions had run one at a time. So if each transaction is correct on its own, they stay correct together. The database prevents <b>all</b> race conditions.')+
+   L.tiers([['list','Actual serial execution','Literally run one transaction at a time.'],['lock','Two-phase locking (2PL)','For decades the only widely used option.'],['flask','Optimistic methods, like SSI','Let transactions run, check them at commit.']])+
+   '<p class="small" style="margin-top:6px">So why isn’t everyone serializable? Each method has a cost. This lesson looks at them on a single machine; chapter 9 extends them to several.</p>');
+  L.done();}},
+{part:0,src:'Chapter 7 · Actual Serial Execution',run(L){
+  L.h(L.kick('learn','Remove the concurrency')+'<h1 class="q">One thread, one transaction at a time</h1>'+
+   L.prose('The simplest way to avoid concurrency problems is to have no concurrency: run each transaction to completion, in order, on a single thread. The result is serializable by definition.')+
+   L.prose('For 30 years designers thought this would be too slow. Around 2007 they changed their minds, because of two developments:')+
+   L.list([['box','RAM got cheap','The whole active dataset often fits in memory, so transactions don’t wait for the disk.'],
+     ['clock','OLTP transactions are short','Everyday transactions make a few reads and writes. Long analytic queries are read-only and can run on a snapshot, outside the single thread.']],1)+
+   L.prose('VoltDB/H-Store, Redis and Datomic work this way. Skipping lock management can sometimes make it faster than a concurrent design. But throughput is capped at what <b>one CPU core</b> can do.'));
+  L.done();}},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Encapsulating transactions in stored procedures',run(L){
+  L.h(L.kick('learn','No chatting allowed')+'<h1 class="q">The single thread can’t wait for your app</h1>'+
+   L.prose('Early databases imagined one transaction covering a whole user journey, like booking a flight: search, choose, pick seats, enter details, pay. But people are slow. The database would hold huge numbers of idle transactions. So web apps keep each transaction inside one HTTP request.')+
+   L.prose('Even so, most transactions are still <b>interactive</b>: the app sends a query, reads the answer, sends the next one, and so on. Each step is a trip across the network. A single-threaded database would spend most of its time waiting for the app.')+
+   L.note('So serial-execution databases don’t allow interactive multi-statement transactions. The app hands over the whole transaction as a <b>'+L.g('stored-proc','stored procedure')+'</b>. With the data in memory, it runs very fast, with no waiting for the network or the disk.','play'));
+  L.done();}},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Encapsulating transactions in stored procedures',pts:1,
+ solve:async L=>{L.$('#run').click();},
+ run(L){
+  const A=['b','w','w','b','w','w','b'],B=['b','b','b'];
+  const bar=(id,arr,n)=>{const el=L.$('#'+id);if(!el)return;el.innerHTML=arr.slice(0,n).map(x=>'<span style="display:inline-block;width:16px;height:16px;border-radius:5px;margin:0 3px 3px 0;background:'+(x==='b'?'var(--ok-strong)':'var(--soft2)')+';border:1px solid var(--line)"></span>').join('');};
+  L.h(L.kick('try','See it happen')+'<h1 class="q">The database’s only thread runs Ravi’s “end shift” transaction. Green = working, grey = waiting for the app.</h1>'+
+   L.lanes([['chat','Interactive','Count on-duty couriers, wait for the app, update Ravi, wait, commit.<div id="ba" style="margin-top:10px"></div><div class="res" id="ra"></div>',4],
+            ['play','Stored procedure','The whole transaction is sent in one call.<div id="bb" style="margin-top:10px"></div><div class="res" id="rb"></div>',2]])+
+   '<button class="btn pri" id="run" style="margin-top:14px">'+L.ic('play')+'Run it</button><div id="sq"></div>');
+  L.$('#run').onclick=function(){this.remove();let n=0;
+    const t=setInterval(()=>{n++;if(!L.$('#ba')){clearInterval(t);return;}bar('ba',A,n);bar('bb',B,Math.min(n,3));
+      if(n>=A.length){clearInterval(t);
+        L.$('#ra').innerHTML='<span style="color:var(--no)">Idle for most of the time, and no other transaction may run meanwhile.</span>';
+        L.$('#rb').innerHTML='<span style="color:var(--ok)">Done in one go. The thread is free for the next transaction.</span>';
+        const q=L.$('#sq');q.innerHTML='<h2 class="sub">Why do serial-execution databases insist on stored procedures?</h2>';
+        L.mc(q,['Stored procedure languages are more modern','So the one thread never waits on the network','So a transaction can wait for user input'],1,
+         'With one thread, every wait stalls everyone. Sending the whole transaction up front removes the network waits.',
+         'It’s about waiting: with one thread, any pause for the network stalls every other transaction. (Stored procedure languages have in fact been criticized as old-fashioned.)');}},160);};}},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Pros and cons of stored procedures',run(L){
+  L.h(L.kick('learn','A bad reputation, partly fixed')+'<h1 class="q">Stored procedures have real downsides</h1>'+
+   L.list([['Old languages','Each vendor has its own (Oracle’s PL/SQL, SQL Server’s T-SQL, PostgreSQL’s PL/pgSQL). They look archaic and lack libraries.'],
+     ['Hard to manage','Code inside the database is harder to debug, version, deploy, test and monitor.'],
+     ['Shared blast radius','One database often serves many app servers, so a badly written procedure does more damage there.']],4)+
+   L.prose('Newer systems use ordinary languages: VoltDB uses Java or Groovy, Datomic Java or Clojure, Redis Lua.')+
+   L.note('VoltDB replicates by running the same procedure on every replica. So procedures must be <b>deterministic</b>: the same result on every node. Reading the current time, for example, has to go through special deterministic functions.','cycle'));
+  L.done();}},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Partitioning',run(L){
+  L.h(L.kick('learn','Scaling past one core')+'<h1 class="q">Partition, and keep each transaction inside one partition</h1>'+
+   L.prose('If each transaction only touches one '+L.g('partition','partition')+', each partition can have its own thread on its own CPU core, and throughput grows with the number of cores. A transaction that spans partitions must run in lock-step across all of them. VoltDB reports about 1,000 cross-partition writes per second, orders of magnitude below its single-partition speed, and adding machines doesn’t help.')+
+   L.prose('Simple key-value data partitions easily. Data with several secondary indexes tends to need a lot of cross-partition work.')+
+   '<h2 class="sub">Serial execution works when…</h2>'+
+   L.list([['clock','Every transaction is small and fast','One slow transaction stalls all the others.'],
+     ['box','The active data fits in memory','A transaction that has to wait for the disk slows everything down.'],
+     ['trend','Writes fit on one core','Or the data partitions so transactions rarely cross partitions.']],2));
+  L.done();}},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Summary of serial execution',pts:6,run(L){
+  L.h(L.kick('pr','Fit or trouble?')+'<h1 class="q">Otterpost is testing a serial-execution database. Sort each use.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Works well','Will cause trouble'],[
+   ['Deducting a parcel price from one merchant’s balance, with all data in memory',0,'Short, in memory, one partition: the ideal case.'],
+   ['A transaction that waits for a dispatcher to click “confirm” before committing',1,'Waiting for a person inside the single thread stalls every other transaction.'],
+   ['Booking a slot in one zone, when each zone’s data sits in one partition',0,'Single-partition transactions scale with the number of cores.'],
+   ['Thousands of credit transfers a second between merchants on different partitions',1,'Cross-partition transactions are far slower and don’t scale by adding machines.'],
+   ['A procedure that reads the server clock directly, on a database that replicates by re-running procedures',1,'Each replica would get a different time. Procedures must be deterministic.'],
+   ['Reading the rarely used five-year parcel archive from disk inside the transaction thread',1,'Waiting for the disk on the single thread makes the whole system very slow.']],
+   'Short, in-memory, single-partition, deterministic: that’s where serial execution shines.');}},
+
+/* ---------- PART 2: TWO-PHASE LOCKING ---------- */
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL)',run(L){
+  L.h(L.kick('learn','The classic method')+'<h1 class="q">Two-phase locking: anyone writing gets the object alone</h1>'+
+   L.prose('For about 30 years, two-phase locking (2PL) was the only widely used way to get serializability. Several transactions may read an object together, as long as nobody is writing it. Writing needs exclusive access:')+
+   L.list([['eye','A read it, B wants to write it','B waits until A commits or aborts. B can’t change it behind A’s back.'],
+     ['pencil','A wrote it, B wants to read it','B waits too. Reading the old version, as snapshot isolation would, isn’t allowed.']],1)+
+   L.prose('Writers block readers and readers block writers, the opposite of snapshot isolation. In return 2PL stops every race condition, including lost updates and '+L.g('write-skew','write skew')+'. MySQL (InnoDB) and SQL Server use it for “serializable”; DB2 for “repeatable read”.')+
+   L.note('<b>2PL is not 2PC.</b> Two-phase commit (chapter 9) is something completely different.','alert'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Implementation of two-phase locking',run(L){
+  L.h(L.kick('learn','How the locks work')+'<h1 class="q">Shared to read, exclusive to write, held until the end</h1>'+
+   L.tiers([['eye','Shared mode','To read, take the lock in shared mode. Many can share it, but they wait if someone holds it exclusively.'],
+            ['lock','Exclusive mode','To write, take it in exclusive mode. Nobody else may hold it in any mode, so you wait for all of them.'],
+            ['arrow','Upgrade','Read first, then write? Upgrade shared to exclusive, under the same rules.'],
+            ['clock','Hold to the end','Keep every lock until commit or abort. Phase one: take locks while running. Phase two: release them all at the end.']])+
+   L.prose('With so many locks, A can end up waiting for B while B waits for A: a '+L.g('deadlock','deadlock')+'. The database spots it and aborts one of them, and the app must retry it.'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL)',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Under 2PL, Linh’s long report has read every row of the slots table and is still running. Tobias’s booking wants to update one slot. What happens?</h1>');
+  L.mc(L.card,['It writes at once; the report sees the old version','It waits until the report commits or aborts','The report is aborted so the booking can go first'],1,
+   'The report holds shared locks on everything it read, so the writer must wait. That’s why long transactions hurt under 2PL.',
+   'Under 2PL readers block writers: no old versions, no automatic abort. The booking waits for the report to finish.');}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Implementation of two-phase locking',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Under 2PL, must B wait?',['B goes ahead','B must wait'],[
+   ['A has read Ravi’s row and is still running. B wants to read it too.',0,'Both hold the lock in shared mode. Readers don’t block readers.'],
+   ['A has read Ravi’s row and is still running. B wants to update it.',1,'B needs the lock exclusively, and A still holds it shared.'],
+   ['A has updated Mia’s row and hasn’t committed. B wants to read it.',1,'A holds it exclusively, so B waits, even just to read.'],
+   ['A read Ravi’s row and has already committed. B wants to update it.',0,'A released all its locks at commit.']]);}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Performance of two-phase locking',run(L){
+  L.h(L.kick('ex','A load test')+'<h1 class="q">Zainab tries 2PL serializable on a copy of the Parcel DB, with Peak Week traffic</h1>');
+  L.beats(L.card,[
+   ['Queues form','Many bookings want the same popular slot rows. Each waits for the one ahead, so a queue builds up.'],
+   ['No time limit','Traditional databases don’t cap how long a transaction runs, so there is no limit on how long a waiter may wait.'],
+   ['One slow transaction','A single transaction that touches lots of data takes many locks, and the rest of the system can grind to a halt.'],
+   ['Kwame’s graphs','Latency becomes unstable and very slow at high percentiles like p99, exactly where Kwame looks.'],
+   ['Deadlocks','Deadlocks happen far more often than under lock-based read committed. Each one aborts a transaction that must redo all its work.']],
+   'The cost of 2PL is partly managing locks, but mostly lost concurrency: anything that might race has to wait.');}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Predicate locks',run(L){
+  L.h(L.kick('learn','Locking rows that don’t exist yet')+'<h1 class="q">Predicate locks stop phantoms</h1>'+
+   L.prose('Serializable isolation must also stop phantoms. Example: the Westport hub’s loading bays. If one transaction has searched for bookings of bay 3 between 09:00 and 09:30, nobody else may insert an overlapping booking for bay 3 then. Other bays, or other times, are fine.')+
+   L.prose('A '+L.g('predicate-lock','predicate lock')+' belongs to every object matching a search condition, not to one row:')+
+   L.list([['eye','Reading with a condition','Take a shared predicate lock on the condition. Wait if someone holds an exclusive lock on any matching object.'],
+     ['pencil','Inserting, updating, deleting','First check whether the old or new value matches anyone’s predicate lock. If so, wait for them.']],3)+
+   L.note('The key: it also covers objects that <b>don’t exist yet</b>. With predicate locks, 2PL stops all write skew and becomes serializable.','lock'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Index-range locks',run(L){
+  L.h(L.kick('learn','The practical version')+'<h1 class="q">Index-range locks: lock a bit more, check much less</h1>'+
+   L.prose('Checking many predicate locks is slow. So most 2PL databases use '+L.g('index-range','index-range locks')+' (also called next-key locks). The trick: lock a <b>bigger</b> set than the condition. Any write that matches the original condition still matches the bigger one, so it’s safe.')+
+   L.lanes([['list','Index on bay','Lock the index entry for bay 3: all its bookings, at any time.',1],
+            ['clock','Index on time','Lock the 09:00–09:30 range: bookings for every bay in that window.',2]])+
+   L.prose('A conflicting insert has to update that same part of the index, hits the lock and waits. Less precise, but far cheaper. With no suitable index, the database can lock the whole table: safe, but bad for performance.'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Index-range locks',pts:1,run(L){
+  L.h(L.kick('pr','Safe or not?')+'<h1 class="q">A transaction searched for bookings of bay 3 between 09:00 and 09:30. Which lock is a safe simplification of that search?</h1><div id="hq"></div>');
+  L.mc(L.$('#hq'),['Lock only bay 3, from 09:00 to 09:15','Lock every bay from 09:00 to 09:30','Lock only the bookings that exist now'],1,
+   'It covers more than the search did, so any conflicting booking still runs into it.',
+   'A safe simplification must cover <i>more</i> than the search. A shorter window misses 09:15–09:30, and locking existing rows misses new ones: the phantoms.');}},
+
+/* ---------- PART 3: SSI ---------- */
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Pessimistic versus optimistic concurrency control',run(L){
+  L.h(L.kick('learn','A newer idea')+'<h1 class="q">Serializable without the waiting</h1>'+
+   L.prose('So far: 2PL doesn’t perform well, serial execution doesn’t scale well, and weak levels let races through. '+L.g('ssi','Serializable snapshot isolation (SSI)')+' offers full serializability with only a small cost over snapshot isolation. It was first described in 2008 (Michael Cahill’s PhD thesis). PostgreSQL has used it for “serializable” since version 9.1, and FoundationDB uses a similar method.')+
+   L.lanes([['lock','Pessimistic','If anything might go wrong, wait until it’s safe. That’s 2PL. Serial execution is the extreme: one lock on everything, kept short.',4],
+            ['flask','Optimistic','Carry on and hope. At commit, check whether isolation was broken; if so, abort and retry.',2]])+
+   L.prose('Optimistic control does badly under high '+L.g('contention','contention')+': many aborts, and retries add load near full capacity. With spare capacity and little contention, it tends to beat pessimistic methods. SSI is snapshot isolation plus a way to detect conflicts.'));
+  L.done();}},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Decisions based on an outdated premise',run(L){
+  L.h(L.kick('ex','Catching an outdated premise')+'<h1 class="q">How SSI notices that a decision went stale</h1>');
+  L.beats(L.card,[
+   ['The premise','Ravi (txn 42) and Mia (txn 43) each read “2 couriers on duty in W3” and act on it. The database doesn’t know how the app uses that answer, so it assumes any change to it could make their writes wrong.'],
+   ['Case 1 · stale read','Txn 43 reads from its snapshot and ignores 42’s uncommitted change to Ravi’s row. The database notes that. If 42 has committed by the time 43 commits, 43’s premise is out of date: abort.'],
+   ['Why wait until commit?','If 43 turns out to be read-only, there’s no write skew risk. And 42 might still abort. Waiting avoids needless aborts and keeps long read-only queries cheap.'],
+   ['Case 2 · write after read','The database records that 42 and 43 read the W3 data (for example on that index entry). When one writes, it finds the other’s read. Like a lock, but it doesn’t block: it’s a tripwire that marks the reader’s premise as possibly stale.'],
+   ['Who wins','The first to commit succeeds. When the second tries to commit, a conflicting write has already committed, so it is aborted.']],
+   'SSI lets everyone run, then aborts the transactions whose premise changed before they committed.');}},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Detecting writes that affect prior reads',pts:1,
+ solve:async L=>{L.$('#who').children[0].click();await L.sleep(20);L.$('#go2').click();},
+ run(L){
+  let first=null;const N=['Ravi','Mia'];
+  L.h(L.kick('try','See it happen')+'<h1 class="q">Under SSI, Ravi and Mia end their shifts at the same time and neither waits. Pick who reaches commit first, then run.</h1><div id="who"></div>'+
+   '<div id="sim" hidden>'+L.lanes([['person','Ravi · txn 42','<div id="l0"></div>',2],['person','Mia · txn 43','<div id="l1"></div>',3]])+
+   '<button class="btn pri" id="go2" style="margin-top:14px">'+L.ic('play')+'Run</button></div><div id="sq"></div>');
+  N.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n+' commits first';b.onclick=()=>{if(first!==null)return;first=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#who').appendChild(b);});
+  const add=(j,ic,txt,col)=>{const el=L.$('#l'+j);if(el)el.innerHTML+='<div style="display:flex;gap:6px;align-items:flex-start;margin:6px 0;font-size:13.5px;color:'+(col||'var(--ink)')+'">'+L.ic(ic)+'<span>'+txt+'</span></div>';};
+  L.$('#go2').onclick=function(){this.remove();const s=1-first;
+    setTimeout(()=>{add(0,'eye','Reads: 2 on duty');add(1,'eye','Reads: 2 on duty');},200);
+    setTimeout(()=>{add(0,'pencil','Sets own row off duty');add(1,'pencil','Sets own row off duty');},550);
+    setTimeout(()=>{add(first,'check','Commits: no conflicting write committed yet','var(--ok)');},900);
+    setTimeout(()=>{if(!L.$('#l0'))return;add(s,'x','Aborted: a write that changed what it read has already committed, so its premise is stale','var(--no)');
+      const q=L.$('#sq');q.innerHTML='<h2 class="sub">'+N[s]+'’s app retries the aborted transaction. What does it see now?</h2>';
+      L.mc(q,['Still 2 on duty, so it ends the shift','1 on duty, so it refuses to end the shift'],1,
+       'The retry runs on a fresh snapshot that includes '+N[first]+'’s committed change. The rule holds: one courier stays on duty.',
+       'The retry gets a new snapshot, which includes the committed change. It sees only 1 on duty and refuses.');},1250);};}},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Performance of serializable snapshot isolation',run(L){
+  L.h(L.kick('learn','What SSI costs')+'<h1 class="q">The abort rate decides how well SSI performs</h1>'+
+   L.list([['scale','Tracking detail','Tracking reads and writes precisely means fewer needless aborts but more bookkeeping. Coarser tracking is faster but aborts more. PostgreSQL uses theory to skip some unnecessary aborts.'],
+     ['lock','Versus 2PL','Nobody waits for locks, and readers and writers don’t block each other. Latency is much more predictable, and read-only queries need no locks.'],
+     ['trend','Versus serial execution','Not limited to one CPU core. FoundationDB spreads conflict detection over many machines, even for transactions across partitions.'],
+     ['clock','Keep writers short','A long transaction that reads and writes is likely to hit a conflict and abort. Long read-only ones may be fine.']],1)+
+   '<p class="small" style="margin-top:8px">SSI is probably less sensitive to slow transactions than 2PL or serial execution. When the book was written it was young and still proving itself in practice.</p>');
+  L.done();}},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Performance of serializable snapshot isolation',pts:1,run(L){
+  L.h(L.kick('pr','Where it struggles')+'<h1 class="q">In which situation would SSI perform worst?</h1><div id="hq"></div>');
+  L.mc(L.$('#hq'),['Long read-only reports running beside bookings','Data spread across many partitions','Many transactions fighting over the same rows'],2,
+   'High contention means many premises go stale, many aborts and many retries, which hurts most when the system is near capacity.',
+   'Read-only queries run on a snapshot without locks, and SSI can work across partitions. Its weak spot is contention: lots of conflicts mean lots of aborts.');}},
+
+/* ---------- PART 4: THE WHOLE MAP ---------- */
+{part:3,src:'Chapter 7 · Summary',run(L){
+  const Y='<span style="color:var(--ok);font-weight:700">yes</span>',N='<span style="color:var(--no);font-weight:700">no</span>',P='<span style="color:var(--h3);font-weight:700">partly</span>';
+  const rows=[['Dirty reads',Y,Y,Y],['Dirty writes',Y,Y,Y],['Read skew',N,Y,Y],['Lost updates',N,P,Y],['Write skew',N,N,Y],['Phantoms in writes',N,N,Y]];
+  L.h(L.kick('learn','The chapter on one card')+'<h1 class="q">Which level prevents which race?</h1>'+
+   '<table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 12px"><tr style="text-align:left;color:var(--muted)"><th style="padding:6px 4px"></th><th style="padding:6px 4px">Read committed</th><th style="padding:6px 4px">Snapshot</th><th style="padding:6px 4px">Serial&shy;izable</th></tr>'+
+   rows.map(r=>'<tr style="border-top:1px solid var(--line)">'+r.map((c,j)=>'<td style="padding:7px 4px;'+(j?'':'font-weight:600')+'">'+c+'</td>').join('')+'</tr>').join('')+'</table>'+
+   '<p class="small">Lost updates: some snapshot implementations detect them automatically; others need a manual lock. Snapshot isolation does stop simple phantom reads in read-only queries.</p>'+
+   L.prose('Transactions are an abstraction: whole classes of faults and concurrency problems shrink to “abort and try again”. An app that only reads and writes single records may manage without them. For anything more complex, they remove a huge number of error cases you would otherwise have to think about.'));
+  L.done();}},
+{part:3,src:'Chapter 7 · Summary',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which race condition does only serializable isolation prevent?</h1>');
+  L.mc(L.card,['Read skew','Dirty writes','Write skew'],2,
+   'Snapshot isolation’s lost-update detection doesn’t catch it. Only serializable isolation does.',
+   'Snapshot isolation already stops read skew, and almost every implementation stops dirty writes. Write skew needs serializability.');}},
+{part:3,src:'Chapter 7 · Serializability',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which way to serializability?',['Serial execution','Two-phase locking','SSI'],[
+   ['Readers never wait for writers; conflicts are checked when a transaction commits.',2,'Optimistic: run on a snapshot, check at commit.'],
+   ['Shared and exclusive locks, all held until commit or abort.',1,'That’s the two phases: take locks, then release them all at the end.'],
+   ['The whole transaction is sent as a stored procedure and run on one thread.',0,'No concurrency at all, so no network waits allowed.'],
+   ['Index-range locks stop phantoms by making writers wait.',1,'A pessimistic approximation of predicate locks.'],
+   ['Throughput is capped at one CPU core per partition.',0,'One thread does all the work for its partition.'],
+   ['Performance depends mostly on how many transactions get aborted.',2,'Contention causes stale premises, which cause aborts.']]);}},
+{part:3,src:'Chapter 7 · Serializability',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s trade-off')+'<h1 class="q">Write skew keeps hitting slots and on-duty rules. The Parcel DB is partitioned, Linh’s long read-only reports run all day, and bookings rarely fight over the same rows. By the book’s trade-offs, which method fits best?</h1><div id="hq"></div>');
+  L.mc(L.$('#hq'),['Actual serial execution','Serializable snapshot isolation','Two-phase locking'],1,
+   'Reports read a snapshot without blocking bookings, low contention keeps aborts rare, and it isn’t capped at one core. (Caveat: it was still young when the book was written.)',
+   'Serial execution struggles with cross-partition work and long transactions. Under 2PL, the all-day reports would block bookings. SSI suits low contention plus long reads.');}},
+{part:3,src:'Chapter 7 · Summary',pts:5,run(L){
+  L.h(L.kick('pr','The weakest level that works')+'<h1 class="q">For each Otterpost bug, what is the weakest isolation level that stops it?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Read committed','Snapshot isolation','Only serializable'],[
+   ['A dashboard shows a parcel from a booking that later aborts',0,'A dirty read. Read committed stops it.'],
+   ['Linh’s backup mixes data from before and after a transfer',1,'Read skew. A consistent snapshot fixes it.'],
+   ['The last two couriers in a zone both end their shifts',2,'Write skew. Only serializable isolation catches it automatically.'],
+   ['Two claims overwrite each other’s uncommitted parcel and slip writes',0,'Dirty writes. Read committed makes the second writer wait.'],
+   ['Two recipients overfill a delivery slot by booking at once',2,'Write skew through a phantom: each inserted a new row the other’s check never saw.']],
+   'Weaker levels are fine for some races, but anything shaped like check → decide → write needs serializable isolation (or careful manual locking).');}}
+  ]
+});
+</script>
+</body>
+</html>

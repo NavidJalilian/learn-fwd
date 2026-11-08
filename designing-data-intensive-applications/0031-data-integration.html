@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Integration</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0031', title:'Data integration', minutes:20, icon:'map',
+  goals:['Explain why Otterpost should derive its copies from one ordered log, not dual writes','Say where a single total order breaks down, and why causality still matters','Evolve a derived view gradually by reprocessing history'],
+  parts:['Many tools','Logs vs transactions','Limits of order','Batch and stream'],
+  read:'Read the start of chapter 12 (“Data Integration”) for the full lambda architecture discussion and the railway gauge sidebar.',
+  glossary:{
+    cdc:'Change data capture: reading a database’s log of row changes so another system (a warehouse, a search index, a cache) can copy them.',
+    dualwrite:'Dual writes: the application itself writes each change to several systems, for example the database and then the search index. Easy to build, but the copies can drift apart.',
+    totalorder:'Total order: an ordering where you can compare any two items and say which comes first, like numbers.',
+    idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
+    eventtime:'Event time vs processing time: event time is when something actually happened (the timestamp inside the event); processing time is when a stream processor gets round to handling it. The two can be far apart.',
+    'lambda-arch':'Lambda architecture: running a batch system and a separate stream system side by side over the same events. The stream gives a fast, rough view; the batch job later produces a corrected one.'
+  },
+  cheatsheet:[
+    'Chapter 12 is <b>Kleppmann’s opinion</b>: read it as “he argues”, not settled fact.',
+    'No tool fits every use, so you <b>combine tools by deriving data</b>. Know where data is written first and what is derived from what.',
+    'Avoid <b>dual writes</b>. Send all writes through one place that decides a <b>total order</b>, then derive every other copy in that order (CDC or event sourcing).',
+    '<b>Log-based derived data vs distributed transactions:</b> same goal. Logs give up instant read-your-writes but contain faults. Kleppmann favours logs.',
+    'Total order breaks down with <b>partitions, several datacenters, microservices and offline clients</b>. Causal links across systems need care: no simple answer.',
+    'Batch and stream are converging. Keep derivations <b>deterministic</b> and updates <b>asynchronous</b>, so one fault stays local.',
+    '<b>Reprocess history</b> into a new view next to the old one, then shift users gradually, like the railways’ third rail.',
+    '<b>Lambda architecture</b> runs batch and stream side by side; its problems pushed toward one engine with replay, exactly-once and event-time windows.'
+  ],
+  steps:[
+/* ---------- PART 1: MANY TOOLS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s parcel data must serve tracking-page lookups, partial-phone-number searches, monthly on-time reports and ETA predictions. Will one database product be the best tool for all four?</h1>');
+  L.mc(L.card,['Yes, if we pick a good general-purpose one','Probably not, as each job suits a different tool'],1,
+   'Every product, even a “general-purpose” database, is built for some usage pattern. So big applications end up combining several tools. This lesson is about combining them without losing control of the data.',
+   'Every product, even a “general-purpose” database, is built for some usage pattern. Big applications end up combining several tools, and this lesson is about doing that safely.');}},
+{part:0,src:'Chapter 12 · The Future of Data Systems',run(L){
+  L.h(L.kick('learn','A chapter of opinions')+'<h1 class="q">The last chapter looks ahead, and says so</h1>'+
+   L.prose('Up to now the book has described how data systems work today. In chapter 12 Kleppmann turns to how he thinks they <i>should</i> work. He writes in the first person, calls it his opinion, and invites you to disagree.')+
+   L.note('So in this lesson and the next three, read each recommendation as “Kleppmann argues…”, not as settled fact.','info')+
+   L.prose('His aim gathers up the whole book. Chapter 1 asked for systems that are reliable, scalable and maintainable. Here he reaches further: applications that are robust, correct, evolvable and, in the end, good for people.'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Data Integration',run(L){
+  L.h(L.kick('learn','Data integration')+'<h1 class="q">One set of data, many different jobs</h1>'+
+   L.prose('For a problem like “store data and look it up later” there is no single right answer, only approaches that suit different circumstances. Each product has to pick one. Trying to do everything in one piece of software almost guarantees doing it badly.')+
+   L.prose('And complex applications use the same data in several ways, so you end up combining tools. Otterpost already does:')+
+   L.list([['box','Parcel DB','The '+L.g('derived','system of record')+' for parcels, merchants and prices.'],['eye','Support search','Finds a parcel from a partial phone number or postcode.'],['trend','Analytics warehouse','On-time and route reports.'],['clock','ETA model','Predicts each parcel’s delivery window.']],1)+
+   '<p class="small" style="margin-top:10px">Kleppmann distrusts claims like “99% of people only need X”: they say more about the speaker’s experience than about the tool. The need for integration shows when you zoom out to a whole organization’s dataflows.</p>');
+  L.done();}},
+{part:0,src:'Chapter 12 · Reasoning about dataflows',run(L){
+  L.h(L.kick('learn','Reasoning about dataflows')+'<h1 class="q">Know where data is written first</h1>'+
+   L.prose('When copies of the same data live in several systems, ask two questions: <b>where is data written first?</b> And <b>which copy is derived from which?</b>')+
+   L.flow([['pencil','Write','Parcel DB','the system of record'],['list','Capture',L.g('cdc','Change data capture'),'every change, in order'],['eye','Apply','Support search','same changes, same order']])+
+   L.prose('If change data capture is the <i>only</i> way into the search index, the index is derived entirely from the Parcel DB and stays consistent with it, bugs aside.')+
+   L.note('The danger is '+L.g('dualwrite','dual writes')+': the app writes to both systems itself. Two clients can send conflicting writes that the two systems apply in different orders. Neither system is in charge of the order, so they can stay inconsistent for good.','alert'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Reasoning about dataflows',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh maps where Otterpost’s parcel data really comes from</h1>');
+  L.beats(L.card,[
+   ['The question','Linh asks, for every copy of parcel data: where does it come from? The answers are messy. The booking code writes to the Parcel DB and then calls support search directly. A script copies some fields to the notification service.'],
+   ['The rule','Linh proposes that all input goes to one place first, the Parcel DB, which decides a single '+L.g('totalorder','total order')+' for all writes.'],
+   ['The pipes','Every other copy (support search, the tracking cache, the warehouse, notifications) follows the Parcel DB’s change stream through the event log and applies the writes in that same order.'],
+   ['The name','Kleppmann points out this is state machine replication again, the idea behind total order broadcast: same inputs in the same order give the same result. Whether the log comes from CDC or from event sourcing matters less than deciding one order.'],
+   ['The bonus','Updates driven by a log can usually be made deterministic and '+L.g('idempotence','idempotent')+'. If the search updater crashes, it re-reads from where it stopped, and repeats do no harm.']],
+   'Funnel writes through one place that decides the order. Derive every other copy by applying that order.');}},
+{part:0,src:'Chapter 12 · Reasoning about dataflows',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants new parcels to appear in support search sooner, so the booking code would also write straight into the search index. What’s the risk?</h1>');
+  L.mc(L.card,['Search indexes can’t take writes from app code','Two edits could land in different orders and never agree','The event log would fill its disk twice as fast'],1,
+   'With dual writes nobody decides one order for both systems. Two edits made at the same time can leave the Parcel DB and search different for good.',
+   'Search indexes accept writes fine, and the log isn’t involved here. The real risk is order: with dual writes, two edits made at once can reach the two systems in different orders, and nothing ever reconciles them.');}},
+{part:0,src:'Chapter 12 · Reasoning about dataflows',pts:1,
+ solve:async L=>{L.$('#rd').click();L.$('#rl').click();},
+ run(L){
+  const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Two edits to one parcel’s phone number arrive at the same moment. Run both designs.</h1>'+
+   L.prose('<b>Edit A</b>: the merchant API sets the phone to …4410. <b>Edit B</b>: Signe’s support agent corrects it to …4471.')+
+   L.lanes([['x','Dual writes','The app writes to the Parcel DB and to search itself.<div class="res" id="ra"></div>',4],
+            ['list','One log','Writes go to the Parcel DB only. Search follows its change stream.<div class="res" id="rb"></div>',2]])+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="rd">'+L.ic('play')+'Run dual writes</button><button class="btn" id="rl">'+L.ic('play')+'Run one log</button></div><div id="rq"></div>');
+  const ask=()=>{const q=L.$('#rq');if(seen.size<2||q.innerHTML)return;q.innerHTML='<h2 class="sub">Why can’t this mismatch happen with one log?</h2>';
+    L.mc(q,['The log delivers writes faster than direct calls','Search rejects any write that arrives too late','Every copy applies writes in the one order the log fixed'],2,
+     'The Parcel DB decides one order (A, then B), and search replays exactly that order. Same inputs, same order, same result.',
+     'Speed and rejection rules don’t help. What helps is one order: the Parcel DB fixes A-then-B, and search applies the same sequence.');};
+  L.$('#rd').onclick=function(){this.disabled=true;seen.add(0);
+    L.$('#ra').innerHTML='Parcel DB gets A, then B: <b>…4471</b><br>Search gets B, then A: <b>…4410</b><br><span style="color:var(--no)">They disagree, and nothing will ever fix it.</span>';ask();};
+  L.$('#rl').onclick=function(){this.disabled=true;seen.add(1);
+    L.$('#rb').innerHTML='Parcel DB orders them A, then B: <b>…4471</b><br>Search replays A, then B: <b>…4471</b><br><span style="color:var(--ok)">Both copies agree.</span>';ask();};}},
+
+/* ---------- PART 2: LOGS VS TRANSACTIONS ---------- */
+{part:1,src:'Chapter 12 · Derived data versus distributed transactions',run(L){
+  L.h(L.kick('learn','Derived data versus distributed transactions')+'<h1 class="q">Two ways to keep systems in step</h1>'+
+   L.prose('The classic way to keep different systems consistent is a distributed transaction (two-phase commit, for example through XA). Kleppmann says it reaches the same goal as log-based derived data, by different means:')+
+   L.lanes([['lock','Distributed transactions','<b>Order:</b> locks.<br><b>Exactly once:</b> atomic commit.<br><b>Timing:</b> usually '+L.g('linearizability','linearizable')+', so you can read your own writes.',4],
+            ['list','Log-based derived data','<b>Order:</b> position in the log.<br><b>Exactly once:</b> deterministic retry and idempotence.<br><b>Timing:</b> updated asynchronously, so no such promise by default.',2]])+
+   L.prose('His view: XA’s poor fault tolerance and performance severely limit it, and a better protocol is unlikely to be widely adopted soon. So log-based derived data is the most promising way to integrate systems. But he won’t just tell people that eventual consistency is inevitable and they must live with it. A later lesson looks at stronger guarantees built on top.'));
+  L.done();}},
+{part:1,src:'Chapter 12 · Derived data versus distributed transactions',run(L){
+  L.h(L.kick('ex','Otterpost’s billing ledger')+'<h1 class="q">Linh proposes replacing the two-phase commit at booking time</h1>');
+  L.beats(L.card,[
+   ['Today','Since finance got its own billing ledger, every booking writes to the Parcel DB and the ledger in one two-phase commit.'],
+   ['The pain','When the ledger is slow, bookings wait. When it’s down, bookings abort. Kwame remembers a ledger hiccup stalling one of Bramble & Bolt’s flash sales.'],
+   ['Linh’s idea','Write the booking to the Parcel DB only. Its change stream goes into the event log. The ledger, support search and notifications each follow the log in the same order.'],
+   ['Safe repeats','If the ledger’s consumer crashes halfway, it re-reads from its last position in the log. Applying a booking it already saw has no extra effect.'],
+   ['The catch','Bramble & Bolt books a parcel and opens its balance page straight away. The ledger may not have caught up, so for a moment the charge is missing. The log design doesn’t promise read-your-writes by default.']],
+   'Same goal, different trade: the log design keeps bookings flowing when the ledger struggles, but the ledger is updated a little later.');}},
+{part:1,src:'Chapter 12 · Derived data versus distributed transactions',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What does Linh’s log design give up, at least by default?</h1>');
+  L.mc(L.card,['A merchant instantly reading back its own charge','Every booking eventually reaching the ledger','All systems applying bookings in one order'],0,
+   'The ledger is updated asynchronously, so there’s no timing guarantee like reading your own writes. Kleppmann admits this is a real cost.',
+   'The log still delivers every booking, and in one order. What’s missing is timing: right after booking, the merchant may not see its own charge yet.');}},
+{part:1,src:'Chapter 12 · Derived data versus distributed transactions',pts:6,run(L){
+  L.h(L.kick('pr','Which approach?')+'<h1 class="q">Sort each description into the approach it belongs to.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Distributed transaction','Log-based derived data'],[
+   ['Decides the order of writes by taking locks',0,'Distributed transactions use locks for mutual exclusion.'],
+   ['Decides the order of writes by their place in one log',1,'With CDC or event sourcing, the log fixes the order.'],
+   ['Gets “exactly once” through atomic commit',0,'Atomic commit makes a change take effect in every system or in none.'],
+   ['Gets “exactly once” through retries that are safe to repeat',1,'A failed step is simply retried; idempotence makes the repeat harmless.'],
+   ['A merchant books, reads it back at once, and is sure to see it',0,'Transaction systems usually give linearizability, which includes reading your own writes.'],
+   ['The ledger is down for ten minutes, yet bookings keep working',1,'An asynchronous consumer can fall behind and catch up. A two-phase commit would block or abort.']],
+   'Same goal, two mechanisms. Kleppmann bets on the log, and accepts that derived copies lag a little.');}},
+
+/* ---------- PART 3: LIMITS OF ORDER ---------- */
+{part:2,src:'Chapter 12 · The limits of total ordering',run(L){
+  L.h(L.kick('learn','The limits of total ordering')+'<h1 class="q">One order for everything doesn’t scale forever</h1>'+
+   L.prose('For a small system, one totally ordered log is easy: a single-leader database builds exactly that. As systems grow, Kleppmann lists four places where it breaks down:')+
+   L.list([['layers','Too much for one leader','A total order needs one node to decide it. When scans and GPS pings outgrow one machine, the log is '+L.g('partition','partitioned')+', and the order between partitions is ambiguous.'],
+     ['map','Several datacenters','Westport, Eastvale and Nordhaven each have their own leader, since syncing across datacenters is slow. Events from two datacenters have no defined order.'],
+     ['box','Microservices','Billing and dispatch each keep their own durable state. Events from two services have no defined order.'],
+     ['pointer','Offline clients','The courier app acts before the server confirms, even offline. Phone and server see events in different orders.']],2)+
+   '<p class="small" style="margin-top:10px">Formally, deciding a total order is total order broadcast, which is equivalent to '+L.g('consensus','consensus')+'. Most consensus algorithms assume one node can handle the whole stream. Scaling past that, and working well across regions, is still an open research problem.</p>');
+  L.done();}},
+{part:2,src:'Chapter 12 · The limits of total ordering',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh splits the event log into 12 partitions by parcel ID, because one machine can’t keep up. What happens to ordering?</h1>');
+  L.mc(L.card,['Order holds within a partition, not between them','The whole log still keeps one global order','Order is lost everywhere, even for one parcel'],0,
+   'Each partition keeps its own order, and every event for one parcel lands in one partition. But which of two events in different partitions came first is now undefined.',
+   'Partitioning keeps order <i>inside</i> each partition, so one parcel’s events stay in order. Across partitions there is no defined order any more.');}},
+{part:2,src:'Chapter 12 · The limits of total ordering',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Is there one defined order?',['Yes, one defined order','No defined order'],[
+   ['Two scans of the same parcel, both routed to that parcel’s log partition.',0,'Routing by parcel ID puts every event for one parcel in one partition, in order.'],
+   ['A merchant edit handled by the Westport leader and another by the Nordhaven leader.',1,'Each datacenter has its own leader. Events from two datacenters have no defined order.'],
+   ['A charge recorded by billing and a route change recorded by dispatch, each in its own database.',1,'Services that each own their durable state give no defined order between their events.'],
+   ['Every change recorded in the single Parcel DB leader’s replication log.',0,'A single-leader database builds exactly such a totally ordered log.'],
+   ['A courier marks a parcel delivered while offline; meanwhile support reschedules it on the server.',1,'A client that acts before the server confirms sees events in a different order from the server.'],
+   ['Two GPS pings from different couriers that land in different log partitions.',1,'The order between two partitions is ambiguous.']]);}},
+{part:2,src:'Chapter 12 · Ordering events to capture causality',run(L){
+  L.h(L.kick('learn','Ordering events to capture causality')+'<h1 class="q">When the order of two events really matters</h1>'+
+   L.prose('Often a missing total order is fine. If two events aren’t causally linked, any order will do. And updates to one object stay in order if all of that object’s events go to the same log partition.')+
+   L.prose('The hard cases cross objects. The book’s example: someone unfriends their ex, <i>then</i> messages their remaining friends complaining about them. Friendships live in one place, messages in another. If the notification service handles the message first, the ex gets notified.')+
+   '<h2 class="sub">No simple answer, only starting points</h2>'+
+   L.list([['Logical timestamps','A total order without coordination. But receivers must still cope with out-of-order events, and extra metadata travels along.'],
+     ['Record what the user saw','Log the state the user saw as an event with a unique ID. Later events reference that ID, recording the dependency.'],
+     ['Conflict resolution','Helps keep stored state right when events arrive out of order. It can’t undo side effects, like a notification already sent.']],3));
+  L.done();}},
+{part:2,src:'Chapter 12 · Ordering events to capture causality',pts:1,
+ solve:async L=>{L.$('#in').click();L.$('#sw').click();},
+ run(L){
+  const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Ama stops sharing their tracking with ex-flatmate Jo, <i>then</i> changes their delivery address. Deliver Ama’s two events to the notifier in both orders.</h1>'+
+   L.note('The sharing list lives in a preferences service; addresses live in the Parcel DB. The notifier texts “new address” to everyone on the parcel’s sharing list, so it joins the two streams.','info')+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 8px"><button class="btn" id="in">'+L.ic('play')+'In Ama’s order</button><button class="btn" id="sw">'+L.ic('play')+'Swapped order</button></div>'+
+   '<div class="res" id="ta"></div><div class="res" id="tb"></div><div id="cq"></div>');
+  const ask=()=>{const q=L.$('#cq');if(seen.size<2||q.innerHTML)return;q.innerHTML='<h2 class="sub">Which starting point could have stopped Jo’s text?</h2>';
+    L.mc(q,['Apply last-write-wins to the sharing list afterwards','Tag the address change with the list version Ama saw','Send address events through a faster log partition'],1,
+     'If the address event records “Ama saw the list without Jo” by its event ID, the dependency travels with it and the notifier can tell the removal must come first. Kleppmann offers this as a starting point, not a complete fix.',
+     'Fixing the stored list later can’t unsend a text: that’s an external side effect. And speed doesn’t link the two events. Recording which list version Ama saw does.');};
+  L.$('#in').onclick=function(){this.disabled=true;seen.add(0);
+    L.$('#ta').innerHTML='<b>In order:</b> 1. Remove Jo, so the list is just Ama. 2. New address, texted to Ama. <span style="color:var(--ok)">Jo hears nothing.</span>';ask();};
+  L.$('#sw').onclick=function(){this.disabled=true;seen.add(1);
+    L.$('#tb').innerHTML='<b>Swapped:</b> 1. New address, while the list still has Jo, so Ama <i>and Jo</i> get the text. 2. Remove Jo: too late. <span style="color:var(--no)">Jo now has Ama’s new address.</span>';ask();};}},
+
+/* ---------- PART 4: BATCH AND STREAM ---------- */
+{part:3,src:'Chapter 12 · Batch and Stream Processing',run(L){
+  L.h(L.kick('learn','Batch and stream processing')+'<h1 class="q">The tools that put data in all the right places</h1>'+
+   L.prose('Kleppmann sums up the goal of data integration: data should end up in the right form in all the right places. Batch and stream processors do that work. Their outputs are derived datasets: search indexes, materialized views, recommendations, metrics.')+
+   L.prose('The main difference is the input. A stream never ends; a batch job’s input has a known size. Even that line is blurring: Spark runs streams as small batches on a batch engine, and Flink runs batches on a stream engine. Each can imitate the other, though small batches can do poorly with hopping or sliding windows.')+
+   '<h2 class="sub">Maintaining derived state</h2>'+
+   L.lanes([['cycle','Deterministic functions','Inputs never change, outputs are only appended, and the output depends only on the input. Stream processors add fault-tolerant state. This makes recovery and reasoning simpler.',2],
+            ['shield','Asynchronous updates','Derived copies <i>could</i> be updated in the same transaction, like a database index. But asynchrony keeps a fault local. A distributed transaction aborts if any participant fails, spreading the failure.',3]])+
+   '<p class="small" style="margin-top:10px">The same goes for secondary indexes that span partitions: they are most reliable and scalable when maintained asynchronously.</p>');
+  L.done();}},
+{part:3,src:'Chapter 12 · Maintaining derived state',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab suggests updating support search inside each Parcel DB transaction, “just like an index”. Following Kleppmann’s argument, what happens the day search goes down?</h1>');
+  L.mc(L.card,['Every booking fails too, until search is back','Bookings succeed, and search catches up later','Search quietly loses the bookings it missed'],0,
+   'A transaction spanning both systems aborts if either one fails, so a sick search cluster stops bookings. Updating search asynchronously from the log would have kept the fault inside search.',
+   'That’s how the asynchronous log design behaves. Putting search inside the same transaction means a search outage aborts every booking: the failure spreads.');}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',run(L){
+  L.h(L.kick('learn','Reprocessing data for application evolution')+'<h1 class="q">Reprocessing lets you reshape data, not just patch it</h1>'+
+   L.prose('Stream processing brings new input into derived views quickly. Batch processing can reprocess years of history to build a <i>new</i> view of data you already have.')+
+   L.prose('That matters when the application changes. Without reprocessing, schema changes are limited to simple ones, like adding an optional field or a new type of record, whether the '+L.g('schema','schema')+' is checked on write or on read. With reprocessing you can restructure a dataset into a completely different model.')+
+   L.note('<b>The book’s railway story.</b> Nineteenth-century England had rival track gauges. Once a standard was chosen in 1846, lines were converted by adding a third rail, so trains of both gauges could run during the change. When every train had been converted, the extra rail came out. It was costly, which is why other gauges survive today.','book'));
+  L.done();}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',run(L){
+  L.h(L.kick('ex','A gradual migration')+'<h1 class="q">Linh gives the tracking page a “third rail”</h1>');
+  L.beats(L.card,[
+   ['The need','Bramble & Bolt orders often arrive as three or four parcels. Recipients want one timeline per household, but the tracking view stores one row per parcel. Adding a field won’t fix that.'],
+   ['A second view','Linh replays the event log’s history into a new per-household view. The old per-parcel view keeps running. Both are derived from the same events.'],
+   ['Try it on a few','1% of recipients get the new page. A bug shows up in timelines that cross midnight. Linh sends that 1% back to the old view, fixes the code and replays again.'],
+   ['Turn it up','10%, then 50%, then everyone. At every stage the old view still works, so any step can be undone.'],
+   ['Remove the old rail','Only when nobody reads the old view any more does Linh drop it.']],
+   'Side-by-side views make a big change gradual and reversible. With less risk of irreversible damage, Kleppmann says, you can move faster.');}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',pts:1,run(L){
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Zainab wants support search to store addresses as street, building and flat instead of one text field. Put a gradual migration in order.</h1>');
+  L.order(L.card,['Derive the new view alongside the old one','Route a small share of searches to it','Raise the share as bugs get fixed','Drop the old view once nobody uses it'],
+   'Old and new run side by side, so every step can be reversed until the very last one.');}},
+{part:3,src:'Chapter 12 · The lambda architecture',run(L){
+  L.h(L.kick('learn','The lambda architecture')+'<h1 class="q">Two systems, one answer</h1>'+
+   L.prose('If batch reprocesses history and streams handle recent updates, how do you combine them? The '+L.g('lambda-arch','lambda architecture')+' records incoming data as immutable events (much like event sourcing) and derives read-optimized views using two systems side by side:')+
+   L.flow([['flame','Stream layer','e.g. Storm','quick, approximate view',3],['clock','Batch layer','e.g. Hadoop MapReduce','later, corrected view',2]],false)+
+   L.prose('The thinking: batch is simpler and less bug-prone, streams were thought less reliable, and streams can use fast approximate algorithms. Kleppmann credits it with popularizing views derived from immutable events. But he sees three problems:')+
+   L.list([['Logic twice','The same logic must run in two frameworks. Even with shared libraries, you debug, tune and run two systems.'],
+     ['Merging outputs','Easy for a simple count per tumbling window. Much harder for joins, sessions, or output that isn’t a time series.'],
+     ['Incremental batches','Reprocessing everything often is expensive, so batches go hourly. That brings stragglers and windows crossing batch edges, so the batch layer stops being simple.']],4));
+  L.done();}},
+{part:3,src:'Chapter 12 · Unifying batch and stream processing',run(L){
+  L.h(L.kick('learn','Unifying batch and stream processing')+'<h1 class="q">One engine for history and for live events</h1>'+
+   L.prose('More recent systems give lambda’s benefits without its downsides: batch reprocessing and stream processing in the same system. Kleppmann lists three features this needs. Tap each one.'));
+  L.flips(L.card,[
+   ['Replay history','The engine that handles live events can also replay old ones. Log-based brokers can replay messages, and some stream processors read from a distributed filesystem like HDFS.'],
+   ['Exactly-once semantics','Output is the same as if no fault had happened, even when faults do happen. As in batch jobs, a failed task’s partial output is thrown away.'],
+   ['Event-time windows','Windows go by '+L.g('eventtime','when events happened')+', not when they were processed, since processing time means nothing in a replay. Apache Beam is one API for this.']],
+   'With all three, Linh could rebuild a report by replaying a year of scans through the same stream job that runs live.');}},
+{part:3,src:'Chapter 12 · Unifying batch and stream processing',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'What’s missing for the replay?',['Replay through one engine','Exactly-once output','Event-time windows'],[
+   ['Linh replays a month of scans in 20 minutes, and the on-time report puts the whole month into one hour.',2,'Processing time is meaningless in a replay. Window by when each scan actually happened.'],
+   ['A task crashes mid-replay and its half-written counts stay, so some days are counted twice.',1,'Exactly-once means the output looks as if no fault happened, so a failed task’s partial output must be discarded.'],
+   ['Last year’s scans sit only in files the stream processor has no way to read.',0,'The engine must be able to replay history, from a log-based broker or a distributed filesystem.'],
+   ['Old scan events were deleted from the event log after a week, so there’s nothing to feed back in.',0,'You can only reprocess what you kept. Replay needs the history to still exist.']]);}},
+{part:3,src:'Chapter 12 · Data Integration',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence states Kleppmann’s approach to data integration.</h1>');
+  L.sentence(L.card,[
+   ['Write to every system directly','Lock all the systems together','Derive every other system'],
+   ['from one ordered log','from the app’s own calls','by hand when they drift'],
+   ['and avoid replaying history','and reprocess history'],
+   ['in one big overnight switch','as side-by-side views']],[2,0,1,1],
+   [['That’s dual writes: nothing decides one order, so the systems can drift apart for good.','That’s distributed transactions. Kleppmann finds XA too fragile and slow for this.'],
+    ['App calls can reach different systems in different orders.','Fixing drift by hand is exactly what deriving from a log avoids.'],
+    ['Without reprocessing you’re stuck with small changes, like adding an optional field.'],
+    ['A sudden switch is hard to undo. Side-by-side views keep every step reversible.']],
+   'Derive every other system from one ordered log, and reprocess history as side-by-side views. That’s the first half of chapter 12 in one line.');}}
+  ]
+});
+</script>
+</body>
+</html>

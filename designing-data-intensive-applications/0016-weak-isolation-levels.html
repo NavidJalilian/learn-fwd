@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Weak Isolation Levels</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0016', title:'Weak isolation levels', minutes:20, icon:'layers',
+  goals:['Say which race conditions read committed and snapshot isolation stop, and which they let through','Pick a fix for a lost update: atomic write, lock, automatic detection or compare-and-set','Spot write skew and phantoms, and know why only serializable isolation fully stops them'],
+  parts:['Read committed','Snapshots','Lost updates','Write skew'],
+  read:'Read the “Weak Isolation Levels” section of chapter 7 for the on-call doctors, the meeting-room bookings and the details of MVCC.',
+  glossary:{
+    'dirty-read':'Dirty read: seeing another transaction’s writes before it has committed. If it later aborts, you saw data that never really existed.',
+    'dirty-write':'Dirty write: overwriting a value that another transaction wrote but hasn’t committed yet.',
+    'read-skew':'Read skew (nonrepeatable read): one transaction sees different parts of the database as they were at different moments, so the parts don’t add up.',
+    'snapshot-isolation':'Snapshot isolation: each transaction reads from a frozen picture of the database as it was when the transaction started.',
+    mvcc:'MVCC (multi-version concurrency control): keeping several committed versions of each row side by side, so each transaction can read the version that fits its snapshot.',
+    'lost-update':'Lost update: two transactions each read a value, change it and write it back. The second write wipes out the first change.',
+    'write-skew':'Write skew: two transactions read the same data, each decides it is safe to go ahead, and each writes something different. Together they break a rule neither broke alone.',
+    phantom:'Phantom: a write in one transaction changes which rows match another transaction’s search, such as a new booking appearing in an “any bookings at noon?” query.'
+  },
+  cheatsheet:[
+    'Weak isolation is common because serializable costs speed. Its bugs depend on timing, so tests rarely catch them, and “ACID” databases use it too.',
+    '<b>Read committed</b>: no dirty reads (you only see committed data) and no dirty writes (you only overwrite committed data). Row locks for writers; readers get the old committed value.',
+    '<b>Read skew</b>: parts of the database seen at different moments. Fine for a person who reloads, fatal for backups and long analytic queries.',
+    '<b>Snapshot isolation</b>: each transaction reads a consistent snapshot from its start, built with MVCC (transaction IDs, created-by, deleted-by). Readers and writers don’t block each other.',
+    'Names are a mess: “repeatable read”, and even “serializable”, may mean snapshot isolation. Read your database’s docs.',
+    '<b>Lost update</b>: two read-modify-write cycles, one clobbers the other. Fixes: atomic write, explicit lock (FOR UPDATE), automatic detection, compare-and-set. With replicas: merge siblings; last write wins loses updates.',
+    '<b>Write skew</b>: check → decide → write, where the write changes what the check would now find. Atomic operations and lost-update detection don’t catch it.',
+    '<b>Phantom</b>: when the check looks for rows that don’t exist yet, there is nothing to lock. Materialize the conflict as a last resort, or use serializable isolation.'
+  ],
+  steps:[
+/* ---------- PART 1: READ COMMITTED ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two support agents sometimes edit the same parcel at the same moment. Tobias’s tests ran that code 1,000 times without a problem. Is it safe?</h1>');
+  L.mc(L.card,['Yes: a thousand passing runs prove it','Not necessarily: timing bugs hide from tests'],1,
+   'Concurrency bugs only appear with unlucky timing, so they are rare in tests and hard to reproduce. That’s why it matters to know exactly what your database protects you from.',
+   'A test only exercises the timings it happens to hit. Concurrency bugs need unlucky timing, which may never show up in tests.');}},
+{part:0,src:'Chapter 7 · Weak Isolation Levels',run(L){
+  L.h(L.kick('learn','Why “weak” isolation exists')+'<h1 class="q">Most databases trade some safety for speed</h1>'+
+   L.prose('Race conditions only matter when one transaction reads data another is changing, or when two change the same data. With full serializable isolation you could pretend concurrency doesn’t exist. But that costs performance, so many databases default to weaker '+L.g('isolation','isolation levels')+' that stop some problems and not others.')+
+   L.note('These bugs are not theoretical. The book cites weak isolation causing lost money, an investigation by financial auditors and corrupted customer data. “Just use an ACID database” misses the point: many popular relational databases use weak isolation too.','alert')+
+   L.prose('So you need to know which race conditions each level lets through. This lesson covers the two most common levels, <b>read committed</b> and <b>snapshot isolation</b>, and the bugs they don’t stop.'));
+  L.done();}},
+{part:0,src:'Chapter 7 · Read Committed',run(L){
+  L.h(L.kick('learn','The most basic level')+'<h1 class="q">Read committed makes two promises</h1>'+
+   L.tiers([['eye','No dirty reads','When you read, you only see data that has been committed.','Another transaction’s writes appear all at once, when it commits.'],
+            ['pencil','No dirty writes','When you write, you only overwrite data that has been committed.','If another transaction has an uncommitted write on that row, you wait.']])+
+   L.prose('Why block '+L.g('dirty-read','dirty reads')+'? Two reasons. A transaction that updates several objects could be seen half done, like a new parcel in the dashboard list while the counter hasn’t moved. And if that transaction aborts, you would have acted on data that was never really there.')+
+   '<p class="small">An even weaker level, read uncommitted, stops dirty writes but not dirty reads.</p>');
+  L.done();}},
+{part:0,src:'Chapter 7 · Read Committed · No dirty writes',run(L){
+  L.h(L.kick('ex','A dirty write at the hub')+'<h1 class="q">Two couriers claim the same parcel at the same instant</h1>');
+  L.beats(L.card,[
+   ['The book’s story','Two people buy the same used car at once. Buying writes the listing and the invoice. With dirty writes allowed, the car goes to one buyer and the invoice to the other.'],
+   ['At Otterpost','Couriers Ravi and Mia both tap “take this parcel”. A claim writes two objects: the <b>parcel row</b> (who carries it) and the hub’s <b>handover slip</b> (who signs for it).'],
+   ['Interleaved','Ravi writes the parcel row; Mia overwrites it before Ravi commits. Mia writes the slip; Ravi overwrites that before Mia commits.'],
+   ['The mess','The parcel row says Mia, the slip says Ravi. Each overwrote the other’s <b>uncommitted</b> write: a '+L.g('dirty-write','dirty write')+'. Read committed prevents this by making the second writer wait.'],
+   ['Not covered','The counter race (both read 42, both write 43) is different. The second write comes after the first transaction committed, so it isn’t dirty. Read committed lets it through. Part 3 covers it.']],
+   'Read committed keeps uncommitted writes from being seen or overwritten. It does not make every concurrent pattern safe.');}},
+{part:0,src:'Chapter 7 · Read Committed · Implementing read committed',run(L){
+  L.h(L.kick('learn','How databases do it')+'<h1 class="q">Locks for writers, old values for readers</h1>'+
+   L.lanes([['lock','Stopping dirty writes','A transaction must take a <b>row lock</b> before writing and hold it until it commits or aborts. Anyone else who wants to write that row waits.',2],
+            ['eye','Stopping dirty reads','The database keeps the <b>old committed value</b> next to the new uncommitted one. Readers get the old value until the writer commits.',3]])+
+   L.prose('Why not make readers take the lock too? Because one long-running write would make many readers wait. Response times suffer, and a slowdown in one part of the app spreads to unrelated parts.')+
+   L.prose('Read committed is the default in Oracle 11g, PostgreSQL, SQL Server 2012, MemSQL and many other databases.'));
+  L.done();}},
+{part:0,src:'Chapter 7 · Read Committed · Implementing read committed',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Under read committed, a transaction is changing a balance from $500 to $400 and hasn’t committed yet. Signe opens that balance now. What do they see in most databases?</h1>');
+  L.mc(L.card,['$400, the newest value','They wait until the change commits','$500, the last committed value'],2,
+   'The database keeps the old committed value for readers, so Signe doesn’t wait and doesn’t see uncommitted data.',
+   'Seeing $400 would be a dirty read. Waiting would mean read locks, which most databases avoid because one slow writer would hold up every reader. They get $500.');}},
+{part:0,src:'Chapter 7 · Read Committed',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Dirty read, dirty write, or neither?',['Dirty read','Dirty write','Neither'],[
+   ['Signe’s screen shows a parcel as “delivered”, written by a transaction that later aborts.',0,'They saw an uncommitted write that was then rolled back.'],
+   ['Two claims each write the parcel row and its slip, overwriting each other before either commits.',1,'Each overwrote the other’s uncommitted value.'],
+   ['Two servers add 1 to a counter. The second reads after the first commits, and one increment is lost.',2,'Everything read and overwritten was committed, so nothing was dirty. It’s a lost update, which read committed doesn’t stop.'],
+   ['The tracking page shows “out for delivery” only once the scan’s transaction has committed.',2,'That’s read committed working as intended.']]);}},
+
+/* ---------- PART 2: SNAPSHOTS ---------- */
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',run(L){
+  L.h(L.kick('ex','A problem read committed allows')+'<h1 class="q">$100 seems to vanish into thin air</h1>');
+  L.beats(L.card,[
+   ['Two accounts','Bramble & Bolt keeps $1,000 of Otterpost credit in two merchant accounts, Homewares and Garden, with $500 each.'],
+   ['A transfer','A transaction moves $100 from Garden to Homewares.'],
+   ['Linh’s report','At that moment, Linh’s report reads Homewares <b>before</b> the $100 arrives ($500) and Garden <b>after</b> it left ($400).'],
+   ['$900?','The report shows a total of $900. Every value it read was committed, so read committed allows this. Read Homewares again and it says $600. This is a <b>nonrepeatable read</b>, or '+L.g('read-skew','read skew')+'.'],
+   ['Usually harmless','A person who reloads a few seconds later sees $1,000. (“Skew” here means a timing problem, not the uneven load of partitioning.)']],
+   'Read skew: one transaction sees different parts of the database as they were at different moments.');}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',run(L){
+  L.h(L.kick('learn','When a reload won’t fix it')+'<h1 class="q">Some jobs can’t live with read skew</h1>'+
+   L.list([['box','Backups','Copying a large database takes hours while writes continue. Some parts end up older than others. Restore that backup and the missing $100 is gone for good.'],
+     ['trend','Analytics and integrity checks','A query that scans much of the database gives nonsense if it sees different parts at different moments.']],2)+
+   L.prose('The usual fix is <b>'+L.g('snapshot-isolation','snapshot isolation')+'</b>. Each transaction reads from a <b>consistent snapshot</b>: all data committed when it started. Changes made later by others are invisible to it, however long it runs.')+
+   L.prose('That makes long read-only queries much easier to reason about. PostgreSQL, MySQL with InnoDB, Oracle, SQL Server and others support it.'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Implementing snapshot isolation',run(L){
+  L.h(L.kick('learn','Many versions side by side')+'<h1 class="q">The database keeps old versions instead of overwriting</h1>'+
+   L.prose('Writers still take write locks, so two writers to one row still wait for each other. But reads take no locks at all. The key principle: <b>readers never block writers, and writers never block readers.</b> Long reports and normal writes run side by side.')+
+   L.prose('To give each transaction its own point in time, the database keeps several committed versions of a row: '+L.g('mvcc','multi-version concurrency control (MVCC)')+'. With MVCC, read committed typically takes a fresh snapshot for each query; snapshot isolation uses one snapshot for the whole transaction.')+
+   L.list([['Transaction IDs','Each transaction gets an always-increasing ID when it starts.'],
+     ['Created by, deleted by','Each row version records who created it and who deleted it. A delete only fills in “deleted by”; garbage collection removes the row later, once nobody can see it.'],
+     ['Update = delete + create','Txn 13 changes Garden from $500 to $400: the $500 version gets “deleted by 13” and a new $400 version is “created by 13”.']],3));
+  L.done();}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Visibility rules for observing a consistent snapshot',pts:1,
+ solve:async L=>{[...L.$('#rd').children].forEach(b=>b.click());},
+ run(L){
+  const V=[['$500','created by txn 3 · deleted by txn 13'],['$400','created by txn 13']];
+  const R=[['Txn 12','started just before 13',0,'Txn 13 has a later ID. Writes by transactions that started after you are ignored, so both its delete and its new row are invisible.'],
+           ['Txn 14','started while 13 was running',0,'13 was still in progress when you started. Its writes stay invisible to you, even after it commits.'],
+           ['Txn 16','started after 13 committed',1,'13 had committed before you started, so you see its delete of the $500 version and its new $400 version.']];
+  const seen=new Set();
+  L.h(L.kick('pr','See the snapshot')+'<h1 class="q">Txn 13 moves $100 out of Garden. Tap each reader to see which version of the Garden row it can see.</h1>'+
+   L.note('A version is visible to you if its creator had committed when you started, and it is either not deleted or its deleter had not committed when you started.','eye')+
+   '<div id="vr" style="margin-top:12px"></div><div id="rd" style="margin-top:6px"></div><div class="fb info" id="why">Choose a reader.</div><div id="vq"></div>');
+  const draw=k=>{L.$('#vr').innerHTML=V.map((v,j)=>'<div class="rung'+(k===j?' cur':'')+'" style="margin-bottom:6px;'+(k!==null&&k!==j?'opacity:.4':'')+'"><small>Garden version '+(j+1)+'</small>'+v[0]+' <span class="small">· '+v[1]+'</span></div>').join('');};draw(null);
+  R.forEach((r,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML='<b>'+r[0]+'</b>&nbsp;'+r[1];
+    b.onclick=()=>{[...L.$('#rd').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);draw(r[2]);
+      L.$('#why').innerHTML='<b>'+r[0]+' sees '+V[r[2]][0]+'.</b> '+r[3];
+      if(seen.size===3&&!L.$('#vq').innerHTML){const q=L.$('#vq');q.innerHTML='<h2 class="sub">Txn 14 is Linh’s backup, and it runs for three hours. Which Garden balance does it copy at the end?</h2>';
+        L.mc(q,['$400, the latest committed value','$500, as it was when the backup began'],1,
+         'Its snapshot stays frozen at its start. It also sees Homewares before the $100 arrived, so the backup adds up to $1,000.',
+         'A transaction keeps one snapshot for its whole life. 13 was still running when the backup started, so the backup never sees its writes, and its totals stay consistent.');}};
+    L.$('#rd').appendChild(b);});}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Repeatable read and naming confusion',run(L){
+  L.h(L.kick('learn','Indexes, and a naming mess')+'<h1 class="q">Same idea, many names</h1>'+
+   L.prose('<b>Indexes.</b> One approach: an '+L.g('index','index')+' points to every version of a row and each query filters out the versions it can’t see. CouchDB, Datomic and LMDB instead use append-only B-trees: a write copies the pages it changes, up to a new root. Each root is a consistent snapshot. Both need background garbage collection.')+
+   L.prose('<b>Names.</b> The SQL standard was based on System R’s 1975 definitions, before snapshot isolation was invented. It defines “repeatable read”, which looks similar. So:')+
+   L.list([['Oracle','calls snapshot isolation “serializable”.'],['PostgreSQL and MySQL','call it “repeatable read”.'],['IBM DB2','uses “repeatable read” for real serializability.']],4)+
+   L.quote('…nobody really knows what repeatable read means.','Martin Kleppmann, chapter 7'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Repeatable read and naming confusion',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab sees a database set to “repeatable read”. What should they conclude?</h1>');
+  L.mc(L.card,['It is serializable, as the SQL standard says','Check the docs: the name differs by database','It means the database has no isolation'],1,
+   'Exactly Zainab’s habit. The same name means snapshot isolation in one database and serializability in another, and implementations differ.',
+   'The name isn’t reliable. PostgreSQL and MySQL use it for snapshot isolation, DB2 for serializability. Read what this database actually guarantees.');}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',pts:5,run(L){
+  L.h(L.kick('pr','Which level is enough?')+'<h1 class="q">Sort each Otterpost job.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Read committed is fine','Needs snapshot isolation'],[
+   ['Linh’s three-hour nightly backup of the Parcel DB',1,'Writes continue during the copy. Without a snapshot, the backup mixes old and new data, permanently.'],
+   ['A recipient’s tracking page reading one parcel’s status',0,'One short read of one row. A person who reloads sees the update.'],
+   ['Kwame’s weekly check that every parcel’s price appears in billing',1,'An integrity check scanning lots of data gives nonsense if it sees different moments.'],
+   ['Linh’s on-time report scanning a month of deliveries',1,'A long analytic scan needs one consistent point in time.'],
+   ['Signe looking up one parcel’s delivery address',0,'A single quick read. Read committed already hides uncommitted data.']],
+   'Short reads by people: read committed is fine. Long scans, backups and checks: they need a consistent snapshot.');}},
+
+/* ---------- PART 3: LOST UPDATES ---------- */
+{part:2,src:'Chapter 7 · Preventing Lost Updates',run(L){
+  L.h(L.kick('ex','Two writers, one balance')+'<h1 class="q">How a flash sale loses money</h1>');
+  L.beats(L.card,[
+   ['Read','Tobias’s booking code reads Bramble & Bolt’s credit balance: $1,000.'],
+   ['Modify','It subtracts the parcel price, $8, in the app: $992.'],
+   ['Write','It writes $992 back. This is a <b>read-modify-write cycle</b>.'],
+   ['Twice at once','In a flash sale, two bookings do this together. Both read $1,000, both write $992. One $8 charge has vanished: a '+L.g('lost-update','lost update')+'. The later write clobbered the earlier one.'],
+   ['Same shape elsewhere','Adding an item to a list inside a JSON document. Two people editing a wiki page, each saving the whole page.']],
+   'So far we covered what readers see. Lost updates are a conflict between two writers, and both levels so far can let them through.');}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates',run(L){
+  L.h(L.kick('learn','Four fixes')+'<h1 class="q">Ways to stop a lost update</h1>'+
+   L.list([['Atomic write','Let the database do the arithmetic: <b>set balance = balance − 8</b>. Usually the best choice when it fits. Watch out: ORMs make it easy to write the unsafe read-modify-write by accident.'],
+     ['Explicit lock','Read with <b>SELECT … FOR UPDATE</b>, check your rules in code, then write. Others wait. Useful when the logic can’t be one query, like checking a move in a multiplayer game. Easy to forget a lock.'],
+     ['Automatic detection','Let both run, and the database aborts the one that would lose an update; it retries. PostgreSQL’s repeatable read, Oracle’s serializable and SQL Server’s snapshot level do this. MySQL/InnoDB’s repeatable read doesn’t.'],
+     ['Compare-and-set','Write only if the value is still what you read, otherwise retry. Careful: if the check can read an old snapshot, it may not protect you.']],3)+
+   '<p class="small" style="margin-top:10px">Automatic detection is less error-prone: nobody has to remember anything in the code.</p>');
+  L.done();}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates · Conflict resolution and replication',run(L){
+  L.h(L.kick('learn','With several copies')+'<h1 class="q">Locks don’t work when there isn’t one up-to-date copy</h1>'+
+   L.prose('Locks and compare-and-set assume one current copy of the data. With multi-leader or leaderless '+L.g('replication','replication')+', writes can happen on different nodes at once and be copied later. There is no single copy to lock.')+
+   L.flow([['layers','Keep siblings','Let concurrent writes create several versions','',1],['cycle','Merge later','App code or special data types combine them','',2]])+
+   L.prose('<b>Commutative</b> atomic operations work well here: ones you can apply in any order and get the same result, like adding to a counter or adding to a set. Riak 2.0’s datatypes merge concurrent updates like this without losing any.')+
+   L.note('<b>Last write wins</b> loses updates by design, and it is the default in many replicated databases.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates · Atomic write operations',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What is the simplest safe fix for Tobias’s “deduct $8 from the balance” code?</h1>');
+  L.mc(L.card,['Let the database subtract, in one atomic update','Read and write faster, so the gap is smaller','Run each booking twice, just to be sure'],0,
+   'The database applies “balance − 8” safely even when bookings arrive together. No read-modify-write cycle in the app.',
+   'A smaller gap only makes the bug rarer, and running twice charges twice. Let the database do the subtraction atomically.');}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which fix fits best?',['Atomic write','Explicit lock','Compare-and-set','Merge siblings'],[
+   ['Add 1 to a merchant’s “parcels today” counter.',0,'Simple arithmetic the database can do in one atomic operation.'],
+   ['Dispatch moves a parcel to another route, but code must first check van capacity and courier hours.',1,'The check is app logic, so lock the rows (FOR UPDATE), check, then write.'],
+   ['Signe’s team saves a delivery note only if nobody changed it since the agent opened it.',2,'Write only if the value is unchanged; if it changed, reload and retry.'],
+   ['Offline courier phones each add scans to a parcel’s history, and the copies sync later.',3,'There’s no single copy to lock. Adding to a set is commutative, so the versions can be merged without loss.']]);}},
+
+/* ---------- PART 4: WRITE SKEW ---------- */
+{part:3,src:'Chapter 7 · Write Skew and Phantoms',run(L){
+  L.h(L.kick('ex','A subtler race')+'<h1 class="q">Two couriers end their shifts, and the zone is empty</h1>');
+  L.beats(L.card,[
+   ['The book’s story','A hospital must always have at least one doctor on call. Two on-call doctors, both ill, ask to go off call at the same moment. Each check sees two on call. Both go off, and nobody is left.'],
+   ['Otterpost’s rule','Zone W3 in Westport must always have at least one courier on duty. Tonight only Ravi and Mia are on.'],
+   ['Both check','Both feel ill and tap “end shift” together. Each transaction counts the couriers on duty in W3. Under snapshot isolation, both see <b>2</b>.'],
+   ['Both write','Each sets only <b>their own</b> row to off duty. Different rows, so it’s neither a dirty write nor a lost update. Both commit.'],
+   ['Result','Nobody is on duty in W3. Had they run one after the other, the second would have been refused. This is '+L.g('write-skew','write skew')+'.']],
+   'Each transaction was correct alone. Only running them at the same time broke the rule.');}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms · Characterizing write skew',run(L){
+  L.h(L.kick('learn','What makes it write skew')+'<h1 class="q">Same reads, different writes</h1>'+
+   L.prose('Write skew happens when two transactions read the same objects, then each updates some of them, possibly different ones. If they happen to update the <i>same</i> object, you get a dirty write or a lost update instead. So write skew is a broader form of the lost update.')+
+   L.list([['Atomic operations','Don’t help: several objects are involved.'],
+     ['Lost-update detection','Doesn’t help either. PostgreSQL’s and MySQL’s repeatable read, Oracle’s serializable and SQL Server’s snapshot level don’t detect write skew.'],
+     ['A constraint','“At least one on duty” spans many rows. Most databases can’t express that, though triggers or materialized views sometimes can.'],
+     ['Lock what you read','Second best: select W3’s on-duty couriers <b>FOR UPDATE</b>, so the other transaction must wait.']],4)+
+   L.note('The real fix is serializable isolation, the next lesson.','shield'));
+  L.done();}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms · Characterizing write skew',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two transactions read the same zone’s rows, and each updates a <i>different</i> courier’s row. Together they break the zone’s rule. What is this?</h1>');
+  L.mc(L.card,['A lost update: one write wipes out the other','Write skew: different rows, one shared rule','A dirty write: uncommitted data overwritten'],1,
+   'Neither write touched the other’s row, so nothing was overwritten. The shared premise they both read is what broke.',
+   'Lost updates and dirty writes need both transactions to write the <i>same</i> object. Here they wrote different rows: write skew.');}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms · Phantoms causing write skew',run(L){
+  L.h(L.kick('learn','The pattern, and phantoms')+'<h1 class="q">Check, decide, write</h1>'+
+   L.flow([['eye','1 · Check','Search for rows matching a condition','“on-duty couriers in W3”',1],['bulb','2 · Decide','App code chooses to go ahead','',2],['pencil','3 · Write','Insert, update or delete, which changes what step 1 would find','',3]])+
+   L.prose('The book gives more cases: booking a meeting room with no overlaps, moving two game pieces to one square, claiming a username, and spending money or points you might not have. At Otterpost, two recipients can each see 19 of 20 places taken in a delivery slot, and each book one.')+
+   L.prose('A write that changes the result of another transaction’s search is a '+L.g('phantom','phantom')+'. In the courier case, the rows already exist, so you can lock them. But a room check looks for the <i>absence</i> of bookings. If it finds no rows, FOR UPDATE has nothing to lock. Snapshot isolation stops phantoms for read-only queries, not in read-write ones like these.')+
+   '<p class="small">For usernames there’s an easy way out: a unique constraint makes the second insert fail.</p>');
+  L.done();}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms · Materializing conflicts',run(L){
+  L.h(L.kick('learn','A last resort')+'<h1 class="q">No row to lock? Create one</h1>'+
+   L.prose('The Westport hub has loading bays that vans book in 15-minute windows. Two drivers could book the same bay and time, because each check finds no booking to lock.')+
+   L.flow([['list','Pre-make rows','One row per bay per 15 minutes, for the next six months','',1],['lock','Lock first','A booking locks its bay-and-time rows FOR UPDATE','',2],['check','Then check','Look for overlaps and insert as before','',3]])+
+   L.prose('The extra table holds no booking data. It is purely a set of locks. This is called <b>materializing conflicts</b>: turning a phantom into a lock conflict on real rows.')+
+   L.note('It is hard and error-prone to design, and it lets concurrency control leak into your data model. Use it only if nothing else works. Serializable isolation is much better in most cases.','alert'));
+  L.done();}},
+{part:3,src:'Chapter 7 · Weak Isolation Levels',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Name the race condition',['Dirty read','Lost update','Read skew','Write skew'],[
+   ['Two recipients each see 19 of 20 places taken in the 14:00 slot, and each books one. Now there are 21.',3,'Same check, separate inserts, a shared limit broken.'],
+   ['Two app servers read a balance of $1,000, and each writes back $992.',1,'Two read-modify-write cycles on one value. One change is lost.'],
+   ['Linh’s backup copies Homewares before a transfer and Garden after it.',2,'Different parts seen at different moments. A snapshot would fix it.'],
+   ['A merchant’s dashboard shows a parcel from a booking that later aborts.',0,'It saw an uncommitted write.'],
+   ['Two merchants each check that a custom tracking code is free, then both insert it.',3,'Check for absence, then insert: write skew via a phantom. A unique constraint solves this one.'],
+   ['The last two couriers on duty in a zone both end their shifts at once.',3,'Both read “2 on duty”, each changed their own row.']]);}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms · Materializing conflicts',pts:1,run(L){
+  L.h(L.kick('pr','Zainab’s call')+'<h1 class="q">Recipients reserve compartments in Otterpost’s parcel lockers for time windows. Two must never overlap. The check usually finds zero rows, and switching to serializable isn’t possible yet. What should Zainab try?</h1><div id="hq"></div>');
+  L.mc(L.$('#hq'),['Lock the rows the check returns, FOR UPDATE','Pre-create a lock row per compartment and time','Rely on automatic lost-update detection'],1,
+   'That’s materializing the conflict: now there is a real row to lock. Keep it as a stopgap; serializable isolation is the cleaner fix.',
+   'When the check returns zero rows, FOR UPDATE locks nothing, and lost-update detection doesn’t catch write skew. Creating lock rows gives the transactions something real to collide on.');}}
+  ]
+});
+</script>
+</body>
+</html>

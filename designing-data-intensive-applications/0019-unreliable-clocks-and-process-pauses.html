@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unreliable Clocks and Process Pauses</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0019', title:'Unreliable clocks and process pauses', minutes:20, icon:'clock',
+  goals:['Pick the right clock for timing something versus stamping a moment','Explain how “newest timestamp wins” silently loses writes','Spot code that assumes a process can’t freeze mid-step'],
+  parts:['Two kinds of clock','Keeping clocks in sync','Trusting timestamps','Process pauses'],
+  read:'Read the “Unreliable Clocks” section of chapter 8 for the full list of clock pitfalls and the Spanner story.',
+  glossary:{
+    'tod-clock':'Time-of-day clock (wall-clock time): returns the current date and time. It is synced with NTP, so it can suddenly jump forward or backward.',
+    'mono-clock':'Monotonic clock: a clock that only ever moves forward. Good for measuring how long something took on one machine. Its actual value means nothing on its own.',
+    'ntp':'NTP (Network Time Protocol): the usual way a computer sets its clock, by asking time servers over the network.',
+    'drift':'Clock drift: a computer’s quartz clock running a little fast or slow, so it slowly moves away from the true time.',
+    lww:'Last write wins (LWW): resolve a conflict by keeping the write with the latest timestamp and silently dropping the others. Everyone ends up the same, but data is lost.',
+    'logical-clock':'Logical clock: a counter that goes up with each event. It shows which event came before which, not the time of day.',
+    'lease':'Lease: a lock that expires after a set time. The holder must renew it before it runs out, or another node can take over.',
+    'gc-pause':'Garbage-collection (GC) pause: a moment when a language runtime stops all of a program’s threads to clean up unused memory. It can last from milliseconds to minutes.'
+  },
+  cheatsheet:[
+    'Use a <b>monotonic clock</b> for durations and timeouts. Use a <b>time-of-day clock</b> for moments, knowing it can jump.',
+    'Clocks <b>drift</b> (Google assumes 200 ppm: about 17 seconds a day between syncs), and NTP can fail in many quiet ways.',
+    'Never trust the clock on a device you don’t control, like a courier’s phone.',
+    'A broken clock causes <b>silent data loss</b>, not a crash. Monitor clock offsets and remove nodes that drift too far.',
+    '<b>Last write wins</b> by timestamp can drop a later write if the earlier one came from a node with a fast clock. Logical clocks are safer for ordering.',
+    'A clock reading is a <b>range</b>, not a point. Spanner waits out that range before committing.',
+    'Any process can <b>freeze</b> at any line (GC, VM pause, disk, paging, a stop signal) and wake up not knowing time passed.',
+    'Hard real-time guarantees are possible but very costly. Servers instead limit GC impact: drain before collecting, or restart on a schedule.'
+  ],
+  steps:[
+/* ---------- PART 1: TWO KINDS OF CLOCK ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two scans of the same parcel come from two different couriers’ phones. One is stamped 10:00:00.120, the other 10:00:00.118. Which scan happened first?</h1>');
+  L.mc(L.card,['The one stamped .118','You can’t be sure'],1,
+   'Two milliseconds apart, from two different clocks? Each phone keeps its own time, and they disagree by far more than that. This lesson is about why.',
+   'Only if both phones’ clocks agreed to within a millisecond, and they almost certainly don’t. Each machine has its own clock, and clocks drift apart.');}},
+{part:0,src:'Chapter 8 · Unreliable Clocks',run(L){
+  L.h(L.kick('learn','What we ask clocks')+'<h1 class="q">Software asks a clock two very different kinds of question</h1>'+
+   L.lanes([['clock','How long?','A <b>duration</b>: has this request timed out? How long did the query take? How many requests per second in the last five minutes?',2],
+            ['cal','When?','A <b>point in time</b>: when was this parcel delivered? When should the reminder email go out? When does this cache entry expire?',3]])+
+   L.prose('In a distributed system both are tricky. A message always arrives after it was sent, but because network delays vary, you don’t know <i>how much</i> later.')+
+   L.prose('And every machine has its own clock: a small quartz crystal that runs a little fast or slow. Machines can sync their clocks with '+L.g('ntp','NTP')+', which asks time servers for the time, but only to a degree.'));
+  L.done();}},
+{part:0,src:'Chapter 8 · Unreliable Clocks',pts:5,run(L){
+  L.h(L.kick('try','Duration or moment?')+'<h1 class="q">Sort each of Otterpost’s clock uses.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Duration','Point in time'],[
+   ['How long the booking API took to answer',0,'The gap between sending and receiving: a duration.'],
+   ['Send the “out for delivery” email at 8:00',1,'A specific time of day: a point in time.'],
+   ['Has the courier app’s sync request timed out yet?',0,'A timeout measures elapsed time: a duration.'],
+   ['The “Delivered at 14:32” line on the tracking page',1,'A moment on the calendar: a point in time.'],
+   ['Average scans per second over the last five minutes',0,'A rate over an interval: it depends on elapsed time.']],
+   'The two kinds of question need two different kinds of clock. That’s next.');}},
+{part:0,src:'Chapter 8 · Monotonic Versus Time-of-Day Clocks',run(L){
+  L.h(L.kick('learn','Two kinds of clock')+'<h1 class="q">Every modern computer has at least two clocks, built for different jobs</h1>'+
+   L.lanes([['cal','Time-of-day clock','The date and time, counted from 1 January 1970 (UTC). Synced with NTP, so a timestamp on one machine roughly matches another. But if it’s too far ahead, NTP may reset it and it <b>jumps backward</b>. It usually ignores leap seconds too.',3],
+            ['clock','Monotonic clock','Always moves <b>forward</b>. NTP may speed it up or slow it down slightly (by up to 0.05%), but never makes it jump. Its value alone means nothing, like “nanoseconds since boot”.',2]])+
+   L.prose('So: measure durations, like timeouts and response times, with the '+L.g('mono-clock','monotonic clock')+'. That works fine in a distributed system, because it doesn’t need other machines’ clocks to agree. Use the '+L.g('tod-clock','time-of-day clock')+' for moments, and remember it can jump.'));
+  L.done();}},
+{part:0,src:'Chapter 8 · Time-of-day clocks',pts:1,
+ solve:async L=>{L.$('#pp').children[1].click();L.$('#run').click();},
+ run(L){
+  let p=null;const O=['About 3 s','About −2 s','About 8 s'];
+  const row=(id,lb)=>'<div style="display:flex;justify-content:space-between;gap:10px;background:var(--soft);border-radius:12px;padding:10px 12px;margin:6px 0"><span class="small" style="margin:0">'+lb+'</span><b id="'+id+'" style="font-variant-numeric:tabular-nums">…</b></div>';
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias times a Parcel DB query that really takes 3 seconds by subtracting two time-of-day readings. Halfway, NTP finds this server 5 s fast and resets it. What does Tobias’s code report?</h1><div id="pp"></div>'+
+   '<div id="sw" hidden>'+row('cw','Time-of-day clock')+row('cm','Monotonic clock')+'<div id="nt" class="small" style="min-height:22px"></div><button class="btn pri" id="run">'+L.ic('play')+'Run the query</button></div>');
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sw').hidden=false;};L.$('#pp').appendChild(b);});
+  const fw=t=>{const w=7+t-(t>=1.5?5:0);return '10:00:'+(w<10?'0':'')+w.toFixed(1);},fm=t=>(5000+t).toFixed(1);
+  L.$('#cw').textContent=fw(0);L.$('#cm').textContent=fm(0);
+  L.$('#run').onclick=function(){this.remove();let s=0;
+    const tm=setInterval(()=>{s++;const t=s*0.3;const cw=L.$('#cw');if(!cw){clearInterval(tm);return;}
+      cw.textContent=fw(t);L.$('#cm').textContent=fm(t);if(t>=1.5&&!L.$('#nt').textContent)L.$('#nt').innerHTML='<span style="color:var(--no)">'+L.ic('alert')+' NTP reset: the time-of-day clock jumped back 5 s</span>';
+      if(s>=10){clearInterval(tm);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'You called it!':'It reported about −2 seconds',
+         'Time-of-day: 10:00:05.0 − 10:00:07.0 = <b>−2.0 s</b>. Monotonic: 5003.0 − 5000.0 = <b>3.0 s</b>. A time-of-day clock can jump, so it’s unfit for measuring durations. The monotonic clock got it right.');L.done();}},150);};}},
+{part:0,src:'Chapter 8 · Monotonic clocks',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame’s dashboard shows monotonic clock readings from two Parcel DB servers: 1,000,000 and 5,000,000. What can Kwame conclude?</h1>');
+  L.mc(L.card,['Nothing: the two values can’t be compared','The second server’s clock is running fast','The second server booted earlier than the first'],0,
+   'A monotonic value is only meaningful compared with an earlier reading <i>on the same machine</i>. Across machines, the numbers don’t mean the same thing.',
+   'You can’t read anything into it. A monotonic clock’s value is arbitrary (perhaps time since some start point), so comparing two machines’ values tells you nothing.');}},
+
+/* ---------- PART 2: KEEPING CLOCKS IN SYNC ---------- */
+{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',run(L){
+  L.h(L.kick('learn','Keeping clocks right is harder than it looks')+'<h1 class="q">Hardware clocks and NTP can be fickle. Tap each card.</h1>');
+  L.flips(L.card,[
+   ['Drift','Quartz runs fast or slow, more so as temperature changes. That limits accuracy even when all else works.'],
+   ['Forced reset','If a clock is too far from the NTP server, it may refuse to sync, or be reset so time jumps back or forward.'],
+   ['Blocked by a firewall','A node accidentally cut off from NTP servers may go unnoticed for a while, drifting all along.'],
+   ['Slow networks','NTP is only as good as the network delay. Over the internet, about 35 ms at best, with spikes near a second.'],
+   ['Wrong servers','Some NTP servers are off by hours. Clients ask several and ignore outliers, but you’re still trusting strangers.'],
+   ['Leap seconds','Some minutes have 59 or 61 seconds. That has crashed big systems. One fix: “smear” the extra second over a day.'],
+   ['Virtual machines','When a VM is paused so another can use the CPU, its clock seems to jump forward by tens of milliseconds.'],
+   ['Devices you don’t control','Phones and other user devices can be wildly wrong. Some users set the wrong date on purpose, for example to cheat in games.']],
+   'Very accurate clocks are possible, with GPS receivers, the Precision Time Protocol and careful monitoring. Rules for high-frequency traders demand clocks within 100 microseconds. But it takes real effort, and much can still go wrong.');}},
+{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">How far can a clock drift between syncs?</h1>');
+  L.beats(L.card,[
+   ['The rate','Google assumes its servers’ clocks drift by up to <b>200 ppm</b> (parts per million). That’s 0.0002 seconds of error for every second that passes.'],
+   ['Synced every 30 s','30 × 0.0002 = 0.006 s. Up to <b>6 ms</b> off by the time the next sync comes.'],
+   ['Synced once a day','86,400 seconds in a day × 0.0002 ≈ <b>17 seconds</b> off.'],
+   ['At Otterpost','Suppose a node in the courier location store is firewalled off from NTP and nobody notices for a week. At that rate it could be <b>about two minutes</b> off, while everything else seems to work.']],
+   'Drift adds up quietly. How often you sync, and whether syncing is actually working, decides how wrong a clock can get.');}},
+{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants to order scan events by the time on each courier’s phone. Which clock should Otterpost trust least?</h1>');
+  L.mc(L.card,['A server clock synced with NTP','A courier’s own phone clock','A GPS receiver in the datacenter'],1,
+   'Devices you don’t control can be set to any time, even wildly in the past or future. The book’s advice: you probably can’t trust them at all.',
+   'The phone is the weakest link. Couriers can set its clock to anything, by accident or on purpose. NTP-synced servers and GPS receivers are far better.');}},
+{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',pts:1,run(L){
+  L.h(L.kick('pr','Do the maths')+'<h1 class="q">A support search server re-syncs with NTP once an hour. At 200 ppm of drift, roughly how far off can it get just before a sync?</h1>');
+  L.mc(L.card,['About 7 seconds','About 0.7 milliseconds','About 0.7 seconds'],2,
+   '3,600 seconds × 0.0002 = 0.72 seconds. Long enough to put events from two servers in the wrong order.',
+   'An hour is 3,600 seconds. 3,600 × 0.0002 = 0.72, so about 0.7 seconds.');}},
+
+/* ---------- PART 3: TRUSTING TIMESTAMPS ---------- */
+{part:2,src:'Chapter 8 · Relying on Synchronized Clocks',run(L){
+  L.h(L.kick('learn','A quiet kind of broken')+'<h1 class="q">A bad clock doesn’t crash anything. That’s the problem.</h1>'+
+   L.prose('A day may not have exactly 86,400 seconds, time-of-day clocks can move backward, and two nodes can disagree about the time. Clocks work well most of the time, but like networks, robust software must expect them to be wrong.')+
+   L.lanes([['x','Broken network card','The machine stops working. Alarms fire and someone fixes it quickly.',4],
+            ['clock','Broken clock','Everything seems fine while the clock drifts further away. Software that relies on it loses data quietly.',3]])+
+   L.note('If you use software that needs synced clocks, <b>monitor the clock offsets</b> between all machines. Declare any node that drifts too far dead and remove it from the cluster.','eye'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Timestamps for ordering events',pts:1,
+ solve:async L=>{L.$('#lp').children[0].click();L.$('#rep').click();},
+ run(L){
+  let p=null,skew=3;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Courier location store. Node A sets van 12 to “loading”. Two milliseconds later, dispatch reads that and sets it to “departed” via node C. Node A’s clock is just 3 ms fast. Which status does node B keep?</h1>'+
+   '<p class="small">Each write carries the time on the node where it started. Node B uses '+L.g('lww','last write wins')+'.</p><div id="lp"></div><div id="lw" hidden><button class="btn pri" id="rep">'+L.ic('play')+'Replicate to node B</button></div><div id="lr"></div><div id="ls"></div>');
+  ['“Loading”, the earlier write','“Departed”, the later write'].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#lw').hidden=false;};L.$('#lp').appendChild(b);});
+  const show=()=>{const a=42000+skew,c=42002,keep=a>c?'loading':'departed';
+    L.$('#lr').innerHTML='<div style="background:var(--soft);border-radius:14px;padding:12px;margin-top:10px;font-size:14.5px;line-height:1.6">'+
+     'Node A: “loading”, stamped <b>42.'+String(a).slice(2)+' s</b><br>Node C: “departed”, stamped <b>42.'+String(c).slice(2)+' s</b><br>Node B keeps: <span class="chip static '+(keep==='departed'?'ok':'no')+'" style="margin:4px 0 0">'+(keep==='departed'?L.ic('check')+'departed':L.ic('x')+'loading. The later write is gone')+'</span></div>';};
+  L.$('#rep').onclick=function(){this.remove();show();L.award(p===0);
+    const s=L.$('#ls');s.innerHTML='<p class="small" style="margin-top:12px">Try other amounts of skew for node A:</p>';
+    [0,1,3,10].forEach(v=>{const b=document.createElement('button');b.className='chip'+(v===3?' sel':'');b.textContent=v+' ms fast';b.onclick=()=>{skew=v;[...s.querySelectorAll('.chip')].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');show();};s.appendChild(b);});
+    L.sheet(p===0?'ok':'no',p===0?'You called it!':'Node B kept “loading”','The later write had the <i>lower</i> timestamp, so last write wins threw it away, with no error anywhere. Any skew bigger than the 2 ms gap does this. Real NTP setups rarely do better than a few milliseconds.');L.done();};}},
+{part:2,src:'Chapter 8 · Timestamps for ordering events',run(L){
+  L.h(L.kick('learn','Why “newest timestamp wins” is risky')+'<h1 class="q">Last write wins is common, and it has three built-in problems</h1>'+
+   L.prose('Databases with multi-leader or leaderless replication, such as Cassandra and Riak, often resolve conflicts this way. Stamping on the client instead of the server doesn’t fix it.')+
+   L.list([['Writes vanish silently','A node with a slow clock can’t overwrite values from a node with a fast clock until the gap has passed. Any amount of data can be dropped, with no error reported.'],
+     ['It can’t see cause and effect','It can’t tell a write that came straight after another from two truly concurrent writes. That needs extra tracking, such as version vectors.'],
+     ['Ties happen','Two nodes can produce the same millisecond timestamp. A random tie-breaker settles it, but can also break cause and effect.']],4)+
+   L.prose('Better NTP won’t save it: NTP’s own accuracy is limited by network round-trip times, and ordering correctly would need a clock far more accurate than those network delays. A '+L.g('logical-clock','logical clock')+', a counter rather than a quartz crystal, is a safer way to order events. A later lesson covers it.'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Relying on Synchronized Clocks',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Sound or risky?',['Sound','Risky'],[
+   ['The merchant API measures its timeouts with the monotonic clock.',0,'Durations on one machine are exactly what the monotonic clock is for.'],
+   ['The courier location store settles conflicting writes by keeping the highest timestamp.',1,'Last write wins can silently drop the later write if clocks are skewed.'],
+   ['A rate limiter works out “seconds since the last request” by subtracting time-of-day readings.',1,'If NTP resets the clock backward, that gap can come out negative or wrong.'],
+   ['The courier app orders a parcel’s scans by the courier phones’ own clocks.',1,'Phone clocks can be wildly off, and couriers can even change them.'],
+   ['Kwame alerts on clock offsets and removes any Parcel DB node that drifts too far.',0,'That’s the book’s advice for any software that relies on synced clocks.']]);}},
+{part:2,src:'Chapter 8 · Clock readings have a confidence interval',run(L){
+  L.h(L.kick('learn','A reading is really a range')+'<h1 class="q">A clock can show nanoseconds without being accurate to nanoseconds</h1>'+
+   L.prose('Even syncing with a local NTP server every minute, quartz drift can leave a clock several milliseconds off. Over the public internet, tens of milliseconds is about the best you can do, and congestion can push the error past 100 ms.')+
+   L.quote('it doesn’t make sense to think of a clock reading as a point in time','Martin Kleppmann, chapter 8')+
+   L.prose('Think of it as a <b>confidence interval</b>: “95% sure it’s between 10.3 and 10.5 seconds past the minute.” The uncertainty is roughly drift since the last sync, plus the server’s own error, plus the round trip to it.')+
+   L.note('Most systems hide this: an ordinary call for the time doesn’t say whether it’s good to 5 milliseconds or 5 years. Google’s <b>TrueTime</b> API in Spanner is an exception. It returns two values, [earliest, latest], and the true time is somewhere in between.','info'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',run(L){
+  L.h(L.kick('ex','How Spanner uses the range')+'<h1 class="q">Can clock timestamps put transactions in order across datacenters?</h1>');
+  L.beats(L.card,[
+   ['The need','Snapshot isolation (from the transactions lessons) needs transaction IDs that go up: a write with a higher ID than your snapshot is invisible to you. On one node, a simple counter does it.'],
+   ['The bottleneck','Across many partitions and datacenters, one shared counter needs coordination. With lots of small, fast transactions, it becomes a bottleneck.'],
+   ['The idea','Use synced clock timestamps as transaction IDs instead. Later transaction, higher timestamp. The catch: clocks are uncertain.'],
+   ['The trick','Compare ranges. If A’s range ends before B’s range starts, B definitely came after A. Only overlapping ranges leave the order in doubt.'],
+   ['The wait','Before committing a read-write transaction, Spanner deliberately <b>waits for the length of its uncertainty range</b>, so any later transaction’s range can’t overlap it.'],
+   ['The cost','A wider range means a longer wait. So Google puts a GPS receiver or atomic clock in each datacenter, keeping uncertainty to about 7 ms. When the book was written, mainstream databases outside Google didn’t do this.']],
+   'Clocks can order events safely only if you know their uncertainty and are willing to wait it out.');}},
+{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Transaction A’s timestamp range is [10.30, 10.37] s. Transaction B’s is [10.35, 10.42] s. Which came first?</h1>');
+  L.mc(L.card,['A, because its range starts earlier','B, because its range ends later','Can’t tell, since the ranges overlap'],2,
+   'Between 10.35 and 10.37, either could be first. Only ranges that don’t overlap give a certain order, which is why Spanner waits.',
+   'Where a range starts or ends doesn’t settle it. The two overlap (10.35 to 10.37), so either could have happened first.');}},
+
+/* ---------- PART 4: PROCESS PAUSES ---------- */
+{part:3,src:'Chapter 8 · Process Pauses',run(L){
+  L.h(L.kick('learn','Leases and the gap')+'<h1 class="q">How does a leader know it is still the leader?</h1>'+
+   L.prose('Westport has one route planner, and it must be the only process writing Westport’s routes. One way: it holds a '+L.g('lease','lease')+' from the other nodes, a lock with a timeout. It renews the lease before it runs out. If the planner dies, it stops renewing, and another can take over. Its loop looks roughly like this:')+
+   '<div style="background:var(--soft);border-radius:14px;padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.7;overflow-wrap:anywhere">repeat forever:<br>&nbsp;&nbsp;req = next request<br>&nbsp;&nbsp;if lease has under 10 s left: renew it<br>&nbsp;&nbsp;if lease is still valid: write routes(req)</div>'+
+   L.list([['Clocks again','The expiry time was set by another machine, but it’s compared with this machine’s clock. If they disagree by seconds, strange things happen.'],
+           ['The gap','Even with only the local monotonic clock, the code assumes almost no time passes between checking the lease and writing. Usually true. Not always.']],4));
+  L.done();}},
+{part:3,src:'Chapter 8 · Process Pauses',pts:1,
+ solve:async L=>{L.$('#zp').children[1].click();L.$('#zr').click();},
+ run(L){
+  let p=null;const E=[['0 s','Planner 1 checks its lease: 12 s left. Valid.','ok'],['0.1 s','A garbage-collection pause freezes Planner 1 mid-loop.','no'],['12 s','The lease runs out. The lock service grants it to Planner 2.',''],['13 s','Planner 2 writes fresh Westport routes.',''],['15 s','Planner 1 wakes. To it, almost no time has passed.','no'],['15 s','Planner 1 writes its stale routes. Couriers get a mix of both plans.','no']];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Planner 1 has just checked its lease: 12 s left. Then a 15-second pause hits before it writes. What happens when it wakes?</h1><div id="zp"></div>'+
+   '<div id="zw" hidden><button class="btn pri" id="zr">'+L.ic('play')+'Play the timeline</button></div><div class="ladder" id="zl"></div>');
+  ['It sees the lease expired and stops','It writes routes anyway, clashing with Planner 2'].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#zw').hidden=false;};L.$('#zp').appendChild(b);});
+  L.$('#zr').onclick=function(){this.remove();let k=0;
+    const tm=setInterval(()=>{const zl=L.$('#zl');if(!zl){clearInterval(tm);return;}const e=E[k];
+      zl.insertAdjacentHTML('beforeend',(k?'<div class="conn"></div>':'')+'<div class="rung"'+(e[2]==='no'?' style="border-color:var(--no-line)"':'')+'><small>'+e[0]+'</small>'+e[1]+'</div>');k++;
+      if(k>=E.length){clearInterval(tm);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'You called it!':'It wrote anyway','Nothing told the thread it had been frozen. It already passed the lease check, so it carries straight on and writes. It would only notice on the <i>next</i> loop, too late.');L.done();}},300);};}},
+{part:3,src:'Chapter 8 · Process Pauses',run(L){
+  L.h(L.kick('learn','Why a process can freeze')+'<h1 class="q">A 15-second pause sounds crazy. It isn’t.</h1>'+
+   L.list([['Garbage collection','Runtimes like Java’s sometimes stop every thread to clean up memory. Such pauses have lasted minutes.'],
+     ['Virtual machines','A VM can be suspended and resumed, for example to move it live to another host, for any length of time.'],
+     ['Busy CPUs','The OS or the VM host can switch away from your thread at any line. Under heavy load, getting it back takes a while.'],
+     ['Slow disks and paging','A thread may wait on disk, sometimes unexpectedly (like loading code on first use). If memory is short, even a plain memory read can wait for disk.'],
+     ['A stop signal','Pressing Ctrl-Z, even by accident, freezes a Unix process until it’s told to continue.'],
+     ['Closed laptop lids','On user devices, execution can be suspended and resumed at any time.']],3)+
+   L.prose('Unlike threads on one machine, nodes have no shared memory, so mutexes and similar tools don’t carry over. A node must assume it can be paused at <b>any</b> point, be declared dead, and wake up unaware it was ever asleep.'));
+  L.done();}},
+{part:3,src:'Chapter 8 · Process Pauses',pts:1,run(L){
+  L.h(L.kick('pr','Tobias’s fix')+'<h1 class="q">Tobias moves the lease check to the line just before the planner writes routes. “Now there’s no gap.” Is the zombie-planner bug fixed?</h1>');
+  L.mc(L.card,['Yes, the check now comes right before the write','Only if the planner uses the monotonic clock','No, a pause can still land between check and write'],2,
+   'Right. However short the gap, a pause can strike inside it, and the thread won’t know. Code alone can’t prove the lease is still held at the moment of writing. The next lesson shows how the storage side can catch this.',
+   'Moving the check shrinks the gap but doesn’t close it, and the right clock doesn’t help either. A pause can hit between any two lines, and the thread can’t tell afterwards.');}},
+{part:3,src:'Chapter 8 · Response time guarantees',run(L){
+  L.h(L.kick('learn','Can we just stop the pauses?')+'<h1 class="q">Yes, at great cost. Most servers settle for less.</h1>'+
+   L.lanes([['shield','Hard real-time','Systems that control aircraft, robots or cars must respond by a deadline, every time. That needs a real-time OS, documented worst-case timings, limited memory allocation and huge amounts of testing. Expensive, restrictive, and it may even handle less work overall.',4],
+            ['cycle','Limit the damage','If the runtime warns a GC is coming, stop sending that node requests, let it finish its work, then collect: a planned mini-outage. Or collect only short-lived objects and restart nodes one at a time before a big collection is needed.',2]])+
+   L.prose('On the web, “real-time” usually just means pushing data quickly to users, with no hard deadlines. For most server-side systems, true real-time guarantees aren’t worth the cost, so they live with pauses and clock trouble.'));
+  L.done();}},
+{part:3,src:'Chapter 8 · Limiting the impact of garbage collection',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which approach fits?',['Hard real-time','Drain before GC','Restart on a schedule'],[
+   ['Firmware for a robot arm that sorts parcels at the Westport hub. A late response could injure someone.',0,'Machines that move physical objects need guaranteed deadlines, whatever the cost.'],
+   ['Tracking page servers: response times spike whenever a node collects garbage. The runtime can warn a few moments ahead.',1,'Use the warning: send traffic elsewhere, let in-flight requests finish, then collect while idle.'],
+   ['Booking servers slowly pile up long-lived objects until a huge full collection hits every few days.',2,'Collect only the short-lived objects, and restart each node in turn before a full collection is needed.'],
+   ['The automatic braking controller in an Otterpost van.',0,'A pause here is a safety incident, not just a slow page.']]);}},
+{part:3,src:'Chapter 8 · Process Pauses',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence states the lesson of process pauses.</h1>');
+  L.sentence(L.card,[['A node can be paused','A node is only paused'],['only between requests','at any point in its code'],['so checking a lease','so renewing a lease'],['guarantees nobody else writes','can’t prove it holds it when it acts']],[0,1,0,1],
+   [['Pauses can strike any node, not just a special few.'],['A pause can land in the middle of a function, even between two lines.'],['Renewing has the same problem: the pause can come right after.'],['Nothing guarantees that. The lease may expire during a pause.']],
+   'A node must assume it may freeze anywhere, be declared dead, and wake up unaware. That’s why the next lesson asks who decides what’s true.');}}
+  ]
+});
+</script>
+</body>
+</html>

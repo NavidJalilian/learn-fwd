@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B-Trees and Other Indexes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+const PG=(keys,hl)=>'<span style="display:inline-flex;gap:4px;border:2px solid var(--line2);border-radius:10px;padding:5px 7px;margin:4px;background:var(--card);flex-wrap:wrap">'+keys.map(k=>'<span style="padding:2px 6px;border-radius:6px;font-weight:600;font-size:14px;'+(k===hl?'background:var(--ok-bg);color:var(--ok)':'background:var(--soft)')+'">'+k+'</span>').join('')+'</span>';
+const TREE=(par,leaves,hl)=>'<div style="background:var(--soft);border-radius:16px;padding:12px;text-align:center"><div class="small">Parent page</div>'+PG(par,hl)+'<div class="small" style="margin-top:8px">Leaf page'+(leaves.length>1?'s':'')+' (room for 4 keys each)</div>'+leaves.map(l=>PG(l,hl)).join('')+'</div>';
+Course.lesson({
+  id:'0006', title:'B-trees and other indexes', minutes:20, icon:'tree',
+  goals:['Trace how a B-tree finds, updates and splits pages, and how it survives a crash','Weigh B-trees against LSM-trees for a real Otterpost workload','Choose between secondary, covering, multi-column and fuzzy indexes'],
+  parts:['How B-trees work','B-tree or LSM-tree?','More ways in','Fuzzy and in-memory'],
+  read:'Read chapter 3 from “B-Trees” to the end of “Keeping everything in memory” for the B-tree figures and the full comparison with LSM-trees.',
+  glossary:{
+    'b-tree':'B-tree: the most widely used index. It splits the data into fixed-size pages arranged as a sorted, balanced tree, and updates pages in place.',
+    'page':'Page: a fixed-size block of the database file (traditionally 4 KB) that a B-tree reads or writes as one unit.',
+    'branching-factor':'Branching factor: how many child pages one B-tree page points to. In real databases it is typically several hundred.',
+    'wal':'Write-ahead log (WAL, also called a redo log): an append-only file where every change is written before it is applied, so the database can repair itself after a crash.',
+    'latch':'Latch: a lightweight lock that stops two threads from changing the same part of a data structure at the same time.',
+    'write-amp':'Write amplification: one write to the database turning into several writes to disk over the database’s lifetime.',
+    'sstable':'SSTable (Sorted String Table): a segment file whose key-value pairs are sorted by key, with each key appearing only once.',
+    'lsm':'LSM-tree (Log-Structured Merge-Tree): a storage engine design that keeps a memtable plus a cascade of SSTables on disk, merged in the background.',
+    'compaction':'Compaction: rewriting log segments to throw away values that were overwritten or deleted, keeping only the latest value for each key.',
+    'secondary-index':'Secondary index: an extra index on a column other than the primary key, such as all parcels of one merchant. Its keys don’t have to be unique.',
+    'heap-file':'Heap file: the place where a table’s rows are kept in no particular order. Indexes hold pointers into it.',
+    'clustered-index':'Clustered index: an index that stores the whole row inside the index itself, so no extra hop is needed to read it.',
+    'covering-index':'Covering index: an index that also stores some of the table’s columns, so certain queries can be answered from the index alone.',
+    'concat-index':'Concatenated index: one index over several columns, joined into one key in a fixed order, like a phone book sorted by last name and then first name.',
+    'edit-distance':'Edit distance: how many single-letter changes (adding, removing or replacing a letter) it takes to turn one word into another.'
+  },
+  cheatsheet:[
+    '<b>B-tree:</b> fixed-size pages in a sorted, balanced tree. A lookup follows page references from the root to a leaf; three or four levels are usually enough.',
+    '<b>B-tree writes:</b> update a page in place. A full page splits into two half-full pages and the parent gets a new boundary.',
+    '<b>Crash safety:</b> a write-ahead log records each change before the pages are touched. Latches keep threads from seeing half-done pages.',
+    '<b>LSM vs B-tree:</b> LSM-trees usually write faster and store smaller; B-trees read more predictably and keep each key in one place. Test with your own workload.',
+    '<b>Write amplification</b> and compaction backlogs matter under heavy writes. LSM engines usually won’t throttle writes, so monitor them.',
+    '<b>Where rows live:</b> heap file (pointer), clustered index (whole row), covering index (some columns). Copies speed up reads but cost writes.',
+    '<b>Several columns:</b> a concatenated index helps only from its first column. A box on a map needs a multi-dimensional index such as an R-tree.',
+    '<b>In-memory databases</b> are fast mainly because they skip encoding data for disk, and they can still be durable.'
+  ],
+  steps:[
+/* ---------- PART 1: HOW B-TREES WORK ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A printed phone book lists 200,000 Westport names in alphabetical order. To find “Okoro”, what do you do?</h1>');
+  L.mc(L.card,['Read every page from the very start','Open near the middle, then narrow it down'],1,
+   'You use the sort order to skip most of the book. The index in this lesson does the same thing, a few page-jumps at a time.',
+   'Reading every page works, but it ignores the sort order. Opening near the right letter and narrowing down skips almost the whole book. The index in this lesson works that way.');}},
+{part:0,src:'Chapter 3 · B-Trees',run(L){
+  L.h(L.kick('learn','B-trees')+'<h1 class="q">The most widely used index splits data into fixed-size pages</h1>'+
+   L.prose('Log-structured indexes are gaining ground, but the most common index of all is the '+L.g('b-tree','B-tree')+'. Introduced in 1970, it is still the standard index in almost all relational databases, and many nonrelational ones use it too. Zainab’s Parcel DB is a relational database, so its indexes are almost certainly B-trees.')+
+   L.prose('Like SSTables, B-trees keep keys sorted, so lookups and range queries are efficient. That is where the likeness ends:')+
+   L.lanes([['layers','LSM-tree','Variable-size segments, several megabytes or more, always written start to finish and never changed afterwards.',1],
+            ['tree','B-tree','Fixed-size '+L.g('page','pages')+', traditionally 4 KB, read or written one page at a time and overwritten in place. Disks are arranged in fixed-size blocks too.',2]])+
+   L.prose('Each page has an address, so one page can refer to another, like a pointer, but on disk. Those references build a tree of pages.'));
+  L.done();}},
+{part:0,src:'Chapter 3 · B-Trees',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Looking up key 251, page by page</h1>');
+  L.beats(L.card,[
+   ['Start at the root','One page is the root, where every lookup begins. It holds a few keys with references to child pages between them: below 100, 100–200, 200–300, and so on. Each child covers one continuous range of keys.'],
+   ['Follow a reference','251 falls between the boundaries 200 and 300, so follow that reference. The page it leads to splits 200–300 into smaller ranges.'],
+   ['Reach a leaf','A hop or two later you reach a <b>leaf page</b> holding individual keys. It stores the value for 251 right there, or a reference to the page where the value lives.'],
+   ['Count the branches','The number of child references on one page is the '+L.g('branching-factor','branching factor')+'. The book’s small drawing uses six. Real databases typically use several hundred.']],
+   'Each page narrows the range, like opening a phone book closer and closer to the right name.');}},
+{part:0,src:'Chapter 3 · B-Trees',run(L){
+  L.h(L.kick('learn','Updates and growth')+'<h1 class="q">Change a page in place, and split it when it’s full</h1>'+
+   L.list([['pencil','Update a key','Find the leaf page that holds it, change the value, and write the page back to the same place. Every reference to that page stays valid.'],
+     ['layers','Add a key','Find the page whose range covers the new key and add it there. If the page has no room, it splits into two half-full pages, and the parent page is updated with the new boundary.'],
+     ['tree','Stay shallow','Splitting keeps the tree balanced: with n keys, its depth grows only with the logarithm of n. Most databases fit in a B-tree three or four levels deep.']],2)+
+   L.note('A four-level tree of 4 KB pages with a branching factor of 500 can hold up to 256 TB.','info'));
+  L.done();}},
+{part:0,src:'Chapter 3 · B-Trees',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame asks how many pages the Parcel DB reads to find one parcel by ID among hundreds of millions. Roughly how many?</h1>');
+  L.mc(L.card,['Three or four, one per level of the tree','About thirty, halving the range each time','Thousands, reading the pages one by one'],0,
+   'With hundreds of references per page, each level multiplies the reach by hundreds. Three or four levels cover hundreds of millions of keys.',
+   'The “B” isn’t for binary: each page branches hundreds of ways, not two, and nothing is read one by one. Three or four levels cover hundreds of millions of keys.');}},
+{part:0,src:'Chapter 3 · B-Trees',pts:1,
+ solve:async L=>{L.$('#po').children[1].click();L.$('#ins').click();},
+ run(L){
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The leaf page for keys 200–300 is full. The Parcel DB inserts key 240. What happens?</h1><div id="tv">'+TREE(['…','200','300','…'],[['210','230','251','270']])+'</div>'+
+   '<div id="po" style="margin-top:12px"></div><div id="g2" hidden><button class="btn pri" id="ins">'+L.ic('play')+'Insert 240</button></div>');
+  ['The page stretches to hold five keys','It splits into two half-full pages','Key 240 goes on a new page at the end'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#g2').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#ins').onclick=function(){this.remove();
+    L.$('#tv').innerHTML=TREE(['…','200','240','300','…'],[['210','230'],['240','251','270']],'240')+'<p class="small" style="margin:8px 0 0;text-align:center">Pages written for this one insert: <b>3</b> (two halves and their parent)</p>';
+    L.award(p===1);
+    L.sheet(p===1?'ok':'no',p===1?'You called it':'It splits in two','Pages have a fixed size, so a full page can’t stretch, and keys must stay in sorted order, so nothing goes “at the end.” The page splits into two half-full pages, and the parent gets a new boundary. Notice the cost: one insert rewrote three pages.');L.done();};}},
+{part:0,src:'Chapter 3 · Making B-trees reliable',run(L){
+  L.h(L.kick('learn','Making B-trees reliable')+'<h1 class="q">Overwriting pages is risky, so write the change down first</h1>'+
+   L.prose('A B-tree’s basic write overwrites a page on disk and keeps it at the same location. On a spinning disk that means moving the head and waiting for the right spot to come round. An SSD has to erase and rewrite large blocks at a time.')+
+   L.prose('A split is worse: it overwrites several pages. If the database crashes after writing only some of them, the index is corrupted, for example with an <b>orphan page</b> that no parent points to.')+
+   L.flow([['pencil','1 · Log it','Append the change to the '+L.g('wal','write-ahead log')+'.','also called a redo log',1],['layers','2 · Apply it','Then overwrite the pages of the tree.','',2],['shield','3 · After a crash','Replay the log to bring the tree back to a consistent state.','',3]])+
+   L.prose('Threads using the tree at the same time need care too, or one may see it half-changed. B-trees protect their pages with '+L.g('latch','latches')+' (lightweight locks). Log-structured engines have it easier: they merge in the background and swap old files for new ones in one step.'));
+  L.done();}},
+{part:0,src:'Chapter 3 · B-tree optimizations',run(L){
+  L.h(L.kick('learn','B-tree optimizations')+'<h1 class="q">Decades of tweaks. Tap each one.</h1>');
+  L.flips(L.card,[
+   ['Copy-on-write','Instead of overwriting a page and keeping a WAL, write the changed page somewhere new and make new parent pages that point to it. LMDB does this. It also helps with concurrency.'],
+   ['Shorter keys','Interior pages only need enough of each key to mark a boundary. Abbreviating keys packs more into a page: a higher branching factor and fewer levels.'],
+   ['Leaves in order','Pages can sit anywhere on disk, so a long range scan may need a seek per page. Many engines try to keep leaf pages in sequence on disk, but that’s hard as the tree grows.'],
+   ['Sibling pointers','Each leaf page can point to its left and right neighbours, so a scan walks along in key order without climbing back to the parent.'],
+   ['Fractal trees','Variants that borrow log-structured ideas to cut down on disk seeks. Despite the name, they have nothing to do with fractals.']],
+   'All of these keep the core idea: fixed-size pages in a sorted, balanced tree.');}},
+{part:0,src:'Chapter 3 · Making B-trees reliable',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which technique helps?',['Write-ahead log','Latches','Sibling pointers','Shorter keys'],[
+   ['The Parcel DB crashes halfway through a page split. On restart, one page has no parent.',0,'The write-ahead log recorded the split before any page changed. Replaying it repairs the tree.'],
+   ['Two threads change the same page at once, and one of them reads the tree half-changed.',1,'Latches are short locks on parts of the tree, so one thread finishes before the other looks.'],
+   ['A report reads every parcel in ID order and keeps climbing back up to parent pages.',2,'With a pointer to the next leaf, the scan walks straight along the leaves in key order.'],
+   ['Zainab wants more keys on each interior page so the tree needs fewer levels.',3,'Interior keys only mark boundaries, so they can be shortened. More keys per page means a higher branching factor.']]);}},
+
+/* ---------- PART 2: B-TREE OR LSM-TREE? ---------- */
+{part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',run(L){
+  L.h(L.kick('learn','The rule of thumb')+'<h1 class="q">LSM-trees tend to write faster, B-trees tend to read faster</h1>'+
+   L.prose('B-tree engines are generally more mature, but '+L.g('lsm','LSM-trees')+' have interesting performance. As a rough rule, LSM-trees are typically faster for writes, and B-trees are thought to be faster for reads. An LSM read may have to check several structures and '+L.g('sstable','SSTables')+' at different stages of compaction.')+
+   L.note('<b>But test it.</b> Benchmarks are often inconclusive and sensitive to the details of the workload. Measure with your own workload before you decide.','flask')+
+   L.prose('One idea matters for both: '+L.g('write-amp','write amplification')+'. One write to the database can turn into several writes to disk over time:')+
+   L.lanes([['tree','B-tree','Writes each change at least twice: to the WAL, then to the page, and again if the page splits. It writes a whole page even if only a few bytes changed.',2],
+            ['layers','LSM-tree','Writes data again and again as SSTables are compacted and merged.',1]])+
+   '<p class="small" style="margin-top:10px">It matters on SSDs, which wear out after a limited number of overwrites, and in write-heavy apps, where the disk’s write rate caps how many writes per second you get.</p>');
+  L.done();}},
+{part:1,src:'Chapter 3 · Advantages of LSM-trees · Downsides of LSM-trees',run(L){
+  L.h(L.kick('learn','Pros and cons')+'<h1 class="q">What each design does well</h1>'+
+   L.lanes([['trend','LSM-tree strengths','<p style="margin:0 0 8px"><b>Higher write throughput</b>, often: sometimes lower write amplification, and it writes compact SSTables in sequence instead of overwriting several pages. A big deal on spinning disks.</p><p style="margin:0"><b>Smaller files.</b> B-trees leave unused space in pages after splits (fragmentation). LSM-trees rewrite files to remove it, and compress better.</p>',1],
+            ['alert','LSM-tree weak spots','<p style="margin:0 0 8px"><b>Compaction gets in the way.</b> A request may wait while the disk finishes merging. Averages barely change, but high percentiles can get quite slow. B-trees are more predictable.</p><p style="margin:0"><b>It can fall behind.</b> Flushing and '+L.g('compaction','compaction')+' share the disk. If merging can’t keep up, unmerged files pile up and reads slow down. Engines usually don’t slow incoming writes, so you must monitor this.</p>',4]])+
+   L.note('<b>A B-tree keeps each key in exactly one place.</b> That suits strong transactions: many databases lock ranges of keys, and in a B-tree those locks attach straight to the tree. B-trees aren’t going away; log-structured indexes are increasingly popular in new datastores.','tree'));
+  L.done();}},
+{part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias’s ping store takes a flood of writes all day and is read far less. The Parcel DB needs strong transactions on ranges of keys. Which first guess fits the rule of thumb?</h1>');
+  L.mc(L.card,['Both should use B-trees','Pings: B-tree. Parcel DB: LSM-tree','Pings: LSM-tree. Parcel DB: B-tree'],2,
+   'Heavy writes favour an LSM-tree. Range locks for transactions favour a B-tree, where each key lives in one place. Then test both guesses with the real workload.',
+   'A flood of writes is where LSM-trees usually shine, while transactions that lock key ranges suit a B-tree. Treat it as a first guess, and test it with the real workload.');}},
+{part:1,src:'Chapter 3 · Downsides of LSM-trees',pts:1,
+ solve:async L=>{L.$('#nd').click();await L.sleep(1500);L.$('#pk').click();await L.sleep(1500);},
+ run(L){
+  const seen=new Set();let busy=false;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias’s ping store is an LSM-tree. Run a normal day, then Peak Week, and watch the files waiting to be merged.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:8px 0 12px"><div class="small" id="lbl">Compaction can merge a steady amount per hour. Press a button to start.</div>'+
+   '<div class="meterrow"><div class="lb">Unmerged SSTables</div><div class="meter"><div id="m0" style="background:var(--h2)"></div></div></div>'+
+   '<div class="meterrow"><div class="lb">Disk used</div><div class="meter"><div id="m1" style="background:var(--h3)"></div></div></div>'+
+   '<p class="small" id="rd" style="margin:6px 0 0"></p></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="nd">'+L.ic('play')+'Normal day</button><button class="btn pri" id="pk">'+L.ic('flame')+'Peak Week (3× writes)</button></div><div id="q"></div>');
+  const go=(peak)=>{if(busy)return;busy=true;let t=0;
+    L.$('#lbl').textContent=peak?'Peak Week: writes arrive three times faster':'Normal day';
+    const iv=setInterval(()=>{const m0=L.$('#m0');if(!m0){clearInterval(iv);return;}t++;
+      const segs=peak?3+2*t:(t%2?4:3),disk=peak?30+5.5*t:30+0.1*t;
+      m0.style.width=Math.round(segs/25*100)+'%';L.$('#m1').style.width=Math.round(disk)+'%';
+      L.$('#rd').innerHTML='<b>'+segs+'</b> files waiting · disk <b>'+Math.round(disk)+'%</b> · '+(peak?'<span style="color:var(--no)">reads slowing: more files to check</span>':'reads steady');
+      if(t>=10){clearInterval(iv);busy=false;seen.add(peak);
+        if(seen.size===2&&!L.$('#q').innerHTML){const q=L.$('#q');q.innerHTML='<h2 class="sub">The engine won’t slow down incoming writes by itself. What should Kwame set up before Peak Week?</h2>';
+          L.mc(q,['Wait for the engine to throttle writes itself','Alerts on unmerged files and free disk space','Switch compaction off until the rush is over'],1,
+           'Typical SSTable engines keep accepting writes even when compaction falls behind, so only monitoring catches the pile-up before the disk fills.',
+           'The engine usually won’t throttle writes, and switching compaction off makes the pile grow faster. Watch the number of unmerged files and the free disk space, and act early.');}}},120);};
+  L.$('#nd').onclick=()=>go(false);L.$('#pk').onclick=()=>go(true);}},
+{part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',pts:6,run(L){
+  L.h(L.kick('pr','Which design gets the point?')+'<h1 class="q">Zainab lists pros for a design review. Which engine does each one belong to?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['LSM-tree','B-tree'],[
+   ['Usually sustains a higher rate of writes',0,'It writes compact SSTables in sequence, and sometimes has lower write amplification.'],
+   ['More predictable response times at high percentiles',1,'There is no background compaction competing with requests for the disk.'],
+   ['Smaller files on disk, with less fragmentation',0,'Rewriting SSTables removes gaps, and sorted files compress well.'],
+   ['Each key exists in exactly one place',1,'An LSM-tree may hold several copies of a key in different segments.'],
+   ['Locks on key ranges can attach right to the index',1,'Because each key lives in one place, range locks sit directly on the tree.'],
+   ['Needs monitoring in case merging falls behind',0,'A compaction backlog is an LSM problem, and engines usually won’t throttle writes.']],
+   'Neither design wins everywhere. Know the trade-offs, then test with your own workload.');}},
+
+/* ---------- PART 3: MORE WAYS IN ---------- */
+{part:2,src:'Chapter 3 · Other Indexing Structures',run(L){
+  L.h(L.kick('learn','Secondary indexes')+'<h1 class="q">Most tables need more than one way in</h1>'+
+   L.prose('So far every index has been like a <b>primary key</b> index: the key identifies exactly one row, and other records refer to that row by it.')+
+   L.prose('A '+L.g('secondary-index','secondary index')+' indexes another column. Zainab adds one on the parcels table’s merchant column, so the merchant dashboard can list one shop’s parcels quickly. Secondary indexes are often crucial for fast joins, too.')+
+   L.prose('The twist: their keys aren’t unique. Bramble & Bolt has many parcels. There are two ways to handle that:')+
+   L.list([['A list per key','Each key’s value is the list of matching row IDs, like a postings list in full-text search.'],
+     ['Make each key unique','Append the row ID to the key, as in “merchant M-17, parcel OP-4471”.']],3)+
+   '<p class="small" style="margin-top:10px">Both B-trees and log-structured indexes can serve as secondary indexes.</p>');
+  L.done();}},
+{part:2,src:'Chapter 3 · Storing values within the index',run(L){
+  L.h(L.kick('learn','Where the row lives')+'<h1 class="q">An index can hold a pointer, the whole row, or something in between</h1>'+
+   L.tiers([['pointer','Pointer into a heap file','The index stores a reference. Rows sit in a '+L.g('heap-file','heap file')+', in no particular order. Every index points to the one copy, so nothing is duplicated.','A common choice for that reason.'],
+            ['box','Clustered index','The whole row is stored inside the '+L.g('clustered-index','index')+', saving the extra hop to the heap.','MySQL’s InnoDB always clusters the primary key. SQL Server allows one clustered index per table.'],
+            ['layers','Covering index','Stores <i>some</i> of the table’s columns in the '+L.g('covering-index','index')+', so certain queries are answered from the index alone.','The index is said to “cover” those queries.']])+
+   L.note('<b>Copies cost something.</b> Clustered and covering indexes speed up reads, but they take more storage, slow down writes, and make the database work harder to keep the copies consistent.','alert')+
+   '<p class="small">A heap detail: if an updated row no longer fits in its old spot, it moves. Then either every index is updated, or a forwarding pointer is left behind.</p>');
+  L.done();}},
+{part:2,src:'Chapter 3 · Storing values within the index',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">The tracking page’s busiest query</h1>');
+  L.beats(L.card,[
+   ['The query','When the tracking page’s cache misses, it asks the Parcel DB: “status and ETA for OP-4471.” On delivery day this happens a lot.'],
+   ['With a pointer','The index on tracking code gives a location in the heap file. A second hop reads the whole row, about 30 columns, just to get two of them.'],
+   ['With a covering index','Zainab adds status and ETA to the index as included columns. Now the index alone answers the query.'],
+   ['The price','Every status change now updates the index as well as the row, and the index takes more space. For a page that is read far more than it changes, that’s a good trade.']],
+   'Store data inside an index only where read speed is worth the extra writes and storage.');}},
+{part:2,src:'Chapter 3 · Storing values within the index',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which index answers “status and ETA for OP-4471” without touching the table at all?</h1>');
+  L.mc(L.card,['Tracking code, pointing into the heap file','Status, pointing into the heap file','Tracking code, including status and ETA'],2,
+   'It covers the query: the key finds the entry, and the included columns hold the answer.',
+   'A pointer means one more hop into the heap file, and an index on status can’t find a tracking code. Only the index that includes status and ETA covers the query.');}},
+{part:2,src:'Chapter 3 · Multi-column indexes',run(L){
+  L.h(L.kick('learn','Several columns at once')+'<h1 class="q">One key from several columns, or a true multi-dimensional index</h1>'+
+   L.prose('A '+L.g('concat-index','concatenated index')+' joins several columns into one key, in a fixed order. Think of a paper phone book sorted by (last name, first name):')+
+   L.list([['check','Last name','Every Okoro? Yes: they all sit together.'],['check','Last and first name','Nia Okoro? Yes.'],['x','First name only','Every Nia? No help: the Nias are scattered through the whole book.']],2)+
+   L.prose('Some queries need <b>two ranges at once</b>. A map shows a rectangle, and the app wants every point inside it: latitude between two values <i>and</i> longitude between two values. A normal B-tree or LSM index gives a strip (the right latitudes at any longitude), not the box.')+
+   L.prose('One fix turns both coordinates into one number with a space-filling curve and uses a normal B-tree. More commonly, a spatial index such as an <b>R-tree</b> is used. It isn’t only for maps: (date, temperature) for weather records, or (red, green, blue) for product colours, work the same way.'));
+  L.done();}},
+{part:2,src:'Chapter 3 · Multi-column indexes',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Index on (merchant, booking date)',['It helps','It can’t help'],[
+   ['List every parcel Bramble & Bolt has ever booked.',0,'Merchant is the first column, so all of Bramble & Bolt’s entries sit together.'],
+   ['List every parcel booked on 3 December, for any merchant.',1,'The date is the second column. Like first names in a phone book, those entries are scattered under every merchant.'],
+   ['List Bramble & Bolt’s parcels booked on 3 December.',0,'Both columns, in the index’s order: like finding one last-name and first-name pair.'],
+   ['Find which merchant booked parcel OP-4471.',1,'This searches by tracking code, which isn’t in this index at all. The primary key index handles it.']]);}},
+{part:2,src:'Chapter 3 · Multi-column indexes',pts:1,run(L){
+  L.h(L.kick('pr','Pick the index')+'<h1 class="q">Dispatch wants every courier inside the rectangle shown on a map of Westport. Which index fits?</h1>');
+  L.mc(L.card,['A spatial index such as an R-tree','A concatenated index on (latitude, longitude)','Two separate one-column B-tree indexes'],0,
+   'A multi-dimensional index narrows both coordinates at once, and an R-tree is the common choice.',
+   'A concatenated index is sorted by latitude first, so like a one-column index it narrows only one coordinate: you get a strip, not the box. A spatial index such as an R-tree narrows both at once.');}},
+
+/* ---------- PART 4: FUZZY AND IN-MEMORY ---------- */
+{part:3,src:'Chapter 3 · Full-text search and fuzzy indexes',run(L){
+  L.h(L.kick('learn','Fuzzy search')+'<h1 class="q">When the search word isn’t exact</h1>'+
+   L.prose('Every index so far finds an exact key or a sorted range of keys. None can find <i>similar</i> keys, such as misspelled words. Fuzzy search needs other techniques.')+
+   L.list([['book','Full-text features','Search engines can expand a word to its synonyms, ignore grammatical variations of a word, and find words that appear near each other.'],
+     ['pencil','Typos','Lucene can find words within a given '+L.g('edit-distance','edit distance')+'. A distance of 1 means one letter added, removed or replaced.'],
+     ['tree','How it works','Lucene’s small in-memory index is an automaton over the characters of the keys, similar to a trie. It can be turned into a Levenshtein automaton, which finds words within an edit distance efficiently.']],3)+
+   '<p class="small" style="margin-top:10px">Other fuzzy techniques lean toward document classification and machine learning.</p>');
+  L.done();}},
+{part:3,src:'Chapter 3 · Full-text search and fuzzy indexes',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A caller tells Signe’s team their name is “Okora”. The parcel is filed under “Okoro”. What is the edit distance?</h1>');
+  L.mc(L.card,['0: the search treats them as equal','1: one letter is replaced','2: one letter removed, one added'],1,
+   'Swap the last letter and you’re done: one edit. A fuzzy search allowing distance 1 finds the parcel.',
+   'Edit distance counts the fewest single-letter changes needed. Replacing the final “a” with “o” is one change, so the distance is 1.');}},
+{part:3,src:'Chapter 3 · Keeping everything in memory',run(L){
+  L.h(L.kick('learn','Keeping everything in memory')+'<h1 class="q">If the data fits in RAM, why bother with disk structures?</h1>'+
+   L.prose('All these structures exist because disks are awkward. We put up with them for two reasons: disks are <b>durable</b> (their contents survive a power cut) and <b>cheaper per gigabyte</b> than RAM. As RAM gets cheaper, many datasets fit in memory, perhaps spread over several machines.')+
+   L.list([['Cache only','Some, like Memcached, are only caches: losing the data on a restart is acceptable.'],
+     ['Durable','Others survive restarts using battery-powered RAM, a log of changes on disk, periodic snapshots, or copies on other machines. Reads are still served entirely from memory.'],
+     ['Why faster','Not because they skip disk reads: with enough memory, the operating system caches a disk-based database’s blocks anyway. They win by skipping the work of encoding in-memory structures into a form that can be written to disk.'],
+     ['New data models','Redis offers structures such as priority queues and sets, which are hard to build with disk-based indexes.']],4)+
+   '<p class="small" style="margin-top:10px">Research on “anti-caching” moves the least recently used records to disk when memory runs out, and loads them back when needed. The indexes must still fit in memory.</p>');
+  L.done();}},
+{part:3,src:'Chapter 3 · Keeping everything in memory',pts:1,run(L){
+  L.h(L.kick('pr','Myth check')+'<h1 class="q">Tobias says: “The Parcel DB fits in RAM, so the operating system already caches all of it. An in-memory database couldn’t be any faster.” Are they right?</h1>');
+  L.mc(L.card,['No: the in-memory one skips encoding work','Yes: both serve everything from memory','No: in-memory databases never touch disk'],0,
+   'Even with every block cached, a disk-based engine still pays to encode its data structures in a form fit for disk. Skipping that is the in-memory database’s main speed advantage.',
+   'Many in-memory databases do write a log or snapshots to disk for durability. Their edge comes from not encoding data structures for disk, not from avoiding disk reads.');}}
+  ]
+});
+</script>
+</body>
+</html>

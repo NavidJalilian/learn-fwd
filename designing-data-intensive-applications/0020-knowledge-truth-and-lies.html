@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Knowledge, Truth and Lies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0020', title:'Knowledge, truth and lies', minutes:20, icon:'scale',
+  goals:['Explain why a majority, not a node itself, decides what’s true','Use fencing tokens to stop a node that wrongly thinks it’s in charge','Name the system model and the safety and liveness properties of a design'],
+  parts:['Truth by majority','Leaders and locks','Byzantine faults','System models'],
+  read:'Read the “Knowledge, Truth, and Lies” section and the summary of chapter 8 for the full fencing and Byzantine discussion.',
+  glossary:{
+    'quorum':'Quorum: a minimum number of nodes that must vote for a decision. Usually a majority, more than half of all nodes.',
+    'lease':'Lease: a lock that expires after a set time. The holder must renew it before it runs out, or another node can take over.',
+    'fencing':'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already seen.',
+    'byzantine':'Byzantine fault: a node that “lies”, sending wrong or made-up messages, by malfunction or on purpose, rather than simply being slow or silent.',
+    'system-model':'System model: the list of things an algorithm is allowed to assume, such as how long delays can be and how nodes may fail.',
+    'safety':'Safety property: “nothing bad happens”. Once broken, you can point to the moment it broke, and the damage can’t be undone.',
+    'liveness':'Liveness property: “something good eventually happens”. It may not hold yet, but it still could later. Often contains the word “eventually”.'
+  },
+  cheatsheet:[
+    'A node only knows what messages tell it. It <b>can’t trust its own judgment</b>, like whether it is still alive or still the leader.',
+    'A <b>majority quorum</b> decides. There can only be one majority, so there can’t be two conflicting decisions.',
+    'A node that thinks it holds a lock may be wrong. Give out <b>fencing tokens</b> and make the resource itself reject old ones.',
+    'Nodes in this book are <b>unreliable but honest</b>. <b>Byzantine</b> (lying) nodes matter in aerospace and between untrusting organizations, rarely in your own datacenter.',
+    'Still guard against <b>weak lying</b>: app-level checksums, input sanity checks, several NTP servers.',
+    'Real systems are best modelled as <b>partially synchronous</b> with <b>crash-recovery</b> faults.',
+    '<b>Safety</b> (nothing bad happens) must always hold. <b>Liveness</b> (something good eventually happens) may come with conditions.',
+    'If one machine will do, use one machine. But fault tolerance and low latency for far-apart users need many.'
+  ],
+  steps:[
+/* ---------- PART 1: TRUTH BY MAJORITY ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">You text a friend and get no reply for an hour. Can you tell whether they’re asleep, their phone died, or your text never arrived?</h1>');
+  L.mc(L.card,['Yes, usually you can tell','No, all three look the same'],1,
+   'From where you sit, every one of those is just silence. Nodes in a distributed system are always in your position.',
+   'From your side, all three look identical: silence. You only learn more if a message gets through. Nodes in a distributed system live like this all the time.');}},
+{part:0,src:'Chapter 8 · Knowledge, Truth, and Lies',run(L){
+  L.h(L.kick('learn','What can a node know?')+'<h1 class="q">A node can only guess, based on the messages it gets, or doesn’t get</h1>'+
+   L.prose('The last two lessons showed the problems: no shared memory, an unreliable network with variable delays, partial failures, unreliable clocks and process pauses.')+
+   L.prose('So a node can’t know anything for sure. To learn another node’s state, what it has stored or whether it is working, it must exchange messages. If the other node goes quiet, there is no way to tell a network problem from a node problem.')+
+   L.note('The way out isn’t philosophy. We write down what we assume about the system (a '+L.g('system-model','system model')+') and design algorithms that are proven to work under those assumptions. Reliable behaviour is possible even when the assumptions promise very little.','compass'));
+  L.done();}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',run(L){
+  L.h(L.kick('ex','Three stories')+'<h1 class="q">Eastvale’s Parcel DB follower has a bad week</h1>');
+  L.beats(L.card,[
+   ['Monday','Its network link goes one-way: it receives everything, but its replies are dropped. It is working perfectly, yet after a timeout the other nodes <b>declare it dead</b>. It protests “I’m not dead!”, but nobody hears.'],
+   ['Wednesday','Same fault, but this time it notices its messages aren’t being acknowledged and realizes the network is broken. It is still declared dead, and it can do nothing about it.'],
+   ['Friday','A stop-the-world garbage-collection pause freezes it for a full minute. The others wait, retry, and declare it dead.'],
+   ['Friday, a minute later','The pause ends and it carries on as if nothing happened, chatting to the others. From its point of view, hardly any time has passed. It has no idea it was declared dead.']],
+   'In each story the node’s own view of itself was wrong or useless. A node can’t be the judge of its own state.');}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',run(L){
+  L.h(L.kick('learn','Let the majority decide')+'<h1 class="q">Important decisions are made by vote, not by one node</h1>'+
+   L.quote('a node cannot necessarily trust its own judgment of a situation','Martin Kleppmann, chapter 8')+
+   L.prose('Relying on any single node is risky: it can fail and leave the system stuck. So many distributed algorithms use a '+L.g('quorum','quorum')+', a minimum number of votes from several nodes. That includes deciding whether a node is dead. If a quorum says a node is dead, it is dead, even if it feels fine. It must step down.')+
+   L.lanes([['people','Keeps working','With a majority quorum, 3 nodes survive 1 failure, and 5 nodes survive 2.',2],
+            ['shield','Stays safe','There can only be one majority at a time, so two groups can’t make conflicting decisions.',1]]));
+  L.done();}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',pts:1,
+ solve:async L=>{L.$$('#sp .chip').forEach(b=>b.click());},
+ run(L){
+  const S=[[5,3],[5,4],[6,3]];const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">A network fault splits a cluster in two. Try each split and see which side may decide that the other side is dead.</h1><div id="sp"></div><div id="sv" style="min-height:120px"></div><div id="sq"></div>');
+  const dots=(n,c)=>Array.from({length:n},()=>'<span style="display:inline-block;width:20px;height:20px;border-radius:50%;margin:3px;background:'+c+'"></span>').join('');
+  const side=(k,n,c)=>{const maj=k>n/2;return '<div class="lane"><div>'+dots(k,c)+'</div><div class="res" style="color:var(--'+(maj?'ok':'no')+')">'+k+' of '+n+': '+(maj?'majority, can decide':'no majority, must wait')+'</div></div>';};
+  S.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0]+' nodes: '+s[1]+' | '+(s[0]-s[1]);
+    b.onclick=()=>{[...L.$('#sp').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#sv').innerHTML='<div class="two" style="margin-top:6px">'+side(s[1],s[0],'var(--h1)')+side(s[0]-s[1],s[0],'var(--h3)')+'</div>';
+      if(seen.size===S.length&&!L.$('#sq').innerHTML){const q=L.$('#sq');q.innerHTML='<h2 class="sub">When six nodes split 3 | 3, what happens?</h2>';
+        L.mc(q,['Each side declares the other side dead','The side holding the old leader decides','Neither side can decide anything yet'],2,
+         'A majority means <i>more than half</i>. Three of six isn’t, so both sides wait. That’s the price of never having two conflicting majorities.',
+         'Neither side has more than half, so neither may decide. If both could, you’d get two conflicting decisions, which a majority quorum exists to prevent.');}};
+    L.$('#sp').appendChild(b);});}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame runs a five-node cluster that votes on which nodes are dead. How many nodes can fail while the rest can still reach a majority?</h1>');
+  L.mc(L.card,['One','Two','Three'],1,
+   'Three of five is still more than half, so two can fail.',
+   'A majority of five is three. With two failed, three remain, which is still a majority. With three failed, only two remain, and that isn’t.');}},
+
+/* ---------- PART 2: LEADERS AND LOCKS ---------- */
+{part:1,src:'Chapter 8 · The leader and the lock',run(L){
+  L.h(L.kick('learn','The leader and the lock')+'<h1 class="q">Often there must be exactly one of something</h1>'+
+   L.list([['star','One leader','Only one node may lead a database partition, to avoid split brain.'],
+           ['lock','One lock holder','Only one client may hold the lock on a resource, so it isn’t corrupted by two writers.'],
+           ['person','One owner of a name','Only one user may register a given username.']],2)+
+   L.prose('The danger: a node may <i>believe</i> it is the chosen one after the majority has already declared it dead, during a network fault or a pause. If it keeps acting in that role, others may believe it.')+
+   L.note('The book’s real example: a storage service let a client write a file only while it held a '+L.g('lease','lease')+' from a lock service. One client paused, its lease expired, a second client got the lease and wrote, then the first woke up and wrote too. The file was corrupted. HBase once had this bug. Last lesson’s paused route planner is the same story.','book'));
+  L.done();}},
+{part:1,src:'Chapter 8 · Fencing tokens',run(L){
+  L.h(L.kick('learn','Fencing tokens')+'<h1 class="q">Make the resource itself turn away the old lock holder</h1>'+
+   L.flow([['lock','Grant','Each time the lock service grants a lease, it also hands out a number that always goes up.','',1],
+           ['pencil','Send','Every write to storage must carry the writer’s current number.','',2],
+           ['shield','Check','Storage remembers the highest number it has processed and rejects anything lower.','',3]])+
+   L.prose('That number is a '+L.g('fencing','fencing token')+'. If ZooKeeper is the lock service, its transaction ID can serve as one, because it is guaranteed to keep increasing.')+
+   L.prose('The key point: the <b>resource</b> must check, not the clients. If storage can’t check tokens itself, you may work around it, for example by putting the token in the file name. Checking on the server side is good practice anyway: a service shouldn’t assume its clients always behave.'));
+  L.done();}},
+{part:1,src:'Chapter 8 · Fencing tokens',pts:1,
+ solve:async L=>{L.$('#fA').click();L.$('#fB').click();},
+ run(L){
+  const base=[['Planner 1 gets the Westport lease with token 41.',''],['Planner 1 freezes in a long GC pause. Its lease expires.','no'],['Planner 2 gets the lease with token 42 and writes routes, sending 42. Storage notes: highest token 42.','']];
+  const end={A:['Planner 1 wakes and writes stale routes, sending 41. Storage: 41 is lower than 42, so <b>rejected</b>. Routes stay correct.','ok'],
+             B:['Planner 1 wakes and writes stale routes, sending 41. Storage doesn’t check, so <b>accepted</b>. Couriers get a mix of both plans.','no']};const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Replay the paused-planner story with fencing tokens. Try it with and without the storage check.</h1>'+
+   '<div><button class="chip" id="fA">'+L.ic('shield')+'Storage checks tokens</button><button class="chip" id="fB">'+L.ic('x')+'Storage doesn’t check</button></div><div class="ladder" id="fl"></div><div id="fq"></div>');
+  const pick=k=>{['A','B'].forEach(x=>L.$('#f'+x).classList.toggle('sel',x===k));seen.add(k);
+    L.$('#fl').innerHTML=base.concat([end[k]]).map((e,j)=>(j?'<div class="conn"></div>':'')+'<div class="rung"'+(e[1]==='no'?' style="border-color:var(--no-line)"':e[1]==='ok'?' style="border-color:var(--ok-line)"':'')+'><small>Step '+(j+1)+'</small>'+e[0]+'</div>').join('');
+    if(seen.size===2&&!L.$('#fq').innerHTML){const q=L.$('#fq');q.innerHTML='<h2 class="sub">Tobias suggests dropping the storage check: “Each planner will check its own lease before writing.” What’s wrong with that?</h2>';
+      L.mc(q,['Planners can’t see their lease without asking storage','A paused planner wakes still believing its lease is valid','Checking in the planner is slower than checking in storage'],1,
+       'Exactly. The node’s own belief is what can’t be trusted. Only the resource, which sees the tokens arrive, can reject the stale write.',
+       'Speed and access aren’t the issue. A planner that was frozen still believes its lease is valid when it wakes, so its own check passes. Only the resource can reject the stale token.');}};
+  L.$('#fA').onclick=()=>pick('A');L.$('#fB').onclick=()=>pick('B');}},
+{part:1,src:'Chapter 8 · Fencing tokens',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The route store has already processed a write with token 57. Now a write arrives carrying token 55. What should it do?</h1>');
+  L.mc(L.card,['Reject it, because 55 is lower than 57','Accept it, since 55 was a valid token once','Ask the lock service whether 55 is valid'],0,
+   'A lower token means an older lease. Its holder has been replaced, even if it doesn’t know yet.',
+   'Once a higher token has been seen, the holder of 55 has been replaced. Storage needs no extra checks: it simply rejects anything lower than the highest it has seen.');}},
+{part:1,src:'Chapter 8 · Fencing tokens',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Is the route store protected?',['Protected','Not protected'],[
+   ['The route store checks tokens. An old planner wakes and sends token 41 after token 42 was used.',0,'Storage rejects 41 because it has already seen 42.'],
+   ['The route store ignores tokens. Each planner checks its own lease just before writing.',1,'A paused planner’s own check still says “valid”. Only the resource can catch it.'],
+   ['The lock service hands out random IDs instead of increasing numbers. Storage stores the latest ID.',1,'Random IDs can’t show which lease is newer. Fencing needs numbers that always increase.'],
+   ['A planner is hacked and sends a made-up token, 9,999, with every write.',1,'Fencing catches honest mistakes, not deliberate lies. A node that fakes tokens is a different problem, coming next.']]);}},
+
+/* ---------- PART 3: BYZANTINE FAULTS ---------- */
+{part:2,src:'Chapter 8 · Byzantine Faults',run(L){
+  L.h(L.kick('learn','When nodes lie')+'<h1 class="q">Slow, silent or out of date is one thing. Lying is another.</h1>'+
+   L.prose('This book assumes nodes are <b>unreliable but honest</b>. They may be slow, never answer, or hold old state after a pause. But if a node does answer, it plays by the rules as best it knows.')+
+   L.prose('If nodes might send wrong or made-up messages, such as claiming to have received a message they never got, that’s a '+L.g('byzantine','Byzantine fault')+'. Agreeing on anything then becomes much harder.')+
+   L.note('<b>The Byzantine Generals Problem.</b> Two generals who can only send messengers, who may be delayed or lost, must agree on a plan. In the Byzantine version there are many generals, and some are traitors sending false messages. Nobody knows who.','book'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Byzantine Faults',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these Parcel DB nodes has a Byzantine fault?</h1>');
+  L.mc(L.card,['One that crashed and stopped answering','One whose replies arrive very late','One that says it stored a write it never stored'],2,
+   'It’s sending a false message, not just failing to send one. That’s a Byzantine fault.',
+   'Crashing or being slow is an ordinary, honest fault. A Byzantine fault means sending wrong or made-up messages, like claiming to have stored a write it never stored.');}},
+{part:2,src:'Chapter 8 · Byzantine Faults',run(L){
+  L.h(L.kick('learn','Where it matters, and where it doesn’t')+'<h1 class="q">A system is Byzantine fault-tolerant if it works correctly even when some nodes lie</h1>'+
+   L.lanes([['alert','Worth it','<b>Aerospace</b>: radiation can corrupt memory, and a failure could crash a plane. <b>Several organizations</b> that don’t trust each other, like peer-to-peer networks and blockchains such as Bitcoin, agreeing without a central authority.',4],
+            ['home','Usually not','In your own datacenter, you control every node and radiation is low. The protocols are complicated and costly. For browsers and other end-user clients, the <b>server is the authority</b> and validates their input.',2]])+
+   L.list([['It can’t fix your bugs','The same code runs on every node, so a bug hits them all. Most such protocols need over two-thirds of nodes working (with 4 nodes, at most 1 bad), so you’d need four separate implementations.'],
+           ['It can’t stop attackers','Whoever breaks into one node can probably break into all, since they run the same software. Authentication, access control, encryption and firewalls stay the main defence.']],3));
+  L.done();}},
+{part:2,src:'Chapter 8 · Byzantine Faults',pts:5,run(L){
+  L.h(L.kick('pr','Pick the protection')+'<h1 class="q">For each system, what’s the sensible approach?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Byzantine protocol','Server decides','Trust the nodes'],[
+   ['The Parcel DB leader and its followers, all in Otterpost’s own datacenters',2,'Otterpost controls every node. The book says you can usually assume no Byzantine faults here.'],
+   ['The merchant dashboard running in merchants’ web browsers',1,'Clients under users’ control can do anything. The server is the authority and validates every request.'],
+   ['A parcel registry shared by rival delivery firms and customs agencies, with no central owner',0,'Several organizations that don’t trust each other, with no central authority: that’s where Byzantine tolerance fits.'],
+   ['The courier app on couriers’ phones, sending scans to Otterpost',1,'The phones are end-user devices. Otterpost’s servers decide what is valid, not the app.'],
+   ['The flight-control computers on the cargo planes that fly parcels to Nordhaven',0,'Aerospace systems must tolerate corrupted, unpredictable nodes, because failure is catastrophic.']],
+   'Byzantine protocols are for untrusting organizations and safety-critical hardware. For clients, make the server the authority. Inside your own datacenter, assume honest nodes.');}},
+{part:2,src:'Chapter 8 · Weak forms of lying',run(L){
+  L.h(L.kick('learn','Weak forms of lying')+'<h1 class="q">Honest nodes can still send nonsense by accident</h1>'+
+   L.prose('Hardware faults, bugs and misconfiguration can produce invalid messages. Simple guards help. They wouldn’t stop a determined attacker, but they are cheap, practical steps toward reliability.')+
+   L.list([['check','Checksums in your own protocol','Packets are sometimes corrupted. TCP and UDP checksums usually catch it, but not always.'],
+     ['shield','Sanity-check inputs','Public apps must check values are in a sensible range and limit string sizes, so a huge input can’t exhaust memory. Even internal services should do basic checks.'],
+     ['clock','Several NTP servers','The client asks them all, checks that most agree on a time range, and ignores an outlier that reports the wrong time.']],1));
+  L.done();}},
+{part:2,src:'Chapter 8 · Weak forms of lying',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which simple guard catches it?',['App-level checksum','Input sanity check','Several NTP servers'],[
+   ['A corrupted packet slips past TCP’s checksum and reaches the scan-event handler.',0,'A checksum in Otterpost’s own message format catches corruption the transport layer missed.'],
+   ['A merchant’s API call sets a parcel’s weight to minus 40 kg.',1,'Check that values fall in a sensible range before accepting them.'],
+   ['One of the time servers Otterpost syncs with reports a time three hours off.',2,'With several servers, the wrong one shows up as an outlier and is ignored.'],
+   ['A buggy merchant integration sends a 50 MB recipient name.',1,'Limit string sizes so one request can’t eat the server’s memory.']]);}},
+
+/* ---------- PART 4: SYSTEM MODELS ---------- */
+{part:3,src:'Chapter 8 · System Model and Reality',run(L){
+  L.h(L.kick('learn','System models')+'<h1 class="q">Write down what an algorithm may assume, about time and about failures</h1>'+
+   '<h2 class="sub">Timing</h2>'+L.list([['Synchronous','Delays, pauses and clock error never exceed known limits. Not zero, just bounded. Unrealistic for most real systems.'],
+     ['Partially synchronous','Usually within those limits, but sometimes not, and then delays can get arbitrarily large. Realistic for many systems.'],
+     ['Asynchronous','No timing assumptions at all, not even a clock, so no timeouts. Very restrictive.']],1)+
+   '<h2 class="sub">Node failures</h2>'+L.list([['Crash-stop','A node fails only by crashing, and never comes back.'],
+     ['Crash-recovery','A node may crash and later return. Data on disk survives; memory is lost.'],
+     ['Byzantine','A node may do anything, including trying to deceive others.']],2)+
+   L.note('For real systems, the most useful pair is usually <b>partially synchronous with crash-recovery faults</b>.','star'));
+  L.done();}},
+{part:3,src:'Chapter 8 · System Model and Reality',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Name the model',['Synchronous','Partially synchronous','Asynchronous','Crash-stop','Crash-recovery'],[
+   ['“Our design assumes network delay, pauses and clock error never go above fixed limits.”',0,'Known upper bounds on timing: the synchronous model.'],
+   ['“Delays are normally small, but during Peak Week packets once stalled for over a minute.”',1,'Mostly well behaved, sometimes not: partially synchronous.'],
+   ['A Parcel DB server loses power, reboots with its disk intact and rejoins. Its memory is gone.',4,'Crash, then come back with stable storage: crash-recovery.'],
+   ['“This algorithm may not use any clock, so it can’t use timeouts.”',2,'No timing assumptions at all: the asynchronous model.'],
+   ['“Once a node fails, we assume it never comes back.”',3,'Failing only by crashing, for good: crash-stop.']]);}},
+{part:3,src:'Chapter 8 · Correctness of an algorithm',run(L){
+  L.h(L.kick('learn','What “correct” means')+'<h1 class="q">Describe the properties an algorithm must have</h1>'+
+   L.prose('A sorted list has a property: each element is smaller than the one to its right. Likewise, an algorithm that hands out fencing tokens could promise:')+
+   L.list([['Uniqueness','No two requests ever get the same token.'],['Increasing order','If one request finished before another began, the later one gets a higher token.'],['Availability','A node that asks for a token, and doesn’t crash, eventually gets an answer.']],1)+
+   L.lanes([['shield','Safety','“Nothing bad happens.” The first two. If it’s broken, you can name the moment, and it can’t be undone.',1],
+            ['cycle','Liveness','“Something good eventually happens.” The third. It may not hold yet, but still could later.',2]])+
+   L.prose('A giveaway: liveness properties often say “eventually”. Eventual consistency is one. Algorithms must keep '+L.g('safety','safety')+' in every situation, even if all nodes crash. '+L.g('liveness','Liveness')+' may come with conditions, like “if a majority is up and the network recovers”.'));
+  L.done();}},
+{part:3,src:'Chapter 8 · Safety and liveness',pts:5,run(L){
+  L.h(L.kick('pr','Safety or liveness?')+'<h1 class="q">Sort Otterpost’s promises.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Safety','Liveness'],[
+   ['No two route planners ever receive the same fencing token',0,'If it breaks, you can point to the duplicate token. The damage is done.'],
+   ['Every booking request eventually gets a reply, as long as most nodes are up',1,'“Eventually”, with a condition: liveness.'],
+   ['A merchant’s credit balance never goes below zero',0,'A “never” promise whose violation happens at a moment: safety.'],
+   ['All replicas of the tracking data eventually agree',1,'Eventual consistency is a liveness property.'],
+   ['A merchant is never billed twice for the same parcel',0,'Once a double bill happens, it can’t be undone: safety.']],
+   'Safety must hold no matter what. Liveness can wait for the network to recover or for a majority to come back.');}},
+{part:3,src:'Chapter 8 · Mapping system models to the real world',run(L){
+  L.h(L.kick('learn','Models versus reality')+'<h1 class="q">A model simplifies. Reality bites back.</h1>'+
+   L.prose('The crash-recovery model assumes data on disk survives a crash. But disks get corrupted or wiped, and a firmware bug can make a server fail to see its own drives after a reboot. Quorum algorithms rely on nodes remembering what they stored. A node with amnesia breaks them.')+
+   L.prose('So real code may need to handle things the model calls impossible, even if all it does is stop and call a human to clean up.')+
+   L.note('That doesn’t make models useless. They boil a messy system down to a set of faults you can reason about. A proof is a strong first step and can reveal problems that would hide for years. But a proven algorithm can still be implemented wrongly, so <b>theory and testing matter equally</b>.','scale'));
+  L.done();}},
+{part:3,src:'Chapter 8 · Summary',run(L){
+  L.h(L.kick('learn','Chapter 8 in one screen')+'<h1 class="q">Everything that can go wrong, and the one rule that follows</h1>'+
+   L.tiers([['layers','Networks','Requests and replies can be lost or delayed. No reply tells you nothing.'],
+            ['clock','Clocks','They can be far out of sync, jump forward or back, and you rarely know their error.'],
+            ['pointer','Pauses','A process can freeze anywhere, be declared dead, and wake up unaware.'],
+            ['people','So: ask the quorum','No shared memory, no shared time. Big decisions need several nodes to agree.','',true,'The rule']])+
+   L.prose('Detecting faults is hard too: timeouts can’t tell a dead node from a dead link, and a “limping” node, like a network card that suddenly runs at a tiny fraction of its speed, can be worse than a dead one.')+
+   L.prose('If a single machine can do the job, keep it on one machine. But fault tolerance and low latency for users far apart can’t come from one node. Most systems choose cheap and unreliable over expensive and predictable.'));
+  L.done();}},
+{part:3,src:'Chapter 8 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s question')+'<h1 class="q">After a rough week, Femi asks: “Should we move everything back onto one big machine and escape all this?”</h1>');
+  L.mc(L.card,['Yes, one machine avoids partial failures altogether','No, one machine couldn’t handle 400,000 parcels a day','No, three regions need fault tolerance and low latency'],2,
+   'The book agrees one machine is worth it when it’s enough. But Otterpost needs to survive a lost machine and serve Westport, Eastvale and Nordhaven quickly, which no single node can do.',
+   'A single machine can do a lot nowadays, and avoiding distribution is worth it when you can. But it can’t survive its own failure or be close to users in three regions. That’s why Otterpost is distributed.');}}
+  ]
+});
+</script>
+</body>
+</html>

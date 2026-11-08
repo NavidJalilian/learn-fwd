@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rebalancing and Request Routing</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0014', title:'Rebalancing and request routing', minutes:20, icon:'compass',
+  goals:['Explain why “hash mod N” is a bad way to place data, and what to do instead','Compare fixed, dynamic and per-node partitioning, and decide who should trigger a rebalance','Describe how a request finds the node that holds its partition'],
+  parts:['Why rebalance','Strategies','Who decides','Finding data'],
+  read:'Read the second half of chapter 6 of the book (from “Rebalancing Partitions”) and its summary.',
+  glossary:{
+    'rebalancing':'Rebalancing: moving partitions (and the requests that go with them) from one node to another, for example when a node is added, removed or dies.',
+    'mod':'Mod: the remainder after dividing. 17 mod 5 is 2. In many programming languages it is written with the % sign.',
+    'cascading':'Cascading failure: a small fault in one part causes a fault in another, which causes more, like falling dominoes.',
+    'service-discovery':'Service discovery: the general problem of finding which machine (address and port) to contact for a service, when that can change over time.',
+    'routing-tier':'Routing tier: a layer between clients and database nodes that holds no data itself. It looks up which node owns a request’s partition and forwards the request there.',
+    'coordination-service':'Coordination service: a small, highly reliable store, such as ZooKeeper, that other systems use to agree on shared facts like “which node holds which partition”.',
+    'gossip':'Gossip protocol: nodes pass news about the cluster (who joined, who owns what) to each other, peer to peer, until every node has heard it.',
+    'mpp':'MPP (massively parallel processing): analytics databases that split one complex query into stages and pieces, and run many of them at once on different nodes.'
+  },
+  cheatsheet:[
+    'A good <b>rebalance</b>: fair load afterwards, the database keeps serving during the move, and no more data moves than needed.',
+    '<b>Never hash mod N</b>: when the node count changes, most keys change node.',
+    '<b>Fixed number of partitions</b>: create many more partitions than nodes, and move whole partitions. Keys never change partition; only the partition-to-node map changes.',
+    '<b>Dynamic partitioning</b>: split a partition when it grows too big, merge when it shrinks. An empty database starts with one partition unless you pre-split.',
+    '<b>Partitions per node</b>: a fixed number per node; a new node splits random partitions and takes half of each. Needs hash partitioning.',
+    'Fully automatic rebalancing plus automatic failure detection can turn one slow node into a <b>cascading failure</b>. Keep a human in the loop.',
+    '<b>Routing</b>: ask any node, go through a routing tier, or use a partition-aware client. A coordination service such as ZooKeeper (or gossip) keeps the map current.',
+    '<b>MPP</b> engines split big analytics queries into stages that run in parallel across partitions.'
+  ],
+  steps:[
+/* ---------- PART 1: WHY REBALANCE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s partitioned Parcel DB runs on 4 nodes. For Peak Week, Kwame switches on a fifth, empty node. When does it start to help?</h1>');
+  L.mc(L.card,['Right away: new requests will find it on their own','Only once some partitions have moved onto it'],1,
+   'An empty node holds no partitions, so no request has a reason to go there. Data, and the requests that follow it, must be moved. That move is called '+L.g('rebalancing','rebalancing')+'.',
+   'Requests go to whichever node holds the data they need. An empty node holds nothing yet, so partitions have to move onto it first. That’s rebalancing.');}},
+{part:0,src:'Chapter 6 · Rebalancing Partitions',run(L){
+  L.h(L.kick('learn','Rebalancing')+'<h1 class="q">Clusters change, so data has to move</h1>'+
+   L.prose('Over time a database needs more CPUs (more queries), more disks and memory (more data), or must cover for a machine that failed. Each of these means moving data and requests from one node to another.')+
+   L.prose('Whatever the partitioning scheme, a rebalance should meet three minimum requirements:')+
+   L.list([['scale','Fair afterwards','Data and requests end up shared fairly between the nodes.'],
+           ['play','Keep serving','The database keeps accepting reads and writes while the move happens.'],
+           ['box','Move only what’s needed','Moving less data makes rebalancing faster and puts less load on the network and disks.']],1));
+  L.done();}},
+{part:0,src:'Chapter 6 · Strategies for Rebalancing',run(L){
+  L.h(L.kick('learn','How not to do it')+'<h1 class="q">Tobias’s shortcut: node = hash of key, mod N</h1>'+
+   L.prose('In the last lesson each partition owned a range of hashes. Tobias asks: why not just take the hash '+L.g('mod','mod')+' the number of nodes? With 10 nodes, <i>hash mod 10</i> gives a node number from 0 to 9. Simple.')+
+   L.prose('The problem shows up when N changes. The book follows one key whose hash is 123,456:')+
+   L.flow([['layers','10 nodes','node 6','123,456 mod 10',1],['layers','11 nodes','node 3','123,456 mod 11',2],['layers','12 nodes','node 0','123,456 mod 12',3]])+
+   L.prose('Every time a node is added, this key moves, and so do <b>most</b> other keys. That breaks the third requirement: far more data moves than necessary.'));
+  L.done();}},
+{part:0,src:'Chapter 6 · Strategies for Rebalancing',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">With hash mod N, a parcel whose hash is 7,777 sits on node 1 of nodes 0–3 (7,777 mod 4 = 1). Kwame adds node 4. Where does the parcel go?</h1>');
+  L.mc(L.card,['It stays where it is, on node 1','It moves to node 2, an old node','It moves to node 4, the new one'],1,
+   '7,777 mod 5 = 2. The parcel moves from one old node to another old node, which does nothing to fill the new one. Pure wasted copying.',
+   'Work it out: 7,777 mod 5 = 2. The parcel leaves node 1 for node 2. Neither is the new node, so this move is pure waste.');}},
+{part:0,src:'Chapter 6 · Strategies for Rebalancing',pts:1,
+ solve:async L=>{L.$('#pp').children[2].click();L.$('#go4').click();},
+ run(L){
+  let p=null;const O=['About 20%','About half','About 80%'];
+  let x=12345;const H=[];for(let k=0;k<1000;k++){x=(x*1103515245+12345)%2147483648;H.push(x);}
+  const moved=H.filter(h=>h%4!==h%5).length;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">1,000 parcels, placed with hash mod 4. Kwame adds a fifth node. What share of the parcels will change node?</h1><div id="pp"></div>'+
+   '<div id="sim" hidden><button class="btn pri" id="go4" style="margin:6px 0 10px">'+L.ic('play')+'Add the fifth node</button><div id="dots" style="display:flex;flex-wrap:wrap;gap:5px;max-width:320px"></div><div id="rd" class="small" style="margin-top:10px"></div></div>');
+  L.$('#dots').innerHTML=H.slice(0,40).map(()=>'<span style="width:14px;height:14px;border-radius:50%;background:var(--line2);transition:background .5s"></span>').join('');
+  O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pp').appendChild(b);});
+  L.$('#go4').onclick=function(){this.remove();
+    [...L.$('#dots').children].forEach((d,k)=>{d.style.background=H[k]%4!==H[k]%5?'var(--no-strong)':'var(--ok-strong)';});
+    L.$('#rd').innerHTML='<b style="color:var(--no)">'+(moved/10).toFixed(1)+'% moved</b> (red dots: the first 40 parcels). The least you could move is the new node’s fair share: <b>20%</b>.';
+    L.award(p===2);
+    L.sheet(p===2?'ok':'no',p===2?'You called it!':'About 80% moved','A parcel stays only if its remainder happens to be the same for 4 and for 5. For most parcels it isn’t, so they shuffle between the <i>old</i> nodes too. That is why the hash range is split into partitions instead.');L.done();};}},
+
+/* ---------- PART 2: STRATEGIES ---------- */
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',run(L){
+  L.h(L.kick('learn','Strategy 1: a fixed number of partitions')+'<h1 class="q">Make many more partitions than nodes, then move whole partitions</h1>'+
+   L.prose('Split the data into far more partitions than you have nodes, and give each node several. The book’s example: 10 nodes, 1,000 partitions, about 100 per node.')+
+   L.prose('When a node joins, it <b>steals a few partitions</b> from every existing node until things are fair again. When a node leaves, the reverse happens.')+
+   L.tiers([['lock','Never changes','How many partitions there are, and which partition each key belongs to.'],
+            ['cycle','Changes','Only which node holds which partition.','',true,'The one thing that moves']])+
+   L.note('Copying a partition takes time. Until it finishes, reads and writes keep using the old assignment. And you can give more partitions to more powerful machines. Riak, Elasticsearch, Couchbase and Voldemort work this way.','info'));
+  L.done();}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',pts:1,
+ solve:async L=>{L.$('#addE').click();},
+ run(L){
+  const own={A:[1,5,9,13,17],B:[2,6,10,14,18],C:[3,7,11,15,19],D:[4,8,12,16,20],E:[]};
+  const draw=(hl)=>{L.$('#cl').innerHTML=Object.keys(own).filter(k=>k!=='E'||own.E.length).map(k=>'<div style="background:var(--soft);border-radius:14px;padding:8px 10px;margin-bottom:8px"><b style="font-size:14px">Node '+k+'</b> <span class="small">'+own[k].length+' partitions</span><div style="margin-top:4px">'+own[k].map(p=>'<span class="chip static'+(hl&&k==='E'?' ok':'')+'" style="font-size:12.5px;padding:4px 8px;margin:0 4px 4px 0">P'+p+'</span>').join('')+'</div></div>').join('');};
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">A toy version of Zainab’s setup: 20 partitions on 4 nodes. Add node E and watch what moves.</h1><div id="cl"></div>'+
+   '<button class="btn pri" id="addE">'+L.ic('play')+'Add node E</button><div id="eq"></div>');
+  draw(false);
+  L.$('#addE').onclick=function(){this.remove();['A','B','C','D'].forEach(k=>own.E.push(own[k].pop()));draw(true);
+    const q=L.$('#eq');q.innerHTML='<p class="small"><b>4 of 20 partitions moved</b>, one from each node: exactly E’s fair share.</p><h2 class="sub">A parcel lived in partition P18. What changed for it?</h2>';
+    L.mc(q,['The node holding its partition changed','It now belongs to a different partition','Nothing at all: P18 stayed on node B'],0,
+     'P18 moved from node B to node E as a whole. The parcel is still in P18; only the partition-to-node map changed.',
+     'Keys never change partition under this strategy. But P18 was one of the four that moved: it went from node B to node E.');};}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',run(L){
+  L.h(L.kick('learn','Choosing the number')+'<h1 class="q">The number you pick on day one has to last</h1>'+
+   L.prose('Many databases with fixed partitions never split them, because that keeps operations simple. So the count chosen at setup is also the <b>most nodes</b> you can ever use. Pick it high enough for future growth.')+
+   L.lanes([['alert','Too few, too big','Each partition holds a fixed fraction of the data, so it grows as the data grows. Huge partitions make rebalancing and recovering from a failed node expensive.',3],
+            ['alert','Too many, too small','Every partition carries some management overhead. Too many of them wastes effort.',4]])+
+   L.prose('The best performance comes from partitions that are “just right”. That’s hard to hit with a fixed count when the dataset might stay small or grow a lot.'));
+  L.done();}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab creates 64 fixed partitions for the Parcel DB, on 4 nodes. Years later, Otterpost wants a 100-node cluster. What’s the catch?</h1>');
+  L.mc(L.card,['Each node would hold 25 times more data than now','The database will split partitions to fit the new nodes','Only 64 nodes can hold a partition; the other 36 sit empty'],2,
+   'Whole partitions are the unit of moving. With 64 of them, at most 64 nodes get one. That’s why the count must allow for growth.',
+   'With a fixed count, partitions aren’t split, and a partition can’t be shared between nodes. So 64 partitions means 64 useful nodes at most.');}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Dynamic partitioning)',run(L){
+  L.h(L.kick('learn','Strategy 2: dynamic partitioning')+'<h1 class="q">Split a partition when it gets too big</h1>'+
+   L.prose('With key ranges, fixed boundaries are risky: guess wrong and all the data lands in one partition while the rest stay empty. So key-range databases such as HBase and RethinkDB split partitions as they grow.')+
+   L.flow([['box','Grows','A partition passes the size limit','HBase’s default: 10 GB',1],['layers','Splits','Into two halves, about half the data each','',2],['arrow','Moves','One half can go to another node','',3]])+
+   L.prose('If lots of data is deleted, a small partition can merge with its neighbor. It is much like a B-tree splitting pages. The benefit: the <b>number of partitions follows the data</b>. Little data, few partitions and little overhead. Lots of data, many partitions, each capped in size.')+
+   '<p class="small">It isn’t only for key ranges: MongoDB, since version 2.4, splits dynamically with hash partitioning too.</p>');
+  L.done();}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Dynamic partitioning)',pts:1,run(L){
+  L.h(L.kick('pr','A slow start')+'<h1 class="q">Linh launches a new, empty table on a 5-node, dynamically partitioned cluster, keyed by zone and time. For the first weeks, one node does all the writing. Why?</h1>');
+  L.mc(L.card,['An empty table starts as a single partition','Dynamic partitioning never moves partitions','The zone key is a hot spot that will never cool'],0,
+   'With no data, the database can’t know where to draw boundaries, so it starts with one partition. Until the first split, one node takes every write. The fix is <b>pre-splitting</b>: set up initial partitions on the empty table (HBase and MongoDB allow it). For key ranges, that means guessing the key distribution in advance.',
+   'Dynamic partitioning does move halves after a split. The real cause: an empty table begins as one partition, so one node takes every write until the first split. Pre-splitting avoids that.');}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Partitioning proportionally to nodes)',run(L){
+  L.h(L.kick('learn','Strategy 3: partitions per node')+'<h1 class="q">A fixed number of partitions on each node</h1>'+
+   L.prose('Cassandra and Ketama tie the number of partitions to the number of <b>nodes</b>. Each node holds a fixed number (Cassandra’s default is 256). A new node picks some existing partitions at random, splits each one, and takes over half of each.')+
+   L.prose('Random splits can be unfair, but averaged over hundreds of partitions the new node gets a fair share. (Cassandra 3.0 added another algorithm that avoids unfair splits.) Picking random boundaries needs hash partitioning. This is the closest match to the original meaning of “consistent hashing”.')+
+   L.tiers([['lock','Fixed number','Count stays the same. Partition <b>size</b> grows with the data.'],
+            ['box','Dynamic','Size stays within limits. Partition <b>count</b> grows with the data.'],
+            ['people','Per node','Count grows with the <b>nodes</b>. More data usually means more nodes, so size stays fairly stable.']]));
+  L.done();}},
+{part:1,src:'Chapter 6 · Strategies for Rebalancing',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which strategy is this?',['Fixed number of partitions','Dynamic partitioning','Partitions per node'],[
+   ['Partitions split in two when they grow past a size limit.',1,'Splitting by size is dynamic partitioning.'],
+   ['The partition count is set at setup and never changes.',0,'That’s the fixed-number strategy, operationally the simplest.'],
+   ['A joining node splits random partitions and takes half of each.',2,'Random splits per new node: partitioning proportionally to nodes.'],
+   ['Each partition gets bigger as the whole dataset grows.',0,'With a fixed count, each partition is a fixed fraction of the data.'],
+   ['A brand-new, empty database starts with a single partition.',1,'With no data, there’s nowhere to draw boundaries until the first split.'],
+   ['Adding nodes makes the partitions smaller again.',2,'More nodes, more partitions, so each partition shrinks.']]);}},
+
+/* ---------- PART 3: WHO DECIDES ---------- */
+{part:2,src:'Chapter 6 · Operations: Automatic or Manual Rebalancing',run(L){
+  L.h(L.kick('learn','Automatic or manual?')+'<h1 class="q">Who presses the button to move partitions?</h1>'+
+   L.prose('There is a range between two ends. Fully <b>automatic</b>: the system decides when to move partitions, with no administrator. Fully <b>manual</b>: an administrator sets the partition-to-node map, and it changes only when they change it.')+
+   L.flow([['cycle','Automatic','The system moves partitions by itself','less routine work',1],['eye','In between','The system suggests a plan; a person commits it','Couchbase, Riak, Voldemort',2],['pencil','Manual','An administrator sets every assignment','most control',3]])+
+   L.prose('Automatic is convenient, but unpredictable. Rebalancing is expensive: requests are rerouted and lots of data crosses the network. Done carelessly, it can overload the network or the nodes and slow everything else down while it runs.'));
+  L.done();}},
+{part:2,src:'Chapter 6 · Operations: Automatic or Manual Rebalancing',pts:1,
+ solve:async L=>{L.$('#m0').click();L.$('#m1').click();},
+ run(L){
+  const S=[[['alert','Node 3 is overloaded by a Bramble & Bolt flash sale. It answers slowly.'],['eye','The other nodes decide node 3 is dead.'],['cycle','Automatic rebalancing starts copying node 3’s partitions elsewhere.'],['flame','Node 3 must now also send data. The network fills up. Other nodes slow down.'],['x','More nodes look dead. More rebalancing starts. The overload spreads.']],
+           [['alert','Node 3 is overloaded by a Bramble & Bolt flash sale. It answers slowly.'],['eye','The other nodes decide node 3 is dead.'],['pencil','The system proposes moving node 3’s partitions and waits for approval.'],['person','Kwame checks: node 3 is busy, not dead. The plan is never committed.'],['check','The flash sale ends. Node 3 catches up. Nothing had to move.']]];const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Peak Week, 10 am. Node 3 suddenly slows down. Run the same morning twice.</h1><div id="mm"></div><div id="ms" style="margin:6px 0"></div><div id="mq"></div>');
+  ['Fully automatic','A human approves'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.id='m'+j;b.innerHTML=L.ic(j?'person':'cycle')+n;
+    b.onclick=()=>{[...L.$('#mm').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#ms').innerHTML=S[j].map((s,k)=>'<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);font-size:14.5px;line-height:1.45'+(k===4?';font-weight:600;color:var(--'+(j?'ok':'no')+')':'')+'">'+L.ic(s[0])+'<span>'+s[1]+'</span></div>').join('');
+      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Why did automatic rebalancing make node 3’s trouble worse?</h2>';
+        L.mc(q,['Moving its partitions added load to an already slow node','Rebalancing deleted the data that node 3 was holding','The automatic plan picked the wrong partitions to move'],0,
+         'A slow node looks like a dead one. Moving its data adds work to it, to other nodes and to the network, and the problem cascades.',
+         'Nothing was deleted, and which partitions were picked doesn’t matter. The move itself was the problem: copying data loaded a node that was already struggling, and the network too.');}};
+    L.$('#mm').appendChild(b);});}},
+{part:2,src:'Chapter 6 · Operations: Automatic or Manual Rebalancing',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence is Kwame’s rule for Peak Week.</h1>');
+  L.sentence(L.card,[['Keep a human in the loop','Let the cluster decide alone'],['because humans move data faster,','because a slow node can look dead,'],['and moving data is nearly free.','and moving data adds more load.']],[0,1,1],
+   [['Full automation combined with automatic failure detection is exactly what caused the spiral.'],['People don’t move data faster. A person is slower, but avoids surprises.'],['Rebalancing is expensive: rerouting plus copying lots of data.']],
+   'A person is slower than a fully automatic process, but can stop an overload from becoming a '+L.g('cascading','cascading failure')+'.');}},
+
+/* ---------- PART 4: FINDING DATA ---------- */
+{part:3,src:'Chapter 6 · Request Routing',run(L){
+  L.h(L.kick('learn','Request routing')+'<h1 class="q">The tracking page wants OP-48213. Which machine should it call?</h1>'+
+   L.prose('Partitions move during rebalancing, so someone must always know: for this key, which IP address and port? This is a case of '+L.g('service-discovery','service discovery')+', a problem for any software reachable over a network. The book describes three designs:')+
+   L.list([['cycle','Ask any node','The request goes to any node, for example through a round-robin load balancer. If that node doesn’t own the partition, it forwards the request and passes the reply back.'],
+           ['compass','A routing tier','All requests go to a '+L.g('routing-tier','routing tier')+' first. It holds no data; it just knows which node to forward each request to.'],
+           ['person','A partition-aware client','The client knows the partition map itself and connects straight to the right node.']],2)+
+   L.note('In every design, the hard part is the same: how does whoever routes learn that a partition has moved? Everyone must agree, or requests reach the wrong node.','alert'));
+  L.done();}},
+{part:3,src:'Chapter 6 · Request Routing',run(L){
+  L.h(L.kick('learn','Keeping the map current')+'<h1 class="q">A coordination service keeps the official map</h1>'+
+   L.prose('Getting nodes to agree is a consensus problem, and that is hard to build correctly (chapter 9). So many systems lean on a separate '+L.g('coordination-service','coordination service')+' such as ZooKeeper.')+
+   L.flow([['layers','Nodes','Each node registers itself','',1],['lock','ZooKeeper','Holds the official partition-to-node map','',2],['compass','Routing tier','Subscribes; told whenever an owner changes','',3]])+
+   L.prose('HBase, SolrCloud and Kafka use ZooKeeper this way. LinkedIn’s Espresso uses Helix, which relies on ZooKeeper. MongoDB has its own config servers, with mongos processes as its routing tier.')+
+   L.note('Cassandra and Riak skip the outside service: nodes spread changes to each other with a '+L.g('gossip','gossip protocol')+', and any node forwards requests (design 1). That puts more complexity in the nodes. The addresses of the routing tier or nodes themselves change rarely, so plain DNS is often enough for those.','info'));
+  L.done();}},
+{part:3,src:'Chapter 6 · Request Routing',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">A parcel lookup while its partition is moving</h1>');
+  L.beats(L.card,[
+   ['The request','A recipient refreshes the tracking page. The page asks Otterpost’s routing tier for parcel OP-48213.'],
+   ['The lookup','The routing tier hashes the code: partition 37. Its copy of the map says partition 37 lives on node C. It forwards the request there.'],
+   ['The move','Kwame has just added node E, which is copying partition 37 from node C. Until the copy is done, reads and writes keep going to node C, the old owner.'],
+   ['The switch','The copy finishes. The official map in ZooKeeper now says partition 37 is on node E, and ZooKeeper notifies the routing tier.'],
+   ['Next refresh','The routing tier forwards the next request for OP-48213 to node E. The recipient never noticed.']],
+   'Routing stays correct because one service holds the official map and tells the routers whenever it changes.');}},
+{part:3,src:'Chapter 6 · Request Routing',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In the “ask any node” design, a request for OP-48213 lands on node A, which doesn’t hold that parcel’s partition. What does node A do?</h1>');
+  L.mc(L.card,['It rejects the request, so the client retries elsewhere','It forwards the request to the owner and relays the reply','It answers from the copy of the parcel in its own index'],1,
+   'Node A acts as a go-between: it forwards to the node that owns the partition and passes the reply back to the client.',
+   'In this design any node can take any request. If it isn’t the owner, it forwards the request to the node that is and relays the reply.');}},
+{part:3,src:'Chapter 6 · Request Routing',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which routing design?',['Ask any node','Routing tier','Partition-aware client'],[
+   ['Tobias’s courier app keeps the partition map and calls the owning node directly.',2,'The client itself knows the map, so no go-between is needed.'],
+   ['A load balancer hands each request to the next node in turn; nodes forward when needed.',0,'Any node accepts the request and forwards it if it isn’t the owner.'],
+   ['A layer of servers with no data looks up each owner and forwards requests.',1,'It holds no data, it only routes. That is a routing tier.'],
+   ['Cassandra-style: nodes gossip about changes and forward to the owner.',0,'Gossip keeps every node informed, so any node can forward (design 1).'],
+   ['MongoDB’s mongos processes, reading from config servers.',1,'mongos is MongoDB’s routing tier.']]);}},
+{part:3,src:'Chapter 6 · Request Routing',pts:1,run(L){
+  L.h(L.kick('pr','A routing bug')+'<h1 class="q">Tobias’s merchant API loads the partition map once, at startup, and never refreshes it. Kwame then rebalances onto node E. What goes wrong?</h1>');
+  L.mc(L.card,['Requests for moved partitions are sent to the wrong node','Nothing: the hash of each key hasn’t changed','The API sends every request to node E from then on'],0,
+   'The hash still gives the right <i>partition</i>, but the partition’s <i>node</i> changed. The API should subscribe to the coordination service, as the routing tier does.',
+   'The partition for each key is the same, but some partitions now live on a different node. A map that never refreshes sends those requests to the old owner.');}},
+{part:3,src:'Chapter 6 · Parallel Query Execution',run(L){
+  L.h(L.kick('learn','Parallel query execution')+'<h1 class="q">Beyond single-key lookups</h1>'+
+   L.prose('So far: read or write one key, plus scatter/gather for local indexes. That is about the level most NoSQL datastores support.')+
+   L.prose('<b>'+L.g('mpp','Massively parallel processing (MPP)')+'</b> relational databases, often used for analytics, go much further. A typical warehouse query joins, filters, groups and aggregates. The MPP query optimizer breaks it into stages and pieces, and many of them run in parallel on different nodes.')+
+   L.note('Linh’s report “on-time rate per zone, across all of Peak Week” scans a huge share of the data. Queries like that gain the most from running in parallel. The book returns to these techniques in chapter 10.','trend'));
+  L.done();}},
+{part:3,src:'Chapter 6 · Parallel Query Execution',pts:1,run(L){
+  L.h(L.kick('pr','Last check')+'<h1 class="q">Which Otterpost query gains the most from an MPP engine?</h1>');
+  L.mc(L.card,['Show the scans for one parcel on the tracking page','Add a delivered scan to parcel OP-48213','Average delivery time per hub and merchant, last year'],2,
+   'It scans a large part of the data and groups and aggregates it, so splitting it into parallel stages pays off.',
+   'Single-parcel reads and writes touch one key on one partition. MPP shines on big analytics queries that scan, join, group and aggregate lots of data.');}},
+{part:3,src:'Chapter 6 · Summary',run(L){
+  L.h(L.kick('learn','The chapter in one screen')+'<h1 class="q">Partitioning, from start to finish</h1>'+
+   L.tiers([['layers','Split','Key range (sorted, easy range scans, hot-spot risk) or hash (even spread, no range scans), or a compound key mixing both.'],
+            ['list','Index','Local index: one-partition writes, scatter/gather reads. Global index: one-partition reads, multi-partition writes.'],
+            ['cycle','Rebalance','Fixed partitions, dynamic splits or partitions per node. Never mod N.'],
+            ['compass','Route','Any node, a routing tier or a smart client, kept current by a coordination service or gossip.']])+
+   L.note('Each partition works mostly on its own, which is what lets the database scale. But what if one write must change two partitions, and only one succeeds? The next chapters take that up.','alert'));
+  L.done();}}
+  ]
+});
+</script>
+</body>
+</html>

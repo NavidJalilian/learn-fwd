@@ -1,0 +1,267 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Query Languages and Graph Models</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+const CODE=s=>'<div style="background:var(--soft);border-radius:14px;padding:12px 14px;margin:12px 0;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere">'+s+'</div>';
+Course.lesson({
+  id:'0004', title:'Query languages and graph models', minutes:20, icon:'map',
+  goals:['Explain why “say what, not how” lets a database get faster without touching your queries','Write a MapReduce query in your head and know what map and reduce may not do','Model connected data as a graph and read a Cypher, SPARQL or Datalog query'],
+  parts:['Say what','MapReduce','Graphs','Triples, Datalog'],
+  read:'Read the second half of chapter 2 of the book for the full Cypher, SQL, SPARQL and Datalog versions of the same query.',
+  glossary:{
+    'declarative':'Declarative query: you describe the result you want (conditions, sorting, grouping), and the database decides how to get it. SQL and CSS are declarative.',
+    'imperative':'Imperative code: step-by-step instructions run in a fixed order, like a loop that checks each record in turn.',
+    'optimizer':'Query optimizer: the part of a database that decides how to run a query: which indexes to use, which join method, and in what order.',
+    'mapreduce':'MapReduce: a way to process lots of data. A map function turns each record into key-value pairs, the pairs are grouped by key, and a reduce function combines each group.',
+    'pure':'Pure function: a function that uses only its inputs, makes no extra database queries and changes nothing outside itself, so it can be rerun safely.',
+    'graph':'Graph: data made of vertices (things, also called nodes or entities) and edges (the links between them, also called relationships or arcs).',
+    'property-graph':'Property graph: a graph where every vertex and edge has an ID and key-value properties, and every edge has a label and runs from a tail vertex to a head vertex.',
+    'recursive-cte':'Recursive common table expression (WITH RECURSIVE): a SQL feature that keeps adding rows to a set, round after round, until no new rows appear. Used to follow a chain of unknown length.',
+    'triple':'Triple: a three-part fact (subject, predicate, object), such as (hub_c, within, westport). Triple-stores hold all data this way.',
+    'rule':'Datalog rule: a statement that derives new facts from existing ones. When everything on its right-hand side matches, its left-hand side counts as a new fact.'
+  },
+  cheatsheet:[
+    '<b>Declarative</b> (SQL, CSS) says what result you want; <b>imperative</b> code says how. Declarative lets the database optimize, reorder and run in parallel without breaking you.',
+    '<b>MapReduce</b> sits in between: map emits key-value pairs, they are grouped by key, reduce combines each group. Both must be <b>pure functions</b>.',
+    'Hand-writing two functions is harder than one query, so MongoDB added the declarative aggregation pipeline: NoSQL reinventing SQL.',
+    'When many-to-many links are everywhere, use a <b>graph</b>: vertices and labelled edges, any vertex may link to any other.',
+    '<b>Cypher</b> matches arrow patterns; <code>*0..</code> follows an edge zero or more times. The same query in SQL needs a clumsy recursive CTE.',
+    '<b>Triples</b> (subject, predicate, object) hold both properties and edges. SPARQL queries them; RDF adds URIs so datasets can merge.',
+    '<b>Datalog</b> builds answers from small rules that derive new facts and can be reused.',
+    'Document, relational and graph all thrive in their own domains. Emulating one in another works, but awkwardly.'
+  ],
+  steps:[
+/* ---------- PART 1: SAY WHAT ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two notes for a new hub worker. Overnight, someone reshuffles the parcel shelves. Which note still works in the morning?</h1>');
+  L.mc(L.card,['“Start at shelf 1, check each parcel, stop at the first one not for Eastvale”','“Bring me every parcel addressed to Eastvale”'],1,
+   'The second note says <i>what</i> you want, not <i>how</i> to find it, so a reshuffle can’t break it. That is the idea behind declarative queries.',
+   'The first note quietly relies on the shelf order. Once the shelves move, it stops too early. The second only describes the result, so it still works.');}},
+{part:0,src:'Chapter 2 · Query Languages for Data',run(L){
+  L.h(L.kick('learn','Declarative versus imperative')+'<h1 class="q">Say what you want, and let the database decide how</h1>'+
+   L.prose('<b>'+L.g('imperative','Imperative')+'</b> code tells the computer to do steps in a set order. IMS and CODASYL were queried this way. Linh could find Eastvale’s late parcels like this:')+
+   CODE('for each parcel in parcels:\n  if parcel.region == "Eastvale" and parcel.late:\n    add parcel to results')+
+   L.prose('A <b>'+L.g('declarative','declarative')+'</b> language like SQL only states the pattern of the result: conditions, sorting, grouping. The database’s '+L.g('optimizer','query optimizer')+' picks the indexes, the join methods and the order.')+
+   CODE('SELECT * FROM parcels\nWHERE region = \'Eastvale\' AND late;')+
+   L.list([['pencil','Shorter','Usually more concise and easier to work with.'],['layers','Free to improve','It hides the engine’s internals, so the database can get faster without any change to your queries.'],['people','Easy to parallelize','It names no order of steps, so the database may split the work across cores and machines.']],1));
+  L.done();}},
+{part:0,src:'Chapter 2 · Query Languages for Data',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame moves the analytics database onto a server with 32 cores instead of 4. Whose report is more likely to speed up with no rewrite?</h1>');
+  L.mc(L.card,['Tobias’s loop that checks parcels one by one','Linh’s SQL query that only describes the result'],1,
+   'Processors now get faster by adding cores, not by much higher clock speeds. A declarative query names no order, so the database is free to run it in parallel.',
+   'A loop spells out steps in a fixed order, which is very hard to split across cores. The declarative query leaves the database free to parallelize.');}},
+{part:0,src:'Chapter 2 · Query Languages for Data',pts:1,
+ solve:async L=>{L.$('#pp').children[0].click();L.$('#mv').click();},
+ run(L){
+  let p=null;const before=[['OP-301','today'],['OP-302','today'],['OP-303','today'],['OP-304','tomorrow'],['OP-305','tomorrow']],after=[['OP-304','tomorrow'],['OP-301','today'],['OP-305','tomorrow'],['OP-302','today'],['OP-303','today']];
+  const draw=rows=>rows.map(r=>'<span class="chip static'+(r[1]==='today'?' ok':'')+'" style="font-size:13.5px;padding:5px 9px">'+r[0]+' · '+r[1]+'</span>').join('');
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Both find parcels due today. Tobias’s loop stops at the first parcel not due today. The database is about to move rows to reclaim disk space. What breaks?</h1><div id="pp"></div>'+
+   '<div id="sim" hidden><div style="background:var(--soft);border-radius:16px;padding:12px;margin:6px 0" id="rows">'+draw(before)+'</div>'+
+   L.lanes([['cycle','Tobias’s loop','Reads from the top, stops at the first “tomorrow.”<div class="res" id="ra">Finds 3 parcels</div>',3],['list','Linh’s SQL','<code>WHERE due = today</code><div class="res" id="rb">Finds 3 parcels</div>',2]])+
+   '<button class="btn pri" id="mv" style="margin-top:12px">'+L.ic('play')+'Reclaim disk space</button></div>');
+  ['Only Tobias’s loop','Only Linh’s SQL','Neither of them'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pp').appendChild(b);});
+  L.$('#mv').onclick=function(){this.remove();L.$('#rows').innerHTML=draw(after);
+    L.$('#ra').innerHTML='<span style="color:var(--no)">Finds 0 parcels: the first row is “tomorrow”</span>';
+    L.$('#rb').innerHTML='<span style="color:var(--ok)">Still finds 3 parcels</span>';
+    L.award(p===0);
+    L.sheet(p===0?'ok':'no',p===0?'You called it!':'Only the loop broke','SQL never promised any order, so the database may move rows freely. Code that walks the rows might depend on their order, and the database can never be sure it doesn’t. A more limited language gives the database more room to optimize.');L.done();};}},
+{part:0,src:'Chapter 2 · Declarative Queries on the Web',run(L){
+  L.h(L.kick('learn','Declarative beyond databases')+'<h1 class="q">CSS is a declarative query language for web pages</h1>'+
+   L.prose('The tracking page shows a list of steps. The current step’s list item has the class <i>current</i>, and its title should be highlighted blue. In CSS that is one rule:')+
+   CODE('li.current &gt; p { background-color: blue; }')+
+   L.prose('The selector describes a pattern: every &lt;p&gt; whose direct parent is an &lt;li&gt; with class <i>current</i>. XSL with XPath works the same way.')+
+   L.prose('The imperative version walks the page with JavaScript: loop over all list items, check the class, loop over the children, and set a style on each matching &lt;p&gt;. It is much longer, and it has two serious problems:')+
+   L.list([['When the class moves, the colour stays','The script set a style once. Rerunning it doesn’t remove old highlights. The browser re-checks a CSS rule and drops the colour as soon as the class is gone.'],
+           ['New, faster APIs mean rewrites','To use a faster browser API you must rewrite the script. Browser makers can speed up CSS without breaking anyone.']],4));
+  L.done();}},
+{part:0,src:'Chapter 2 · Declarative Queries on the Web',pts:1,
+ solve:async L=>{L.$('#nx').click();L.$('#nx').click();},
+ run(L){
+  const S=['Picked up','At hub','Out for delivery','Delivered'];let cur=0;const js=new Set([0]);
+  const draw=()=>{L.$('#ca').innerHTML=S.map((s,j)=>'<div style="padding:4px 8px;margin:3px 0;border-radius:8px;font-size:14px;'+(j===cur?'background:var(--h2-bg);color:var(--h2);font-weight:600':'')+'">'+s+'</div>').join('');
+    L.$('#cb').innerHTML=S.map((s,j)=>'<div style="padding:4px 8px;margin:3px 0;border-radius:8px;font-size:14px;'+(js.has(j)?'background:var(--h3-bg);color:var(--h3);font-weight:600':'')+'">'+s+(js.has(j)&&j!==cur?' ✗':'')+'</div>').join('');};
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Mrs. Okoro’s parcel moves along. Advance the status and compare the two pages.</h1>'+
+   L.lanes([['list','CSS rule','<div id="ca"></div>',2],['cycle','Tobias’s script, rerun each time','<div id="cb"></div>',3]])+
+   '<button class="btn pri" id="nx" style="margin-top:12px">'+L.ic('play')+'Next status</button><div id="hq"></div>');
+  draw();
+  L.$('#nx').onclick=function(){if(cur>=S.length-1)return;cur++;js.add(cur);draw();if(cur>=S.length-1)this.remove();
+    if(cur===2&&!L.$('#hq').innerHTML){const q=L.$('#hq');q.innerHTML='<h2 class="sub">What does the browser do for the CSS rule that Tobias’s script never does?</h2>';
+      L.mc(q,['It runs the rule faster on each step','It drops the style once the pattern stops matching','It reruns the script whenever the status changes'],1,
+       'A declarative rule describes <i>which</i> elements should be blue, so the browser keeps the page matching it. The script only ever adds colour.',
+       'Rerunning wasn’t the fix: Tobias’s script already reran and still left old highlights. The browser keeps the page in line with the pattern, removing the style when it no longer applies.');}};}},
+
+/* ---------- PART 2: MAPREDUCE ---------- */
+{part:1,src:'Chapter 2 · MapReduce Querying',run(L){
+  L.h(L.kick('learn','MapReduce querying')+'<h1 class="q">Halfway between declarative and imperative</h1>'+
+   L.prose('<b>'+L.g('mapreduce','MapReduce')+'</b> is a programming model for processing large amounts of data in bulk across many machines, made popular by Google. Some NoSQL stores, such as MongoDB and CouchDB, offer a limited form of it for read-only queries over many documents. (Chapter 10 covers MapReduce in general.)')+
+   L.prose('You write small snippets of code, and the framework calls them again and again. They come from functional programming: <b>map</b> (also called collect) and <b>reduce</b> (also called fold or inject).')+
+   L.flow([['eye','Filter','pick the documents','declarative part'],['pointer','map','emit a key and a value per document'],['layers','Group','pairs with the same key'],['check','reduce','combine each group into one result']]));
+  L.done();}},
+{part:1,src:'Chapter 2 · MapReduce Querying',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh counts parcels arriving at each hub per month</h1>');
+  L.beats(L.card,[
+   ['The data','Each time a cage of parcels reaches a hub, a document is stored: the hub, the time, the region and how many parcels were in the cage.'],
+   ['The filter','A query keeps only Westport documents. MongoDB lets you write this filter declaratively.'],
+   ['map','Called once per matching document. It builds a key from the hub and the month and emits it with the parcel count:'+CODE('emit("Westport Central 2026-11", this.parcels)')],
+   ['Two documents','One cage of 120 on 3 November and one of 85 on 18 November give emit(“… 2026-11”, 120) and emit(“… 2026-11”, 85).'],
+   ['reduce','The pairs are grouped by key, and reduce runs once per key: reduce(“Westport Central 2026-11”, [120, 85]) returns <b>205</b>.'],
+   ['The output','The results are written to a new collection, say <i>monthlyHubReport</i>, ready for the merchant dashboard.']],
+   'map turns each document into key-value pairs; the framework groups them by key; reduce folds each group into one answer.');}},
+{part:1,src:'Chapter 2 · MapReduce Querying',pts:1,run(L){
+  L.h(L.kick('try','Put it in order')+'<h1 class="q">Tap the steps of Linh’s MapReduce query in the order they happen.</h1>');
+  L.order(L.card,['Filter documents with the query','Call map once per document','Group emitted pairs by key','Call reduce once per key','Write results to a collection'],
+   'Filter, map, group by key, reduce, write out. The framework does the grouping; you only write map and reduce.');}},
+{part:1,src:'Chapter 2 · MapReduce Querying',run(L){
+  L.h(L.kick('learn','The rules, and the twist')+'<h1 class="q">map and reduce must be pure functions</h1>'+
+   L.prose('A '+L.g('pure','pure function')+' uses only the data passed in. It may not run extra database queries and may not have side effects. In return, the database can run it anywhere, in any order, and rerun it after a failure. It can still parse strings, call library functions and do calculations.')+
+   L.prose('MapReduce has no monopoly on spreading a query over many machines: SQL can run as a chain of MapReduce steps, or on distributed engines that don’t use MapReduce at all.')+
+   L.prose('The catch: writing two carefully matched functions is often harder than writing one query, and a declarative language gives an optimizer more room. So MongoDB 2.2 added the declarative <b>aggregation pipeline</b>, which is like a subset of SQL written in JSON.')+
+   L.quote('A NoSQL system may find itself accidentally reinventing SQL, albeit in disguise.','Martin Kleppmann, chapter 2'));
+  L.done();}},
+{part:1,src:'Chapter 2 · MapReduce Querying',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Allowed inside Linh’s map function?',['Allowed','Not allowed'],[
+   ['Parse the hub code out of the document’s location text',0,'Parsing strings uses only the input. That’s pure.'],
+   ['Look up the merchant’s name with a second database query',1,'map may not run extra database queries. It only sees the document it was given.'],
+   ['Round the timestamp down to the month with a date library',0,'Calling library functions and doing calculations is fine.'],
+   ['Add 1 to a shared counter to track how many times map ran',1,'That is a side effect. If map is rerun after a failure, the counter double-counts.'],
+   ['Send a status webhook to the merchant as each document passes',1,'Another side effect. The database might run map twice, in any order, and send duplicates.']]);}},
+
+/* ---------- PART 3: GRAPHS ---------- */
+{part:2,src:'Chapter 2 · Graph-Like Data Models',run(L){
+  L.h(L.kick('learn','When everything links to everything')+'<h1 class="q">Graphs: vertices and edges</h1>'+
+   L.prose('Tree-shaped data or unrelated records suit documents. When many-to-many links are common, a '+L.g('graph','graph')+' becomes the natural model: <b>vertices</b> (the things) and <b>edges</b> (the links between them).')+
+   L.flow([['people','Social graph','people, and who knows whom'],['book','Web graph','pages, and the links between them'],['map','Road network','junctions, and the roads joining them']],false)+
+   L.prose('Well-known algorithms run on these: a sat-nav finds the shortest path through a road network; PageRank ranks web pages by their links.')+
+   L.note('Vertices needn’t all be the same kind of thing. The book notes that Facebook keeps one graph whose vertices are people, places, events, check-ins and comments, with many kinds of edges. Otterpost’s graph could hold hubs, zones, roads, couriers and parcels together.','bulb'));
+  L.done();}},
+{part:2,src:'Chapter 2 · Property Graphs',run(L){
+  L.h(L.kick('learn','Property graphs')+'<h1 class="q">What a vertex and an edge are made of</h1>'+
+   L.lanes([['box','Each vertex has','A unique ID · its outgoing edges · its incoming edges · properties (key-value pairs)',2],
+            ['arrow','Each edge has','A unique ID · the <b>tail</b> vertex it starts at · the <b>head</b> vertex it ends at · a label (the kind of link) · properties',3]])+
+   L.prose('In a '+L.g('property-graph','property graph')+' (Neo4j, Titan, InfiniteGraph) you can picture the store as two tables:')+
+   CODE('vertices(vertex_id, properties)\nedges(edge_id, tail_vertex, head_vertex, label, properties)\n-- indexes on BOTH tail_vertex and head_vertex')+
+   L.list([['Any vertex may link to any other','No schema limits which things can be connected.'],['Walk both ways','Indexes on both ends let you follow edges forward and backward.'],['Labels keep it tidy','Different kinds of links live in one graph without a mess.']],1));
+  L.done();}},
+{part:2,src:'Chapter 2 · Property Graphs',run(L){
+  L.h(L.kick('ex','Otterpost’s location graph')+'<h1 class="q">Why Zainab sketches places as a graph</h1>');
+  L.beats(L.card,[
+   ['The book’s example','Lucy, born in Idaho, and Alain, born in Beaune, France, are married and live in London. France splits into régions and départements, the US into states and counties. Lucy’s home is known to the city, her birthplace only to the state.'],
+   ['Otterpost’s version','Addresses lie WITHIN zones, zones WITHIN regions. But Eastvale adds districts between zones and the region, and some pickup points are known only to the zone, not the street.'],
+   ['As edges','Parcel OP-7120 has a PICKED_UP_AT edge to an address in Westport and a DELIVERED_TO edge to an address in Eastvale. Hubs link to each other with ROAD_TO edges carrying a travel time.'],
+   ['Why a graph fits','Different structures per region and different levels of detail would be painful in fixed tables. In a graph, each place simply points WITHIN whatever contains it.'],
+   ['Room to grow','Later, Otterpost can add vertices for vans or lockers and new edge labels without redesigning anything. The book calls graphs good for evolvability.']],
+   'A graph handles uneven structures and mixed levels of detail, and stretches easily as new features add new kinds of things and links.');}},
+{part:2,src:'Chapter 2 · The Cypher Query Language',run(L){
+  L.h(L.kick('learn','The Cypher query language')+'<h1 class="q">Draw the pattern with arrows</h1>'+
+   L.prose('Cypher is a declarative query language for property graphs, created for Neo4j (named after a character in <i>The Matrix</i>). An edge is an arrow: <code>(hubC) -[:WITHIN]-&gt; (westport)</code>. Linh wants every parcel picked up in Westport and delivered in Eastvale:')+
+   CODE('MATCH\n  (p) -[:PICKED_UP_AT]-&gt; () -[:WITHIN*0..]-&gt; (:Region {name:"Westport"}),\n  (p) -[:DELIVERED_TO]-&gt; () -[:WITHIN*0..]-&gt; (:Region {name:"Eastvale"})\nRETURN p.code')+
+   L.prose('<code>:WITHIN*0..</code> means “follow a WITHIN edge zero or more times,” like <code>*</code> in a regular expression. An address may sit one, two or three levels below its region.')+
+   L.note('Linh doesn’t say <i>how</i> to run it. The optimizer may scan every parcel forwards, or start at the two region vertices and walk incoming edges backwards. It picks whichever it predicts is faster.','compass'));
+  L.done();}},
+{part:2,src:'Chapter 2 · The Cypher Query Language',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A rural parcel’s DELIVERED_TO edge points straight at the Eastvale region vertex, with no address or zone in between. Does Linh’s query match it?</h1>');
+  L.mc(L.card,['No, the pattern needs at least one WITHIN edge','Only if there is an index on the name property','Yes, zero WITHIN hops lets the region itself match'],2,
+   '<code>*0..</code> means zero or more. Zero hops means the vertex it reached is itself checked against “Eastvale.”',
+   'The <code>0</code> in <code>*0..</code> allows zero hops, so a parcel delivered straight to the region vertex matches. Indexes only change speed, not results.');}},
+{part:2,src:'Chapter 2 · Graph Queries in SQL',run(L){
+  L.h(L.kick('learn','Graph queries in SQL')+'<h1 class="q">Possible, but clumsy</h1>'+
+   L.prose('If graph data lives in the vertices and edges tables, can SQL query it? Yes, with difficulty. In normal SQL you know in advance which joins you need. In a graph query you may have to cross an <b>unknown number</b> of edges before you reach the vertex you want.')+
+   L.prose('Since SQL:1999, a '+L.g('recursive-cte','recursive common table expression')+' (<code>WITH RECURSIVE</code>) can express this: start with the region, then keep adding everything WITHIN it, round after round, until no new rows appear.')+
+   L.flow([['pencil','Cypher','4 lines','in the book’s example',2],['list','SQL','29 lines','same query, same answer',3]],false)+
+   L.prose('That gap doesn’t make SQL bad. It shows that each data model is built for different uses, so pick the one that suits your app.'));
+  L.done();}},
+{part:2,src:'Chapter 2 · Graph Queries in SQL',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#nr');if(b)b.click();}},
+ run(L){
+  const R=[['Eastvale'],['Riverside district','Old Town district'],['Zone E1','Zone E2','Zone E3'],['12 Mill Lane','40 Quay St','Eastvale hub'],[]];let r=0;
+  const draw=()=>{L.$('#set').innerHTML=R.slice(0,r+1).map((g,j)=>g.map(x=>'<span class="chip static'+(j===r?' ok':'')+'" style="font-size:13.5px;padding:5px 9px">'+x+'</span>').join('')).join('');
+    L.$('#rl').innerHTML='<b>Round '+r+'</b> · '+(r===0?'start with the region':R[r].length?'added '+R[r].length+' new, one level deeper':'nothing new, so stop');};
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Zainab builds the set <i>in_eastvale</i> with a recursive query. Press “Next round” and watch it grow.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0"><div class="small" id="rl" style="margin-bottom:8px"></div><div id="set"></div></div>'+
+   '<button class="btn pri" id="nr">'+L.ic('play')+'Next round</button><div id="gq"></div>');
+  draw();
+  L.$('#nr').onclick=function(){r++;draw();if(r>=R.length-1){this.remove();const q=L.$('#gq');q.innerHTML='<h2 class="sub">Why couldn’t Zainab use a fixed number of joins here?</h2>';
+    L.mc(q,['SQL allows at most three joins in one query','Places sit different numbers of levels below the region','The edges table has no index on head_vertex'],1,
+     'In Eastvale an address sits three levels below the region; in Westport, with no districts, two; a rural drop-off, zero. The recursion keeps going until a round adds nothing, however deep that is.',
+     'SQL has no such join limit, and an index only changes speed. The real problem is that the number of WITHIN hops varies from place to place.');}};}},
+
+/* ---------- PART 4: TRIPLES AND DATALOG ---------- */
+{part:3,src:'Chapter 2 · Triple-Stores and SPARQL',run(L){
+  L.h(L.kick('learn','Triple-stores')+'<h1 class="q">Every fact is a three-part sentence</h1>'+
+   L.prose('A triple-store (Datomic, AllegroGraph and others) is mostly the property graph in different words. All data is stored as '+L.g('triple','triples')+': (subject, predicate, object), as in (Jim, likes, bananas). The subject is a vertex. The object is one of two things:')+
+   L.lanes([['list','A plain value','Then predicate and object are a property. (hub_c, name, “Westport Central”) is like a vertex with {name: “Westport Central”}.',2],
+            ['arrow','Another vertex','Then the predicate is an edge. (hub_c, within, westport) links two vertices with the label <i>within</i>.',3]])+
+   CODE('_:hub_c    a :Hub;    :name "Westport Central"; :within _:westport.\n_:westport a :Region; :name "Westport".')+
+   L.note('That format is <b>Turtle</b>, a readable way to write <b>RDF</b>. RDF was built for the <i>semantic web</i>: sites publishing machine-readable data that could be merged into one web of data. That vision was overhyped and hasn’t happened, but triples are still a good internal model. RDF uses URIs as predicate names, so your <i>within</i> never clashes with someone else’s when data is combined. The URI needn’t point to a real page.','info'));
+  L.done();}},
+{part:3,src:'Chapter 2 · Triple-Stores and SPARQL',pts:5,run(L){
+  L.h(L.kick('pr','Edge or property?')+'<h1 class="q">Zainab loads Otterpost facts as triples. Is each predicate an edge or a property?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Edge','Property'],[
+   ['(op_7120, weightKg, 2.4)',1,'2.4 is a plain number, so weightKg is a property of the parcel vertex.'],
+   ['(op_7120, deliveredTo, addr_9)',0,'addr_9 is another vertex, so deliveredTo is an edge.'],
+   ['(ravi, drives, van_12)',0,'van_12 is a vertex in the graph, so drives is an edge between Ravi and the van.'],
+   ['(hub_c, name, “Westport Central”)',1,'A text value makes name a property.'],
+   ['(zone_n3, within, westport)',0,'Both ends are vertices, so within is an edge.']],
+   'Look at the object: a plain value makes a property, another vertex makes an edge. RDF uses the same predicate idea for both.');}},
+{part:3,src:'Chapter 2 · The SPARQL query language',run(L){
+  L.h(L.kick('learn','SPARQL, and an old question')+'<h1 class="q">SPARQL queries triples; graph databases are not CODASYL again</h1>'+
+   L.prose('SPARQL (pronounced “sparkle”) queries RDF triple-stores. It came before Cypher, and Cypher borrowed its pattern matching. Linh’s query is even shorter here:')+
+   CODE('SELECT ?code WHERE {\n  ?p :code ?code.\n  ?p :pickedUpAt  / :within* / :name "Westport".\n  ?p :deliveredTo / :within* / :name "Eastvale".\n}')+
+   '<p class="small">Variables start with ?. Properties and edges use the same syntax, because RDF doesn’t tell them apart.</p><h2 class="sub">Is a graph database just the old network model? Tap each difference.</h2><div id="fl"></div>');
+  L.flips(L.$('#fl'),[
+   ['Schema','CODASYL fixed which record type could nest in which. In a graph, any vertex can link to any other.'],
+   ['Reaching a record','CODASYL: only by following an access path. Graph: jump straight to any vertex by its ID, or find it with an index.'],
+   ['Order','CODASYL kept children in an ordered set the app had to manage. Graph vertices and edges have no order; sort at query time.'],
+   ['Queries','CODASYL queries were imperative and broke when the schema changed. Graphs offer declarative Cypher or SPARQL.']],
+   'No. The book’s answer is that graph databases differ from CODASYL in all four ways.');}},
+{part:3,src:'Chapter 2 · The Foundation: Datalog',run(L){
+  L.h(L.kick('learn','The foundation: Datalog')+'<h1 class="q">Build the answer from small rules</h1>'+
+   L.prose('Datalog is much older than SPARQL or Cypher: academics studied it in the 1980s, and later languages build on it. Datomic uses it, and Cascalog runs it on Hadoop. A triple becomes <i>predicate(subject, object)</i>:')+
+   CODE('name(westport, \'Westport\').\nwithin(zone_n3, westport).\nwithin(addr_9, zone_n3).')+
+   L.prose('Instead of one big SELECT, you write '+L.g('rule','rules')+'. Words starting with a capital letter are variables. When everything on the right of <code>:-</code> matches, the left side counts as a new fact:')+
+   CODE('in_place(Loc, Name) :- name(Loc, Name).                      /* rule 1 */\nin_place(Loc, Name) :- within(Loc, Via), in_place(Via, Name). /* rule 2 */')+
+   L.prose('Rules can use other rules, even themselves, like functions calling functions. That’s awkward for a quick one-off query, but rules can be combined and reused, so it copes better with complex data.'));
+  L.done();}},
+{part:3,src:'Chapter 2 · The Foundation: Datalog',run(L){
+  L.h(L.kick('ex','Watch the rules fire')+'<h1 class="q">How Datalog learns that addr_9 is in Westport</h1>');
+  L.beats(L.card,[
+   ['Rule 1','The fact name(westport, ‘Westport’) exists, so rule 1 applies. New fact: <b>in_place(westport, ‘Westport’)</b>.'],
+   ['Rule 2, once','within(zone_n3, westport) exists, and we just derived in_place(westport, ‘Westport’). New fact: <b>in_place(zone_n3, ‘Westport’)</b>.'],
+   ['Rule 2, again','within(addr_9, zone_n3) exists, plus the fact from the last step. New fact: <b>in_place(addr_9, ‘Westport’)</b>.'],
+   ['Rule 3','A third rule combines them: a parcel picked up at a place in From and delivered to a place in To. Ask <code>?- cross_region(Code, \'Westport\', \'Eastvale\').</code> and Datalog fills in Code.'],
+   ['Same answer','It returns the same parcels as the Cypher and SPARQL versions, reached one small derived fact at a time.']],
+   'Datalog doesn’t store in_place. It derives it, step by step, by applying rules to facts and to facts derived earlier.');}},
+{part:3,src:'Chapter 2 · Summary',run(L){
+  L.h(L.kick('learn','The chapter in one picture')+'<h1 class="q">From one big tree to three models that each win somewhere</h1>'+
+   L.tiers([['tree','Hierarchical','Data as one big tree. Poor at many-to-many links.','1960s and 70s'],
+            ['list','Relational','Invented to handle many-to-many links. Still everywhere.','1970s onward'],
+            ['box','Document','Self-contained documents; links between them are rare.','NoSQL, one direction'],
+            ['map','Graph','Anything may be related to everything.','NoSQL, the other direction']])+
+   L.prose('Each model can be emulated in another (a graph in SQL tables, say), but the result is often awkward. Hence different systems for different jobs. Document and graph stores usually don’t enforce a schema, yet the app still assumes one: explicit on write, or implicit on read.')+
+   '<p class="small">Many models were left out: genome databases for similar-sequence search, custom systems for particle physics at hundreds of petabytes, and full-text search (more in chapter 3).</p>');
+  L.done();}},
+{part:3,src:'Chapter 2 · Summary',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which model fits best?',['Document','Relational','Graph'],[
+   ['Dispatch needs the fastest route between hubs across the road network',2,'Junctions and roads are a classic graph; shortest-path algorithms run on it.'],
+   ['Courier-app crash reports whose fields differ by app version, each read on its own',0,'Self-contained records with varying shapes suit documents and schema-on-read.'],
+   ['Parcels, merchants, prices and credit, joined together in billing reports',1,'Many-to-one links and joins are the relational model’s strength.'],
+   ['A fraud check that follows links between recipients, phones, addresses and merchants, any number of hops deep',2,'When anything may link to anything, over an unknown number of hops, a graph is most natural.'],
+   ['Each merchant’s label settings, always loaded whole, with nothing pointing at them',0,'A small tree read in one go: the document sweet spot.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

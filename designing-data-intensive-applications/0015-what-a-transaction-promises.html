@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>What a Transaction Promises</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0015', title:'What a transaction promises', minutes:18, icon:'shield',
+  goals:['Say what each letter of ACID really promises, and which one is the app’s job','Tell when one-object operations are enough and when you need a multi-object transaction','Decide when retrying an aborted transaction is safe, and when it backfires'],
+  parts:['Why transactions','ACID','One object or many','Aborts and retries'],
+  read:'Read the start of chapter 7, up to “Weak Isolation Levels”, for the full ACID discussion and the sidebar on replication and durability.',
+  glossary:{
+    acid:'ACID: Atomicity, Consistency, Isolation, Durability. A popular label for the safety promises of transactions. Each database fills it in its own way, so the label alone tells you little.',
+    atomicity:'Atomicity (in ACID): if a fault stops a transaction partway, the database throws away all of its writes. “Abortability” would be a clearer name.',
+    invariant:'Invariant: a rule about your data that must always be true, such as “every merchant’s balance equals top-ups minus parcel prices”.',
+    race:'Race condition: a bug that only appears when two clients happen to touch the same data at nearly the same moment.',
+    denorm:'Denormalization: keeping a copy or summary of data in a second place (like a stored count) so reads are faster. The copy must then be kept in step by hand.',
+    cas:'Compare-and-set: a single-object write that only happens if the value is still what you read earlier. If someone changed it, the write does nothing and you try again.',
+    backoff:'Exponential backoff: waiting longer before each new retry (say 1, 2, then 4 seconds), so retries don’t pile onto a system that is already struggling.'
+  },
+  cheatsheet:[
+    'A <b>transaction</b> groups reads and writes into one unit: <b>commit</b> all of it or <b>abort</b> all of it, so the app can retry instead of untangling a half-done job.',
+    'Transactions are a <b>trade-off</b>, not a law of nature. “Big systems can’t have them” and “serious apps need full ACID” are both hype.',
+    '<b>Atomicity</b> = abortability. It is about faults partway through, not about concurrency.',
+    '<b>Consistency</b> = your app’s invariants. It is the app’s job; atomicity, isolation and durability are the database’s.',
+    '<b>Isolation</b> = concurrent transactions don’t step on each other. Formally that’s serializability, which is rarely the setting in practice.',
+    '<b>Durability</b> = committed data isn’t forgotten. Perfect durability doesn’t exist, so combine disk, replication and backups.',
+    'One-object operations (atomic increment, compare-and-set) are useful but are <b>not</b> transactions. Foreign keys, denormalized copies and secondary indexes need multi-object transactions.',
+    'Retry only <b>transient</b> errors, a limited number of times with backoff. Watch for lost replies (double work), side effects outside the database and overload.'
+  ],
+  steps:[
+/* ---------- PART 1: WHY TRANSACTIONS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tobias’s booking code inserts a parcel, then deducts its price from the merchant’s credit. The server crashes between the two steps. With no protection, what is left in the Parcel DB?</h1>');
+  L.mc(L.card,['A booked parcel that nobody paid for','Nothing, because the booking failed','Both writes, because the code was right'],0,
+   'The first write happened and the second never did. The data is now half-done, and nobody knows which half. This lesson is about the tool that prevents that.',
+   'Nothing undoes the first write by itself. The parcel row is there, the payment isn’t: a half-done booking.');}},
+{part:0,src:'Chapter 7 · Transactions',run(L){
+  L.h(L.kick('learn','Many things can go wrong')+'<h1 class="q">A transaction turns a messy failure into a clean “try again”</h1>'+
+   L.prose('The book opens chapter 7 with a list of what goes wrong in real data systems:')+
+   L.list([['alert','Crashes mid-way','The database, its hardware or the app can die halfway through a series of writes.'],
+     ['compass','Network cuts','The app can lose its link to the database, or one database '+L.g('node','node')+' to another.'],
+     ['people','Clients colliding','Two clients write at once and overwrite each other, or one reads data that is only half updated.']],1)+
+   L.prose('A <b>'+L.g('transaction','transaction')+'</b> groups several reads and writes into one unit. Either all of it takes effect (<b>commit</b>) or none of it does (<b>abort</b>, or rollback). After an abort the app can simply try again. It never has to work out a <b>partial failure</b>, where some steps happened and some didn’t.'));
+  L.done();}},
+{part:0,src:'Chapter 7 · Transactions',pts:1,
+ solve:async L=>{L.$('#crash').click();},
+ run(L){
+  const W=['Insert the parcel row','Deduct $8 from credit','Add 1 to “parcels today”'];
+  const rows=(id,st)=>{const el=L.$('#'+id);if(!el)return;el.innerHTML=W.map((w,j)=>{const s=st[j];
+    const c=s==='ok'?'var(--ok)':s==='no'?'var(--no)':s==='undo'?'var(--muted)':'var(--muted)';
+    const icn=s==='ok'?'check':s==='no'?'x':s==='undo'?'cycle':'clock';
+    return '<div style="display:flex;gap:6px;align-items:flex-start;margin:6px 0;color:'+c+(s==='undo'?';text-decoration:line-through':'')+';font-size:13.5px">'+L.ic(icn)+'<span>'+w+'</span></div>';}).join('');};
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">A booking makes three writes. Crash the server right after write 2, once without a transaction and once with one.</h1>'+
+   L.lanes([['alert','No transaction','<div id="la"></div><div class="res" id="ra"></div>',4],['shield','One transaction','<div id="lb"></div><div class="res" id="rb"></div>',2]])+
+   '<button class="btn pri" id="crash" style="margin-top:14px">'+L.ic('flame')+'Crash after write 2</button><div id="cq"></div>');
+  rows('la',['','','']);rows('lb',['','','']);
+  L.$('#crash').onclick=function(){this.remove();
+    setTimeout(()=>{rows('la',['ok','','']);rows('lb',['ok','','']);},250);
+    setTimeout(()=>{rows('la',['ok','ok','']);rows('lb',['ok','ok','']);},550);
+    setTimeout(()=>{if(!L.$('#la'))return;rows('la',['ok','ok','no']);rows('lb',['undo','undo','undo']);
+      L.$('#ra').innerHTML='<span style="color:var(--no)">Parcel booked and paid, but the counter is one short. Run it again and the merchant pays twice.</span>';
+      L.$('#rb').innerHTML='<span style="color:var(--ok)">Aborted: both writes undone. Nothing changed, so it’s safe to run again.</span>';
+      const q=L.$('#cq');q.innerHTML='<h2 class="sub">Which side can Tobias’s code simply retry?</h2>';
+      L.mc(q,['The side without a transaction','The side with a transaction'],1,
+       'After an abort, the app knows nothing changed. That is the whole point: error handling becomes “just try again”.',
+       'Without a transaction, a retry inserts a second parcel and charges again. Only the aborted transaction left a clean slate.');},900);};}},
+{part:0,src:'Chapter 7 · The Slippery Concept of a Transaction',run(L){
+  L.h(L.kick('learn','Not a law of nature')+'<h1 class="q">Transactions were designed on purpose, and fashions about them swing</h1>'+
+   L.flow([['book','1975','IBM’s System R sets the style','still copied by most SQL databases',1],['layers','Late 2000s','NoSQL databases drop transactions or weaken the word','',4],['scale','Today','A design choice with costs and benefits','',2]])+
+   L.prose('When NoSQL arrived, many people believed transactions and scalability could not go together. Some vendors said the opposite: that any serious app with valuable data must have them. The book’s verdict on both camps:')+
+   L.quote('Both viewpoints are pure hyperbole.','Martin Kleppmann, chapter 7')+
+   L.prose('Transactions exist to make the app’s life simpler: the database takes care of certain errors and concurrency issues (its <b>safety guarantees</b>). Some apps weaken or skip them for speed or availability. To choose, you need to know exactly what they promise and what they cost.'));
+  L.done();}},
+{part:0,src:'Chapter 7 · The Slippery Concept of a Transaction',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">At a conference, Femi hears three claims about transactions. Which one matches the book?</h1>');
+  L.mc(L.card,['Big systems must drop transactions to scale','Valuable data always needs full ACID','They are a trade-off you weigh case by case'],2,
+   'Like any design choice, transactions have advantages and limits. The rest of this chapter shows what you get and what it costs.',
+   'The book calls both extreme claims hype. Transactions are a trade-off: you weigh what they promise against what they cost.');}},
+
+/* ---------- PART 2: ACID ---------- */
+{part:1,src:'Chapter 7 · The Meaning of ACID',run(L){
+  L.h(L.kick('learn','Four letters')+'<h1 class="q">ACID is a useful idea and a vague label</h1>'+
+   L.prose('Theo Härder and Andreas Reuter coined '+L.g('acid','ACID')+' in 1983 to give database fault tolerance precise words. But each database implements it differently, and isolation in particular is fuzzy. Today “ACID compliant” doesn’t tell you which guarantees you actually get. It has become mostly a marketing term.')+
+   L.tiers([['cycle','Atomicity','If something fails partway, undo everything.'],['check','Consistency','The data keeps obeying your app’s rules.'],['people','Isolation','Transactions running at once don’t interfere.'],['lock','Durability','Once committed, the data isn’t lost.']])+
+   L.note('Systems that don’t meet ACID are sometimes called <b>BASE</b> (Basically Available, Soft state, Eventual consistency). The book finds that even vaguer: in practice it just means “not ACID”.','info'));
+  L.done();}},
+{part:1,src:'Chapter 7 · The Meaning of ACID · Atomicity',run(L){
+  L.h(L.kick('learn','A is for “abortability”')+'<h1 class="q">Atomicity is about faults, not about two users at once</h1>'+
+   L.lanes([['cycle','In multi-threaded code','“Atomic” means no other thread can see a half-finished operation.',3],
+            ['shield','In ACID','“Atomic” means: if a fault hits partway, the whole transaction is aborted and its writes are thrown away.',2]])+
+   L.prose('The fault can be a crash, a broken network link, a full disk or a broken rule (a constraint). Without '+L.g('atomicity','atomicity')+', the app can’t tell which changes landed. Retrying risks doing things twice.')+
+   L.prose('With atomicity, an aborted transaction changed nothing, so the app can safely retry. The book suggests <b>abortability</b> would have been a better name. Who sees what while others write is a different letter: I, for isolation.'));
+  L.done();}},
+{part:1,src:'Chapter 7 · The Meaning of ACID · Atomicity',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame says: “ACID atomicity means two bookings running at the same moment can’t see each other’s half-done work.” Which letter actually covers that?</h1>');
+  L.mc(L.card,['Atomicity','Durability','Isolation'],2,
+   'Right. What concurrent transactions can see of each other is isolation. Atomicity is about undoing writes after a fault.',
+   'That’s isolation. In ACID, atomicity means “abort and discard everything if a fault hits partway”. It says nothing about concurrency.');}},
+{part:1,src:'Chapter 7 · The Meaning of ACID · Consistency',run(L){
+  L.h(L.kick('learn','The odd letter out')+'<h1 class="q">“Consistency” is the app’s job, not the database’s</h1>'+
+   L.prose('The word has at least four meanings in this book: replica consistency (chapter 5), consistent hashing (chapter 6), consistency in the CAP theorem (chapter 9), and the C in ACID.')+
+   L.prose('ACID consistency means your data obeys certain '+L.g('invariant','invariants')+'. For Otterpost: <i>every merchant’s credit balance equals their top-ups minus the prices of their parcels.</i> If each transaction starts valid and keeps it valid, the rule always holds.')+
+   L.note('<b>The database can’t know your rules.</b> It can check a few (foreign keys, uniqueness), but if Otterpost’s code writes a wrong balance, the database just stores it. Atomicity, isolation and durability belong to the database; consistency belongs to the app.','scale')+
+   '<p class="small" style="margin-top:10px">A footnote in the book reports a remark that the C was mostly added to make the acronym work.</p>');
+  L.done();}},
+{part:1,src:'Chapter 7 · The Meaning of ACID · Isolation',run(L){
+  L.h(L.kick('ex','Isolation, step by step')+'<h1 class="q">Two bookings, one counter, one lost increment</h1>');
+  L.beats(L.card,[
+   ['The counter','The merchant dashboard keeps Bramble & Bolt’s <b>parcels booked today</b> as a number in the Parcel DB. It says 42. (Assume there is no built-in increment, so the code reads, adds 1, writes.)'],
+   ['Two at once','During a flash sale, two app servers book a parcel at the same moment. <b>Both read 42.</b>'],
+   ['Both write','Each adds 1 and writes <b>43</b>. Two parcels were booked, but the counter went up by one. This is a '+L.g('race','race condition')+'.'],
+   ['The promise','ACID <b>isolation</b> means concurrent transactions can’t step on each other. Textbooks define it as <b>serializability</b>: the result is the same as if the transactions had run one after another.'],
+   ['The reality','Serializable isolation costs performance, so it is rarely used. Oracle 11g has a level called “serializable” that is actually something weaker, called snapshot isolation. The next lesson covers these weaker levels.']],
+   'Isolation is the letter about concurrency. Its strongest form, serializability, is the ideal, and it is often not what you are running.');}},
+{part:1,src:'Chapter 7 · The Meaning of ACID · Durability',run(L){
+  L.h(L.kick('learn','D is for “don’t forget”')+'<h1 class="q">Committed data should survive a crash, within limits</h1>'+
+   L.prose('<b>Durability</b> promises that once a transaction commits, its data won’t be forgotten, even after a hardware fault or crash. On one machine that means it is on disk or SSD, usually with a write-ahead '+L.g('log','log')+' for recovery. With '+L.g('replication','replication')+' it may mean copied to some number of nodes. Either way, the database must wait for that before it says “committed”.')+
+   L.prose('The book’s sidebar lists how each method can still lose data:')+
+   L.list([['Disk only','The machine dies: the data is safe but unreachable until it is fixed.'],
+     ['Replicas only','A power cut or a bug can take down every replica at once. Asynchronous followers can miss recent writes.'],
+     ['Hardware lies','SSDs can break their promises on power loss, and firmware has bugs. One study found 30–80% of SSDs develop a bad block within four years.'],
+     ['Silent rot','Data can corrupt slowly, unnoticed, until replicas and recent backups are corrupted too.']],3)+
+   L.note('No single technique gives a perfect guarantee. Use disk, replication <b>and</b> backups together.','lock'));
+  L.done();}},
+{part:1,src:'Chapter 7 · The Meaning of ACID',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which letter of ACID?',['Atomicity','Consistency','Isolation','Durability'],[
+   ['Deducting the price fails, so the database undoes the parcel row inserted a moment before.',0,'A fault partway through, so every write is thrown away: atomicity.'],
+   ['Otterpost’s rule: a balance must equal top-ups minus parcel prices, and Otterpost’s code must keep it true.',1,'An app-defined invariant that the app must uphold: consistency.'],
+   ['While a booking is half done, Linh’s report sees either all of its writes or none of them.',2,'What one transaction can see of another running at the same time: isolation.'],
+   ['The power fails one second after a booking commits. After the restart, the booking is still there.',3,'Committed data survives a crash: durability.'],
+   ['The booking API only says “booked” once the write has reached two replicas.',3,'Waiting for the copies before reporting a commit is how a replicated database offers durability.'],
+   ['Femi decides no merchant may book with a negative balance. The database stores whatever it is told.',1,'Only the app knows this rule, so keeping it is the app’s job: consistency.']]);}},
+{part:1,src:'Chapter 7 · The Meaning of ACID · Replication and Durability',pts:1,run(L){
+  L.h(L.kick('pr','Kwame’s proposal')+'<h1 class="q">“Each region’s Parcel DB leader now has two followers in the same datacenter: three copies,” says Kwame. “We can stop the nightly backups.” What should Zainab answer?</h1><div id="hq"></div>');
+  L.mc(L.$('#hq'),['Agree: three copies make data loss impossible','Keep backups: one fault can hit every copy','Agree, as long as all replicas run on SSDs'],1,
+   'A power cut or a bug can hit all replicas together, and slow corruption can spread to every copy. Disk, replication and backups each cover gaps the others leave.',
+   'Replicas share risks: a power cut, a bug that crashes every node, or slow corruption that gets copied everywhere. SSDs fail too. Backups are still needed.');}},
+
+/* ---------- PART 3: ONE OBJECT OR MANY ---------- */
+{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations',run(L){
+  L.h(L.kick('learn','Several objects, kept in step')+'<h1 class="q">Atomicity and isolation matter most when one job writes several things</h1>'+
+   L.prose('Counting Bramble & Bolt’s parcels every time the dashboard loads is slow. So Otterpost stores a <b>parcels today</b> counter beside the parcels: '+L.g('denorm','denormalization')+'. Now every booking writes two objects: a new parcel row and the counter.')+
+   L.lanes([['eye','Without isolation','A dashboard shows the new parcel in the list, but the counter hasn’t gone up yet. It saw half of the booking.',4],
+            ['alert','Without atomicity','The counter update fails but the parcel row stays. The two are now out of step for good.',3]])+
+   L.prose('How does the database know which writes belong together? In relational databases, usually everything between <b>BEGIN TRANSACTION</b> and <b>COMMIT</b> on one client connection. Many non-relational databases have no such grouping. A “multi-put” that writes several keys may succeed for some keys and fail for others.'));
+  L.done();}},
+{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations · Single-object writes',run(L){
+  L.h(L.kick('learn','Even one object needs protecting')+'<h1 class="q">Writing one 20 KB parcel document raises three questions</h1>'+
+   L.list([['Network drops at 10 KB','Is an unreadable half-document stored?'],['Power fails mid-overwrite','Do the old and new values end up spliced together?'],['Someone reads mid-write','Do they see a half-updated value?']],2)+
+   L.prose('Storage engines almost always protect a <b>single object</b> on one node: a log for crash recovery gives atomicity, and a lock per object gives isolation. Some add an <b>atomic increment</b> or '+L.g('cas','compare-and-set')+', which stop two clients from overwriting each other’s change.')+
+   L.note('These are useful, but they are <b>not transactions</b>. Calling them “lightweight transactions” or “ACID” is marketing. A transaction groups several operations on several objects into one unit.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations · The need for multi-object transactions',run(L){
+  L.h(L.kick('learn','When one object isn’t enough')+'<h1 class="q">Three common cases need several writes to land together</h1>'+
+   L.prose('Many distributed databases dropped multi-object transactions: they are hard across '+L.g('partition','partitions')+' and can get in the way of very high availability or speed. Nothing makes them impossible, though (chapter 9). And many apps need them:')+
+   L.list([['pointer','Foreign keys','A new parcel row points to its merchant and its address. Insert them together, or the references point at nothing.'],
+     ['layers','Denormalized copies','The parcels-today counter must move with the parcel rows. Document databases without joins push you to copy data like this.'],
+     ['eye','Secondary indexes','An index on recipient postcode is a separate object. Without isolation, a parcel can show up in one index and not yet in another.']],1)+
+   L.prose('You can build such apps without transactions, but error handling gets much harder and concurrency bugs creep in.'));
+  L.done();}},
+{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these jobs needs a multi-object transaction?</h1>');
+  L.mc(L.card,['Updating one courier’s phone number in their row','Inserting a parcel and adding 1 to “parcels today”','Reading one parcel’s status by its tracking code'],1,
+   'Two objects that must stay in step: the parcel row and the denormalized counter.',
+   'That one touches a single object. The parcel plus its counter is two objects that must change together.');}},
+{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations',pts:5,run(L){
+  L.h(L.kick('pr','One object or many?')+'<h1 class="q">Sort each Otterpost job.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['One object is enough','Needs a multi-object transaction'],[
+   ['Add 1 to a courier’s “deliveries today” with an atomic increment',0,'One object, one built-in atomic operation.'],
+   ['Insert a delivery attempt and update the parcel’s copied “attempts” field',1,'A denormalized copy that must change with the source.'],
+   ['Replace a parcel’s whole label document in one write',0,'Storage engines make a single-object write atomic and isolated.'],
+   ['Insert a parcel that points to a merchant row created in the same step',1,'Two rows that refer to each other: the foreign key must be valid.'],
+   ['Set status to “out for delivery” only if it is still “at hub”',0,'That’s compare-and-set on one object.']],
+   'One object: the storage engine and operations like increment or compare-and-set cover you. Several objects in step: you need a transaction.');}},
+
+/* ---------- PART 4: ABORTS AND RETRIES ---------- */
+{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',run(L){
+  L.h(L.kick('learn','Abort, then retry')+'<h1 class="q">An abort is only useful if someone retries</h1>'+
+   L.prose('ACID databases follow one philosophy: if a transaction might break atomicity, isolation or durability, abandon it completely rather than leave it half done.')+
+   L.lanes([['shield','ACID style','“All or nothing.” An aborted transaction left no trace.',2],
+            ['alert','Best-effort style','Leaderless stores do what they can and won’t undo what already happened. Recovery is the app’s job.',4]])+
+   L.prose('Yet many developers only think about the happy path. The book notes that popular ORMs (code libraries that map objects to tables, such as Rails’s ActiveRecord and Django) don’t retry aborted transactions. The error bubbles up, the user’s input is lost, and they see an error. That wastes the main benefit of aborts: <b>safe retries</b>.'));
+  L.done();}},
+{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',run(L){
+  L.h(L.kick('learn','Retrying isn’t perfect')+'<h1 class="q">Five ways a retry can go wrong</h1>'+
+   L.list([['The reply was lost','The commit worked, but the network failed before the client heard. A retry does it twice, unless the app has its own duplicate check.'],
+     ['The system is overloaded','Retrying adds load. Limit retries, use '+L.g('backoff','exponential backoff')+', and treat overload errors differently.'],
+     ['The error is permanent','Retry after transient errors (deadlock, isolation conflict, a network blip, failover). A broken constraint will just fail again.'],
+     ['Side effects escaped','An email or call to another system happens even if the transaction aborts. Retrying sends it again. (Two-phase commit, chapter 9, can tie systems together.)'],
+     ['The client dies too','If the client crashes while retrying, the data it was trying to write is lost.']],4));
+  L.done();}},
+{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'What about retrying this?',['Fine to retry','Pointless: it fails again','May run twice','A side effect repeats','Makes overload worse'],[
+   ['A booking aborted because of a deadlock with another booking.',0,'A deadlock is transient. Retrying is exactly what aborts are for.'],
+   ['A booking failed because its tracking code breaks a uniqueness rule.',1,'A constraint violation is permanent. The same request fails the same way.'],
+   ['The commit worked, but the reply was lost. Tobias’s app retries the booking.',2,'Without a duplicate check, the parcel is booked and charged twice.'],
+   ['The booking calls the merchant’s status webhook, then aborts and is retried.',3,'The webhook already went out. Each retry sends another one.'],
+   ['In Peak Week the Parcel DB is overloaded, and every server retries at once, again and again.',4,'Instant, unlimited retries add load to a database that is already struggling. Limit them and back off.']]);}},
+{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',pts:1,run(L){
+  L.h(L.kick('pr','Write the rule')+'<h1 class="q">Zainab writes a retry rule for Tobias’s booking code. Tap each piece until the rule is safe.</h1>');
+  L.sentence(L.card,[['Retry every error','Retry only transient errors'],['instantly, with no limit','a few times, with backoff'],['and check for duplicates','and trust each runs once']],[1,1,0],
+   [['A broken constraint or other permanent error will just fail again.'],['Instant, unlimited retries pile load onto a database that may already be overloaded.'],['If a commit worked but its reply was lost, a blind retry books the parcel twice.']],
+   'Retry what can succeed next time, don’t add to overload, and guard against a commit that already happened.');}},
+{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',pts:1,run(L){
+  L.h(L.kick('pr','Best effort')+'<h1 class="q">Otterpost’s courier location store uses leaderless replication. A write reaches two replicas and fails on the third. Who has to deal with that?</h1><div id="hq"></div>');
+  L.mc(L.$('#hq'),['The store rolls back the two writes that worked','Otterpost’s own code has to recover from it','Nobody: leaderless replicas can’t disagree'],1,
+   'Leaderless stores work on a best-effort basis. They won’t undo what they already did, so recovering from errors is the app’s job.',
+   'A leaderless store won’t undo writes it has already made. Unlike an ACID transaction, the app must handle the error.');}}
+  ]
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Batch Processing with Unix Tools and MapReduce</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+const CODE=t=>'<code style="background:var(--soft);padding:1px 6px;border-radius:6px;font-size:14px;overflow-wrap:anywhere">'+t+'</code>';
+Course.lesson({
+  id:'0025', title:'Batch processing with Unix tools and MapReduce', minutes:20, icon:'layers',
+  goals:['Tell a system of record from derived data','Explain why a sort-based pipeline copes with data bigger than memory','Trace one MapReduce job from input blocks to reducer output'],
+  parts:['Derived data','Unix tools','Unix philosophy','MapReduce'],
+  read:'Read the Part III introduction and the first half of chapter 10 (up to “MapReduce workflows”) for the full log-analysis walkthrough.',
+  glossary:{
+    batch:'Batch job: a program that reads a large, fixed set of input data, processes all of it and writes output. Nobody waits for it; it usually runs on a schedule, such as nightly.',
+    workingset:'Working set: the amount of memory a job needs random access to at the same time.',
+    hdfs:'HDFS (Hadoop Distributed File System): one big filesystem made from the disks of many ordinary machines. Files are split into blocks, and each block is kept on several machines.',
+    mapper:'Mapper: in MapReduce, your function that is called once for every input record and pulls a key and a value out of it.',
+    reducer:'Reducer: in MapReduce, your function that is called once per key, with all the values for that key, and writes output records.',
+    shuffle:'Shuffle: the MapReduce step that splits mapper output by key, sorts it and copies each part to the right reducer. Despite the name, nothing is random.'
+  },
+  cheatsheet:[
+    '<b>System of record</b> = the authoritative copy, written first. <b>Derived data</b> (caches, indexes, reports, predictions) can be rebuilt from it. Which one a database is depends on how you use it, not on the tool.',
+    '<b>Services</b> are judged by response time, <b>batch jobs</b> by throughput, <b>stream processors</b> sit in between with low delay.',
+    'A <b>hash table</b> of counts works while the distinct keys fit in memory. <b>Sorting</b> spills sorted chunks to disk and merges them, so it keeps going when they don’t.',
+    'Unix philosophy: small tools that do one thing well, a <b>uniform interface</b> (bytes, one record per line), <b>logic separate from wiring</b>, and immutable inputs that make experiments safe.',
+    '<b>HDFS</b> is a shared-nothing filesystem: a NameNode tracks which machine holds each block, and blocks are copied to several machines.',
+    '<b>MapReduce</b>: the mapper pulls out a key and value → the framework partitions by a hash of the key, sorts and shuffles → the reducer combines all values for each key.',
+    'Jobs chain into <b>workflows</b> through directory names. A job’s output only counts once the whole job has succeeded.'
+  ],
+  steps:[
+/* ---------- PART 1: DERIVED DATA ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kwame accidentally wipes the cache in front of Otterpost’s tracking page. Have any parcel statuses been lost for good?</h1>');
+  L.mc(L.card,['Yes, those statuses are gone for good','No, they can be rebuilt from the Parcel DB'],1,
+   'The cache only held copies. Every status still lives in the Parcel DB, so the cache simply fills up again. That difference between the original and its copies opens this part of the book.',
+   'The cache only held copies. Every status still lives in the Parcel DB, so the cache fills up again from there. Nothing is lost for good.');}},
+{part:0,src:'Part III · Derived Data',run(L){
+  L.h(L.kick('learn','Part III begins')+'<h1 class="q">Real applications use many data systems, not one</h1>'+
+   L.prose('The first two parts of the book quietly assumed an application has <b>one</b> database. Real systems rarely look like that. A big application needs to read and process its data in many different ways, and no single database does all of them well.')+
+   L.prose('So applications combine several datastores, indexes, caches and analytics systems, and move data from one to another. Otterpost already does this:')+
+   L.flow([['box','Parcel DB','Bookings, parcels, couriers'],['eye','Support search','Find a parcel by name or postcode'],['trend','Analytics warehouse','Nightly on-time reports']])+
+   L.prose('Part III is about fitting systems like these together into one coherent design. The book notes that vendors who claim one product does everything tend to skip this, yet it is some of the most important work in a real application.'));
+  L.done();}},
+{part:0,src:'Part III · Systems of Record and Derived Data',run(L){
+  L.h(L.kick('learn','Two kinds of data system')+'<h1 class="q">The original, and everything built from it</h1>'+
+   L.lanes([['shield','System of record','Also called the <b>source of truth</b>. New data is written here first. Each fact is stored once, usually normalized. If another system disagrees with it, the system of record is right by definition.',1],
+            ['layers','Derived data','Built by taking data from another system and transforming it. If you lose it, you can rebuild it from the source. Caches, indexes, denormalized values and materialized views are all derived. So are predictions computed from usage logs.',2]])+
+   L.prose('Derived data is technically redundant: it repeats what the source already says. But it is often what makes reads fast, and you can derive several different views from one source.')+
+   L.note('<b>It’s about use, not the tool.</b> A database is just a tool. The same kind of database can be a system of record in one place and '+L.g('derived','derived data')+' in another. Being clear about which data comes from where makes a confusing architecture much easier to follow.','info'));
+  L.done();}},
+{part:0,src:'Part III · Systems of Record and Derived Data',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Support search shows Mrs. Okoro’s phone number ending in 412. The Parcel DB says it ends in 417. Which one is right?</h1>');
+  L.mc(L.card,['The search index, since support uses it every day','Whichever of the two was changed most recently','The Parcel DB, so the search index needs fixing'],2,
+   'The Parcel DB is the system of record, so it is right by definition. The search index is derived from it and should be rebuilt or corrected from it.',
+   'When copies disagree, the system of record wins by definition. The Parcel DB is Otterpost’s system of record; the search index is derived from it and gets fixed from it.');}},
+{part:0,src:'Part III · Systems of Record and Derived Data',pts:6,run(L){
+  L.h(L.kick('pr','Record or derived?')+'<h1 class="q">Sort each part of Otterpost’s data.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['System of record','Derived data'],[
+   ['The Parcel DB, where a new booking is first written',0,'New data lands here first, and it is the authoritative copy.'],
+   ['The support search index, filled from the Parcel DB',1,'It is built from the Parcel DB and could be rebuilt from it.'],
+   ['Merchants’ credit balances, kept in the Parcel DB',0,'The balance is the authoritative fact, stored once in the system of record.'],
+   ['The nightly on-time report in the analytics warehouse',1,'It is computed from scans and bookings. Lose it and you can compute it again.'],
+   ['A second relational database Linh refills each night from Parcel DB data',1,'Same kind of tool as the Parcel DB, but here it is built from other data. Record or derived depends on use, not on the tool.'],
+   ['Delivery-window predictions computed from past scan history',1,'Predictions summarised from history are derived: rerun the computation and you get them back.']],
+   'Ask two questions: is new data written here first, and could I rebuild this from somewhere else? That tells you which way the data flows.');}},
+
+/* ---------- PART 2: UNIX TOOLS ---------- */
+{part:1,src:'Chapter 10 · Batch Processing',run(L){
+  L.h(L.kick('learn','Three kinds of system')+'<h1 class="q">Not every system waits for a request</h1>'+
+   L.tiers([['person','Service (online)','Waits for a request, handles it as fast as it can and sends a response. Judged mainly by <b>response time</b>; availability matters a lot.','Otterpost: the tracking page, the merchant API'],
+            ['layers','Batch job (offline)','Takes a large set of input data, runs a job over all of it and writes output. Takes minutes to days, so nobody waits; often scheduled, say once a day. Judged mainly by <b>throughput</b>.','Otterpost: Linh’s nightly jobs',true,'This chapter'],
+            ['cycle','Stream processor (near-real-time)','Between the two. Like a batch job it consumes inputs and produces outputs, but it works on events shortly after they happen, so its delay is lower.','Chapter 11']])+
+   '<p class="small" style="margin-top:10px">Batch processing is old: punch-card machines counted the 1890 US census this way. MapReduce, published in 2004, made it work at huge scale on ordinary hardware. The book notes its importance is now declining, but it shows clearly why batch processing is useful.</p>');
+  L.done();}},
+{part:1,src:'Chapter 10 · Batch Processing',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which kind of system?',['Service','Batch job','Stream processor'],[
+   ['A recipient opens the tracking page and waits for it to load.',0,'Someone is waiting for a response, so response time is what matters.'],
+   ['Monthly merchant invoices, built from all of last month’s bookings.',1,'A fixed, large input processed in one go on a schedule. Nobody is waiting on a page.'],
+   ['A notification goes out within seconds of an “out for delivery” scan.',2,'It reacts to each event shortly after it happens, without a request from anyone.'],
+   ['Retraining the ETA model each night on every past delivery.',1,'A big, fixed input, run nightly. Throughput matters, not response time.'],
+   ['A merchant’s server calls the API to book a parcel.',0,'A client sends a request and expects an answer quickly.'],
+   ['A count of late parcels per zone that updates as scans arrive.',2,'It consumes events as they come in and keeps its output current.']]);}},
+{part:1,src:'Chapter 10 · Simple Log Analysis',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh finds the five most-viewed tracking pages with six small Unix tools</h1>'+
+   L.prose('The tracking page’s web server adds one line to its log for every request. Each line holds the visitor’s address, the time, the page asked for and more. Linh chains six commands with pipes (<b>|</b>), each feeding the next.'));
+  L.beats(L.card,[
+   [CODE('cat access.log'),'Read the log file, line by line.'],
+   [CODE('awk &#39;{print $7}&#39;'),'Split each line on spaces and keep only the 7th field: the requested page, like '+CODE('/track/OP-48213')+'.'],
+   [CODE('sort'),'Sort the list. If a page was viewed 300 times, its 300 copies now sit in a row.'],
+   [CODE('uniq -c'),'Collapse each run of identical neighbouring lines into one, with a count: '+CODE('300 /track/OP-48213')+'.'],
+   [CODE('sort -r -n'),'Sort again, by the number at the start, biggest first.'],
+   [CODE('head -n 5'),'Keep the first five lines. Done: the top five pages.']],
+   'It looks cryptic, but it chews through gigabytes of logs in seconds, and it is easy to change. Count visitor addresses instead? Print field 1 instead of field 7.');}},
+{part:1,src:'Chapter 10 · Simple Log Analysis',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tap the stages of Linh’s pipeline in order.</h1>');
+  L.order(L.card,['Read the log file','Keep only the requested page','Sort so repeats sit together','Count each run of repeats','Sort by count, biggest first','Keep the first five lines'],
+   'The first sort is what makes counting possible: the counting step only compares each line with the one right before it.');}},
+{part:1,src:'Chapter 10 · Sorting versus in-memory aggregation',run(L){
+  L.h(L.kick('learn','Two ways to count')+'<h1 class="q">Same answer, very different use of memory</h1>'+
+   L.prose('Tobias could write the same report as a short program: read each line and add 1 to a counter for that page, kept in a <b>hash table</b> in memory. The book shows a version in Ruby. Which way is better? It depends on how many <i>different</i> pages there are.')+
+   L.lanes([['box','Hash table in memory','Needs one counter per <b>distinct</b> page. A million views of one page still take one entry. If that '+L.g('workingset','working set')+' fits in memory, this is fine, even on a laptop.',2],
+            ['list','Sort, then count','Needs no table. When the data is bigger than memory, sort writes sorted chunks to disk and then merges them, reading and writing in long sequential runs that disks handle well.',3]])+
+   L.prose('That chunk-and-merge trick is the same one behind SSTables and LSM-trees in chapter 3. The standard Linux <b>sort</b> spills to disk on its own and uses several CPU cores, so the plain pipeline scales to large datasets. The slowest part is usually just reading the input file from disk.'));
+  L.done();}},
+{part:1,src:'Chapter 10 · Sorting versus in-memory aggregation',pts:1,
+ solve:async L=>{L.$('#ja').click();L.$('#jb').click();},
+ run(L){
+  const J=[['ja','Job A · scans per hub, all year','about 880 million lines · a few dozen distinct hubs',4,'Fits easily: one counter per hub.','var(--ok-strong)'],
+           ['jb','Job B · GPS pings per courier per minute, all year','billions of lines · hundreds of millions of distinct courier-minutes',100,'Out of memory: one counter per courier-minute needs far more than 1 GB.','var(--no)']];
+  let n=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh runs two counting jobs as hash tables on a machine with 1 GB of memory. Run each one.</h1>'+
+   J.map((j,k)=>'<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0"><b>'+j[1]+'</b><div class="small">'+j[2]+'</div><div class="meterrow"><div class="lb">Memory</div><div class="meter"><div id="m'+k+'" style="width:0;transition:width .8s;background:'+j[5]+'"></div></div></div><div class="small" id="r'+k+'"></div><button class="btn" id="'+j[0]+'" style="margin-top:8px">'+L.ic('play')+'Run with a hash table</button></div>').join('')+'<div id="wq"></div>');
+  J.forEach((j,k)=>{L.$('#'+j[0]).onclick=function(){this.remove();const m=L.$('#m'+k);requestAnimationFrame(()=>{m.style.width=j[3]+'%';});
+    setTimeout(()=>{const r=L.$('#r'+k);if(!r)return;r.innerHTML='<b style="color:'+j[5]+'">'+j[4]+'</b>';n++;
+      if(n===2){const q=L.$('#wq');q.innerHTML='<h2 class="sub">Both logs are huge. Why did only job B run out of memory?</h2>';
+        L.mc(q,['It has far more distinct keys to count','It has far more lines in its input','Its log lines are longer and messier'],0,
+         'The hash table needs one entry per distinct key, however many lines mention it. For job B, Linh should sort instead: sort spills sorted chunks to disk and merges them, so it finishes.',
+         'Line count barely matters: a million pings for one key still take one counter. The number of distinct keys sets the working set. For job B, Linh should sort instead, which spills to disk and merges.');}},900);};});}},
+
+/* ---------- PART 3: UNIX PHILOSOPHY ---------- */
+{part:2,src:'Chapter 10 · The Unix Philosophy',run(L){
+  L.h(L.kick('learn','The Unix philosophy')+'<h1 class="q">Why six tiny tools could do a real analysis</h1>'+
+   L.quote('We should have some ways of connecting programs like [a] garden hose','Doug McIlroy, inventor of Unix pipes, 1964 (quoted in chapter 10)')+
+   L.prose('The plumbing idea stuck. In 1978 the Unix designers wrote down a set of principles, here in short:')+
+   L.list([['Do one thing well','For a new job, build a new tool rather than adding features to an old one.'],
+     ['Expect your output to feed another program','One you don’t know yet. Keep output clean, and don’t demand interactive input.'],
+     ['Try it early','Build software to be tried within weeks. Throw away the clumsy parts and rebuild them.'],
+     ['Prefer tools to manual help','Build tools to lighten the work, even if it means a detour and some get thrown away afterwards.']],1)+
+   '<p class="small" style="margin-top:10px">The book points out this sounds a lot like today’s Agile and DevOps ideas. <b>sort</b> is the model: it sorts better than most standard libraries, yet it is barely useful alone. It becomes powerful next to tools like <b>uniq</b>.</p>');
+  L.done();}},
+{part:2,src:'Chapter 10 · The Unix Philosophy',run(L){
+  L.h(L.kick('learn','What makes them fit together')+'<h1 class="q">Three design choices behind Unix tools. Tap each one.</h1>');
+  L.flips(L.card,[
+   ['A uniform interface','Every program reads and writes a <b>file</b>: just an ordered sequence of bytes. Real files, pipes, devices and network sockets all look the same. Most tools treat the bytes as text with one record per line, so awk, sort and uniq agree on what a record is. Splitting a line into fields is looser: '+CODE('{print $7}')+' is not very readable.'],
+   ['Logic separate from wiring','Programs read <b>stdin</b> and write <b>stdout</b> and don’t care where data comes from or goes. Whoever runs them wires them up, so your own tool can join any pipeline. Limits: tools with several inputs or outputs are awkward, and you can’t pipe output into a network connection.'],
+   ['Transparency and experimentation','Inputs are treated as immutable, so you can rerun a command as often as you like. You can stop the pipeline at any stage and look at the output. You can save one stage’s output to a file and rerun only the later stages.'],
+   ['The big limit','Unix tools run on <b>one machine</b>. To go further, you need something like Hadoop.']],
+   'The book argues these ideas carry straight over to large distributed data systems, which is why it starts with Unix.');}},
+{part:2,src:'Chapter 10 · Separation of logic and wiring',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias writes a tool that turns courier IDs into names. It opens <b>/data/scans.log</b> itself and writes to <b>/reports/names.txt</b>. What has Tobias given up?</h1>');
+  L.mc(L.card,['Treating the scan log as immutable input','Easy wiring into other pipelines from the shell','Processing more than one line at a time'],1,
+   'Because the tool picks its own input and output files, nobody can just pipe other data into it or send its output onward. Reading stdin and writing stdout would keep the wiring flexible.',
+   'The tool can still leave its input untouched, and how many lines it handles is unrelated. What it lost is flexible wiring: by hard-coding file paths, it decides its own input and output instead of the person running it.');}},
+{part:2,src:'Chapter 10 · The Unix Philosophy',pts:5,run(L){
+  L.h(L.kick('pr','Name the idea')+'<h1 class="q">Which Unix idea is Linh relying on in each case?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Uniform interface','Logic vs wiring','Experimentation'],[
+   ['Linh pipes one stage’s output into a pager to check it before adding the next step.',2,'Stopping at any stage to look is the transparency that makes experiments easy.'],
+   ['Linh’s tools can read a scan file, another tool’s output or a socket, because all are just bytes.',0,'Everything looks like a file, so anything can plug into anything.'],
+   ['Linh’s postcode-to-zone tool reads stdin and writes stdout, so anyone can drop it into a pipeline.',1,'The tool holds the logic; whoever runs it decides the wiring.'],
+   ['Linh saves stage 3’s output to a file, fixes stage 4, and reruns only stages 4 and 5.',2,'Saved intermediate output lets you restart later stages without rerunning everything.'],
+   ['Every tool in the pipeline splits records on the newline character.',0,'A shared record separator is part of the uniform interface that lets the tools work together.']],
+   'Uniform interface lets tools connect, separating logic from wiring lets you connect them any way you like, and immutable inputs make trying things safe.');}},
+
+/* ---------- PART 4: MAPREDUCE ---------- */
+{part:3,src:'Chapter 10 · MapReduce and Distributed Filesystems',run(L){
+  L.h(L.kick('learn','From one machine to thousands')+'<h1 class="q">MapReduce is like Unix tools spread across many machines</h1>'+
+   L.prose('A MapReduce job is like one Unix process: it takes one or more inputs and produces one or more outputs. It normally doesn’t change its input and has no side effects besides writing its output. Output files are written once, from start to end, never edited later.')+
+   L.prose('Where Unix tools use stdin and stdout, MapReduce reads and writes files on a <b>distributed filesystem</b>. In Hadoop that is '+L.g('hdfs','HDFS')+', an open-source copy of Google’s GFS. Object stores such as Amazon S3 are similar in many ways.')+
+   L.flow([['box','A daemon on each machine','Serves the files on that machine’s disks to other '+L.g('node','nodes')],['map','The NameNode','One central server that tracks which block is on which machine'],['layers','Replicated blocks','Each block is copied to several machines, or protected by erasure coding']])+
+   L.prose('HDFS is <b>shared-nothing</b>: ordinary computers on a normal datacenter network, rather than a special shared-disk storage appliance. It scales to tens of thousands of machines and hundreds of petabytes, and costs much less than the equivalent dedicated storage.'));
+  L.done();}},
+{part:3,src:'Chapter 10 · MapReduce and Distributed Filesystems',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A disk dies on one machine in Linh’s cluster. It held a block of yesterday’s scan file. What now?</h1>');
+  L.mc(L.card,['The scan file is lost until someone restores a backup','The block is still on other machines, so the file is readable','The NameNode keeps a full copy of every block itself'],1,
+   'HDFS keeps each block on several machines precisely so a dead disk or machine doesn’t lose data.',
+   'Blocks are '+L.g('replication','replicated')+' across several machines, so the file is still readable. The NameNode only keeps track of where blocks are; it doesn’t store them.');}},
+{part:3,src:'Chapter 10 · MapReduce Job Execution',run(L){
+  L.h(L.kick('learn','How a MapReduce job works')+'<h1 class="q">The log pipeline, rebuilt as four steps</h1>'+
+   L.flow([['list','1 · Split into records','The input parser, one record per line'],['pointer','2 · Map','Pull out a key and a value: like awk'],['layers','3 · Sort by key','Built in: you never write it'],['check','4 · Reduce','Combine each key’s values: like uniq -c']])+
+   L.prose('You write just two functions. The '+L.g('mapper','mapper')+' is called once for every input record. It may emit any number of key-value pairs, including none, and remembers nothing from one record to the next.')+
+   L.prose('The framework gathers all values with the same key and calls the '+L.g('reducer','reducer')+' once per key, with an iterator over those values. The mapper puts data into a shape that can be sorted; the reducer processes it once sorted.')+
+   L.note('Need a second sort, like ranking pages by count? That takes a <b>second</b> MapReduce job that reads the first one’s output.','info'));
+  L.done();}},
+{part:3,src:'Chapter 10 · MapReduce Job Execution',pts:1,
+ solve:async L=>{for(let k=0;k<3;k++)L.$('#nx').click();},
+ run(L){
+  const B=[['OP-48201 · at hub · Westport North','OP-48202 · at hub · Eastvale Depot','OP-48203 · at hub · Westport North','OP-48204 · out for delivery'],['OP-48205 · at hub · Westport South','OP-48206 · at hub · Westport North','OP-48207 · delivered','OP-48208 · at hub · Eastvale Depot']];
+  const chip=(t,ok)=>'<span class="chip static'+(ok?' ok':'')+'" style="margin:3px">'+t+'</span>';
+  const block=(t,html)=>'<div style="background:var(--soft);border-radius:14px;padding:10px 12px;margin:6px 0"><div class="small"><b>'+t+'</b></div>'+html+'</div>';
+  const S=[
+   ()=>block('Input block 1',B[0].map(x=>chip(x)).join(''))+block('Input block 2',B[1].map(x=>chip(x)).join('')),
+   ()=>block('Mapper 1 output',['Westport North, 1','Eastvale Depot, 1','Westport North, 1'].map(x=>chip(x)).join('')+'<div class="small">OP-48204 isn’t an “at hub” scan, so the mapper emits nothing for it.</div>')+block('Mapper 2 output',['Westport South, 1','Westport North, 1','Eastvale Depot, 1'].map(x=>chip(x)).join('')),
+   ()=>block('Sorted by key',[chip('Eastvale Depot: 1, 1'),chip('Westport North: 1, 1, 1'),chip('Westport South: 1')].join('')+'<div class="small">Same keys now sit together, ready for the reducer.</div>'),
+   ()=>block('Reducer output',[chip('Eastvale Depot: 2',1),chip('Westport North: 3',1),chip('Westport South: 1',1)].join(''))];
+  const LB=['Run the mappers','Sort by key','Run the reducer'];let k=0;
+  L.h(L.kick('pr','Be the framework')+'<h1 class="q">Linh’s job counts “at hub” scans per hub. Step through it.</h1><div id="st"></div><button class="btn pri" id="nx" style="margin-top:10px">'+L.ic('play')+LB[0]+'</button><div id="fq"></div>');
+  L.$('#st').innerHTML=S[0]();
+  L.$('#nx').onclick=function(){if(k>=3)return;k++;L.$('#st').insertAdjacentHTML('beforeend','<div style="text-align:center;opacity:.6">'+L.ic('down')+'</div>'+S[k]());
+    if(k<3){this.innerHTML=L.ic('play')+LB[k];}
+    else{this.remove();const q=L.$('#fq');q.innerHTML='<h2 class="sub">Which parts did Linh actually write code for?</h2>';
+      L.mc(q,['The sort and the reducer','The mapper and the reducer','The mapper and the sort'],1,
+       'Linh wrote “if it’s an at-hub scan, emit (hub, 1)” and “add up the ones.” Parsing records and sorting are done by the framework.',
+       'The sort is built into MapReduce: mapper output is always sorted before it reaches the reducer. Linh only writes the mapper and the reducer.');}};}},
+{part:3,src:'Chapter 10 · Distributed execution of MapReduce',run(L){
+  L.h(L.kick('ex','Step by step')+'<h1 class="q">How one job runs across many machines</h1>');
+  L.beats(L.card,[
+   ['Split','The input is a directory in HDFS. Each file or block is a '+L.g('partition','partition')+' handled by its own <b>map task</b>. Input files are typically hundreds of megabytes each.'],
+   ['Near the data','The scheduler tries to run each map task on a machine that already holds a copy of its block, if that machine has spare CPU and memory. This <b>puts the computation near the data</b> and saves copying input over the network. The framework copies Linh’s code there first.'],
+   ['Pick a reducer','The job author sets how many reduce tasks there are. A <b>hash of the key</b> decides which reduce task gets each key-value pair, so all pairs with the same key end up in the same place.'],
+   ['Sort locally','Each map task splits its output by reducer and writes each part as a sorted file on its own local disk.'],
+   ['Shuffle','When a mapper finishes, the reducers download their part from it. Partitioning, sorting and copying together are called the '+L.g('shuffle','shuffle')+'. Unlike shuffling cards, nothing here is random.'],
+   ['Merge and reduce','Each reduce task merges the sorted files it received, keeping the order, and calls the reducer once per key. Its output is written back to HDFS, with copies on other machines.']],
+   'Your mapper and reducer see one record or one key at a time. The framework does all the work of moving data between machines.');}},
+{part:3,src:'Chapter 10 · Distributed execution of MapReduce',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Bramble & Bolt’s parcels appear in all three input blocks of a job that counts parcels per merchant. Tap the pieces until the sentence explains why one reducer call still sees them all.</h1>');
+  L.sentence(L.card,[['All pairs with the same key','All pairs from the same block','All pairs from the same mapper'],['go to one reduce task,','go to every reduce task,'],['because a hash of the key picks it','because the scheduler picks at random','because mappers run near the data']],[0,0,0],
+   [['Bramble & Bolt sits in all three blocks, so grouping by block would split its parcels up.','Each mapper sees only its own block, so it can’t gather every Bramble & Bolt pair.'],
+    ['Sending every pair everywhere would repeat the work. Each key belongs to exactly one reduce task.'],
+    ['Nothing in the shuffle is random. The same key always goes to the same reduce task.','Running near the data decides where map tasks run, not where their output goes.']],
+   'Hashing the key is deterministic, so every Bramble & Bolt pair from every mapper lands at the same reduce task, sorted next to each other.');}},
+{part:3,src:'Chapter 10 · MapReduce workflows',run(L){
+  L.h(L.kick('learn','Chaining jobs')+'<h1 class="q">Real batch work is a workflow of many jobs</h1>'+
+   L.prose('One MapReduce job can count views per page but can’t also rank them, because ranking needs a second sort. So jobs are chained into <b>workflows</b>: one job’s output becomes the next job’s input.')+
+   L.flow([['play','Job 1','Clean the day’s scans'],['box','A directory','/clean/scans in HDFS'],['play','Job 2','On-time rate per merchant']])+
+   L.prose('Hadoop itself has no special support for this. The chaining is done by directory name: job 1 writes to a directory, and job 2 is set up to read that same directory. That is less like a Unix pipe and more like writing each step to a temporary file.')+
+   L.list([['Only complete output counts','A job’s output is valid only once the whole job succeeds. MapReduce throws away the partial output of a failed job, so the next job must wait.'],
+     ['Schedulers manage it','Tools such as Oozie, Azkaban, Luigi, Airflow and Pinball run jobs in the right order. Workflows of 50 to 100 jobs are common for recommendation systems.'],
+     ['Higher-level tools wire it up','Pig, Hive, Cascading, Crunch and FlumeJava set up multi-stage workflows for you.']],2));
+  L.done();}},
+{part:3,src:'Chapter 10 · MapReduce workflows',pts:1,run(L){
+  L.h(L.kick('pr','What should happen?')+'<h1 class="q">Linh’s job 1 crashes after writing 60% of its files to <b>/clean/scans</b>. Job 2 reads that directory. What should happen next?</h1>');
+  L.mc(L.card,['Job 2 starts on the 60% so the report is partly ready','Job 2 starts and fills the missing 40% from the Parcel DB','Job 2 waits; job 1’s partial output is discarded and it reruns'],2,
+   'A job’s output only counts once the whole job has succeeded. The scheduler holds job 2 until job 1 completes properly.',
+   'Partial output from a failed job is not valid: it is thrown away. Job 2 must wait until job 1 has run again and completed, so its input is the full day.');}},
+{part:3,src:'Chapter 10 · MapReduce Job Execution',pts:6,run(L){
+  L.h(L.kick('pr','Who does what?')+'<h1 class="q">In Linh’s count-per-hub job, who handles each part?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Linh writes it','The framework'],[
+   ['Pull the hub name out of each scan record',0,'That is the mapper, Linh’s code.'],
+   ['Sort all key-value pairs by key',1,'The sort is built in. Mapper output is always sorted before reducers see it.'],
+   ['Decide how many reduce tasks the job uses',0,'The number of reduce tasks is set by the job’s author.'],
+   ['Run each map task on a machine that holds its block',1,'The scheduler places tasks near the data.'],
+   ['Add up the scans for each hub',0,'That is the reducer, Linh’s code.'],
+   ['Copy each mapper’s sorted files to the right reducer',1,'Partitioning, sorting and copying make up the shuffle, which the framework runs.']],
+   'Linh writes the logic for one record and one key. The framework handles the parallelism and the data movement.');}}
+  ]
+});
+</script>
+</body>
+</html>

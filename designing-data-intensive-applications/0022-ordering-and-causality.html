@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ordering and Causality</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0022', title:'Ordering and causality', minutes:20, icon:'list',
+  goals:['Tell causally related events from concurrent ones','Explain why Lamport timestamps respect causality but can’t enforce uniqueness','Use total order broadcast to build a uniqueness check, and say why it equals consensus'],
+  parts:['Why order','Partial and total','Sequence numbers','Total order broadcast'],
+  read:'Read the “Ordering Guarantees” section of chapter 9 of the book for the full Lamport timestamp diagram and the proofs it points to.',
+  glossary:{
+    causality:'Causality: the rule that a cause comes before its effect. If one operation could have known about another (it read it, or built on it), the first happened before the second.',
+    causal:'Causal consistency: a promise that if you can see an operation, you can also see everything that happened before it. Concurrent operations may appear in any order.',
+    totalorder:'Total order: an ordering where you can compare any two items and say which comes first, like numbers.',
+    partialorder:'Partial order: an ordering where some pairs can be compared and others can’t, like sets, or events that happened concurrently.',
+    'logical-clock':'Logical clock: a counter that goes up with each event. It shows which event came before which, not the time of day.',
+    lamport:'Lamport timestamp: a pair (counter, node ID). Every node and client carries the highest counter it has seen, so the numbers always respect causality.',
+    'version-vector':'Version vector: a version number for each replica, kept with each key. It lets the database tell an overwrite from a concurrent write.',
+    tob:'Total order broadcast: a way of sending messages so that none are lost and every node gets them in exactly the same order. Also called atomic broadcast.',
+    smr:'State machine replication: every replica starts in the same state and applies the same writes in the same order, so all replicas end up the same.'
+  },
+  cheatsheet:[
+    '<b>Causality</b> orders events: cause before effect, question before answer. Concurrent events have no causal link.',
+    'Causality is a <b>partial order</b>; linearizability is a <b>total order</b>, and it implies causality.',
+    '<b>Causal consistency</b> is the strongest model that stays fast and available during network faults.',
+    'Per-node counters, clock timestamps and preallocated blocks are unique but <b>not causal</b>.',
+    '<b>Lamport timestamps</b> (counter, node ID): carry the max counter everywhere. Total order consistent with causality, but compact and blind to concurrency.',
+    'A total order isn’t enough for uniqueness: you must also know <b>when the order is final</b>.',
+    '<b>Total order broadcast</b> = no message lost + same order everywhere, fixed at delivery. It’s a log.',
+    'Linearizable compare-and-set, total order broadcast and consensus are <b>equivalent</b>: solve one, solve all.'
+  ],
+  steps:[
+/* ---------- PART 1: WHY ORDER ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A recipient, Mr. Haddad, messages their courier: “Can you leave it at number 12?” The courier replies: “Sure, done!” Signe’s support screen shows the reply first, then the question. What’s wrong?</h1>');
+  L.mc(L.card,['The courier replied far too quickly','The answer appears before its question'],1,
+   'An answer can only exist because someone saw the question. Showing it first breaks cause and effect. That idea is this lesson’s backbone.',
+   'Speed isn’t the issue. The courier could only answer after seeing the question, so showing the answer first breaks cause and effect.');}},
+{part:0,src:'Chapter 9 · Ordering Guarantees',run(L){
+  L.h(L.kick('learn','A thread through the whole book')+'<h1 class="q">“What came first?” keeps coming back</h1>'+
+   L.prose('A linearizable store acts as if every operation takes effect at one instant, so operations fall in one well-defined order. Order has shown up again and again before this:')+
+   L.list([['list','Replication','The '+L.g('leader','leader')+'’s main job in single-leader replication is to set the order of writes in the replication log. Without one leader, concurrent writes can conflict.'],
+     ['lock','Serializability','Transactions must behave as if run in some sequential order, either literally, or by locking or aborting when they clash.'],
+     ['clock','Timestamps and clocks','Chapter 8’s attempts to say which of two writes happened later.']],2)+
+   L.prose('The book shows that ordering, linearizability and consensus are deeply connected. It’s more abstract than most of the book, but it clarifies what systems can and can’t do.'));
+  L.done();}},
+{part:0,src:'Chapter 9 · Ordering and Causality',run(L){
+  L.h(L.kick('learn','Causality: cause before effect')+'<h1 class="q">One big reason order matters: it keeps '+L.g('causality','causality')+'</h1>'+
+   L.prose('A message is sent before it’s received; a question comes before its answer. Earlier chapters met this idea under different names. Tap each card.'));
+  L.flips(L.card,[
+   ['Consistent prefix reads','An observer saw an answer before its question. The answer <i>depends</i> on the question.'],
+   ['Multi-leader overtaking','A write overtook another, so a replica saw an update to a row that didn’t exist yet. Create must come before update.'],
+   ['Happens-before','For two operations, A came before B, B before A, or they were concurrent: neither knew about the other.'],
+   ['Snapshot isolation','A “consistent” snapshot means consistent with causality: if it shows an answer, it shows the question too. Read skew breaks that.'],
+   ['Write skew','A doctor went off call <i>because</i> they saw a colleague on call. The action depended on what they observed.'],
+   ['Two channels','The friend who refreshed after hearing the score, and the photo preview: effects that outran their causes.']],
+   'Same idea every time: an effect must never be visible without its cause.');}},
+{part:0,src:'Chapter 9 · Ordering and Causality',run(L){
+  L.h(L.kick('ex','A causal chain at Otterpost')+'<h1 class="q">One thing leads to another</h1>');
+  L.beats(L.card,[
+   ['1 · Write','Ravi scans parcel P-77: “out for delivery”.'],
+   ['2 · Read, then write','Dispatch reads that scan and books P-77 into the 14:00 slot.'],
+   ['3 · Read, then write','The notification service reads the slot and texts Mr. Haddad.'],
+   ['4 · Read, then write','Mr. Haddad reads the text and asks to leave P-77 at number 12.'],
+   ['The causal order','Each step read something, then wrote something because of it. These chains define what happened before what.'],
+   ['The promise','A system that respects this order is <b>causally consistent</b>: any replica that shows step 4 must also show steps 1 to 3. Snapshot isolation gives you this.']],
+   'If you can see an effect, you must be able to see everything that caused it.');}},
+{part:0,src:'Chapter 9 · Ordering and Causality',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which pair of Otterpost events is causally related?</h1>');
+  L.mc(L.card,['A merchant books parcel P-90, then it gets scanned','A scan in Westport and an unrelated one in Eastvale','Two couriers each start their shifts at 07:00'],0,
+   'The pickup scan is of a parcel that only exists because it was booked. The scan depends on the booking.',
+   'Same time doesn’t mean related. Unrelated scans and two couriers starting shifts never knew about each other: they’re concurrent. A parcel must be booked before it can be scanned.');}},
+{part:0,src:'Chapter 9 · Ordering and Causality',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Causal or concurrent?',['One happened before the other','Concurrent'],[
+   ['Signe reads a complaint about P-77, then adds a refund note.',0,'The note was written because of the complaint.'],
+   ['Two couriers in different zones scan different parcels, unaware of each other.',1,'Neither knew about the other: no causal link.'],
+   ['Two support agents edit the same parcel’s note at once, neither seeing the other’s edit.',1,'Same record, but neither saw the other. That’s what concurrent means.'],
+   ['Mrs. Okoro sees “Delivered”, then rates the delivery five stars.',0,'They rated because they saw the delivery: cause, then effect.'],
+   ['Kwame’s Eastvale replica replays a write that it learned from Westport.',0,'The replica could only apply it after Westport’s write existed.']]);}},
+
+/* ---------- PART 2: PARTIAL AND TOTAL ---------- */
+{part:1,src:'Chapter 9 · The causal order is not a total order',run(L){
+  L.h(L.kick('learn','Two kinds of order')+'<h1 class="q">Can you always say which came first?</h1>'+
+   L.lanes([['list','Total order','Any two items can be compared. Numbers: 13 is greater than 5, always.',1],
+            ['layers','Partial order','Some pairs can’t be compared. Is the set {a, b} bigger than {b, c}? Neither contains the other.',2]])+
+   L.prose('<b>Linearizability</b> gives a '+L.g('totalorder','total order')+': one copy, one timeline, so any two operations have a first and a second. There’s no concurrency in what clients can observe.')+
+   L.prose('<b>Causality</b> gives a '+L.g('partialorder','partial order')+': related events are ordered, concurrent ones aren’t. The timeline branches and merges, much like a Git history where people commit on separate branches and later merge.'));
+  L.done();}},
+{part:1,src:'Chapter 9 · Linearizability is stronger than causal consistency',run(L){
+  L.h(L.kick('learn','The middle ground')+'<h1 class="q">Linearizability implies causality, but you can get causality without it</h1>'+
+   L.prose('Any linearizable system keeps causality automatically, even across several channels like the photo storage and the queue. That’s why it’s easy to understand. But it costs speed and availability, especially across distant datacenters.')+
+   L.tiers([['shield','Linearizable','Total order. Preserves causality. Slow over distance, and unavailable to replicas cut off during a partition.'],
+            ['cycle','Causally consistent','Partial order. The strongest model that doesn’t slow down for network delays and stays available during network failures.','CAP doesn’t apply here.',true,'Sweet spot'],
+            ['clock','Eventually consistent','Only promises replicas converge some day.']])+
+   '<p class="small" style="margin-top:10px">Many systems that seem to need linearizability really need only causal consistency. The research is recent, so few production systems offer it yet.</p>');
+  L.done();}},
+{part:1,src:'Chapter 9 · The causal order is not a total order',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two Otterpost operations were concurrent. In a linearizable store, how are they ordered?</h1>');
+  L.mc(L.card,['They stay unordered, like concurrent events','Only if one caused the other','They’re ordered one way or the other'],2,
+   'A linearizable store acts as one copy on one timeline, so every pair gets a first and a second, even if they started out concurrent.',
+   'That describes causality, a partial order. A linearizable store puts every operation on a single timeline, so any two are ordered.');}},
+{part:1,src:'Chapter 9 · Capturing causal dependencies',run(L){
+  L.h(L.kick('learn','How a replica keeps causality')+'<h1 class="q">Don’t apply an effect before its causes</h1>'+
+   L.prose('Concurrent operations may be applied in any order. But if A happened before B, every replica must apply A first. When an operation arrives early, the replica <b>waits</b> until everything before it has been applied.')+
+   L.prose('To know what came before what, the system tracks each node’s “knowledge”, a bit like a fraud trial: did the manager know about X when they decided Y?')+
+   L.list([['Track the whole database','Detecting concurrent writes to one key used '+L.g('version-vector','version vectors')+'. Causal consistency must track dependencies across <i>every</i> key, so version vectors are generalised.'],
+     ['Know what was read','The database needs to know which version the app read. That’s why a write carries back the version number it read, and why SSI checks at commit whether what a transaction read is still current.']],3));
+  L.done();}},
+{part:1,src:'Chapter 9 · Capturing causal dependencies',pts:1,
+ solve:async L=>{for(const a of [1,0,0,0]){const b=L.$('#wr'+a);if(b)b.click();await L.sleep(5);}},
+ run(L){
+  const OPS={a:'Create parcel P-77',b:'Put P-77 on Ravi’s route',c:'Add Ravi’s note to P-77',d:'Create parcel P-80'};
+  const NEED={a:[],b:['a'],c:['b'],d:[]};
+  const ARR=['c','d','a','b'];
+  let k=0,miss=false;const applied=[],held=[];
+  L.h(L.kick('pr','The waiting room')+'<h1 class="q">The Eastvale replica gets four operations out of order. For each one, apply it now or hold it?</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:6px 0 10px"><div class="small" style="margin-bottom:6px">The route needs the parcel. The note needs the route. P-80 needs nothing.</div><div id="ap"></div><div id="hd"></div></div>'+
+   '<h2 class="sub" id="cur"></h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" id="wr0">'+L.ic('check')+'Apply now</button><button class="btn" id="wr1">'+L.ic('clock')+'Hold it</button></div><div id="wf"></div>');
+  const ready=o=>NEED[o].every(x=>applied.includes(x));
+  const draw=()=>{L.$('#ap').innerHTML='<b class="small">Applied:</b> '+(applied.length?applied.map(o=>'<span class="chip static ok">'+OPS[o]+'</span>').join(''):'<span class="small">nothing yet</span>');
+    L.$('#hd').innerHTML='<b class="small">Waiting:</b> '+(held.length?held.map(o=>'<span class="chip static">'+L.ic('clock')+OPS[o]+'</span>').join(''):'<span class="small">nothing</span>');
+    L.$('#cur').innerHTML=k<ARR.length?'Arrives: '+OPS[ARR[k]]:'All four have arrived';};
+  const flush=()=>{let moved=true;while(moved){moved=false;for(let j=0;j<held.length;j++){if(ready(held[j])){applied.push(held.splice(j,1)[0]);moved=true;break;}}}};
+  draw();
+  [0,1].forEach(a=>{L.$('#wr'+a).onclick=()=>{if(k>=ARR.length)return;const o=ARR[k],right=ready(o)?0:1;L.$('#wf').innerHTML='';
+    if(a!==right){miss=true;L.fb(L.$('#wf'),right===1?'<b>Not yet.</b> “'+OPS[o]+'” depends on something this replica hasn’t applied. Applying it now would show an effect without its cause.':'<b>No need to wait.</b> Everything “'+OPS[o]+'” depends on is already here (or it depends on nothing), so it can go in now.','no');return;}
+    if(right===0){applied.push(o);flush();}else held.push(o);k++;draw();
+    if(k===ARR.length){L.$('#wr0').remove();L.$('#wr1').remove();L.award(!miss);
+      L.sheet(miss?'info':'ok',miss?'All applied, in causal order':'Spot on','The note waited until the route existed, and the route waited for the parcel. P-80 had no causes, so it never waited. Concurrent operations can go in any order; causal ones can’t.');L.done();}};});}},
+
+/* ---------- PART 3: SEQUENCE NUMBERS ---------- */
+{part:2,src:'Chapter 9 · Sequence Number Ordering',run(L){
+  L.h(L.kick('learn','A cheaper way to keep order')+'<h1 class="q">Number every operation instead of tracking every dependency</h1>'+
+   L.prose('Tracking all dependencies gets impractical: apps read lots of data before writing, and it’s unclear which reads the write depended on. Instead, give each operation a <b>sequence number</b> from a '+L.g('logical-clock','logical clock')+': a counter, not the time of day.')+
+   L.prose('Sequence numbers are small and form a total order. We can make that order <b>consistent with causality</b>: if A happened before B, A gets the lower number. Concurrent operations may be ordered either way.')+
+   L.flow([['person','Single leader','Adds 1 to a counter for each write','',1],['list','Replication log','Writes numbered 1, 2, 3…','',2],['check','Followers','Apply in that order: always causally consistent, even when lagging','',3]]));
+  L.done();}},
+{part:2,src:'Chapter 9 · Noncausal sequence number generators',run(L){
+  L.h(L.kick('learn','Without a single leader')+'<h1 class="q">Three popular ways to make unique numbers, and their shared flaw</h1>'+
+   L.prose('With several leaders, leaderless replication, or a '+L.g('partition','partitioned')+' database, there’s no single counter. Three common tricks scale better than one leader:')+
+   L.list([['Each node has its own numbers','E.g. one node uses odd numbers, the other even, or a few bits hold the node’s ID. <b>Flaw:</b> a busy node’s counter races ahead of a quiet one’s.'],
+     ['Time-of-day timestamps','High-resolution clock readings, as used by last write wins. <b>Flaw:</b> clock skew can give a later operation a lower timestamp.'],
+     ['Preallocated blocks','Node A takes 1–1,000, node B takes 1,001–2,000. <b>Flaw:</b> a later operation can get a number from the lower block.']],4)+
+   L.note('All three give unique, roughly increasing numbers. None of them is <b>consistent with causality</b>: they don’t capture order across nodes.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 9 · Noncausal sequence number generators',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias numbers scan events: Westport uses odd numbers, Eastvale even. Westport is far busier. Ravi’s Eastvale scan happens after a Westport scan they saw. What can go wrong?</h1>');
+  L.mc(L.card,['Two scans could get the same number','His later scan may get a lower number','Nothing; the numbers stay causal'],1,
+   'Westport’s counter has raced ahead, so Eastvale’s next even number can be lower, even though Ravi’s scan came later.',
+   'Odd and even never collide, so the numbers are unique. But they aren’t causal: busy Westport’s counter runs ahead, so Ravi’s later scan can get a lower number.');}},
+{part:2,src:'Chapter 9 · Lamport timestamps',run(L){
+  L.h(L.kick('learn','Lamport timestamps')+'<h1 class="q">A simple fix from 1978: carry the biggest number you’ve seen</h1>'+
+   L.prose('Leslie Lamport proposed this in one of the most cited papers in distributed systems. Each node has an ID and a counter of operations it has processed. A '+L.g('lamport','Lamport timestamp')+' is the pair <b>(counter, node ID)</b>.')+
+   L.list([['Compare','Higher counter wins. Equal counters? The higher node ID wins. So any two timestamps can be ordered.'],
+     ['The key idea','Every node <i>and every client</i> remembers the highest counter it has seen, and sends it with every request.'],
+     ['Catch up','A node that receives a higher counter than its own jumps straight to it. Its next operation gets that number plus one.']],1)+
+   L.prose('Every causal step carries the number forward, so effects always get bigger timestamps than their causes.'));
+  L.done();}},
+{part:2,src:'Chapter 9 · Lamport timestamps',pts:3,
+ solve:async L=>{for(const q of [1,0,1]){const b=L.$('#lq').children[q];if(b)b.click();await L.sleep(5);const nx=L.$('#lf .btn');if(nx)nx.click();await L.sleep(5);}},
+ run(L){
+  const Q=[
+   {s:{w:1,e:5,c:5},t:'Busy Eastvale (node 2) was at 4. Tobias’s courier app sent it a scan, stamped <b>(5, 2)</b>. The reply told the app “max 5”.',
+    q:'The app now sends a scan to quiet Westport (node 1, counter 1), carrying max 5. Which timestamp does Westport give it?',o:['(2, 1)','(6, 1)','(5, 1)'],r:1,
+    y:'Westport jumps from 1 to 5, the highest it has heard of, then adds one: <b>(6, 1)</b>. The later scan gets the bigger number.',
+    n:'Westport must first jump to the max it was sent (5), then add one for the new operation: (6, 1). Without the jump it would look older than its cause.'},
+   {s:{w:6,e:6,c:6},t:'Meanwhile Eastvale handles a scan from another courier, who never talked to Westport. It is stamped <b>(6, 2)</b>.',
+    q:'Which comes first in the total order: (6, 1) or (6, 2)?',o:['(6, 1) comes first','(6, 2) comes first','They can’t be compared'],r:0,
+    y:'Equal counters, so the node ID breaks the tie: node 1 is lower, so (6, 1) comes first.',
+    n:'Lamport timestamps can always be compared. With equal counters, the lower node ID comes first, so (6, 1) is first.'},
+   {s:{w:6,e:6,c:6},t:'So (6, 1) sits before (6, 2) in the order.',
+    q:'Does that mean Westport’s scan caused Eastvale’s?',o:['Yes, a lower stamp means cause','No, they may be concurrent'],r:1,
+    y:'Right. The two scans were concurrent; the tie-break just picked an order. Lamport timestamps can’t tell concurrent from causal. '+L.g('version-vector','Version vectors')+' can, but they’re bigger.',
+    n:'The other courier never heard of Westport’s scan, so they’re concurrent. Lamport timestamps force an order anyway, and you can’t tell concurrent from causal by looking at them.'}];
+  let k=0,first=true,got=false;
+  L.h(L.kick('pr','Run the counters')+'<h1 class="q">Follow the counters as messages move between nodes.</h1>'+
+   '<div id="ls" style="display:flex;gap:8px;margin:6px 0 10px"></div><div class="fb info" id="lt"></div><h2 class="sub" id="lqq"></h2><div id="lq" style="display:flex;flex-wrap:wrap"></div><div id="lf"></div>');
+  const box=(n,v)=>'<div style="flex:1;text-align:center;border-radius:14px;padding:8px 4px;border:2px solid var(--line);background:var(--card)"><div class="small" style="line-height:1.3">'+n+'</div><div class="week" style="margin:2px 0 0;font-size:24px">'+v+'</div></div>';
+  const show=()=>{const s=Q[k];L.$('#ls').innerHTML=box('Westport<br>node 1',s.s.w)+box('Eastvale<br>node 2',s.s.e)+box('Courier app<br>max seen',s.s.c);
+    L.$('#lt').innerHTML=s.t;L.$('#lqq').textContent=s.q;L.$('#lq').innerHTML='';L.$('#lf').innerHTML='';first=true;got=false;
+    s.o.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;
+      b.onclick=()=>{if(got)return;if(j===s.r){got=true;b.classList.add('ok');if(first)L.award(true);L.$('#lf').innerHTML='';L.fb(L.$('#lf'),s.y,'ok');
+          if(k<Q.length-1){const nx=document.createElement('button');nx.className='btn pri';nx.style.marginTop='10px';nx.innerHTML='Next '+L.ic('arrow');nx.onclick=()=>{k++;show();};L.$('#lf').appendChild(nx);}
+          else{L.sheet('info','The pattern','Lamport timestamps give one total order that respects causality, at the cost of a few bytes. But that order can’t show which events were really concurrent.');L.done();}}
+        else{if(first)L.award(false);first=false;b.classList.add('no');L.$('#lf').innerHTML='';L.fb(L.$('#lf'),s.n,'no');}};
+      L.$('#lq').appendChild(b);});};
+  show();}},
+{part:2,src:'Chapter 9 · Timestamp ordering is not sufficient',run(L){
+  L.h(L.kick('learn','The limit of timestamps')+'<h1 class="q">A total order isn’t enough to say “yes” right now</h1>'+
+   L.prose('Two merchants book parcels at the same moment, one via Westport and one via Eastvale, and both nodes pick tracking code OP-7Q4K. One booking must succeed and one must fail.')+
+   L.prose('Lamport timestamps look like the answer: the lower timestamp wins. That works <b>after the fact</b>, once you’ve collected every operation. But Eastvale must answer its merchant <b>now</b>, and it can’t know whether Westport is claiming the same code with a lower timestamp at this very moment.')+
+   L.note('To be sure, Eastvale would have to ask every other node. If one node is down or unreachable, bookings grind to a halt. That’s not fault-tolerant.','alert')+
+   L.prose('The missing piece: you need to know <b>when the order is final</b>, meaning nobody can still slip an earlier claim in ahead of yours.'));
+  L.done();}},
+{part:2,src:'Chapter 9 · Timestamp ordering is not sufficient',pts:1,run(L){
+  L.h(L.kick('pr','Review Tobias’s design')+'<h1 class="q">Tobias proposes: “Each node checks its own claims and Lamport timestamps, and answers the merchant at once.” What breaks?</h1>');
+  L.mc(L.card,['The node can’t know an earlier claim isn’t still coming','Lamport timestamps can collide, giving two winners','Lamport timestamps ignore causality between bookings'],0,
+   'The order only becomes final once you’ve seen every node’s operations. Answering at once means guessing.',
+   'Lamport timestamps never collide (the node ID breaks ties) and they do respect causality. The flaw is timing: an earlier claim from another node may still be on its way.');}},
+
+/* ---------- PART 4: TOTAL ORDER BROADCAST ---------- */
+{part:3,src:'Chapter 9 · Total Order Broadcast',run(L){
+  L.h(L.kick('learn','Total order broadcast')+'<h1 class="q">Every node gets every message, in the same order</h1>'+
+   L.prose('On one CPU core, the order is just the order things ran. A single leader gives a total order the same way. The hard parts are scaling past one leader and failing over when it dies. The general problem is called '+L.g('tob','total order broadcast')+' (or atomic broadcast, a confusing name unrelated to ACID).')+
+   L.list([['arrow','Reliable delivery','No message is lost: if one node gets it, every node gets it.'],
+     ['list','Totally ordered delivery','Every node gets the messages in the same order.']],2)+
+   L.prose('Both must hold even when nodes or the network fail. During an outage messages wait; they’re retried and delivered, still in order, once it’s fixed.')+
+   L.note('<b>Scope.</b> Partitioned databases with one leader per partition usually order writes <i>within</i> each partition only, so they can’t promise things like consistent snapshots or foreign keys across partitions. Ordering across all partitions takes extra coordination.','info'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Using total order broadcast',run(L){
+  L.h(L.kick('learn','What it gives you')+'<h1 class="q">It’s a log that every node reads the same way</h1>'+
+   L.prose('Delivering a message is like appending to a '+L.g('log','log')+'. ZooKeeper and etcd actually implement total order broadcast, a hint of its link to consensus.')+
+   L.list([['layers','Replication','If each message is a write and every replica applies them in the same order, replicas stay consistent. This is '+L.g('smr','state machine replication')+'.'],
+     ['lock','Serializable transactions','If each message is a deterministic stored procedure, every node runs them in the same order.'],
+     ['shield','Fencing tokens','Each lock request is a message; its position in the log only grows, so it works as a fencing token. ZooKeeper calls it the zxid.']],1)+
+   L.note('The order is <b>fixed at delivery</b>. No node may slip a message in ahead of ones already delivered. That makes it stronger than timestamp ordering.','check'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Implementing linearizable storage using total order broadcast',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Unique tracking codes, built on the log</h1>');
+  L.beats(L.card,[
+   ['The idea','Picture one register per tracking code, starting empty. Claiming a code is a compare-and-set from “empty” to a parcel ID. The log can provide that.'],
+   ['1 · Append','Eastvale appends a message to the log: “claim OP-7Q4K for parcel P-77”.'],
+   ['2 · Wait','It reads the log until its own message is delivered back to it.'],
+   ['3 · Check','It looks for the <b>first</b> claim for OP-7Q4K. If that’s its own, it commits and tells the merchant yes. If Westport’s claim came first, it aborts.'],
+   ['Why it works','Every node sees the log in the same order, so all agree which claim came first. The order is final once delivered.'],
+   ['The catch: reads','Writes are now linearizable, but a read from a store fed by the log may lag. Fixes: put the read through the log too, or ask for the latest log position and wait until you’ve caught up, or read from a replica updated synchronously.']],
+   'Total order broadcast plus “first claim wins” gives you a uniqueness check that every node agrees on.');}},
+{part:3,src:'Chapter 9 · Implementing linearizable storage using total order broadcast',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Put the steps for claiming a tracking code in order.</h1>');
+  L.order(L.card,['Append a claim for OP-7Q4K to the log','Wait for your own claim to be delivered back','Find the first claim for OP-7Q4K in the log','Commit if that claim is yours; otherwise abort'],
+   'You can only judge “first” after your own message has come back, because by then everything ahead of it is fixed.');}},
+{part:3,src:'Chapter 9 · Implementing total order broadcast using linearizable storage',run(L){
+  L.h(L.kick('learn','And the other way round')+'<h1 class="q">Linearizable storage can build total order broadcast, too</h1>'+
+   L.prose('Take a linearizable register holding a number, with an atomic <b>increment-and-get</b>. For each message, get the next number, attach it, and send the message to every node. Nodes deliver messages in number order.')+
+   L.lanes([['list','Total order broadcast','Numbers have <b>no gaps</b>. Delivered 4 and message 6 arrives? Wait for 5.',2],
+            ['clock','Lamport timestamps','Numbers have gaps. Seeing 6 tells you nothing about whether a 5 exists.',4]])+
+   L.prose('The hard part is that register. On one node it’s easy, until that node fails or gets cut off. Think hard enough about it and you end up with a consensus algorithm.')+
+   L.note('It can be proved: a linearizable compare-and-set (or increment-and-get) register, total order broadcast and '+L.g('consensus','consensus')+' are <b>equivalent</b>. Solve one and you can turn it into a solution for the others.','bulb'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Total Order Broadcast',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which tool fits?',['Lamport timestamps','Total order broadcast'],[
+   ['A node has delivered message 4. Message 6 arrives, and it knows to wait for 5.',1,'Gap-free numbering is the key difference from timestamps.'],
+   ['Compact (counter, node ID) pairs that respect causality, with no coordination.',0,'That’s exactly a Lamport timestamp.'],
+   ['Eastvale can confirm a tracking code as soon as its own claim comes back.',1,'Once delivered, the order ahead of you is fixed.'],
+   ['The final order appears only after you’ve collected every node’s operations.',0,'That’s why timestamps can’t answer a uniqueness question on the spot.'],
+   ['Every Parcel DB replica applies the same writes in the same order.',1,'State machine replication rides on total order broadcast.']]);}},
+{part:3,src:'Chapter 9 · Using total order broadcast',pts:1,run(L){
+  L.h(L.kick('pr','Kwame’s fencing tokens')+'<h1 class="q">Kwame wants fencing tokens for the route planner’s region lock, so a paused old planner can’t overwrite routes. Where should the token come from?</h1>');
+  L.mc(L.card,['A random ID generated for each lock request','The planner machine’s time-of-day clock','The lock request’s position in the log'],2,
+   'Log positions only grow and every node sees the same order, so storage can reject a write carrying an older token.',
+   'A random ID gives an order that says nothing about which request came first, and clocks can be skewed or jump. A log position only grows, which is what a fencing token needs.');}}
+  ]
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a Unique ID Generator</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* 64-bit snowflake bar: sizes [sign, timestamp, datacenter, machine, sequence] */
+const SEGC=['h4','h1','h2','h3','h4'];
+function bar(sz){sz=sz||[1,41,5,5,12];return '<div style="display:flex;gap:2px;margin:14px 0 6px;font-size:12px;font-weight:700">'+sz.map((b,j)=>'<div style="flex:'+b+' 1 0;min-width:'+(j===0?18:30)+'px;background:var(--'+SEGC[j]+'-bg);color:var(--'+SEGC[j]+');border-radius:8px;padding:9px 0;text-align:center">'+b+'</div>').join('')+'</div><p class="small" style="margin:0 0 8px;text-align:right">bits, left to right · total '+sz.reduce((a,b)=>a+b,0)+'</p>';}
+function legend(rows){return rows.map((r,j)=>'<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px;line-height:1.45"><span style="flex:none;width:14px;height:14px;border-radius:4px;margin-top:4px;background:var(--'+SEGC[j]+')"></span><div><b>'+r[0]+'</b> · '+r[1]+'</div></div>').join('');}
+const yrs=b=>Math.pow(2,b)/1000/3600/24/365;
+
+Course.lesson({
+  id:'0001', title:'Design a unique ID generator', minutes:20, icon:'layers',
+  goals:['Explain why one database counter breaks once data is split','Weigh multi-master, UUID, ticket server and snowflake against the requirements','Lay out a 64-bit snowflake ID and do its numbers out loud'],
+  parts:['Scope it','Four options','Snowflake','Wrap up'],
+  read:'Read chapter 7 of the book for its figures: the multi-master and UUID diagrams, the 64-bit layout and the timestamp decoding example.',
+  glossary:{
+    'auto-increment':'auto_increment: a database setting that gives each new row the next number (1, 2, 3 …) as its ID.',
+    bit:'Bit: a single 0 or 1. A 64-bit number is 64 of them in a row. n bits can count 2ⁿ different values, so 5 bits give 32.',
+    uuid:'UUID (universally unique identifier): a 128-bit ID, written with letters and digits, that any server can make on its own with almost no chance of a repeat.',
+    epoch:'Epoch: the starting moment a timestamp counts from. A snowflake timestamp is the number of milliseconds since its chosen epoch.',
+    ntp:'NTP (Network Time Protocol): the most popular way to keep the clocks of many servers in step with each other.'
+  },
+  cheatsheet:[
+    'One database’s <b>auto_increment</b> can’t serve a distributed system: one server is too small, and separate counters collide.',
+    'Requirements: <b>unique, numbers only, fits 64 bits, ordered by date, 10,000+ per second</b>.',
+    '<b>Multi-master</b> (each database steps by k): hard across data centers, not time-ordered, awkward when servers are added or removed.',
+    '<b>UUID</b>: no coordination, but 128 bits, not time-ordered, may hold letters. <b>Ticket server</b>: simple and numeric, but a single point of failure.',
+    '<b>Snowflake</b>: 1 sign + 41 timestamp + 5 datacenter + 5 machine + 12 sequence = 64 bits.',
+    '41 bits ≈ <b>69 years</b> (an epoch near today delays the overflow). 12 bits = <b>4,096 IDs per millisecond</b> per machine.',
+    'Wrap-up: clock synchronization (NTP), section length tuning, high availability.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE IT ---------- */
+{part:0,src:'Warm-up',pts:1,
+ solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();},
+ run(L){
+  let p=null;const O=['About 1,000','Just 2','Never'];
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird splits its projects table across two databases, Shard A and Shard B. Each still numbers new rows with its own counter, starting at 1. How many new projects until two share an ID?</h1><div id="po"></div>'+
+   '<div id="sim" hidden>'+L.lanes([['box','Shard A','<div id="sa">Counter: 0</div>',1],['box','Shard B','<div id="sb">Counter: 0</div>',2]])+
+   '<button class="btn pri" id="run" style="margin-top:14px">'+L.ic('play')+'Save one project on each</button><div id="mg"></div></div>');
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#run').onclick=function(){this.remove();
+    L.$('#sa').innerHTML='Counter: 1<div class="res"><b>ID 1</b> · Mae’s sock pattern</div>';
+    L.$('#sb').innerHTML='Counter: 1<div class="res"><b>ID 1</b> · Rafi’s walnut bowl</div>';
+    L.fb(L.$('#mg'),'<b>Clash.</b> Two different projects now share ID 1. A comment or a link that says “project 1” could point at either one.','no');
+    L.award(p===1);
+    L.sheet(p===1?'ok':'no',p===1?'You called it':'It takes just 2','Each counter only knows its own database, so both hand out 1 first. This lesson is about making IDs that stay unique across many servers.');L.done();};}},
+{part:0,src:'Chapter 7 · Design a unique ID generator in distributed systems',run(L){
+  L.h(L.kick('learn','The problem')+'<h1 class="q">Why one counter stops working</h1>'+
+   L.prose('Most databases can number new rows for you with '+L.g('auto-increment','auto_increment')+': 1, 2, 3 and so on. With one database, that’s all you need.')+
+   L.prose('The book’s point: in a <b>distributed system</b>, where many servers share the work, this breaks down. One database server isn’t big enough, and handing out unique IDs across several databases without slowing everything down is hard.')+
+   '<h2 class="sub">How every chapter in this course runs</h2>'+
+   L.flow([['chat','Step 1','Scope it','ask, then estimate'],['map','Step 2','High-level design','get buy-in'],['eye','Step 3','Deep dive','a few key parts'],['check','Step 4','Wrap up','extra talking points']])+
+   '<p class="small">This is the book’s '+L.g('four-step','four-step framework')+'. At Kitebird, staff engineer Tamsin Rhee runs every design review the same way and plays the interviewer. You lead the design.</p>');
+  L.done();}},
+{part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','The book’s interview')+'<h1 class="q">Five questions, five requirements</h1>'+
+   L.prose('The book’s candidate doesn’t start drawing. They ask the interviewer short questions first, and each answer becomes a requirement:')+
+   L.list([['Unique','What must IDs be like? Unique, and sortable.'],
+     ['Ordered by date','Does each new ID go up by 1? Not necessarily, but IDs grow with time: one made in the evening is bigger than one made that morning.'],
+     ['Numbers only','Only digits? Yes.'],
+     ['Fits in 64 bits','How long can an ID be? It must fit in 64 '+L.g('bit','bits')+'.'],
+     ['Over 10,000 a second','What scale? The system must make more than 10,000 IDs every second.']],1)+
+   '<p class="small" style="margin-top:10px">The book’s advice: clear up anything vague before you design anything.</p>');
+  L.done();}},
+{part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Kite IDs: you ask before you draw</h1>');
+  L.beats(L.card,[
+   ['The opening','Tamsin starts the review: “What are we building, and how big is it?” Obi, the on-call lead, reads the incident report: after the shard split, project 48,211 existed on <b>both</b> shards, and comments landed on the wrong one.'],
+   ['Guarantees','You ask what the IDs must promise. Tamsin: never repeat, and newer rows get bigger IDs so “newest first” lists still work.'],
+   ['Format','You ask about format. Hana points out every table stores IDs in a 64-bit integer column, digits only. Anything longer means changing every table and app.'],
+   ['Scale','You ask about volume. Dario says about 4,000 new projects, comments and likes a second at peak, and growing fast. Tamsin: plan for over 10,000.'],
+   ['Agreed','You read the list back: unique, numbers only, fits 64 bits, ordered by time, 10,000+ a second. Tamsin nods. Now you can design.']],
+   'Kitebird lands on the same five requirements as the book. Settle them first: every option in the next part gets judged against them.');}},
+{part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Lior suggests IDs like “kb-7f3a-proj”. Which requirement do they break?</h1>');
+  L.mc(L.card,['Numbers only','Ordered by date','Over 10,000 a second'],0,
+   'Letters and dashes aren’t digits. The apps expect a plain number.',
+   'Nothing says these IDs can’t be made quickly or in time order. The obvious break is format: letters and dashes aren’t digits.');}},
+{part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which requirement is this?',['Unique','Numbers only','Fits in 64 bits','Ordered by date','Over 10,000 a second'],[
+   ['Obi: “Two rows must never share an ID, on any shard, ever.”',0,'Never repeating is the uniqueness requirement.'],
+   ['Dario: “A comment posted at 9 p.m. should sort after one posted at 8 a.m.”',3,'Later rows get bigger IDs: ordered by date.'],
+   ['Hana: “The ID column is a BIGINT: eight bytes, no more.”',2,'Eight bytes are 64 bits, so the ID must fit in 64 bits.'],
+   ['Tamsin: “During a challenge week we could see 10,000 new rows a second.”',4,'That’s the scale requirement.'],
+   ['Hana: “Our Android app reads IDs as integers. No letters.”',1,'Integers only means numbers only.']]);}},
+
+/* ---------- PART 2: FOUR OPTIONS ---------- */
+{part:1,src:'Chapter 7 · Multi-master replication',run(L){
+  const row=(n,a)=>'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0"><b style="width:76px;font-size:14px">'+n+'</b>'+a.map(x=>'<span class="chip static" style="margin:0">'+x+'</span>').join('')+'</div>';
+  L.h(L.kick('learn','Option 1')+'<h1 class="q">Multi-master: each database counts by k</h1>'+
+   L.prose('Keep every database’s auto_increment, but instead of adding 1, each adds <b>k</b>, the number of database servers in use. With two servers:')+
+   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:0 0 14px">'+row('Server 1',[1,3,5,7])+row('Server 2',[2,4,6,8])+'</div>'+
+   L.prose('Servers never hand out the same number, and IDs scale with the number of servers. But the book lists three drawbacks:')+
+   L.list([['Many data centers','Hard to scale across several data centers.'],['Time order','IDs don’t go up with time across servers.'],['Changing servers','It doesn’t scale well when a server is added or removed.']],3));
+  L.done();}},
+{part:1,src:'Chapter 7 · Multi-master replication',pts:1,
+ solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();},
+ run(L){
+  let p=null;const O=['Yes, newest is biggest','No, it can be smaller'];
+  const E=[['9:00','A',1],['9:01','A',3],['9:02','A',5],['9:03','A',7],['9:04','B',2]];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Kitebird’s two shards step by 2. Shard A is busy; Shard B is quiet. Will the newest row have the biggest ID?</h1><div id="po"></div>'+
+   '<div id="sim" hidden><button class="btn pri" id="run" style="margin:6px 0 8px">'+L.ic('play')+'Run five minutes</button><div id="tl"></div></div>');
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#run').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}const e=E[k],last=k===E.length-1;
+      tl.insertAdjacentHTML('beforeend','<div class="row" style="padding:8px 0"><span class="small" style="width:44px">'+e[0]+'</span><span class="chip static'+(last?'':' ok')+'" style="margin:0">Shard '+e[1]+'</span><b style="'+(last?'color:var(--no)':'')+'">ID '+e[2]+(last?' · newest row':'')+'</b></div>');
+      k++;if(k>=E.length){clearInterval(t);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'Right, it can be smaller':'The newest ID was the smallest','The row made at 9:04 got ID 2, smaller than four older rows. Sorting by ID no longer sorts by time, so “ordered by date” fails: IDs don’t go up with time across servers.');L.done();}},320);};}},
+{part:1,src:'Chapter 7 · UUID and Ticket Server',run(L){
+  L.h(L.kick('learn','Options 2 and 3')+'<h1 class="q">No coordination at all, or one central counter</h1>'+
+   L.lanes([['layers','UUID','<p style="margin:0 0 8px">A 128-bit '+L.g('uuid','UUID')+' that each web server makes by itself, for example <span style="word-break:break-all;font-size:13px">3f6c1a2e-8b4d-4e71-9c0a-5d2e7b14f9a3</span>.</p><b>Pros:</b> simple; no coordination, so no sync problems; scales with the web servers.<br><b>Cons:</b> 128 bits, not 64; not ordered by time; can contain letters.',2],
+            ['box','Ticket server','<p style="margin:0 0 8px">One central database whose auto_increment hands out every ID. Flickr built ticket servers this way.</p><b>Pros:</b> numeric IDs; easy to build; fine for small and medium apps.<br><b>Cons:</b> a '+L.g('spof','single point of failure')+'. More ticket servers bring data-sync problems.',3]])+
+   '<p class="small" style="margin-top:12px">How rare are UUID repeats? The book cites Wikipedia: at a billion UUIDs a second, it would take about 100 years to reach even odds of a single duplicate.</p>');
+  L.done();}},
+{part:1,src:'Chapter 7 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Lior pitches three options. The team tests each one.</h1>');
+  L.beats(L.card,[
+   ['Multi-master','Lior: “Keep auto_increment, but step by 2 on our two shards.” Tamsin: “Next year we have six shards and a second region. Then what?” Every server’s step would change, and IDs already don’t follow time across shards.'],
+   ['UUID','Lior: “Fine, UUIDs. No coordination at all.” Hana points at the 64-bit column: a UUID is 128 bits, can hold letters and doesn’t grow with time. Three requirements fail.'],
+   ['Ticket server','Lior: “One ticket database hands out every ID.” Obi: “And when it goes down at 3 a.m., nobody on Kitebird can post anything.” A second ticket server would have to be kept in sync.'],
+   ['The verdict','None meets all five requirements. Tamsin: “So what would?” That’s your cue for a fourth option.']],
+   'Judge each option against the agreed requirements, out loud. Each simple option fails at least one.');}},
+{part:1,src:'Chapter 7 · UUID',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which option makes IDs too long for Kitebird’s 64-bit column?</h1>');
+  L.mc(L.card,['A ticket server','Multi-master, step by k','UUID'],2,
+   'A UUID is 128 bits, twice the budget.',
+   'Ticket servers and multi-master both hand out ordinary auto_increment numbers, which fit. A UUID is 128 bits, twice the budget.');}},
+{part:1,src:'Chapter 7 · Step 2 - Propose high-level design and get buy-in',pts:6,run(L){
+  L.h(L.kick('pr','Whose weakness?')+'<h1 class="q">Match each line to the option it describes.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Multi-master','UUID','Ticket server'],[
+   ['Each database adds the number of servers to its last ID',0,'That’s step-by-k: multi-master.'],
+   ['IDs take 128 bits, double the budget',1,'UUIDs are 128 bits.'],
+   ['One central database hands out every ID',2,'That’s the ticket server idea.'],
+   ['If one box goes down, nobody gets a new ID',2,'A single ticket server is a single point of failure.'],
+   ['Adding a fifth server means changing every server’s step',0,'k is the number of servers, so it changes when servers come or go.'],
+   ['An ID can contain letters',1,'UUIDs can be non-numeric.']],
+   'Multi-master struggles with change and time order, UUIDs with size and format, and the ticket server with failure.');}},
+{part:1,src:'Chapter 7 · UUID',pts:1,run(L){
+  L.h(L.kick('pr','Make the call')+'<h1 class="q">Hana: “Let’s just use UUIDs. Nothing to run, done by lunch.” What do you say in the review?</h1>');
+  L.mc(L.card,['Agree: UUIDs meet every requirement we set','Fine, if we add a ticket server beside it','No: 128 bits and not time-ordered, so they fail'],2,
+   'Hana is right that UUIDs need no coordination. But they’re 128 bits, can hold letters and don’t follow time, so they break three of the five requirements.',
+   'UUIDs need no coordination, but they’re 128 bits (the column holds 64), can contain letters and aren’t ordered by time. Adding a ticket server wouldn’t fix any of that.');}},
+
+/* ---------- PART 3: SNOWFLAKE ---------- */
+{part:2,src:'Chapter 7 · Twitter snowflake approach',run(L){
+  L.h(L.kick('learn','Option 4')+'<h1 class="q">Snowflake: build the ID from sections</h1>'+
+   L.prose('The book borrows Twitter’s <b>snowflake</b> idea: divide and conquer. Instead of one counter, split the 64 bits into sections, each with its own job.')+
+   bar()+
+   legend([['Sign · 1 bit','Always 0. Kept for future use.'],
+     ['Timestamp · 41 bits','Milliseconds since a chosen start moment, the '+L.g('epoch','epoch')+'. Twitter’s default epoch is 4 Nov 2010.'],
+     ['Datacenter ID · 5 bits','2⁵ = 32 datacenters.'],
+     ['Machine ID · 5 bits','32 machines in each datacenter.'],
+     ['Sequence number · 12 bits','Counts IDs made on that machine in the same millisecond. Resets to 0 every millisecond.']]));
+  L.done();}},
+{part:2,src:'Chapter 7 · Step 3 - Design deep dive',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Minting Kite IDs on one server</h1>');
+  L.beats(L.card,[
+   ['At startup','This server’s generator is given <b>datacenter 2</b> and <b>machine 9</b>. Those stay fixed while it runs. The book warns that changing them by accident can cause ID conflicts.'],
+   ['First ID','A new comment arrives. Timestamp = milliseconds since Kitebird’s epoch, right now. Sequence = 0.'],
+   ['Same millisecond','A like arrives in that same millisecond. Same timestamp, same datacenter and machine; the sequence becomes 1. Still unique.'],
+   ['Next millisecond','The clock ticks. The timestamp goes up by 1 and the sequence resets to 0.'],
+   ['Another server','At the same instant, machine 10 makes an ID. Same timestamp, maybe the same sequence, but a different machine number, so no clash.']],
+   'Timestamp and sequence are filled in as each ID is made; datacenter and machine are fixed at startup. No server has to ask any other server.');}},
+{part:2,src:'Chapter 7 · Twitter snowflake approach',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two Kite IDs come from the same machine in the same millisecond. Which section tells them apart?</h1>');
+  L.mc(L.card,['The sequence number','The timestamp','The machine ID'],0,
+   'Same machine and same millisecond means everything else matches. The sequence counts up within the millisecond.',
+   'The timestamp and machine ID are identical here: same millisecond, same machine. Only the sequence number differs.');}},
+{part:2,src:'Chapter 7 · Twitter snowflake approach',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each section to change its size until the layout matches the book’s. It must add up to 64 bits.</h1>');
+  L.sentence(L.card,[['Sign 1','Sign 5','Sign 12'],['Timestamp 32','Timestamp 41','Timestamp 64'],['Datacenter 5','Datacenter 10','Datacenter 12'],['Machine 12','Machine 5','Machine 1'],['Sequence 5','Sequence 41','Sequence 12']],[0,1,0,1,2],
+   [['The sign is a single bit, always 0. More would steal bits from the other sections.','The sign is a single reserved bit, always 0.'],
+    ['32 bits of milliseconds last under 50 days. The book uses 41 bits, about 69 years.','64 bits would leave nothing for the other sections.'],
+    ['10 bits is the datacenter and machine sections together. Datacenter alone is 5.','12 bits is the sequence’s size, not the datacenter’s.'],
+    ['12 bits belongs to the sequence. Machine ID is 5 bits: 32 machines per datacenter.','1 bit would allow only 2 machines per datacenter. The book uses 5.'],
+    ['5 bits would allow only 32 IDs per millisecond. The book uses 12.','41 bits is the timestamp’s size.']],
+   '1 + 41 + 5 + 5 + 12 = 64. Timestamp first, so IDs sort by time.');}},
+{part:2,src:'Chapter 7 · Timestamp and Sequence number',run(L){
+  L.h(L.kick('learn','The deep dive')+'<h1 class="q">What 41 bits and 12 bits buy you</h1>'+
+   L.lanes([['clock','Timestamp · 41 bits','The <b>most important</b> bits come first, so bigger IDs are newer: sorting by ID sorts by time.<br><br>The largest value is 2⁴¹ − 1 milliseconds, about <b>69 years</b>. After that you need a new epoch or a way to migrate IDs. An epoch close to today pushes that day further away.',1],
+            ['layers','Sequence · 12 bits','2¹² = <b>4,096</b> values. It stays 0 unless one machine makes more than one ID in the same millisecond.<br><br>So, in theory, one machine can make up to <b>4,096 IDs per millisecond</b>.',4]])+
+   '<p class="small" style="margin-top:12px">Datacenter and machine IDs are set when a server starts. Timestamp and sequence are filled in while the generator runs.</p>');
+  L.done();}},
+{part:2,src:'Chapter 7 · Step 3 - Design deep dive',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Do the numbers out loud, the way Tamsin expects</h1>');
+  L.beats(L.card,[
+   ['How many milliseconds?','2⁴¹ − 1 = 2,199,023,255,551 milliseconds.'],
+   ['Into years','÷ 1,000 for seconds, ÷ 3,600 for hours, ÷ 24 for days, ÷ 365 for years: about <b>69 years</b>.'],
+   ['When does it run out?','From Twitter’s 2010 epoch, that’s around 2080. Kitebird picks its own epoch, 1 January 2026, so Kite IDs last until about 2095.'],
+   ['Per machine','4,096 IDs per millisecond × 1,000 milliseconds ≈ <b>4 million IDs a second</b> from one machine, in theory.'],
+   ['Against the requirement','Kitebird needs over 10,000 a second. On paper one machine covers that many times over; more machines add room and keep IDs flowing if one fails.'],
+   ['How many generators?','5 + 5 bits: 32 datacenters × 32 machines = 1,024 generators in all.']],
+   'Two numbers to say in any interview: 41 bits ≈ 69 years, and 12 bits = 4,096 IDs per millisecond per machine.');}},
+{part:2,src:'Chapter 7 · Twitter snowflake approach',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which section?',['Sign bit','Timestamp','Datacenter + machine','Sequence number'],[
+   ['Two IDs made in the same millisecond on two different machines differ here.',2,'Same time, maybe the same sequence, but different machines.'],
+   ['Sorting IDs by size sorts them by time because this section comes first.',1,'The timestamp holds the most important bits.'],
+   ['Always 0, kept for future use.',0,'That’s the sign bit.'],
+   ['Goes back to 0 every millisecond.',3,'The sequence resets each millisecond.'],
+   ['Set when the server starts; changing it by accident can cause duplicates.',2,'Datacenter and machine IDs are fixed at startup and need careful review to change.'],
+   ['Runs out after about 69 years.',1,'41 bits of milliseconds last about 69 years.']]);}},
+
+/* ---------- PART 4: WRAP UP ---------- */
+{part:3,src:'Chapter 7 · Step 4 - Wrap up',run(L){
+  L.h(L.kick('learn','If time remains')+'<h1 class="q">Three talking points to finish strong</h1>'+
+   L.list([['clock','Clock synchronization','The design assumes every ID server has the same clock. That may not hold even across cores in one machine, let alone across machines. '+L.g('ntp','NTP')+' is the most popular fix.'],
+     ['scale','Section length tuning','Move bits between sections to fit the job. For example, fewer sequence bits and more timestamp bits suit systems that make few IDs at once but must last a long time.'],
+     ['shield','High availability','The ID generator is mission-critical: if it stops, nothing new can be saved. It must stay up.']],2)+
+   L.note('<b>Beyond the book:</b> because clocks differ slightly, IDs from different machines are only <i>roughly</i> in time order. Saying “roughly time-ordered” in an interview shows you’ve noticed.','info'));
+  L.done();}},
+{part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Obi finds two Kite ID servers whose clocks disagree by a few milliseconds. Which talking point is this?</h1>');
+  L.mc(L.card,['High availability','Section length tuning','Clock synchronization'],2,
+   'The design assumes every server shares the same clock. NTP is the usual fix.',
+   'Nothing is down and no bits need moving. The servers’ clocks disagree, which is clock synchronization. NTP is the usual fix.');}},
+{part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,
+ solve:async L=>{L.$('#mt').click();L.$('#mt').click();L.$('#lk').click();},
+ run(L){
+  let ts=41,sq=12,first=true;
+  L.h(L.kick('pr','Tune the bits')+'<h1 class="q">Hana wants IDs for Kitebird’s class-certificate archive: only a few a minute, but they must last at least 200 years from the epoch. Move bits, then lock it in.</h1>'+
+   '<div id="bb"></div><div id="ro" style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:4px 0 12px"></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="mt">+1 timestamp bit</button><button class="btn" id="ms">+1 sequence bit</button><button class="btn pri" id="lk">'+L.ic('lock')+'Lock it in</button></div><div id="lf"></div>');
+  const draw=()=>{L.$('#bb').innerHTML=bar([1,ts,5,5,sq]);
+    L.$('#ro').innerHTML='<div class="meterrow"><div class="lb">Lasts about</div><b>'+Math.round(yrs(ts)).toLocaleString('en-US')+' years</b></div><div class="meterrow"><div class="lb">IDs per ms per machine</div><b>'+Math.pow(2,sq).toLocaleString('en-US')+'</b></div>';};draw();
+  L.$('#mt').onclick=()=>{if(sq>1){ts++;sq--;L.$('#lf').innerHTML='';draw();}};
+  L.$('#ms').onclick=()=>{if(ts>32){ts--;sq++;L.$('#lf').innerHTML='';draw();}};
+  L.$('#lk').onclick=()=>{L.$('#lf').innerHTML='';const y=Math.round(yrs(ts));
+    if(y>=200){if(first)L.award(true);first=false;
+      L.sheet('ok','Locked in: '+ts+' timestamp bits','That lasts about '+y.toLocaleString('en-US')+' years. Fewer sequence bits and more timestamp bits is the book’s own tuning example: it suits systems that make few IDs at once but must last a long time. Even '+Math.pow(2,sq).toLocaleString('en-US')+' IDs per millisecond is plenty for a few a minute.');L.done();}
+    else{if(first)L.award(false);first=false;L.fb(L.$('#lf'),'<b>Not yet.</b> '+ts+' timestamp bits last only about '+y+' years. Each extra timestamp bit doubles the lifetime.','no');}};}},
+{part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,run(L){
+  L.h(L.kick('pr','Run the review')+'<h1 class="q">Put the Kite IDs review in the book’s order. Tap the steps from first to last.</h1>');
+  L.order(L.card,['Ask what IDs must do and how many a second','Weigh multi-master, UUID and ticket server','Propose the 64-bit snowflake layout','Dig into the timestamp and sequence bits','Raise clock sync, tuning and availability'],
+   'Scope, then options and a chosen design, then the deep dive, then wrap-up talking points: the four steps every chapter in this course follows.',['Step 1','Step 2','Step 2','Step 3','Step 4']);}}
+  ]
+});
+</script>
+</body>
+</html>

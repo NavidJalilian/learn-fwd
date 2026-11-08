@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transmitting Event Streams</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0028', title:'Transmitting event streams', minutes:20, icon:'arrow',
+  goals:['Explain what an event stream is and why polling falls short','Choose between dropping, buffering and backpressure, and between load balancing and fan-out','Decide when a log-based broker beats a classic message queue'],
+  parts:['Streams and events','Messaging systems','Message brokers','Partitioned logs'],
+  read:'Read the first part of chapter 11 (“Transmitting Event Streams”) for the book’s figures on load balancing, redelivery and partitioned logs.',
+  glossary:{
+    event:'Event: a small, self-contained record of something that happened at a certain time, such as “parcel 88 scanned at Westport North hub at 09:14”. Once written, it never changes.',
+    topic:'Topic (or stream): a named group of related events, such as all parcel scans. Producers write events to a topic and consumers read from it.',
+    backpressure:'Backpressure (also called flow control): when the receiver is full, the sender is blocked from sending more until there is room. Nothing is lost; the sender just slows down.',
+    broker:'Message broker (or message queue): an intermediary that receives messages from senders, stores them for a while, and delivers them to one or more recipients.',
+    offset:'Offset: the position number of a message inside one partition of a log. A consumer remembers the offset it has reached, like a reader remembers a page number.'
+  },
+  cheatsheet:[
+    'A <b>stream</b> is input that never ends. An <b>event</b> is a small, immutable record of something that happened, with a timestamp.',
+    '<b>Producers</b> write events to a <b>topic</b>; <b>consumers</b> read them. Polling wastes more requests the faster it goes; notifying consumers is better.',
+    'Ask any messaging system: when consumers are slow, does it <b>drop, buffer or apply backpressure</b>? When nodes crash, are messages <b>lost</b>?',
+    '<b>Direct messaging</b> (UDP multicast, webhooks) assumes both ends stay online. A <b>broker</b> holds messages so clients can come and go.',
+    '<b>Load balancing</b>: each message to one consumer. <b>Fan-out</b>: each message to every consumer. Consumer groups combine both.',
+    'Acknowledgments stop messages being lost, but <b>redelivery plus load balancing reorders</b> messages.',
+    '<b>Log-based brokers</b> append to partitioned logs and consumers move an <b>offset</b>. Order holds within a partition, reading deletes nothing, and old messages can be <b>replayed</b>.',
+    'Classic queue: slow, independent tasks where order doesn’t matter. Log: high throughput, quick messages, order matters.'
+  ],
+  steps:[
+/* ---------- PART 1: STREAMS AND EVENTS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt’s dashboard shows “parcels delivered today.” Linh’s batch job updates it once a night, at 2 a.m. At 4 p.m. the merchant asks why it still says zero. What’s the real problem?</h1>');
+  L.mc(L.card,['The batch job runs only once a day','The dashboard has a display bug'],0,
+   'A daily batch can only show today’s deliveries tomorrow. This lesson is about handling each event as it happens instead.',
+   'The dashboard shows exactly what the job produced. The trouble is timing: a job that runs once a night can only reflect today’s deliveries tomorrow.');}},
+{part:0,src:'Chapter 11 · Stream Processing',run(L){
+  L.h(L.kick('learn','Bounded and unbounded input')+'<h1 class="q">Batch jobs need the input to end. Real data never does.</h1>'+
+   L.prose('The batch jobs of the last chapter assume their input is <b>bounded</b>: a known, finite size, so the job knows when it has read everything. Sorting depends on this. The very last record might have the smallest key, so no output can start until all the input is in.')+
+   L.prose('But most data is <b>unbounded</b>. Parcels were scanned yesterday and today, and more will be scanned tomorrow. Unless Otterpost goes out of business, the dataset is never “complete.” So a batch system has to chop it into artificial slices, such as one day at a time.')+
+   L.flow([['cal','Daily batch','Process a day of scans each night','changes show up a day late'],['clock','Smaller slices','Every hour, or every second','less delay'],['play','Stream','Handle each event as it happens','no fixed slices at all']])+
+   '<p class="small" style="margin-top:10px">“Stream” just means data that becomes available bit by bit over time, like Unix stdin, a TCP connection or a video playing online.</p>');
+  L.done();}},
+{part:0,src:'Chapter 11 · Transmitting Event Streams',run(L){
+  L.h(L.kick('learn','Events, producers and topics')+'<h1 class="q">In a stream, each record is an event</h1>'+
+   L.prose('A batch job parses a file into records. In streaming, a record is called an '+L.g('event','event')+': a small, self-contained, immutable record of something that happened. It usually carries a timestamp from a time-of-day clock.')+
+   L.flow([['pointer','Producer','Courier app scans parcel 88','also: publisher, sender',1],['list','Topic','“parcel-scans”','related events, grouped',2],['people','Consumers','Notifications, ETA model, billing','also: subscribers',3]])+
+   L.prose('An event can be encoded as text, JSON or a binary format, so it can be stored or sent over the network. Just as one batch input file can feed several jobs, one event is written once by a <b>producer</b> and may be processed by many <b>consumers</b>. Related events are grouped into a '+L.g('topic','topic')+'.'));
+  L.done();}},
+{part:0,src:'Chapter 11 · Transmitting Event Streams',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these is an event?</h1>');
+  L.mc(L.card,['The current status shown on the tracking page','Parcel 88 was scanned at Eastvale hub at 14:02','Deliver parcel 88 before noon tomorrow'],1,
+   'It records something that already happened, at a certain time, and it will never change.',
+   'An event records something that already happened, with a time. The 14:02 scan is one. “Deliver before noon” is an instruction, and the current status is state that keeps changing.');}},
+{part:0,src:'Chapter 11 · Transmitting Event Streams',pts:1,
+ solve:async L=>{const c=L.$('#pc').children;c[0].click();c[2].click();},
+ run(L){
+  const P=[['Every 10 minutes','6','about 6',100,'up to 10 minutes'],['Every minute','60','about 38',63,'up to 1 minute'],['Every second','3,600','about 60',2,'up to 1 second']];const seen=new Set();
+  L.h(L.kick('pr','Turn the dial')+'<h1 class="q">Tobias’s first notification sender keeps asking the Parcel DB “any new scans?” On a quiet night about 60 scans arrive per hour, at random. Try at least two polling speeds.</h1><div id="pc"></div>'+
+   '<div id="pr" style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:110px"><div class="small">Pick a polling speed above.</div></div><div id="pq"></div>');
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('clock')+p[0];
+    b.onclick=()=>{[...L.$('#pc').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#pr').innerHTML='<div class="small">Polls per hour: <b>'+p[1]+'</b> · polls that find a new scan: <b>'+p[2]+'</b></div>'+
+       '<div class="meterrow"><div class="lb">Useful polls</div><div class="meter"><div style="width:'+Math.max(p[3],3)+'%;background:var(--ok-strong)"></div></div><b>'+(p[3]<5?'under 2%':p[3]+'%')+'</b></div>'+
+       '<div class="small">A new scan waits <b>'+p[4]+'</b> before anyone notices it.</div>';
+      if(seen.size===2&&!L.$('#pq').innerHTML){const q=L.$('#pq');q.innerHTML='<h2 class="sub">What gives a short wait without all the wasted polls?</h2>';
+        L.mc(q,['Poll every 100 milliseconds instead','Notify the consumer when a scan arrives','Poll less often, but fetch more rows'],1,
+         'The faster you poll, the smaller the share of polls that find anything, so the overhead climbs. Databases’ triggers can react to new rows but are limited, so special tools were built to notify consumers instead.',
+         'Polling faster shortens the wait but wastes even more requests. Polling slower makes the wait longer. The fix is to have consumers notified when new events appear.');}};
+    L.$('#pc').appendChild(b);});}},
+
+/* ---------- PART 2: MESSAGING SYSTEMS ---------- */
+{part:1,src:'Chapter 11 · Messaging Systems',run(L){
+  L.h(L.kick('learn','Messaging systems')+'<h1 class="q">Two questions to ask any messaging system</h1>'+
+   L.prose('A <b>messaging system</b> pushes events from producers to consumers. A Unix pipe or a TCP connection is the simplest kind, but it links exactly one sender to one receiver. A messaging system lets many producers and many consumers share one topic. This is the <b>publish/subscribe</b> model, and there is no one right design for it.')+
+   L.list([['Producers faster than consumers?','Three choices: <b>drop</b> messages, <b>buffer</b> them in a queue, or apply '+L.g('backpressure','backpressure')+' (block the sender). Unix pipes and TCP use backpressure with a small buffer. If you buffer, ask what happens as the queue grows: does it crash when memory is full, or spill to disk, and how slow is that?'],
+     ['Nodes crash or go offline?','Are messages lost? Durability needs writing to disk, replication or both, and that costs something. If you can afford to lose some messages, the same hardware gives more throughput and lower latency.']],1));
+  L.done();}},
+{part:1,src:'Chapter 11 · Messaging Systems',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Is losing a message OK? Kwame and Linh decide for two kinds of data.</h1>');
+  L.beats(L.card,[
+   ['GPS pings','Couriers’ phones send their position every few seconds. If one ping is lost, the next arrives a moment later with a newer position. An occasional gap hardly matters.'],
+   ['But watch the volume','If <b>many</b> pings are dropped quietly, the live map and the metrics built from it can go wrong without anyone noticing. The book warns that heavy loss isn’t always obvious.'],
+   ['Delivery scans','Billing counts “delivered” scans per merchant. Here every lost message is a wrong count, and a wrong invoice for Bramble & Bolt.'],
+   ['The decision','Pings can take a faster path that tolerates some loss. Delivery scans need durable, reliable delivery, even if it costs some throughput.']],
+   'Whether loss is acceptable depends on the application. Readings that are resent soon can live with a gap. Anything you count can’t.');}},
+{part:1,src:'Chapter 11 · Messaging Systems',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame’s dashboard counts failed delivery attempts per zone from events. Under heavy load, which choice makes those counts wrong?</h1>');
+  L.mc(L.card,['Buffering the extra messages in a queue','Dropping messages the consumer can’t keep up with','Backpressure that slows the producers down'],1,
+   'Dropping loses events, and each lost event is missing from the count. Buffering and backpressure only add delay.',
+   'Buffering and backpressure make things slower but lose nothing. Dropping is what breaks a counter: each lost event is one missing from the count.');}},
+{part:1,src:'Chapter 11 · Direct messaging from producers to consumers',run(L){
+  L.h(L.kick('learn','No middleman')+'<h1 class="q">Direct messaging: producer straight to consumer</h1>'+
+   L.prose('Some messaging systems skip any server in between:')+
+   L.list([['trend','UDP multicast','Used for stock-market feeds, where low latency matters. UDP can lose packets, so the producer keeps what it sent and resends on request.'],
+     ['layers','Brokerless libraries','Tools such as ZeroMQ do publish/subscribe directly over TCP or multicast.'],
+     ['eye','Metrics over UDP','StatsD-style collectors accept some loss, so their counters are approximate at best.'],
+     ['chat','Webhooks','One service registers a callback URL with another, which calls it whenever an event happens. Otterpost’s status webhooks to merchants work this way.']],2)+
+   L.note('The catch: these designs usually assume producers and consumers are <b>always online</b>. An offline consumer misses what was sent meanwhile. And if a producer crashes while retrying, its buffer of messages to retry is gone.','alert'));
+  L.done();}},
+{part:1,src:'Chapter 11 · Messaging Systems',pts:5,run(L){
+  L.h(L.kick('pr','Drop, buffer or backpressure?')+'<h1 class="q">Sort each behavior.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Drop','Buffer','Backpressure'],[
+   ['A Unix pipe’s small buffer fills up, so the writing program is paused until the reader catches up.',2,'The sender is blocked until there is room. Nothing is lost.'],
+   ['A metrics collector over UDP loses packets when it’s busy.',0,'Lost packets are simply gone. That’s dropping.'],
+   ['During Peak Week the notification queue grows to 2 million messages and spills onto disk.',1,'Messages wait in a queue to be handled later. That’s buffering, and spilling to disk can slow it down.'],
+   ['In a flash sale, the broker refuses new booking events until consumers catch up, so the merchant API has to wait.',2,'The producer is held back instead of losing data. That’s backpressure.'],
+   ['A courier app keeps scans on the phone while there’s no signal in a basement, and sends them later.',1,'The scans wait in a local buffer. Nothing is dropped, and nobody is blocked from scanning.']],
+   'Only dropping loses data. Buffering spends memory or disk and adds delay; backpressure slows the producer.');}},
+{part:1,src:'Chapter 11 · Direct messaging from producers to consumers',pts:1,run(L){
+  L.h(L.kick('pr','Webhook trouble')+'<h1 class="q">Bramble & Bolt’s server is down for a 20-minute deploy. Otterpost’s webhook sender keeps failed calls in memory to retry, but it crashes and restarts during those 20 minutes. What happens to the status updates?</h1>');
+  L.mc(L.card,['They all arrive once the merchant’s server is back','Some are lost, because the retry buffer died in the crash','They are refused, because webhooks need a broker'],1,
+   'Direct messaging assumes both sides stay online. The retries lived only in the crashed sender’s memory, so those updates never arrive.',
+   'Retries only work while the producer survives. When the sender crashed, its in-memory retry buffer went with it, so some updates are lost for good.');}},
+
+/* ---------- PART 3: MESSAGE BROKERS ---------- */
+{part:2,src:'Chapter 11 · Message brokers',run(L){
+  L.h(L.kick('learn','Message brokers')+'<h1 class="q">A broker is a database for messages in transit</h1>'+
+   L.prose('A '+L.g('broker','message broker')+' runs as a server. Producers write messages to it, and consumers read from it. Because the data sits in one place, clients can connect, disconnect and crash freely, and durability becomes the broker’s job. Some keep messages only in memory; others write them to disk.')+
+   L.prose('Faced with slow consumers, brokers usually let the queue grow without limit. So consumers are <b>asynchronous</b>: the producer only waits for the broker to confirm it has stored the message, not for anyone to process it.')+
+   '<h2 class="sub">Some brokers can even join two-phase commit, like a database. How else do they differ? Tap each card.</h2>');
+  L.flips(L.card,[
+   ['Keeping data','A database keeps data until you delete it. Most brokers delete a message once it’s delivered, so they don’t suit long-term storage.'],
+   ['Queue length','Brokers assume queues are short. If many messages pile up and spill to disk, each takes longer and throughput can drop.'],
+   ['Finding data','Databases offer secondary indexes and search. Brokers let you subscribe to topics that match a pattern. Both let a client choose the data it wants.'],
+   ['Staying current','A query answers once, from a snapshot; you don’t hear if the answer changes. A broker can’t answer arbitrary queries, but it tells you when new messages arrive.']],
+   'This is the traditional broker of the JMS and AMQP standards (RabbitMQ and ActiveMQ are examples). Otterpost’s notification queue works this way.');}},
+{part:2,src:'Chapter 11 · Multiple consumers',run(L){
+  L.h(L.kick('learn','Multiple consumers')+'<h1 class="q">Several consumers on one topic: share the work, or copy it?</h1>'+
+   L.lanes([['people','Load balancing','Each message goes to <b>one</b> of the consumers. They share the work, so you can add consumers when messages are expensive to process.',1],
+            ['layers','Fan-out','Each message goes to <b>every</b> consumer. Each one “tunes in” without affecting the others, like several batch jobs reading the same file.',2]])+
+   L.prose('You can combine the two. Otterpost’s scan topic can feed two <b>groups</b>: notifications and billing. Each group gets every message (fan-out), but inside a group only one machine handles each message (load balancing).'));
+  L.done();}},
+{part:2,src:'Chapter 11 · Multiple consumers',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Inside the notification group, three machines share the work. Each scan should trigger exactly one push message. Which pattern is that?</h1>');
+  L.mc(L.card,['Fan-out','Load balancing'],1,
+   'Each message goes to one of the three machines, so they split the work between them.',
+   'Fan-out would give every machine a copy, so the recipient would get three pushes. Splitting the messages between machines is load balancing.');}},
+{part:2,src:'Chapter 11 · Acknowledgments and redelivery',run(L){
+  L.h(L.kick('learn','Acknowledgments')+'<h1 class="q">How a broker makes sure a message isn’t lost</h1>'+
+   L.prose('A consumer may crash after receiving a message but before finishing it. So brokers use <b>acknowledgments</b>: the consumer tells the broker when it has finished, and only then does the broker remove the message.')+
+   L.flow([['box','Deliver','Broker sends m3 to worker B'],['check','Process','B sends the push'],['shield','Acknowledge','B says “done,” and m3 is removed']])+
+   L.note('If the connection closes or times out with no acknowledgment, the broker assumes the message wasn’t processed and <b>delivers it again</b> to another consumer. But maybe it <i>was</i> processed and only the acknowledgment got lost. Handling that case needs an atomic commit protocol, from chapter 9.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 11 · Acknowledgments and redelivery',pts:1,
+ solve:async L=>{L.$('#run').click();},
+ run(L){
+  const S=[['Worker A takes m1 “Picked up”, sends the push, acknowledges','Picked up'],['Worker B takes m2 “At hub”, sends the push, acknowledges','At hub'],['Worker B takes m3 “Out for delivery”…',''],
+   ['Worker A takes m4 “Delivered”, sends the push, acknowledges','Delivered'],['Worker B crashes before acknowledging m3','!'],['Broker redelivers m3 to worker A, which sends the push','Out for delivery']];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Parcel 88’s four status events go through the notification queue to two load-balanced workers. Run it and watch worker B crash mid-message.</h1>'+
+   '<button class="btn pri" id="run">'+L.ic('play')+'Run the queue</button><div id="tl" style="margin-top:10px"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin-top:10px"><div class="small" style="margin-bottom:6px">Mrs. Okoro’s phone</div><div id="pp" class="small">No pushes yet.</div></div><div id="rq"></div>');
+  let n=0;
+  L.$('#run').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}const s=S[k];
+      tl.insertAdjacentHTML('beforeend','<div class="small" style="padding:3px 0;'+(s[1]==='!'?'color:var(--no);font-weight:600':'')+'">'+(k+1)+'. '+s[0]+'</div>');
+      if(s[1]&&s[1]!=='!'){n++;const pp=L.$('#pp');if(n===1)pp.innerHTML='';pp.insertAdjacentHTML('beforeend','<span class="chip static'+(n===4?' no':'')+'">'+n+'. '+s[1]+'</span>');}
+      k++;if(k===S.length){clearInterval(t);const q=L.$('#rq');q.innerHTML='<h2 class="sub">Mrs. Okoro saw “Delivered” before “Out for delivery.” Which change prevents this?</h2>';
+        L.mc(q,['Add a third worker to share the load','Give each worker its own queue, no load balancing','Have workers acknowledge before processing'],1,
+         'That’s the book’s fix. Even when a broker tries to keep order, load balancing plus redelivery will reorder messages. That matters here because the messages depend on each other.',
+         'More workers means more chances to reorder. Acknowledging before processing would lose m3 entirely if a worker crashed. The fix is a separate queue per consumer, without load balancing.');}},380);};}},
+{part:2,src:'Chapter 11 · Multiple consumers',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Load balancing or fan-out?',['Load balancing','Fan-out'],[
+   ['Billing, the ETA model and support search each need every scan event.',1,'Each system needs its own copy of every message. That’s fan-out.'],
+   ['Six machines share a pile of “print label” jobs, and each label must print once.',0,'Each job goes to one machine, so they share the work.'],
+   ['A new fraud-check team wants to tune in to booking events without disturbing anyone.',1,'Fan-out lets a new consumer get every message without affecting the others.'],
+   ['During Peak Week, Linh adds two more machines to the notification group so pushes go out faster.',0,'Adding consumers to share the work inside a group is load balancing.']]);}},
+
+/* ---------- PART 4: PARTITIONED LOGS ---------- */
+{part:3,src:'Chapter 11 · Partitioned Logs',run(L){
+  L.h(L.kick('learn','Two mindsets')+'<h1 class="q">Why not keep the messages, the way a database does?</h1>'+
+   L.prose('Networks and classic brokers have a <b>transient</b> mindset: a message passes through and leaves no trace. Even brokers that write to disk delete messages soon after delivery. Databases and files have the opposite, <b>permanent</b> mindset: data stays until someone deletes it.')+
+   L.lanes([['x','Classic broker','Receiving and acknowledging <b>deletes</b> the message, so rerunning a consumer won’t give the same result. A new consumer only sees messages sent after it signed up.',4],
+            ['check','Files and databases','Reading changes nothing, so a job can be rerun safely, just like a batch job. A new client can read data written long ago.',2]])+
+   L.prose('A <b>log-based message broker</b> combines both: durable storage like a database, with the low-latency notifications of messaging.'));
+  L.done();}},
+{part:3,src:'Chapter 11 · Using logs for message storage',run(L){
+  L.h(L.kick('learn','How a log-based broker works')+'<h1 class="q">Append, partition, number</h1>'+
+   L.list([['Append','A producer sends a message by adding it to the end of a '+L.g('log','log')+'. A consumer reads the log in order; at the end, it waits to be told about new messages, much like the Unix tool <code>tail -f</code>.'],
+     ['Partition','To go beyond what one disk can handle, the log is split into '+L.g('partition','partitions')+' on different machines. A topic is a group of partitions carrying the same kind of message.'],
+     ['Number','Inside each partition, every message gets an increasing '+L.g('offset','offset')+'. Messages in one partition are totally ordered. Across partitions there is <b>no</b> ordering guarantee.']],2)+
+   '<p class="small" style="margin-top:10px">The book’s examples are Apache Kafka, Amazon Kinesis Streams and Twitter’s DistributedLog. They write every message to disk yet handle millions of messages per second by partitioning, and survive faults by replicating.</p>');
+  L.done();}},
+{part:3,src:'Chapter 11 · Logs compared to traditional messaging',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh builds Otterpost’s event log</h1>');
+  L.beats(L.card,[
+   ['The topic','Linh creates a <b>parcel-scans</b> topic with 8 partitions. Every scan of the same parcel goes to the same partition, so each parcel’s events stay in order.'],
+   ['Fan-out for free','Notifications, billing and the ETA model each read the whole topic at their own pace. Reading deletes nothing, so they never get in each other’s way.'],
+   ['Load balancing by partition','The notification group has 4 machines. The broker doesn’t hand out single messages: it gives each machine whole partitions, 2 each. Each machine reads its partitions one message at a time.'],
+   ['Light bookkeeping','No acknowledgment per message. The broker just records each consumer’s offset now and then: everything below it is done, everything above it is not seen yet.'],
+   ['A crash','Machine 3 dies after handling partition 6 up to offset 5,119, but its last recorded offset was 5,100. Another machine takes over partition 6 from 5,100, so messages 5,100 to 5,119 are processed a second time.']],
+   'The offset works like the log sequence number a database follower uses to reconnect to its leader. The broker acts like the leader, the consumer like the follower.');}},
+{part:3,src:'Chapter 11 · Logs compared to traditional messaging',run(L){
+  L.h(L.kick('learn','The trade-off')+'<h1 class="q">Handing out whole partitions has a price</h1>'+
+   L.list([['people','At most one consumer per partition','A topic with 8 partitions can spread its work over at most 8 machines in a group. To get more parallelism, use more partitions.'],
+     ['clock','Head-of-line blocking','One slow message holds up every message behind it in that partition.']],4)+
+   '<h2 class="sub">So which broker when?</h2>'+
+   L.lanes([['list','Classic JMS/AMQP queue','Messages are expensive to process, you want to spread them one by one across workers, and order doesn’t matter much.',1],
+            ['layers','Log-based broker','Very high throughput, each message is quick to process, and order matters.',2]]));
+  L.done();}},
+{part:3,src:'Chapter 11 · Logs compared to traditional messaging',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Otterpost turns booking events into PDF shipping labels. Each label takes about two seconds to render, and the order they come out in doesn’t matter. Which broker style fits best?</h1>');
+  L.mc(L.card,['A log-based broker with partitions','A classic JMS/AMQP-style queue'],1,
+   'Slow, independent tasks are what a classic queue is for: each message goes to whichever worker is free, and one slow label doesn’t block the rest.',
+   'In a log, one slow label holds up its whole partition, and you can’t have more workers than partitions. Slow tasks with no ordering needs suit a classic queue.');}},
+{part:3,src:'Chapter 11 · Disk space usage',run(L){
+  L.h(L.kick('learn','Disk space')+'<h1 class="q">The log is a huge ring buffer on disk</h1>'+
+   L.prose('If you only ever append, the disk fills up. So the log is split into <b>segments</b>, and from time to time the oldest segments are deleted or moved to archive storage.')+
+   L.prose('In effect the log is a fixed-size buffer that throws away its oldest messages when full (a <b>circular</b> or <b>ring buffer</b>). Because it lives on disk, it can be very large. The book’s rough sum: a 6 TB drive written at its full 150 MB/s fills in about 11 hours. Real systems rarely write that fast, so a log often holds days or weeks of messages.')+
+   L.note('A log’s throughput stays about the same however long you keep messages, because every message goes to disk anyway. Brokers that keep messages in memory are fast while queues are short, then slow down once they spill to disk.','trend'));
+  L.done();}},
+{part:3,src:'Chapter 11 · When consumers cannot keep up',pts:1,run(L){
+  L.h(L.kick('learn','Slow consumers')+'<h1 class="q">When a consumer can’t keep up</h1>'+
+   L.prose('In the drop, buffer or backpressure choice, a log is <b>buffering with a large but fixed-size buffer</b>. If a consumer falls so far behind that the messages it needs have already been deleted, it misses them.')+
+   L.list([['eye','Watch the lag','Monitor how far each consumer is behind the end of the log and alert if it grows. The buffer is big, so a person has time to fix the slow consumer.'],
+     ['shield','Only the slow one suffers','A consumer that falls behind doesn’t disrupt the others. You can even point a test consumer at the production log with little risk.'],
+     ['x','A stopped consumer costs nothing','A crashed or shut-down consumer leaves only its offset behind. With a classic broker, a forgotten queue keeps filling up and eats memory.']],3)+
+   '<div id="lq"><h2 class="sub">Linh’s log disks hold 6 TB each and take about 15 MB/s, a tenth of full speed. Roughly how far behind can a consumer fall before it misses messages?</h2></div>');
+  L.mc(L.$('#lq'),['About 11 hours','About 4 to 5 days','About 6 weeks'],1,
+   '6,000,000 MB ÷ 15 MB/s = 400,000 seconds, about 111 hours or 4.6 days. Writing at a tenth of full speed buys ten times the 11 hours.',
+   '11 hours is the figure at full speed. At a tenth of the speed the disk lasts ten times longer: 6,000,000 MB ÷ 15 MB/s ≈ 400,000 seconds, about 4.6 days.');}},
+{part:3,src:'Chapter 11 · Replaying old messages',pts:1,run(L){
+  L.h(L.kick('learn','Replaying old messages')+'<h1 class="q">Reading a log is like reading a file</h1>'+
+   L.prose('With a classic broker, processing and acknowledging a message deletes it. In a log-based broker, consuming is <b>read-only</b>. Apart from the consumer’s own output, the only effect is that its offset moves forward, and the consumer controls that offset.')+
+   L.prose('So you can start a copy of a consumer at yesterday’s offsets, write its output somewhere new, and reprocess the whole day, as often as you like, with different code each time. That makes a log much like batch input: derived data stays separate from the input, so experiments and recovery from bugs get easier.')+
+   '<div id="rq"><h2 class="sub">Tobias’s new ETA consumer wrote wrong delivery windows into its table all day yesterday. The bug is fixed now. What can Linh do?</h2></div>');
+  L.mc(L.$('#rq'),['Nothing: those scans were consumed and are gone','Rerun the fixed consumer from yesterday’s offsets','Ask the courier apps to resend yesterday’s scans'],1,
+   'The scans are still in the log. A copy of the consumer started at yesterday’s offsets recomputes the windows with the fixed code.',
+   'Consuming a log deletes nothing. Linh can start the fixed consumer at yesterday’s offsets, write to a fresh table and reprocess the day. Nobody needs to resend anything.');}},
+{part:3,src:'Chapter 11 · Summary',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Classic queue or log?',['Classic JMS/AMQP queue','Log-based broker'],[
+   ['A new analytics consumer must read the last week of scans, not just new ones.',1,'A log keeps messages on disk, so a new consumer can start from an old offset. A classic queue only delivers what’s sent after it subscribes.'],
+   ['Each message is a slow, independent job: resize a courier’s profile photo.',0,'Slow, independent tasks suit a classic queue, where any free worker takes the next message.'],
+   ['Tens of millions of GPS pings a day, each handled very quickly, and each courier’s pings must stay in order.',1,'High throughput, quick messages and ordering are where logs shine.'],
+   ['After a bug, Linh wants to reprocess yesterday’s messages with fixed code.',1,'Reading a log is non-destructive, so you can move the offset back and replay.'],
+   ['A task queue where nobody ever needs to go back and reread old messages.',0,'The book calls the classic broker a good fit for task queues where exact order and rereading don’t matter.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

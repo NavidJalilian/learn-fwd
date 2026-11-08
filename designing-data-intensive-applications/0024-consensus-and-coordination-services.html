@@ -1,0 +1,249 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consensus and Coordination Services</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0024', title:'Consensus and coordination services', minutes:20, icon:'people',
+  goals:['Name the four properties of consensus and why it needs a majority','Explain how epochs and overlapping quorums let a leader decide safely','Choose when to lean on a coordination service like ZooKeeper or etcd'],
+  parts:['Agreeing safely','Leaders and epochs','Coordination','Big picture'],
+  read:'Read chapter 9 from “Fault-Tolerant Consensus” to the end of the chapter summary for the details, including the ZooKeeper features and the list of problems equivalent to consensus.',
+  glossary:{
+    'twopc':'Two-phase commit (2PC): an algorithm for atomic commit across nodes. A coordinator first asks every participant “can you commit?” (prepare), and only if all say yes tells them all to commit.',
+    tob:'Total order broadcast: a way of sending messages so that none are lost and every node gets them in exactly the same order. Also called atomic broadcast.',
+    'epoch':'Epoch number: a number that goes up with every leader election (Paxos calls it the ballot number, Viewstamped Replication the view number, Raft the term number). Within one epoch there is at most one leader.',
+    quorum:'Quorum: a minimum number of nodes that must vote for a decision. Usually a majority, more than half of all nodes.',
+    'coordination-service':'Coordination service: a small, highly reliable store, such as ZooKeeper, that other systems use to agree on shared facts like “which node holds which partition”.',
+    'ephemeral':'Ephemeral node: a ZooKeeper entry tied to a client’s session. If the session times out, the entry is deleted automatically, releasing any lock it stood for.',
+    fencing:'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already seen.'
+  },
+  cheatsheet:[
+    '<b>Consensus</b>: nodes propose values and decide on one. Properties: uniform agreement, integrity, validity, termination.',
+    '<b>Termination</b> is the fault-tolerance part. It needs a majority up; safety holds even when there isn’t one. 2PC fails termination.',
+    'Viewstamped Replication, Paxos, Raft and Zab decide a <b>sequence</b> of values: they are total order broadcast.',
+    'At most one leader per <b>epoch</b>. Each decision needs a quorum vote, and the election and proposal quorums overlap.',
+    'Costs: synchronous voting, 3 nodes to survive 1 failure (5 for 2), mostly fixed membership, trouble with timeouts on flaky networks.',
+    '<b>ZooKeeper / etcd</b>: linearizable atomic operations, total order (fencing tokens), sessions with ephemeral nodes, change notifications. Small, slow-changing data only.',
+    'Compare-and-set, atomic commit, total order broadcast, locks and leases, membership and uniqueness are all <b>equivalent to consensus</b>.',
+    'A leader only moves consensus elsewhere. Don’t build your own: use a proven algorithm or service.'
+  ],
+  steps:[
+/* ---------- PART 1: AGREEING SAFELY ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two recipients try to grab the last place in the 6–7 pm delivery slot at the same moment, through two different servers. How many should get it?</h1>');
+  L.mc(L.card,['Both: the courier can squeeze one more in','Exactly one, and every server must agree which'],1,
+   'Both can’t win. Something has to pick one, and every server has to agree on the pick. That’s the consensus problem.',
+   'The slot has a fixed number of places, so only one request can win. Every server must agree which one. That’s the consensus problem.');}},
+{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',run(L){
+  L.h(L.kick('learn','Consensus, stated precisely')+'<h1 class="q">Propose, then decide</h1>'+
+   L.prose('Formally, one or more nodes <b>propose</b> values, and the algorithm <b>decides</b> on one of them. For the last slot place, each server proposes the ID of the recipient it’s serving. The decision says who got the place.')+
+   L.list([['Uniform agreement','No two nodes decide differently.'],['Integrity','No node decides twice.'],['Validity','If a node decides a value, some node proposed it.'],['Termination','Every node that doesn’t crash eventually decides.']],1)+
+   '<p class="small" style="margin-top:10px">Agreement and integrity are the core: everyone decides the same thing, and nobody changes their mind. Validity rules out cheats, such as always deciding “nothing.”</p>');
+  L.done();}},
+{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',run(L){
+  L.h(L.kick('learn','Where fault tolerance comes in')+'<h1 class="q">A dictator can agree. It just can’t survive.</h1>'+
+   L.prose('The first three properties are easy if you don’t need fault tolerance: let one node be the “dictator” that decides everything. If it fails, no more decisions. That’s exactly '+L.g('twopc','2PC')+'’s weakness: when the coordinator dies, in-doubt participants are stuck.')+
+   L.prose('<b>Termination</b> is the fault-tolerance property: even if some nodes fail, the rest must still decide. The model assumes a crashed node never comes back (picture its datacenter buried by a landslide). So any algorithm that waits for recovery, like 2PC, fails termination.')+
+   L.lanes([['shield','Safety','Agreement, integrity, validity. Most implementations keep these even if a majority fails: an outage can stop decisions, but never corrupt them.',2],
+            ['play','Liveness','Termination. It needs a majority of nodes working and reachable.',3]])+
+   '<p class="small" style="margin-top:10px">Most consensus algorithms assume no Byzantine faults (nodes that break the protocol, for example by sending contradictory messages). Tolerating those is possible if fewer than a third of nodes are faulty.</p>');
+  L.done();}},
+{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias jokes: “My slot algorithm always decides ‘nobody gets the place.’ Every node agrees, and none ever changes its mind!” Which property does it break?</h1>');
+  L.mc(L.card,['Uniform agreement','Integrity','Validity'],2,
+   '“Nobody” was never proposed. Validity says the decision must be one of the proposed values.',
+   'Every node agrees and never changes its mind, so agreement and integrity hold. Validity fails: no server proposed “nobody.”');}},
+{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',pts:1,
+ solve:async L=>{for(let k=0;k<3;k++)L.$('#crash').click();},
+ run(L){
+  let down=0;const P=['Agreement','Integrity','Validity','Termination'];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Five nodes decide who gets each last slot place. Crash them one at a time and watch which properties still hold.</h1>'+
+   '<div id="nodes"></div><button class="btn pri" id="crash" style="margin:4px 0 12px">'+L.ic('flame')+'Crash a node</button>'+
+   '<div class="lane"><div class="small" id="st"></div><div id="props" style="margin-top:8px"></div></div><div id="cq"></div>');
+  const draw=()=>{const live=5-down,maj=live>=3;
+    L.$('#nodes').innerHTML=[1,2,3,4,5].map(j=>{const up=j<=live;return '<span class="chip static '+(up?'ok':'no')+'">'+L.ic(up?'check':'x')+'N'+j+'</span>';}).join('');
+    L.$('#st').innerHTML='<b>'+live+' of 5</b> nodes up. '+(maj?'That’s a majority, so decisions keep coming.':'No majority, so decisions stop. Nothing wrong is decided.');
+    L.$('#props').innerHTML=P.map((p,j)=>{const ok=j<3||maj;return '<span class="chip static '+(ok?'ok':'no')+'">'+L.ic(ok?'check':'x')+p+'</span>';}).join('');};
+  draw();
+  L.$('#crash').onclick=()=>{if(down>=5)return;down++;draw();if(down>=5)L.$('#crash').hidden=true;
+    if(down===3&&!L.$('#cq').innerHTML){const q=L.$('#cq');q.innerHTML='<h2 class="sub">Three of five are down. What’s true now?</h2>';
+      L.mc(q,['Decisions go on among the two survivors','Decisions stop, and nothing wrong is decided','Decisions go on, but nodes may disagree'],1,
+       'Termination needs a majority, so progress halts. Agreement, integrity and validity still hold: the cluster stalls rather than deciding badly.',
+       'Two of five isn’t a majority. A correct algorithm stops deciding rather than risk a wrong or conflicting decision. Only termination is lost.');}};}},
+{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which property is broken?',['Uniform agreement','Integrity','Validity','Termination'],[
+   ['Server 1 tells Mrs. Okoro they got the last place. Server 2 tells Mr. Lund they did.',0,'Two nodes decided differently.'],
+   ['Server 3 decides Mrs. Okoro, then later switches its decision to Mr. Lund.',1,'A node decided twice.'],
+   ['The cluster gives the place to “test-user-0”, which no server proposed.',2,'The decision must be one of the proposed values.'],
+   ['A healthy server waits forever because the one node it relies on was destroyed.',3,'A node that didn’t crash never decides. No progress.'],
+   ['Under 2PC, a participant stays in doubt because the coordinator never comes back.',3,'2PC waits for the coordinator to recover, so it doesn’t meet termination.']]);}},
+
+/* ---------- PART 2: LEADERS AND EPOCHS ---------- */
+{part:1,src:'Chapter 9 · Consensus algorithms and total order broadcast',run(L){
+  L.h(L.kick('learn','Real consensus algorithms')+'<h1 class="q">They agree on a whole sequence, not one value</h1>'+
+   L.prose('The best-known fault-tolerant consensus algorithms are <b>Viewstamped Replication</b>, <b>Paxos</b>, <b>Raft</b> and <b>Zab</b>. They’re similar, not identical. The book’s advice: know their shared ideas, and don’t implement one yourself. It’s hard.')+
+   L.prose('Most of them decide a <b>sequence</b> of values, which makes them '+L.g('tob','total order broadcast')+' algorithms. Each message delivered is one round of consensus, and each property becomes a guarantee:')+
+   L.list([['check','Agreement','Every node delivers the same messages in the same order.'],['x','Integrity','No message is duplicated.'],['shield','Validity','No message is corrupted or made up.'],['play','Termination','No message is lost.']],2)+
+   '<p class="small" style="margin-top:10px">Viewstamped Replication, Raft and Zab implement total order broadcast directly. For Paxos, this optimization is called Multi-Paxos.</p>');
+  L.done();}},
+{part:1,src:'Chapter 9 · Consensus algorithms and total order broadcast',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In total order broadcast built on consensus, which property makes sure no message is lost?</h1>');
+  L.mc(L.card,['Integrity','Termination','Validity'],1,
+   'Every node that doesn’t crash eventually decides, so every message eventually gets delivered.',
+   'Integrity stops duplicates and validity stops fakes. Termination makes sure every message eventually gets decided, so none is lost.');}},
+{part:1,src:'Chapter 9 · Single-leader replication and consensus',run(L){
+  L.h(L.kick('learn','A chicken-and-egg problem')+'<h1 class="q">To elect a leader, you first need… a leader?</h1>'+
+   L.prose('Single-leader replication sends every write through the '+L.g('leader','leader')+', in one order, to all followers. That sounds like total order broadcast. So why didn’t replication need consensus? It depends on how the leader is chosen.')+
+   L.lanes([['person','Chosen by humans','Operators configure the leader: a “dictator” consensus. It works, but if the leader dies, writes stop until a human picks a new one. That fails termination.',3],
+            ['cycle','Chosen automatically','Automatic failover gets closer to fault-tolerant total order broadcast. But all nodes must agree who leads, or you get split brain. That takes consensus.',2]])+
+   L.prose('Now the loop: consensus algorithms are total order broadcast, which is like single-leader replication, which needs a leader, which needs consensus. Next screen: the way out.'));
+  L.done();}},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',run(L){
+  L.h(L.kick('learn','Epochs and quorums')+'<h1 class="q">The way out: one leader per epoch</h1>'+
+   L.prose('Consensus protocols do use a leader, but don’t promise it’s unique. They promise something weaker: each '+L.g('epoch','epoch number')+' has at most one leader. Paxos calls it the ballot number, Viewstamped Replication the view number, Raft the term number.')+
+   L.list([['Elect','When the leader seems dead, nodes vote for a new one with a higher epoch number. If two leaders clash, the higher epoch wins.'],
+     ['Propose','For every decision, the leader sends its proposal and waits for a '+L.g('quorum','quorum')+' (usually a majority) to vote for it. A node votes yes only if it knows of no leader with a higher epoch.'],
+     ['Overlap','The election quorum and the proposal quorum must share at least one node. So if a proposal vote turns up no higher epoch, the leader knows it’s still in charge.']],3)+
+   '<p class="small" style="margin-top:10px">It looks like 2PC, but the leader is elected, it needs a majority rather than every node, and a recovery process brings nodes back into a consistent state after a new leader takes over.</p>');
+  L.done();}},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',pts:1,
+ solve:async L=>{L.$('#pk').children[1].click();L.$('#run').click();},
+ run(L){
+  let p=null;
+  const A=[['N1 → N2','yes, it knows no higher epoch','ok'],['N1 → N3','no: “I voted in epoch 4”','no'],['N1','2 of 5 votes, counting itself. No majority. It learns of epoch 4 and steps down.','no']];
+  const B=[['N5 → N3','yes','ok'],['N5 → N4','yes','ok'],['N5','3 of 5 votes, counting itself. Decided.','ok']];
+  L.h(L.kick('pr','Predict, then watch')+L.note('Kwame’s five-node coordination cluster. N1 led in <b>epoch 3</b>. A network fault cut N1 off from N4 and N5, so N3, N4 and N5 elected N5 as leader for <b>epoch 4</b>. N1 doesn’t know yet, and can still reach N2 and N3.','info')+
+   '<h1 class="q" style="margin-top:16px">Both leaders propose a different Westport route planner. Whose proposal gets decided?</h1><div id="pk"></div>'+
+   '<div id="vt" hidden>'+L.lanes([['person','N1 · epoch 3','<div id="la"></div>',4],['person','N5 · epoch 4','<div id="lb"></div>',2]])+'<button class="btn pri" id="run" style="margin-top:12px">'+L.ic('play')+'Run the votes</button></div>');
+  ['N1’s (epoch 3)','N5’s (epoch 4)','Both of them'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#vt').hidden=false;};L.$('#pk').appendChild(b);});
+  const line=x=>'<p class="small" style="margin:6px 0;color:var(--'+x[2]+')"><b>'+x[0]+'</b>: '+x[1]+'</p>';
+  L.$('#run').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const la=L.$('#la'),lb=L.$('#lb');if(!la||!lb){clearInterval(t);return;}
+      la.insertAdjacentHTML('beforeend',line(A[k]));lb.insertAdjacentHTML('beforeend',line(B[k]));k++;
+      if(k>=A.length){clearInterval(t);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'You called it':'Only N5’s proposal wins','N5 gathered a majority. N1 couldn’t: N3 had voted in the epoch-4 election, so it refused N1 and told it about the newer epoch. Any two majorities overlap, so an outdated leader always runs into a node that knows better.');L.done();}},500);};}},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',pts:1,run(L){
+  L.h(L.kick('pr','Why it’s safe')+'<h1 class="q">Kwame’s cluster has five nodes. Why is a leader that collects a majority of votes sure to meet at least one node from the latest election?</h1>');
+  L.mc(L.card,['Every election result is broadcast to all clients','The old leader compares its clock with the new one','Any two majorities of five nodes share a node'],2,
+   'Three plus three is six, more than five, so two majorities always overlap. The shared node reports any higher epoch.',
+   'It’s plain counting, not clocks or broadcasts: two groups of at least three out of five must share a node, and that node knows the newest epoch.');}},
+{part:1,src:'Chapter 9 · Limitations of consensus',run(L){
+  L.h(L.kick('learn','Limitations of consensus')+'<h1 class="q">A huge breakthrough, with a price</h1>'+
+   L.prose('Consensus brings safety where everything else is uncertain, stays fault-tolerant, and provides total order broadcast, so it can also implement '+L.g('linearizability','linearizable')+' operations. Yet it isn’t used everywhere:')+
+   L.list([['Voting is synchronous replication','Many databases choose asynchronous replication for speed, and accept losing some committed data on failover.'],
+     ['A strict majority is needed','Three nodes tolerate one failure; five tolerate two. If the network splits, only the majority side makes progress.'],
+     ['Membership is usually fixed','Adding or removing nodes needs dynamic-membership extensions, which are much less well understood.'],
+     ['Timeouts misfire','With variable delays, especially across regions, nodes wrongly decide the leader is dead. Safety holds, but frequent elections can leave little time for real work.']],4)+
+   '<p class="small" style="margin-top:10px">Raft has known edge cases: with one consistently unreliable link, leadership can bounce between two nodes and the system never makes progress.</p>');
+  L.done();}},
+{part:1,src:'Chapter 9 · Limitations of consensus',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Keeps deciding, or blocked?',['Keeps deciding','Blocked, but safe'],[
+   ['A five-node cluster with two nodes crashed.',0,'Three of five is still a majority.'],
+   ['A five-node cluster with three nodes crashed.',1,'Two of five isn’t a majority. It stops, but decides nothing wrong.'],
+   ['A three-node cluster with one node crashed.',0,'Two of three is a majority.'],
+   ['A network split leaves 3 of 5 nodes in Westport. The Westport side…',0,'Three of five is a majority, so it carries on.'],
+   ['…and the Eastvale side, with the other 2 nodes.',1,'The minority side is blocked until the network heals.'],
+   ['A four-node cluster split 2 and 2.',1,'A majority of four is three. Neither half has it, so neither can decide.']]);}},
+
+/* ---------- PART 3: COORDINATION ---------- */
+{part:2,src:'Chapter 9 · Membership and Coordination Services',run(L){
+  L.h(L.kick('learn','Coordination services')+'<h1 class="q">ZooKeeper and etcd: consensus you can borrow</h1>'+
+   L.prose(L.g('coordination-service','Coordination services')+' like ZooKeeper and etcd look like a key-value database. But they hold only small amounts of data that fit in memory, replicated to every node by fault-tolerant total order broadcast. You often use them indirectly: HBase, Hadoop YARN, OpenStack Nova and Kafka all rely on ZooKeeper.')+
+   L.list([['lock','Linearizable atomic operations','Compare-and-set lets exactly one of several racing clients win, for example to take a lock. Locks are usually leases that expire if the client fails.'],
+     ['list','Total ordering','Every operation gets a rising transaction ID (ZooKeeper’s zxid), which works as a '+L.g('fencing','fencing token')+'.'],
+     ['eye','Failure detection','Clients keep a session alive with heartbeats. If it times out, the session’s '+L.g('ephemeral','ephemeral nodes')+' are deleted, releasing its locks.'],
+     ['alert','Change notifications','Clients can watch keys and get told when they change, instead of polling.']],1)+
+   '<p class="small" style="margin-top:10px">Only the first one truly needs consensus. The combination is what makes these services so useful.</p>');
+  L.done();}},
+{part:2,src:'Chapter 9 · Membership and Coordination Services',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">One route planner per region, for real this time</h1>');
+  L.beats(L.card,[
+   ['The rule','Each region must have exactly one route planner writing its routes. Lesson 0020 showed the damage a paused planner can do.'],
+   ['The setup','Kwame runs three route planner instances in Westport, plus a five-node coordination service such as ZooKeeper or etcd.'],
+   ['The race','At startup, all three try to create the key “westport-planner-leader” with an atomic operation. Exactly one succeeds. Its key is ephemeral, tied to its session.'],
+   ['The token','The winner takes the operation’s rising transaction ID and sends it as a fencing token with every write to the routes store.'],
+   ['The pause','The leader freezes in a long garbage-collection pause. Its heartbeats stop, the session times out, and the ephemeral key disappears.'],
+   ['The takeover','The other two were watching the key. They’re notified, race again, and one becomes leader with a higher token. When the old leader wakes up, its writes carry an older token and are rejected.']],
+   'Atomic operations, ephemeral nodes, notifications and ordering together give automatic failover, without Otterpost writing a consensus algorithm.');}},
+{part:2,src:'Chapter 9 · Membership and Coordination Services',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In that setup, how do the two standby planners learn the leader is gone, without checking every second?</h1>');
+  L.mc(L.card,['They poll the routes store for missing writes','They compare their clocks with the leader’s','They watch the key and get a change notification'],2,
+   'Watching a key means the service tells them when it changes, so they never have to poll.',
+   'Polling and clock checks are what change notifications save you from. The standbys watch the key, and the service tells them when the ephemeral key disappears.');}},
+{part:2,src:'Chapter 9 · Membership and Coordination Services',run(L){
+  L.h(L.kick('learn','What they’re for')+'<h1 class="q">Good jobs for a coordination service, and bad ones</h1>'+
+   L.list([['Allocating work','Choosing a leader among several instances, and deciding which partition goes to which node as nodes join, leave or fail. Libraries like Apache Curator help, but it’s still not easy.'],
+     ['Outsourced coordination','The service runs on a fixed few nodes (usually three or five) and serves many clients, so thousands of app nodes don’t have to vote.'],
+     ['Slow-changing data only','Facts like “the node at 10.1.1.23 leads partition 7,” which change over minutes or hours. Not runtime state that changes thousands of times a second.'],
+     ['Service discovery','Finding a service’s IP address doesn’t really need consensus. DNS answers are cached and a little stale, and that’s usually fine. Read-only caching replicas can serve such reads.'],
+     ['Membership','Agreeing which nodes are alive. A node may be wrongly declared dead, but agreement still helps: “the lowest-numbered member leads” only works if all agree who the members are.']],2));
+  L.done();}},
+{part:2,src:'Chapter 9 · Membership and Coordination Services',pts:6,run(L){
+  L.h(L.kick('pr','Right tool?')+'<h1 class="q">Kwame gets requests to put things in the coordination service. Sort them.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Good fit','Wrong tool'],[
+   ['Which node leads partition 7 of the Parcel DB',0,'Small, slow-changing, and everyone must agree on it.'],
+   ['Every courier GPS ping, tens of millions a day',1,'Huge, fast-changing data. These services hold small amounts of data in memory.'],
+   ['Which Eastvale route planner instance is the leader',0,'Leader election is a classic use.'],
+   ['Every parcel record and its scan events',1,'It’s not a general-purpose database. That data belongs in the Parcel DB.'],
+   ['Which dispatch workers are alive right now',0,'Membership: sessions and ephemeral nodes are built for it.'],
+   ['Each courier’s live position, updated every few seconds',1,'Runtime state that changes constantly. Other tools are meant for that.']],
+   'Small, slow-changing facts the whole system must agree on: yes. Bulk or fast-changing application data: no.');}},
+{part:2,src:'Chapter 9 · Membership and Coordination Services',pts:1,run(L){
+  L.h(L.kick('pr','Advise the team')+'<h1 class="q">Tobias wants every tracking-page server to do a linearizable read from the coordination service on every request, just to find the merchant API’s address. What’s the better view?</h1>');
+  L.mc(L.card,['Service discovery can live with slightly stale answers','Right: addresses must always be perfectly fresh','Addresses belong in the Parcel DB instead'],0,
+   'Like DNS, service discovery is fine with answers that are a little stale. Cached or read-only replica reads are enough. Staying available matters more.',
+   'The book notes service discovery doesn’t really need consensus. DNS answers are cached and stale, and that’s usually fine. What matters is that lookups stay available.');}},
+
+/* ---------- PART 4: BIG PICTURE ---------- */
+{part:3,src:'Chapter 9 · Summary',run(L){
+  L.h(L.kick('learn','The chapter’s big reveal')+'<h1 class="q">Six problems that are secretly the same</h1>'+
+   L.prose('Many problems turn out to be <b>equivalent to '+L.g('consensus','consensus')+'</b>: if you can solve one, you can turn that into a solution for the others.')+
+   L.list([['Linearizable compare-and-set','Decide whether to set a value, based on its current value.'],['Atomic transaction commit','Decide whether a distributed transaction commits or aborts.'],
+     ['Total order broadcast','Decide the order in which to deliver messages.'],['Locks and leases','Decide which of several racing clients gets the lock.'],
+     ['Membership / coordination','Decide which nodes are alive and which count as dead.'],['Uniqueness constraint','Decide which of several conflicting records is allowed.']],1)+
+   '<p class="small" style="margin-top:10px">All are easy on one node, or if one node makes every decision. That’s why a single-leader database can offer linearizable operations, uniqueness constraints and an ordered replication log.</p>');
+  L.done();}},
+{part:3,src:'Chapter 9 · Summary',run(L){
+  L.h(L.kick('learn','When the leader fails')+'<h1 class="q">Three ways out, and only one is automatic</h1>'+
+   L.tiers([['clock','Wait for it to recover','The system is blocked meanwhile. Many XA/JTA coordinators do this. If the leader never returns, it’s stuck forever: no termination.','Otterpost’s 2PC bookings work this way'],
+            ['person','Fail over by hand','Humans choose a new leader and reconfigure. Many relational databases do this. Consensus by “act of God,” as slow as people are.',''],
+            ['cycle','Elect automatically','Needs a consensus algorithm. Use a proven one that handles bad network conditions.','',true,'Fault-tolerant']])+
+   L.quote('kicks the can down the road','Chapter 9 summary, on what having a leader achieves')+
+   L.prose('A single-leader database avoids consensus on every write, but still needs it to keep and change leadership. Not every system needs consensus at all: leaderless and multi-leader systems usually live with conflicts and branching histories instead.'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Summary',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which problem is it, underneath?',['Uniqueness constraint','Atomic commit','Total order broadcast','Locks and leases','Membership'],[
+   ['Two bookings must never get the same tracking code.',0,'Concurrent conflicting records: one must win, the other must fail.'],
+   ['A booking must land in both the Parcel DB and the billing ledger, or in neither.',1,'Every participant must agree to commit or abort.'],
+   ['Every replica must apply parcel scan events in exactly the same order.',2,'Deciding the delivery order of messages.'],
+   ['Only one Westport route planner may write routes at a time.',3,'Racing instances; one gets the lease.'],
+   ['Dispatch must agree which of its workers are still alive.',4,'Deciding which nodes count as live members.']]);}},
+{part:3,src:'Chapter 9 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence says what a leader really does for consensus.</h1>');
+  L.sentence(L.card,[['A single-leader database avoids consensus','A single-leader database still needs consensus'],['to choose and change its leader,','on every single write,'],['so the leader moves the problem elsewhere.','so the leader makes the problem go away.']],[1,0,0],
+   [['It runs no consensus per write, but leadership itself must be agreed. It still needs consensus.'],['Writes flow through the leader without a vote each time. Consensus is needed for leadership, not every write.'],['It doesn’t go away: when the leader fails, the nodes still have to agree on a new one.']],
+   'Consensus is still required, only in a different place and less often.');}},
+{part:3,src:'Chapter 9 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Final call')+'<h1 class="q">For Nordhaven’s new dispatch service, Tobias plans their own leader election: “Miss three heartbeats and you’re dead. The lowest ID left takes over.” What should Kwame advise?</h1>');
+  L.mc(L.card,['Ship it: heartbeats and lowest ID are enough','Use a proven coordination service like ZooKeeper or etcd','Skip leaders and let every dispatcher write routes'],1,
+   'Home-made consensus has a poor track record. Timeouts can wrongly declare nodes dead, and without agreement on membership, two nodes can each think they lead. A proven service handles those cases.',
+   'Without agreement on who’s alive, “lowest ID” can crown two leaders, and routes need exactly one writer. The book advises using something like ZooKeeper rather than building your own.');}}
+  ]
+});
+</script>
+</body>
+</html>

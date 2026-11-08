@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Aiming for Correctness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0033', title:'Aiming for correctness', minutes:20, icon:'shield',
+  goals:['Stop retries from doubling work with an end-to-end request ID','Enforce constraints across partitions with logs instead of atomic commit','Tell timeliness from integrity, and decide when to check, apologize or audit'],
+  parts:['End to end','Constraints','Timeliness vs integrity','Trust, but verify'],
+  read:'Read the “Aiming for Correctness” section of chapter 12 for the full money-transfer walk-through and Kleppmann’s case for self-auditing systems.',
+  glossary:{
+    idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
+    'request-id':'Request ID (operation identifier): a unique ID created once for an operation by the client, sent with every retry and checked at the database, so a repeat can be recognized and ignored.',
+    'end-to-end':'End-to-end argument: the idea (Saltzer, Reed and Clark, 1984) that some jobs, like removing duplicates or catching corruption, can only be done completely by the applications at the two ends. Lower layers can help but can’t finish the job.',
+    'timeliness':'Timeliness: users see the system in an up-to-date state. A timeliness problem, like a stale read, goes away if you wait and try again.',
+    'integrity':'Integrity: no corruption: nothing lost, nothing contradictory or false, and derived data that matches its source. An integrity problem stays until someone finds it and repairs it.',
+    compensating:'Compensating transaction: a new, separate transaction that undoes the effects of an earlier committed one. To the database it is just another transaction.',
+    'auditing':'Auditing: checking the integrity of data, for example by re-reading it, comparing copies or rerunning the processing that produced it.',
+    'merkle':'Merkle tree: a tree of hashes. Changing any record changes the hashes above it, and it can prove efficiently that a record is part of a dataset.'
+  },
+  cheatsheet:[
+    'Even <b>serializable transactions</b> can’t stop an app bug or a repeated request from writing wrong data.',
+    'TCP, database transactions and 2PC each remove duplicates only <b>within their own scope</b>. Fix it end to end: a <b>request ID</b> made by the client, checked by a unique constraint.',
+    '<b>End-to-end argument:</b> only the endpoints can fully guarantee correctness. Lower layers just make problems rarer.',
+    'Uniqueness needs <b>consensus</b>: one leader, or route every claim on a value to <b>one log partition</b> processed in order.',
+    'Multi-partition writes without atomic commit: log <b>one message</b>, derive per-partition messages deterministically, <b>dedupe by request ID</b>.',
+    '<b>Timeliness</b> violations are temporary; <b>integrity</b> violations are permanent. Integrity matters more.',
+    '<b>Loose constraints:</b> write now, apologize later (a compensating transaction), unless the action is hard to undo. Coordinate only where you must.',
+    '<b>Trust, but verify:</b> audit end to end, replay events through deterministic code, and test your restores.'
+  ],
+  steps:[
+/* ---------- PART 1: END TO END ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt’s server books a parcel through Otterpost’s merchant API. The booking goes through, but the reply never arrives. Their code sends the same request again. What might happen?</h1>');
+  L.mc(L.card,['Otterpost books two parcels and charges twice','Nothing: the network quietly drops the copy'],0,
+   'From Otterpost’s side the retry looks like a brand-new booking. This lesson is about making that retry harmless.',
+   'The network only drops copies inside one connection. A retry sent later looks like a brand-new booking, so the parcel can be booked and charged twice.');}},
+{part:0,src:'Chapter 12 · Aiming for Correctness',run(L){
+  L.h(L.kick('learn','Why correctness is hard')+'<h1 class="q">Databases remember their mistakes</h1>'+
+   L.prose('If a service only reads data, a bug is easy to recover from: fix it, restart, done. A database is built to remember things more or less forever, so a wrong write can last forever too.')+
+   L.prose('For about forty years, '+L.g('transaction','transactions')+' (atomicity, isolation, durability) have been the main tool for building correct apps. Kleppmann argues these foundations are weaker than they look: weak isolation levels confuse people, and independent tests (the Jepsen experiments) have found databases that break their own promises when the network fails. Simple designs often work at low load with no faults, then show subtle bugs under pressure.')+
+   L.lanes([['lock','Serializable + atomic commit','Strong guarantees, but they usually work only inside one datacenter, and they limit scale and fault tolerance.',1],
+            ['alert','Cross your fingers','Simpler, but only fine if you can live with losing or corrupting data now and then.',4]])+
+   L.note('Kleppmann’s view: transactions aren’t going away, but they aren’t the last word. This lesson covers his other ways to think about correctness in dataflow systems.','bulb'));
+  L.done();}},
+{part:0,src:'Chapter 12 · The End-to-End Argument for Databases',run(L){
+  L.h(L.kick('learn','Exactly-once execution')+'<h1 class="q">A perfect database can still store the wrong thing</h1>'+
+   L.prose('Serializable transactions don’t save you if the application has a bug that writes wrong data or deletes good data. That’s one reason Kleppmann favours immutable, append-only data: it is easier to recover when faulty code can’t destroy what was there.')+
+   L.prose('A subtler problem: something fails while processing a message. You can give up (and lose data) or retry. But maybe the first try <i>did</i> succeed and you just never heard back.')+
+   L.flow([['x','Give up','Data is lost.','',4],['cycle','Retry blindly','It may run twice.','',3],['check','Retry safely','Same effect as running once.','',2]],false)+
+   L.prose('Running twice is a form of corruption: a merchant billed twice, a counter bumped twice. <b>Exactly-once</b> means the final effect is as if no fault happened, even though there was a retry. One of the most effective tools is to make the operation '+L.g('idempotence','idempotent')+'. For operations that aren’t naturally idempotent, that takes care: extra metadata (such as the IDs of operations already applied) and fencing during failover.'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Duplicate suppression',run(L){
+  L.h(L.kick('ex','The book’s example')+'<h1 class="q">Every layer removes duplicates, but only inside its own box</h1>');
+  L.beats(L.card,[
+   ['TCP','TCP numbers its packets, so the receiver puts them in order and throws away duplicates. But only within <b>one connection</b>.'],
+   ['The transaction','The book’s example moves $11 from one account to another in one transaction. Many databases tie a transaction to the client’s connection. The client sends COMMIT, then the connection times out before the reply. Did it commit? The client can’t tell.'],
+   ['The retry','The client reconnects and runs the transaction again. That’s a new connection, outside TCP’s duplicate check. The transfer isn’t idempotent, so <b>$22</b> may move instead of $11. The book notes real banks don’t work like this textbook transaction.'],
+   ['Two-phase commit?','2PC lets a coordinator reconnect and tell a database to commit or abort an in-doubt transaction. That covers the hop between the app and the database, but not the hop before it.'],
+   ['The person','A user on a weak phone signal submits a form. The request arrives, the reply doesn’t. They see an error and press “submit again”. To the web server that’s a new request; to the database, a new transaction. No layer can tell it’s a repeat.']],
+   'TCP, transactions and 2PC each catch duplicates only within their own scope. A retry that starts further out always looks brand new.');}},
+{part:0,src:'Chapter 12 · Operation identifiers',pts:1,
+ solve:async L=>{L.$('#r0').click();await L.sleep(1700);L.$('#r1').click();await L.sleep(1700);},
+ run(L){
+  const RUN=[[
+    '→ POST /parcels','✓ Parcel P-501 booked, −$4.20','✗ Reply lost (timeout)','→ POST /parcels again','✓ Parcel P-502 booked, −$4.20','<b style="color:var(--no)">2 parcels, $8.40 charged</b>'],[
+    '→ POST /parcels · id bb-7f3','✓ bb-7f3 saved, P-501 booked, −$4.20','✗ Reply lost (timeout)','→ POST again · id bb-7f3','✗ bb-7f3 already exists: insert fails, nothing changes','<b style="color:var(--ok)">1 parcel, $4.20 charged</b>']];
+  const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Zainab’s fix: Bramble & Bolt’s system creates one ID per booking, sends it with every try, and the Parcel DB has a unique constraint on it. Run both and compare.</h1>'+
+   L.lanes([['x','Without a request ID','<div id="o0" class="small" style="overflow-wrap:anywhere;min-height:20px"></div><button class="btn pri" id="r0" style="margin-top:10px">'+L.ic('play')+'Book, lose reply, retry</button>',4],
+            ['check','With a request ID','<div id="o1" class="small" style="overflow-wrap:anywhere;min-height:20px"></div><button class="btn pri" id="r1" style="margin-top:10px">'+L.ic('play')+'Book, lose reply, retry</button>',2]])+
+   '<div id="hq"></div>');
+  [0,1].forEach(m=>{L.$('#r'+m).onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const o=L.$('#o'+m);if(!o){clearInterval(t);return;}o.innerHTML+='<div style="margin:3px 0">'+RUN[m][k]+'</div>';k++;
+      if(k>=RUN[m].length){clearInterval(t);seen.add(m);
+        if(seen.size===2&&!L.$('#hq').innerHTML){const q=L.$('#hq');q.innerHTML='<h2 class="sub">What made the second retry harmless?</h2>';
+          L.mc(q,['A shorter timeout on Bramble & Bolt’s side','Running the booking at serializable isolation','The same ID on both tries, plus a unique constraint'],2,
+           'The retry carried the same ID, so the insert failed and the booking couldn’t happen twice. Relational databases can generally keep a unique constraint correct even at weak isolation levels, unlike an app that checks first and inserts after.',
+           'Timeouts and isolation don’t help: the retry is a separate request and a separate transaction. What saved it was the same ID on both tries, rejected the second time by the unique constraint.');}}},220);};});}},
+{part:0,src:'Chapter 12 · The end-to-end argument',run(L){
+  L.h(L.kick('learn','The end-to-end argument')+'<h1 class="q">Only the two ends can finish the job</h1>'+
+   L.prose('The request ID is one case of a general principle, the '+L.g('end-to-end','end-to-end argument')+', set out by Saltzer, Reed and Clark in 1984. In plain words: some jobs can only be done completely by the applications at the two ends of a conversation. Features in the layers between can help, but can’t finish the job.')+
+   L.tiers([['cycle','Duplicates','TCP and stream processors remove duplicates inside their own scope. A person resubmitting after a timeout gets past all of them.','End-to-end fix: a '+L.g('request-id','request ID')+' from the client all the way to the database'],
+            ['alert','Corruption','Ethernet, TCP and TLS checksums catch damage on the wire, but not bugs in the software at either end or bad disks.','End-to-end fix: checksums over the data itself'],
+            ['lock','Snooping','A WiFi password protects the WiFi hop; TLS protects against network attackers, but not a hacked server.','End-to-end fix: end-to-end encryption and authentication']])+
+   L.note('Lower layers are still worth having: they make high-level problems rarer. HTTP requests would often get mangled if TCP didn’t put packets back in order. They’re just not enough on their own.','layers'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Operation identifiers',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias adds request IDs to the merchant API. Where should each ID be created?</h1>');
+  L.mc(L.card,['In Otterpost’s API server, as each request arrives','In the merchant’s system, once per booking, before the first try','In the Parcel DB, when the parcel row is inserted'],1,
+   'The ID must exist before the first send, so every retry carries the same one. The book suggests a UUID in a hidden form field, or a hash of the form’s fields.',
+   'An ID created when a request arrives is new for every retry, so the retry still looks like a fresh booking. Only the client knows two attempts are the same booking, so it must create the ID once, before the first try.');}},
+{part:0,src:'Chapter 12 · The end-to-end argument',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Is a lower layer enough here?',['A lower layer handles it','Needs an end-to-end fix'],[
+   ['A packet from a hub scanner arrives twice on the same connection.',0,'TCP drops duplicate packets within one connection.'],
+   ['The courier app loses signal in a lift and resends a “delivered” scan after it reconnects.',1,'The resend comes on a new connection, so TCP can’t tell it’s a repeat. The scan needs its own ID from the app.'],
+   ['A bug in the label service writes the wrong postcode, then sends it over TLS.',1,'TLS protects the trip, not mistakes made at either end. Only a check on the data itself catches this.'],
+   ['The packets of a big label file arrive out of order.',0,'TCP puts packets back in order before the app sees them.'],
+   ['A disk on the backup server silently flips bits in last month’s invoices.',1,'Network checksums never see the disk. You need checksums over the data, checked end to end.']]);}},
+{part:0,src:'Chapter 12 · Applying end-to-end thinking in data systems',run(L){
+  L.h(L.kick('learn','Why can’t the database just handle it?')+'<h1 class="q">Tap each card</h1>');
+  L.flips(L.card,[
+   ['What transactions give you','They squash many problems (concurrent writes, broken constraints, crashes, network cuts, disk failures) into two outcomes: commit or abort. A huge simplification.'],
+   ['Why that isn’t enough','The app still needs end-to-end measures like duplicate suppression. A transaction can’t see a retry that starts outside it.'],
+   ['What happens without them','Transactions are expensive, especially across different technologies. Teams that skip them rebuild fault tolerance in app code, and Kleppmann suspects most of that code is wrong, so data gets lost or corrupted.'],
+   ['What he’d like','Abstractions that make end-to-end correctness easy while staying fast and easy to run at scale. He says we haven’t found the right one yet.']],
+   'Next: what this means for rules like “each delivery slot has only so many places”.');}},
+
+/* ---------- PART 2: CONSTRAINTS ---------- */
+{part:1,src:'Chapter 12 · Uniqueness constraints require consensus',run(L){
+  L.h(L.kick('learn','Enforcing constraints')+'<h1 class="q">One winner per value means someone has to decide</h1>'+
+   L.prose('Many features need uniqueness: one account per username, one person per seat. Other rules work the same way: a balance that never goes negative, never selling more than you have in stock. At Otterpost: unique tracking codes, a limited number of places per delivery slot, merchant credit that stays above zero.')+
+   L.prose('In a distributed system, enforcing uniqueness needs '+L.g('consensus','consensus')+': when requests for the same value arrive at the same time, something must pick the winner and reject the rest.')+
+   L.list([['person','One leader decides','The usual way. Fine if you accept sending every request through one node (even from the other side of the world) and it doesn’t fail. Tolerating its failure brings back the consensus problem.'],
+     ['layers','Partition by the value','To scale out, send every request about the same value to the same '+L.g('partition','partition')+': all tries with one request ID, or all claims on one username (by hash).'],
+     ['x','Not asynchronous multi-leader','Two leaders could each accept a conflicting write. To reject a violation immediately, synchronous coordination can’t be avoided.']],1));
+  L.done();}},
+{part:1,src:'Chapter 12 · Uniqueness in log-based messaging',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Peak Week: two people tap the last place in a delivery slot at the same moment</h1>');
+  L.beats(L.card,[
+   ['The idea','Linh points out that a '+L.g('log','log')+' gives every consumer the same order. That is total order broadcast, which is equivalent to consensus. So a log can decide who came first.'],
+   ['Step 1','Each slot booking becomes a message, appended to the log partition chosen by the hash of the slot: <b>zone W4, Tuesday 18:00–19:00</b>.'],
+   ['Step 2','One stream processor reads that partition in order on a single thread, keeping a local database of places taken. Mrs. Okoro’s message comes first: one place left, so it records it and emits <b>accepted</b>. Dan’s comes next: full, so it emits <b>rejected</b>.'],
+   ['Step 3','Each phone watches the output stream for the answer to its own request.'],
+   ['Scaling','More partitions mean more throughput, because each partition is processed on its own. And the processor can run any validation logic, not just “is it taken?”']],
+   'The core rule: route every write that might conflict to the <b>same partition</b>, and process it there one at a time.');}},
+{part:1,src:'Chapter 12 · Uniqueness in log-based messaging',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">To spread load, Tobias partitions slot bookings by recipient ID instead. What goes wrong?</h1>');
+  L.mc(L.card,['Nothing: each recipient’s own requests stay in order','The processor can no longer keep a local database','Two claims on one slot can land in different partitions'],2,
+   'Conflicting claims are about the same slot, so they must meet in the same partition. Split by recipient, two processors could each give away the last place.',
+   'The problem is that claims on the <i>same slot</i> now land in different partitions, processed by different processors that can each accept one. Partition by the thing that must stay unique.');}},
+{part:1,src:'Chapter 12 · Multi-partition request processing',run(L){
+  L.h(L.kick('learn','Across partitions')+'<h1 class="q">A transfer across partitions, without atomic commit</h1>'+
+   L.prose('In the book’s money transfer, the request ID, the payer’s account and the payee’s account may live in three different partitions. Traditionally that needs an atomic commit across all three. That forces it into one order with every other transaction on those partitions, so they can’t work independently and throughput suffers.')+
+   L.flow([['list','1 · Log it','The client gives the request a unique ID. It is appended as one message, partitioned by that ID.','',1],
+           ['layers','2 · Split it','A processor emits a debit for the payer and a credit for the payee, each partitioned by its account, both carrying the ID.','',2],
+           ['check','3 · Apply once','Further processors drop repeated IDs and update the balances.','',3]])+
+   L.prose('Why it works: writing one message is atomic in almost every system, so the request is in the log or it isn’t. If step 2 crashes, it restarts from its last checkpoint and may emit the same instructions again. It is deterministic, so the copies are identical and step 3 drops them by ID.')+
+   L.note('To stop an overdraft, add a processor partitioned by payer account that checks balances first. Only valid requests go into the log at step 1.','shield'));
+  L.done();}},
+{part:1,src:'Chapter 12 · Multi-partition request processing',pts:1,run(L){
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Linh redesigns parcel booking so it no longer needs two-phase commit between the Parcel DB and the billing ledger. Tap the steps in order.</h1><div id="od"></div>');
+  L.order(L.$('#od'),[
+   'Bramble & Bolt’s system gives the booking a unique request ID',
+   'A credit check, partitioned by merchant, confirms they can pay',
+   'The booking is appended to the request log as one message',
+   'A processor emits “debit $4.20” and “create parcel”, both with the ID',
+   'Ledger and Parcel DB consumers drop repeated IDs and apply each change'],
+   'Two differently partitioned stages plus one end-to-end ID: each booking is charged once and creates one parcel, even after crashes, with no atomic commit.');}},
+{part:1,src:'Chapter 12 · Multi-partition request processing',pts:1,run(L){
+  L.h(L.kick('pr','What happens next?')+'<h1 class="q">The splitting processor crashes right after sending “debit $4.20” for booking bb-7f3, before “create parcel”. It restarts from its last checkpoint. What happens?</h1>');
+  L.mc(L.card,['It sends both again; the ledger drops the repeated debit by ID','The debit is applied twice, so Bramble & Bolt pays $8.40','The booking is lost, because the crash happened midway'],0,
+   'The booking message is still in the log, so nothing is lost. The processor is deterministic, so it emits the same two instructions again, and the ledger recognizes bb-7f3 and ignores the repeat.',
+   'The booking is safe in the log, and the repeated debit carries the same ID, so the ledger ignores it. The processor sends both instructions again, and each takes effect exactly once.');}},
+
+/* ---------- PART 3: TIMELINESS VS INTEGRITY ---------- */
+{part:2,src:'Chapter 12 · Timeliness and Integrity',run(L){
+  L.h(L.kick('learn','Two meanings of “consistency”')+'<h1 class="q">Being up to date and being correct are different things</h1>'+
+   L.prose('A transaction is usually '+L.g('linearizability','linearizable')+': once the writer’s commit returns, everyone sees the write. Log consumers are asynchronous: the sender doesn’t wait. (A client <i>can</i> wait for its answer on an output stream, as the slot booking did, but the check is correct whether or not anyone waits.)')+
+   L.prose('Kleppmann says the word “consistency” mixes up two separate needs: '+L.g('timeliness','timeliness')+' and '+L.g('integrity','integrity')+'.')+
+   L.lanes([['clock','Timeliness','Users see an up-to-date state. A stale read is temporary: wait and try again. Linearizability is a strong form of it; read-your-writes is a weaker one.',1],
+            ['shield','Integrity','No corruption: nothing lost, nothing contradictory or false, and derived data (like an index) that matches its source. Problems stay until someone checks and repairs them.',2]])+
+   L.quote('Violations of timeliness are “eventual consistency,” whereas violations of integrity are “perpetual inconsistency.”','Martin Kleppmann')+
+   L.prose('He argues integrity matters far more in most apps. A card purchase missing from today’s statement is normal. A statement that doesn’t add up, or money charged to you but never paid to the shop, is a disaster.'));
+  L.done();}},
+{part:2,src:'Chapter 12 · Timeliness and Integrity',pts:1,
+ solve:async L=>{L.$('#pp').children[0].click();L.$('#wt').click();await L.sleep(1300);},
+ run(L){
+  const P=[['Mrs. Okoro’s tracking page still says “at hub” two minutes after the “out for delivery” scan.','Now shows “out for delivery”.'],
+           ['Bramble & Bolt’s October invoice total doesn’t equal the sum of its parcel charges.','Still wrong. Waiting changes nothing.'],
+           ['Support search can’t find 300 parcels that are in the Parcel DB.','Still missing. The index lost them.']];
+  let p=null;
+  L.h(L.kick('pr','Predict, then wait')+'<h1 class="q">Signe’s team reports three problems. Which one will fix itself if you just wait?</h1><div id="pp"></div>'+
+   '<div id="ws" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px"><div><div class="small">Simulated time</div><div class="week" id="tm">0 min</div></div><button class="btn pri" id="wt">'+L.ic('clock')+'Wait one hour</button></div><div id="pr"></div></div>');
+  P.forEach((x,j)=>{const b=document.createElement('button');b.className='chip';b.style.textAlign='left';b.textContent=x[0];b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#ws').hidden=false;};L.$('#pp').appendChild(b);});
+  L.$('#wt').onclick=function(){this.remove();let m=0;
+    const t=setInterval(()=>{m+=10;const tm=L.$('#tm');if(!tm){clearInterval(t);return;}tm.textContent=m+' min';
+      if(m>=60){clearInterval(t);
+        L.$('#pr').innerHTML=P.map((x,j)=>'<div class="fb '+(j===0?'ok':'no')+'" style="margin:6px 0">'+L.ic(j===0?'check':'x')+' '+x[1]+'</div>').join('');
+        L.award(p===0);
+        L.sheet(p===0?'ok':'no',p===0?'You called it':'Only the tracking page fixed itself','The stale tracking page was a <b>timeliness</b> problem: the update was on its way. The invoice and the index are <b>integrity</b> problems: they stay wrong until someone finds and repairs them.');L.done();}},180);};}},
+{part:2,src:'Chapter 12 · Timeliness and Integrity',pts:5,run(L){
+  L.h(L.kick('pr','Sort them')+'<h1 class="q">Timeliness or integrity?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Timeliness','Integrity'],[
+   ['A merchant’s dashboard shows today’s parcel count 30 seconds behind.',0,'It catches up on its own. That’s timeliness.'],
+   ['A courier’s “delivered” scan was processed twice, so they were paid twice for one drop.',1,'An event taking effect twice is corruption. It stays until someone fixes it.'],
+   ['A parcel was charged to Bramble & Bolt but never recorded in the Parcel DB.',1,'Money charged with nothing to show for it: disappearing data, an integrity failure.'],
+   ['A recipient reads from a lagging replica and can’t see the slot they just booked.',0,'The replica will catch up. Annoying, but temporary.'],
+   ['A buggy consumer dropped an event, so a parcel’s history skips “at hub” forever.',1,'A lost event never comes back by waiting. Integrity.']],
+   'Timeliness problems go away with time. Integrity problems need someone to notice and repair them, which is why they matter more.');}},
+{part:2,src:'Chapter 12 · Correctness of dataflow systems',run(L){
+  L.h(L.kick('learn','Correctness of dataflow systems')+'<h1 class="q">Dataflow systems separate the two, and keep integrity</h1>'+
+   L.prose('ACID transactions usually give both: linearizability for timeliness and atomic commit for integrity. So from a transactions point of view, the difference hardly matters. Event-based dataflow systems split them apart: no timeliness guarantee unless a consumer waits, but integrity is central. Losing an event or applying it twice breaks integrity, which is why exactly-once processing matters.')+
+   L.list([['Write one message','The whole booking is a single message, easy to write atomically. This fits event sourcing.'],
+     ['Derive everything else deterministically','The debit and the parcel row come from that message through deterministic functions, much like stored procedures.'],
+     ['Carry one request ID through','The client’s ID passes through every stage, so each stage can drop duplicates.'],
+     ['Keep messages immutable','Derived data can be reprocessed from the log, which makes recovering from bugs easier.']],2)+
+   '<p class="small" style="margin-top:10px">Kleppmann calls this combination a very promising direction: comparable correctness to distributed transactions, potentially with much better performance and robustness.</p>');
+  L.done();}},
+{part:2,src:'Chapter 12 · Loosely interpreted constraints',run(L){
+  L.h(L.kick('learn','Loosely interpreted constraints')+'<h1 class="q">Sometimes it’s fine to say sorry later</h1>'+
+   L.prose('A strict uniqueness rule needs consensus, and stream processing can’t avoid that. But Kleppmann points out that many real businesses already live with weaker rules:')+
+   L.list([['Same seat or username twice','Apologize to one person and ask them to choose another. A fix like this is a '+L.g('compensating','compensating transaction')+'.'],
+     ['Sold more than you have','Order more stock, apologize for the delay, offer a discount. You need that process anyway, for when a forklift runs over some of your stock.'],
+     ['Overbooked flights and hotels','Done on purpose, with refunds and upgrades ready. Bad weather and strikes need the same process.'],
+     ['Overdrawn accounts','The bank charges a fee and asks for the money back. A daily withdrawal limit caps the risk.']],3)+
+   L.prose('Whether the apology is cheap enough is a business decision. If it is, write optimistically and check the rule afterwards. Still check <i>before</i> anything that is expensive to undo. These apps still need integrity (never lose a booking), just not timeliness on the rule.'));
+  L.done();}},
+{part:2,src:'Chapter 12 · Loosely interpreted constraints',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Check first, or fix later?',['Check strictly first','Write now, apologize if needed'],[
+   ['Two recipients grab the last place in a Peak Week delivery slot.',1,'Apologize to one and offer the next slot or a small discount. A cheap compensating transaction.'],
+   ['Paying couriers’ weekly earnings to their bank accounts.',0,'Like cash from an ATM, money paid out is hard to get back. Check before this step.'],
+   ['Bramble & Bolt’s prepaid credit dips slightly below zero in a flash sale, within a daily limit.',1,'Like an overdraft with a daily limit: the risk is capped and the fix is simply billing them.'],
+   ['Two small merchants pick the same shop handle on the dashboard.',1,'Ask one of them to choose another, like a clashing username.']]);}},
+{part:2,src:'Chapter 12 · Coordination-avoiding data systems',pts:1,run(L){
+  L.h(L.kick('learn','Coordination-avoiding systems')+'<h1 class="q">Coordinate only where you have to</h1>'+
+   L.prose('Put the two ideas together: dataflow keeps integrity without atomic commit or synchronous coordination across partitions, and many rules can be checked loosely. So many apps can avoid coordination and still keep strong integrity, with better performance and fault tolerance.')+
+   L.lanes([['map','Otterpost’s regions','Westport, Eastvale and Nordhaven could each keep running alone, replicating to each other asynchronously. Weak timeliness (not linearizable), strong integrity.',1],
+            ['lock','Where coordination stays','Serializable transactions in small scopes where they work well. No need for cross-system (XA) transactions. Synchronous checks only before steps you can’t recover from.',3]])+
+   L.prose('Coordination means fewer apologies for inconsistencies, but it can also mean more apologies for outages and slowness. You can’t get apologies to zero; you look for the best trade-off.')+
+   '<div id="cq"><h2 class="sub">Femi asks: should every Otterpost write go through one global coordinator, so nothing is ever inconsistent?</h2></div>');
+  L.mc(L.$('#cq'),['Yes: no inconsistencies means no apologies at all','No: outages and slowness bring their own apologies'],1,
+   'A global coordinator cuts one kind of apology and adds another. Keep coordination for the few steps that really need it.',
+   'Coordination doesn’t remove apologies, it swaps them: fewer for inconsistencies, more for outages and slow responses across regions. Coordinate only where you must.');}},
+
+/* ---------- PART 4: TRUST, BUT VERIFY ---------- */
+{part:3,src:'Chapter 12 · Trust, but Verify',run(L){
+  L.h(L.kick('learn','Trust, but verify')+'<h1 class="q">The things we assume never break do break, rarely</h1>'+
+   L.prose('Every design rests on a system model: we assume processes crash and networks drop messages, but that data on disk survives, memory isn’t corrupted and the CPU multiplies correctly. Mostly true. But really it’s a matter of probability: does the “impossible” happen often enough to meet it?')+
+   L.list([['box','Hardware','Data can rot on untouched disks, and network corruption sometimes slips past TCP checksums. Kleppmann once saw crash reports that only random memory bit-flips could explain. Rare, but with enough devices it happens.'],
+     ['alert','Database bugs','He has seen MySQL fail to keep a uniqueness constraint and PostgreSQL’s serializable level allow write skew, in mature, well-tested databases.'],
+     ['pencil','Application bugs','Far more likely: app code gets much less testing. Many apps don’t even use foreign keys or unique constraints. ACID consistency assumes the transaction itself is bug-free.']],4)+
+   L.prose('So corruption will happen sooner or later. You need a way to find it: checking the integrity of data is called '+L.g('auditing','auditing')+'. Big storage systems like HDFS and Amazon S3 keep re-reading files and comparing replicas to catch silent corruption. The same logic says: try restoring your backups now and then, or you’ll learn they’re broken only when you need them.')+
+   L.note('Kleppmann fears the culture of ACID databases taught us to trust blindly. When NoSQL weakened the guarantees, the audit tools still weren’t there. He hopes for systems that keep checking their own integrity.','eye'));
+  L.done();}},
+{part:3,src:'Chapter 12 · Designing for auditability',run(L){
+  L.h(L.kick('ex','A billing dispute')+'<h1 class="q">Bramble & Bolt says October’s invoice charged for parcels it never booked</h1>');
+  L.beats(L.card,[
+   ['Only tables','Zainab checks the billing tables and the change data capture log. She can see <i>which</i> rows changed, but not <i>why</i>: the app logic that decided those changes ran once and is gone.'],
+   ['An event log','Linh’s booking events are immutable, and every charge is derived from them by deterministic code. Running the same events through the same code version gives the same result every time.'],
+   ['Replay','Hashes show the stored events weren’t corrupted. Replaying October through the same code version reproduces the wrong total exactly, so Linh can step through it and see why: a surcharge rule fired once per retry. They fix the rule and reprocess.'],
+   ['End to end','Kwame adds a nightly check comparing the booking events at the start of the pipeline with the invoice lines at the end. Every disk, network, service and job in between is checked along the way. Like automated tests, it lets the team change things with less fear.'],
+   ['Stronger tools','An audit table, or a log signed by a hardware security module, protects the log, but can’t prove the right entries went in. Kleppmann finds the integrity checking in blockchains interesting, though he is skeptical of their Byzantine fault tolerance and calls proof of work wasteful. A '+L.g('merkle','Merkle tree')+' (a tree of hashes) can efficiently prove a record is in a dataset; certificate transparency uses them.']],
+   'Explicit, deterministic dataflow makes it clear where data came from. That turns “is this right?” into something you can rerun and check.');}},
+{part:3,src:'Chapter 12 · The end-to-end argument again',pts:1,run(L){
+  L.h(L.kick('pr','Your call')+'<h1 class="q">Kwame can afford one new integrity check for billing this quarter. Which one catches the most?</h1>');
+  L.mc(L.card,['A checksum on every disk in the billing ledger','Running the billing jobs at serializable isolation','Comparing log events with final invoice lines, end to end'],2,
+   'An end-to-end comparison includes every disk, network, service and job on the path, so corruption anywhere along the way shows up.',
+   'Disk checksums miss software bugs, and isolation doesn’t stop a buggy rule. Comparing the start of the pipeline with the end checks everything in between, including parts nobody thought of.');}}
+  ]
+});
+</script>
+</body>
+</html>

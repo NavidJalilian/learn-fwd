@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a Web Crawler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0003', title:'Design a web crawler', minutes:22, icon:'compass',
+  goals:['Scope a crawler and size it in pages a second and storage','Trace a page through the 11-step crawl workflow','Keep a crawler polite, fast, sturdy and out of traps'],
+  parts:['Scope it','The big picture','URL frontier','Downloader and traps'],
+  read:'Read chapter 9 of the book for its diagrams: the full crawler design, the numbered workflow and the URL frontier’s queues.',
+  glossary:{
+    crawler:'Web crawler (also robot or spider): a program that downloads web pages, finds the links on them, and follows those links to more pages.',
+    dns:'DNS (Domain Name System): the internet’s phone book. It turns a name like knitbymae.example into the numeric IP address a computer needs to connect.',
+    fifo:'FIFO queue (first in, first out): a waiting line where items leave in the order they arrived.',
+    bfs:'Breadth-first search (BFS): visit everything one link away first, then everything two links away, and so on. Depth-first search (DFS) instead follows one chain of links as deep as it goes before backing up.',
+    bloom:'Bloom filter: a compact, memory-saving way to check whether an item is already in a set. It answers by probability rather than with certainty, which is why it is so fast and small.',
+    robots:'robots.txt: a small file a website publishes to tell crawlers which pages they may and may not download.',
+    'spider-trap':'Spider trap: a page or site that makes a crawler loop forever, for example links that keep generating new URLs.'
+  },
+  cheatsheet:[
+    'Basic loop: <b>download</b> pages, <b>extract</b> their links, <b>add</b> the new links, repeat.',
+    'Scope: search indexing, 1 billion HTML pages a month, keep 5 years, skip duplicates: ≈ <b>400 pages/s</b> (peak 800), <b>500 TB a month</b>, <b>30 PB</b> in 5 years.',
+    'Traits of a good crawler: <b>scalability, robustness, politeness, extensibility</b>.',
+    'Pipeline: seed URLs → URL frontier → HTML downloader (+ DNS resolver) → content parser → “Content Seen?” → URL extractor → URL filter → “URL Seen?” → back to the frontier.',
+    '<b>BFS, not DFS.</b> URL frontier: <b>front queues</b> for priority, <b>back queues</b> for politeness (one host per queue, a delay between downloads), plus recrawls for freshness.',
+    'Downloader: obey and cache <b>robots.txt</b>; speed up with a distributed crawl, a DNS cache, locality and short timeouts.',
+    'Robustness: consistent hashing, saved crawl state, exception handling, data validation. Extensibility: plug-in modules.',
+    'Problem content: duplicates (hashes), spider traps (max URL length, then manual review and filters), data noise.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE IT ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Pattern Finder, Kitebird’s new crawler, finds a tiny sewing blog on a cheap host. It could fetch all 300 pages in one second. Should it?</h1>');
+  L.mc(L.card,['Yes, faster is always better','No, spread the requests out over time'],1,
+   'A small site can buckle under a burst. Being gentle with other people’s servers is one of the four traits of a good crawler, and a big part of this lesson.',
+   'Three hundred requests in a second could knock a small site over. Being gentle with other people’s servers is one of the four traits of a good crawler.');}},
+{part:0,src:'Chapter 9 · Design a web crawler',run(L){
+  L.h(L.kick('learn','The problem')+'<h1 class="q">What a crawler does, and what for</h1>'+
+   L.prose('A '+L.g('crawler','web crawler')+' starts from a few pages, follows their links to new pages, and collects what it finds: web pages, images, videos, PDFs. Its basic loop has three steps:')+
+   L.flow([['down','Download','the pages for a list of URLs'],['list','Extract','the links on those pages'],['cycle','Add','the new links to the list, and repeat']])+
+   L.list([['eye','Search engine indexing','The most common use. Googlebot is Google’s crawler.'],['book','Web archiving','Preserving the web, as national libraries do.'],['trend','Web mining','Finding knowledge, like firms reading annual reports.'],['shield','Web monitoring','Spotting copyright and trademark infringement.']],2));
+  L.done();}},
+{part:0,src:'Chapter 9 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('ex','The book’s interview')+'<h1 class="q">Six questions and four sums</h1>');
+  L.beats(L.card,[
+   ['Purpose','What is the crawler for? Search engine indexing.'],
+   ['Volume','How many pages a month? <b>1 billion</b>.'],
+   ['Content','HTML only, or PDFs and images too? HTML only.'],
+   ['Changes','Pick up new and edited pages? Yes.'],
+   ['Storage','Keep the HTML? Yes, for up to <b>5 years</b>.'],
+   ['Duplicates','Pages with duplicate content? Ignore them.'],
+   ['The sums','1 billion ÷ 30 days ÷ 24 hours ÷ 3,600 seconds ≈ <b>400 pages a second</b>, and peak '+L.g('qps','QPS')+' is twice that: <b>800</b>. At 500 KB a page that’s <b>500 TB a month</b>, and × 12 months × 5 years = <b>30 PB</b>.']],
+   'Even a “simple” crawler hides choices. You and the interviewer may not share the same assumptions until you ask.');}},
+{part:0,src:'Chapter 9 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','Note them down')+'<h1 class="q">Four traits of a good crawler</h1>'+
+   L.list([['layers','Scalability','The web has billions of pages. Crawl efficiently, in parallel.'],
+     ['shield','Robustness','The web is full of traps: bad HTML, unresponsive servers, crashes, malicious links. Handle every one.'],
+     ['people','Politeness','Don’t send a website too many requests in a short time.'],
+     ['box','Extensibility','Support new content types, like images later, with small changes instead of a redesign.']],1));
+  L.done();}},
+{part:0,src:'Chapter 9 · Step 1 - Understand the problem and establish design scope',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A maker’s page has badly broken HTML, and it crashes a Pattern Finder worker. Which trait is missing?</h1>');
+  L.mc(L.card,['Robustness','Politeness','Extensibility'],0,
+   'Bad HTML is one of the traps the web is full of. A robust crawler survives it.',
+   'Nobody was flooded and no new content type is involved. Surviving bad HTML is robustness.');}},
+{part:0,src:'Chapter 9 · Step 1 - Understand the problem and establish design scope',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which trait is this about?',['Scalability','Robustness','Politeness','Extensibility'],[
+   ['A tiny sewing blog goes offline after Pattern Finder sends it 50 requests a second.',2,'Too many requests to one site in a short time: politeness.'],
+   ['Next year Dario wants PDF patterns too, and the downloader would need a rewrite.',3,'New content types should need small changes: extensibility.'],
+   ['One server can’t fetch pages fast enough; the job needs many working in parallel.',0,'Doing more work in parallel is scalability.'],
+   ['A site never answers, and a worker waits on it forever.',1,'Unresponsive servers are a trap a robust crawler handles.']]);}},
+{part:0,src:'Chapter 9 · Back of the envelope estimation',pts:1,run(L){
+  L.h(L.kick('pr','Napkin math')+'<h1 class="q">Pattern Finder will crawl about 30 million pages a month. Using the book’s method, about how many pages a second is that?</h1>');
+  L.mc(L.card,['About 1,200','About 120','About 12'],2,
+   '30 million ÷ 30 ÷ 24 ÷ 3,600 ≈ 12 pages a second, so about 24 at peak. Far smaller than the book’s crawler.',
+   'Divide by the seconds in a month: 30 million ÷ 30 ÷ 24 ÷ 3,600 ≈ 12 pages a second.');}},
+
+/* ---------- PART 2: THE BIG PICTURE ---------- */
+{part:1,src:'Chapter 9 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','The high-level design')+'<h1 class="q">The parts, first half: from seed to parsed page</h1>'+
+   L.list([['Seed URLs','The starting points. For one university, its domain. For the whole web, split the URL space, say by country or by topic. There’s no perfect answer: think out loud.'],
+     ['URL Frontier','The URLs still to download, like a '+L.g('fifo','first-in-first-out queue')+'.'],
+     ['HTML Downloader','Downloads the pages whose URLs the frontier hands it.'],
+     ['DNS Resolver','Turns a URL’s host name into an IP address for the downloader. See '+L.g('dns','DNS')+'.'],
+     ['Content Parser','Parses and checks each page, since malformed pages cause problems and waste storage. It’s a separate part so it doesn’t slow the crawl.']],1));
+  L.done();}},
+{part:1,src:'Chapter 9 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','The high-level design')+'<h1 class="q">The parts, second half: two duplicate checks</h1>'+
+   L.list([['“Content Seen?”','About 29% of web pages are duplicates. Comparing pages character by character is slow, so compare their hash values instead.'],
+     ['Content Storage','Stores the HTML. Mostly on disk, since there’s so much; popular content in memory to cut delay.'],
+     ['URL Extractor','Pulls the links out of a page and turns relative paths into full URLs.'],
+     ['URL Filter','Drops certain content types, file extensions, error links and blacklisted sites.'],
+     ['“URL Seen?”','Tracks URLs already visited or already in the frontier, so none is added twice. That avoids extra load and endless loops. Usually a '+L.g('bloom','bloom filter')+' or a hash table.'],
+     ['URL Storage','Keeps the URLs already visited.']],2));
+  L.done();}},
+{part:1,src:'Chapter 9 · Web crawler workflow',run(L){
+  L.h(L.kick('ex','Follow one page')+'<h1 class="q">The 11-step workflow, on a Kitebird maker’s site</h1>');
+  L.beats(L.card,[
+   ['1 · Seed','knitbymae.example goes into the URL Frontier as a seed URL.'],
+   ['2–3 · Download','The HTML Downloader takes URLs from the frontier, gets each host’s IP address from the DNS Resolver, and downloads the pages.'],
+   ['4 · Parse','The Content Parser checks that Mae’s page isn’t malformed.'],
+   ['5–6 · Content Seen?','The page’s content isn’t in storage yet, so it moves on. A copy of it on a mirror site would be discarded here.'],
+   ['7–8 · Extract and filter','The link extractor finds 40 links. The URL filter drops the .zip downloads and a blacklisted site.'],
+   ['9–10 · URL Seen?','Each remaining link is checked. Mae’s home page was processed before, so nothing more is done with it.'],
+   ['11 · Back to the frontier','Brand-new links, like a pattern page on quiltnook.example, join the URL Frontier. The loop goes on.']],
+   'Eleven steps and two duplicate checks: “Content Seen?” guards against repeated pages, “URL Seen?” against repeated links.');}},
+{part:1,src:'Chapter 9 · Content Seen?',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The same free sock pattern sits at two different URLs. Which part stops Pattern Finder storing it twice?</h1>');
+  L.mc(L.card,['“URL Seen?”','“Content Seen?”','The URL filter'],1,
+   'The URLs differ, but the content is the same. Comparing content hashes catches it.',
+   'The two URLs are different, so URL checks let both through. “Content Seen?” compares the page content itself, by hash.');}},
+{part:1,src:'Chapter 9 · Web crawler workflow',pts:1,run(L){
+  L.h(L.kick('pr','Run the pipeline')+'<h1 class="q">Put the crawl pipeline in order, from seed to frontier.</h1>');
+  L.order(L.card,['Seed URLs go into the URL Frontier','The downloader fetches pages, using DNS','The Content Parser checks each page','“Content Seen?” drops duplicate pages','The URL Extractor pulls out the links','The URL Filter drops unwanted links','“URL Seen?” drops known URLs','New URLs join the URL Frontier'],
+   'Pages are checked before their links are pulled out, and links are checked twice (filter, then “URL Seen?”) before they rejoin the frontier.');}},
+{part:1,src:'Chapter 9 · Step 2 - Propose high-level design and get buy-in',pts:6,run(L){
+  L.h(L.kick('pr','Which part?')+'<h1 class="q">Match each job to the part of Pattern Finder that does it.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['DNS Resolver','Content Seen?','URL Filter','URL Seen?'],[
+   ['Turns knitbymae.example into an IP address',0,'Names become IP addresses at the DNS Resolver.'],
+   ['Notices a page’s hash is already in storage',1,'Hash comparison of page content is “Content Seen?”.'],
+   ['Drops links to .zip files and blacklisted sites',2,'Unwanted file types and sites are the URL filter’s job.'],
+   ['Skips a link that’s already waiting in the frontier',3,'“URL Seen?” knows what’s visited or already queued.'],
+   ['Stops the crawler going round a loop of links',3,'Tracking seen URLs prevents endless loops.'],
+   ['Skips a pattern copied word for word onto a mirror site',1,'Same content at a new URL: “Content Seen?”.']],
+   'Content checks look at what a page says; URL checks look at where a link points.');}},
+
+/* ---------- PART 3: URL FRONTIER ---------- */
+{part:2,src:'Chapter 9 · DFS vs BFS',run(L){
+  L.h(L.kick('learn','The deep dive')+'<h1 class="q">Breadth first, but plain BFS has two problems</h1>'+
+   L.prose('Think of the web as a directed graph: pages are nodes, links are edges. Crawling is walking that graph. Depth-first search usually isn’t a good choice, because it can go very deep. Crawlers use '+L.g('bfs','breadth-first search')+' with a FIFO queue.')+
+   L.list([['Impolite','Most links on a page point back to the same host. Download them in parallel and that host gets flooded.'],
+     ['No priority','Plain BFS treats every URL alike, but pages differ a lot in quality and importance.']],4)+
+   '<p class="small" style="margin-top:10px">The URL frontier fixes both.</p>');
+  L.done();}},
+{part:2,src:'Chapter 9 · DFS vs BFS',pts:1,
+ solve:async L=>{L.$('#po').children[2].click();L.$('#run').click();},
+ run(L){
+  let p=null;const O=['1','2','4'];
+  const Q=[['quiltnook','/patterns/a'],['quiltnook','/patterns/b'],['quiltnook','/patterns/c'],['quiltnook','/patterns/d'],['quiltnook','/patterns/e'],['knitbymae','/socks'],['sewlab','/aprons']];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Pattern Finder’s plain FIFO queue starts with the links from one quiltnook.example page. Four workers each take the next URL at once. How many hit quiltnook.example together?</h1>'+
+   '<div style="margin:2px 0 8px">'+Q.map(q=>'<span class="chip static" style="font-size:13px'+(q[0]==='quiltnook'?';border-color:var(--h3)':'')+'">'+q[0]+q[1]+'</span>').join('')+'</div><div id="po"></div>'+
+   '<div id="sim" hidden><button class="btn pri" id="run" style="margin:6px 0 8px">'+L.ic('play')+'Start four workers</button><div id="tl"></div></div>');
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#run').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}
+      tl.insertAdjacentHTML('beforeend','<div class="row" style="padding:8px 0"><span class="chip static" style="margin:0">Worker '+(k+1)+'</span><span style="color:var(--no);font-weight:500">'+Q[k][0]+Q[k][1]+'</span></div>');
+      k++;if(k>=4){clearInterval(t);L.fb(tl,'<b>quiltnook.example: 4 requests at once.</b> A small hobby site may not cope.','no');L.award(p===2);
+        L.sheet(p===2?'ok':'no',p===2?'All four':'All four of them','Links on one page mostly point to the same host, so plain BFS hands every worker the same site. That’s the “impolite” problem the URL frontier’s back queues solve.');L.done();}},350);};}},
+{part:2,src:'Chapter 9 · Politeness',run(L){
+  L.h(L.kick('learn','Politeness')+'<h1 class="q">Back queues: one host, one queue, one page at a time</h1>'+
+   L.prose('The idea: download one page at a time from each host, with a delay between downloads. The book’s design:')+
+   L.list([['Queue router','Makes sure each queue holds URLs from only one host.'],
+     ['Mapping table','Records which host goes to which queue.'],
+     ['FIFO queues b1 … bn','One queue per host.'],
+     ['Queue selector','Ties each worker thread to one queue.'],
+     ['Worker threads','Each downloads pages from its host one by one, with a delay between them.']],2));
+  L.done();}},
+{part:2,src:'Chapter 9 · Priority',run(L){
+  L.h(L.kick('learn','Priority')+'<h1 class="q">Front queues: important pages first</h1>'+
+   L.prose('A random forum post that mentions Apple matters less than Apple’s home page, though both contain “Apple”. So a <b>prioritizer</b> scores each URL by usefulness: PageRank, website traffic, update frequency and so on.')+
+   L.list([['Prioritizer','Takes URLs in and computes their priority.'],['Queues f1 … fn','Each has an assigned priority.'],['Queue selector','Picks a queue at random, with a bias toward higher priority.']],3)+
+   L.flow([['star','Front queues','manage priority'],['people','Back queues','manage politeness'],['down','Workers','download pages']])+
+   '<p class="small">Together, the two layers make the URL frontier.</p>');
+  L.done();}},
+{part:2,src:'Chapter 9 · Freshness',run(L){
+  L.h(L.kick('ex','Pattern Finder’s frontier')+'<h1 class="q">One URL’s trip through the frontier</h1>');
+  L.beats(L.card,[
+   ['Ranking','New URLs arrive. The prioritizer puts a popular designer’s pattern index in a high-priority front queue and an old forum thread in a low one.'],
+   ['Politeness','The router sends each URL to its host’s back queue. One worker handles quiltnook.example: fetch a page, pause, fetch the next.'],
+   ['Freshness','Pages change, so the crawler must recrawl. The book’s strategies: recrawl based on each page’s update history, and recrawl important pages first and more often. Mae posts a pattern weekly, so knitbymae.example comes round often; a site unchanged for years, rarely.'],
+   ['Storage','A real search crawl’s frontier can hold hundreds of millions of URLs: too many for memory, and disk alone is too slow. The book’s hybrid: most URLs on disk, with memory buffers for adding and removing, written to disk now and then.']],
+   'The frontier balances priority (front queues), politeness (back queues) and freshness (recrawls), with storage split between disk and memory.');}},
+{part:2,src:'Chapter 9 · URL frontier',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which half of the frontier stops Pattern Finder hammering one small site?</h1>');
+  L.mc(L.card,['Back queues','Front queues'],0,
+   'Back queues hold one host each, and a worker downloads from it one page at a time with a delay.',
+   'Front queues set priority. Politeness comes from back queues: one host per queue, one page at a time, with a delay.');}},
+{part:2,src:'Chapter 9 · URL frontier',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which part of the frontier fixes it?',['Front queues','Back queues','Recrawl policy','Disk plus memory buffers'],[
+   ['Pattern Finder spends its first week on spam forums while top designers’ pages wait.',0,'Ranking URLs by usefulness is the front queues’ job.'],
+   ['A blog owner complains about 20 requests a second from Pattern Finder.',1,'One host per back queue, one page at a time, with a delay.'],
+   ['A designer updated their sock pattern a month ago; Kitebird search still shows the old one.',2,'Freshness: recrawl based on update history, important pages more often.'],
+   ['The frontier has grown too big for memory, and disk alone is too slow.',3,'The hybrid: most URLs on disk, memory buffers for adding and removing.']]);}},
+
+/* ---------- PART 4: DOWNLOADER AND TRAPS ---------- */
+{part:3,src:'Chapter 9 · HTML Downloader',run(L){
+  L.h(L.kick('learn','The downloader')+'<h1 class="q">Ask first, then go fast</h1>'+
+   L.prose(L.g('robots','robots.txt')+', the Robots Exclusion Protocol, is how a website tells crawlers which pages they may download. Check it before crawling a site and follow its rules. Cache the file and refresh it now and then, so you don’t download it for every page.')+
+   L.list([['Distributed crawl','Spread jobs over many servers, each running many threads and each responsible for part of the URL space.'],
+     ['Cache DNS','A DNS lookup takes 10 to 200 ms and can hold up other threads. Keep your own name-to-IP cache, refreshed by scheduled jobs.'],
+     ['Locality','Put crawl servers near the websites they fetch, so downloads are faster.'],
+     ['Short timeout','If a host doesn’t answer within a set time, stop and crawl other pages.']],1)+
+   L.note('<b>Beyond the book:</b> robots.txt is a convention. Polite crawlers obey it, but it doesn’t lock anything.','info'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Robustness',pts:1,run(L){
+  L.h(L.kick('learn','Robustness and extensibility')+'<h1 class="q">Survive failures, and grow by plugging in</h1>'+
+   L.lanes([['shield','Robustness','<b>'+L.g('consistent-hashing','Consistent hashing')+'</b> spreads load across downloaders and lets you add or remove one. <b>Save crawl state and data</b> so a disrupted crawl restarts easily. <b>Handle exceptions</b> without crashing. <b>Validate data</b> to prevent errors.',2],
+            ['box','Extensibility','New content types plug in as modules. The book’s examples: a <b>PNG Downloader</b> module for images, and a <b>Web Monitor</b> module that watches for copyright and trademark infringement.',3]])+
+   '<div id="lq"><h2 class="sub">A Pattern Finder downloader crashes mid-crawl. What lets the crawl restart where it stopped?</h2></div>');
+  L.mc(L.$('#lq'),['Saved crawl state and data','A new PNG Downloader module'],0,
+   'Crawl state and data written to storage are reloaded to restart the crawl.',
+   'A module adds a content type; it doesn’t help with a crash. Saved crawl state and data let the crawl restart.');}},
+{part:3,src:'Chapter 9 · Detect and avoid problematic content',run(L){
+  L.h(L.kick('learn','Problem content')+'<h1 class="q">Duplicates, traps and noise</h1>'+
+   L.list([['Redundant content','Nearly 30% of pages are duplicates. Hashes or checksums detect them.'],
+     ['Spider traps','A '+L.g('spider-trap','spider trap')+' keeps a crawler looping forever, like an endlessly deep path: /foo/bar/foo/bar/… A maximum URL length helps, but no single fix catches every trap. Trap sites stand out by having an unusually large number of pages. A person can verify one, then exclude the site or add a custom URL filter.'],
+     ['Data noise','Ads, code snippets and spam URLs add little or no value. Exclude them where you can.']],4));
+  L.done();}},
+{part:3,src:'Chapter 9 · Spider traps',pts:1,
+ solve:async L=>{L.$('#run').click();},
+ run(L){
+  const S=[['knitbymae',[12,25,34,40,42,42]],['quiltnook',[18,31,44,52,55,55]],['sewlab',[9,17,24,29,30,30]],['quiltguild',[800,1600,2400,3200,4000,4800]]];
+  const U=['/events/2027/01','/events/2028/06','/events/2029/11','/events/2031/04','/events/2032/09','/events/2034/02'];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Pattern Finder has been crawling four makers’ sites for an hour. Press play and watch the page counts.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:10px 14px;margin:6px 0 10px">'+S.map((s,j)=>'<div class="meterrow"><div class="lb">'+s[0]+'</div><div class="meter"><div id="m'+j+'" style="background:var(--'+(j===3?'no-strong':'ok-strong')+')"></div></div><b id="c'+j+'" style="width:46px;text-align:right;font-size:14px">0</b></div>').join('')+
+   '<div class="small" id="url" style="word-break:break-all">Latest quiltguild URL: none yet</div></div>'+
+   '<button class="btn pri" id="run">'+L.ic('play')+'Run the crawl</button><div id="hq"></div>');
+  L.$('#run').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{if(!L.$('#m0')){clearInterval(t);return;}
+      S.forEach((s,j)=>{L.$('#m'+j).style.width=Math.min(100,s[1][k]/48)+'%';L.$('#c'+j).textContent=s[1][k].toLocaleString('en-US');});
+      L.$('#url').textContent='Latest quiltguild URL: quiltguild.example'+U[k];
+      k++;if(k>=6){clearInterval(t);const q=L.$('#hq');
+        q.innerHTML='<h2 class="sub">quiltguild.example has a calendar whose “next month” link never ends. Its URLs stay short. What’s the best fix?</h2>';
+        L.mc(q,['Lower the maximum URL length','Verify it by hand, then filter or exclude','Add more downloader servers'],1,
+         'The unusual page count gave the trap away. A person checks it, then excludes the site or adds a custom URL filter, as the book suggests.',
+         'The calendar URLs never get longer, so a length cap won’t catch them, and more servers would just crawl the trap faster. A person verifies it, then excludes the site or adds a custom URL filter.');}},380);};}},
+{part:3,src:'Chapter 9 · Step 4 - Wrap up',run(L){
+  L.h(L.kick('learn','If time remains')+'<h1 class="q">Talking points the book leaves for the end</h1>'+
+   L.list([['play','Server-side rendering','Many sites build links on the fly with JavaScript or AJAX. Render the page first (also called dynamic rendering), then parse it, or those links stay hidden.'],
+     ['x','Filter out unwanted pages','Storage and crawl capacity are limited, so an anti-spam component weeds out low-quality and spam pages.'],
+     ['box','Database replication and sharding','To make the data layer available, scalable and reliable.'],
+     ['layers','Horizontal scaling','A large crawl needs hundreds or thousands of download servers. The key is keeping them '+L.g('stateless','stateless')+'.'],
+     ['trend','Analytics','Collect and analyze data to fine-tune the system.']],3));
+  L.done();}},
+{part:3,src:'Chapter 9 · Step 3 - Design deep dive',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which fix fits?',['Cache DNS lookups','Set a short timeout','Obey robots.txt','Cap the URL length','Render the page first'],[
+   ['Threads sit idle waiting on name lookups for the same hosts, again and again.',0,'Keep a name-to-IP cache so threads stop waiting on DNS.'],
+   ['One site never answers, and a worker waits on it forever.',1,'Give up after a set time and crawl other pages.'],
+   ['A maker’s site asks crawlers to stay out of its /drafts/ folder.',2,'That request lives in robots.txt, which a polite crawler follows.'],
+   ['Links like /patterns/a/b/a/b/a/b/… keep getting longer.',3,'An endlessly deep path is exactly what a maximum URL length catches.'],
+   ['A pattern shop builds its links with JavaScript, and the parser finds none.',4,'Server-side rendering runs the scripts first, so the links appear.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

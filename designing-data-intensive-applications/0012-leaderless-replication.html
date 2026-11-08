@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leaderless Replication and Quorums</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0012', title:'Leaderless replication and quorums', minutes:22, icon:'people',
+  goals:['Explain how a leaderless store keeps working when a node is down','Choose quorum settings n, w and r, and know where they stop protecting you','Tell concurrent writes from ordered ones, and merge them without losing data'],
+  parts:['No leader','Quorums','Limits and sloppy quorums','Concurrent writes'],
+  read:'Read “Leaderless Replication” and the Summary of chapter 5, especially the shopping-cart walk-through in “Capturing the happens-before relationship.”',
+  glossary:{
+    'leaderless':'Leaderless (Dynamo-style) replication: there is no leader. Clients, or a coordinator acting for them, send each write to several replicas and read from several replicas.',
+    'quorum':'Quorum: with n copies of each value, a write must be confirmed by w of them and a read must hear from r of them. If w + r > n, the nodes written to and the nodes read from overlap.',
+    'read-repair':'Read repair: when a read gets an old value from one replica and a newer one from another, the newer value is written back to the replica that was behind.',
+    'anti-entropy':'Anti-entropy: a background process that compares replicas and copies over any data one of them is missing, in no particular order.',
+    'sloppy':'Sloppy quorum: when a value’s usual (“home”) nodes can’t be reached, writes and reads count responses from other reachable nodes instead.',
+    'hinted':'Hinted handoff: once the network recovers, writes that a stand-in node accepted for another node are sent on to their home node.',
+    'concurrent':'Concurrent operations: two operations where neither knew about the other when it started. It doesn’t matter whether they overlapped in clock time.',
+    'siblings':'Siblings: several values for the same key that were written concurrently, kept side by side until the application merges them.',
+    'tombstone':'Tombstone: a special record that says “this key was deleted.” When copies are merged, it tells the merge to drop the key’s older values instead of bringing them back.',
+    'version-vector':'Version vector: a version number for each replica, kept with each key. It lets the database tell an overwrite from a concurrent write.',
+    'lww':'Last write wins (LWW): resolve a conflict by keeping the write with the latest timestamp and silently dropping the others. Everyone ends up the same, but data is lost.'
+  },
+  cheatsheet:[
+    '<b>Leaderless</b> (Dynamo-style): send each write and each read to several replicas. No leader, so no failover.',
+    'Copies catch up through <b>read repair</b> (on read) and <b>anti-entropy</b> (in the background).',
+    '<b>Quorum:</b> n replicas, wait for w writes and r reads. If <b>w + r &gt; n</b>, the sets overlap. Writes survive n − w nodes down; reads survive n − r.',
+    'Quorums aren’t absolute: sloppy quorums, concurrent writes, failed writes that aren’t rolled back and restored nodes can all return stale data. Monitor staleness.',
+    '<b>Sloppy quorum + hinted handoff:</b> borrow other nodes when home nodes are unreachable, then hand the writes back. More write availability, no read guarantee.',
+    '<b>Last write wins</b> converges by dropping data. Safe only when each key is written once.',
+    'A <b>happens before</b> B if B knew about or built on A. If neither knew of the other, they’re <b>concurrent</b>, whatever the clock says.',
+    'Version numbers (or <b>version vectors</b> with several replicas) keep concurrent values as <b>siblings</b>; merge them, using <b>tombstones</b> for removals.'
+  ],
+  steps:[
+/* ---------- PART 1: NO LEADER ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Courier Ravi’s phone sends their position to three copies of a store at once. One copy is rebooting. Two copies say “got it.” Should the phone treat the ping as saved?</h1>');
+  L.mc(L.card,['No, all three copies must confirm','Yes, two out of three is enough'],1,
+   'Two copies have it, so it’s safe enough, and the third can catch up later. That’s the idea behind leaderless replication and quorums.',
+   'Waiting for all three would mean one rebooting copy blocks every ping. Two out of three is enough; the third catches up later. That’s the idea behind quorums.');}},
+{part:0,src:'Chapter 5 · Leaderless Replication',run(L){
+  L.h(L.kick('learn','No leader at all')+'<h1 class="q">Any replica can take a write</h1>'+
+   L.prose('With one leader or several, a client writes to one leader, and the database copies the write in an order the leader decides. Some databases drop the leader idea: <b>any replica accepts writes directly from clients</b>.')+
+   L.prose('Some of the earliest replicated systems were leaderless. The idea came back after Amazon built its in-house Dynamo system. Riak, Cassandra and Voldemort copied it, so this style is called '+L.g('leaderless','Dynamo-style')+'. (Amazon’s DynamoDB is a different product, based on single-leader replication.)')+
+   L.flow([['person','Client','Sends each write to several replicas, or a coordinator does it for the client.','',1],['layers','Replicas','Each one accepts the write on its own.','',2],['alert','No fixed order','Even a coordinator doesn’t decide the order of writes.','',4]])+
+   L.note('Otterpost’s new <b>courier location store</b>, which holds the live position of every courier, is leaderless.','map'));
+  L.done();}},
+{part:0,src:'Chapter 5 · Writing to the Database When a Node Is Down',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">A node goes down, and nothing fails over</h1>');
+  L.beats(L.card,[
+   ['The write','Ravi’s phone sends a new position to all three replicas of the location store. Replica 3 is rebooting for a system update. Replicas 1 and 2 answer OK. Two OKs are enough, so the write counts as done. No failover needed.'],
+   ['The gap','Replica 3 comes back, but it missed that write. It still holds Ravi’s older position, version 6. Replicas 1 and 2 have version 7.'],
+   ['The read','The dispatch map doesn’t ask just one replica; it asks several in parallel. It gets version 7 from replicas 1 and 2 and version 6 from replica 3. The version numbers show which is newer.'],
+   ['The repair','The dispatch map sees replica 3 is behind and writes version 7 back to it. That’s '+L.g('read-repair','read repair')+'.']],
+   'Leaderless writes and reads go to several replicas, so one missing node doesn’t block anything, and stale copies can be spotted and fixed.');}},
+{part:0,src:'Chapter 5 · Writing to the Database When a Node Is Down',run(L){
+  L.h(L.kick('learn','How copies catch up')+'<h1 class="q">Two ways a replica gets the writes it missed</h1>'+
+   L.lanes([['eye','Read repair','When a client reads from several nodes, it spots stale replies and writes the newer value back. Works well for values that are read often.',2],
+            ['cycle','Anti-entropy','A background process keeps comparing replicas and copies over missing data. Unlike a leader’s log, it copies in no particular order, and there may be a long delay.',3]])+
+   L.prose('Not every database has both. Voldemort, for example, had no '+L.g('anti-entropy','anti-entropy')+' process. Without one, a value that’s rarely read may stay missing on some replicas, so it is less durable.'));
+  L.done();}},
+{part:0,src:'Chapter 5 · Writing to the Database When a Node Is Down',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A courier’s home-hub setting is written once a year and almost never read. The store uses read repair but has no anti-entropy. A replica missed the last write. When will it get it?</h1>');
+  L.mc(L.card,['Within seconds, through read repair','Only when someone reads that setting','Never: the replica will be removed'],1,
+   'Read repair only runs when a value is read. A rarely read value can stay missing on that replica for a long time, which is why anti-entropy matters.',
+   'Read repair isn’t a background job; it happens only during a read. With no anti-entropy, the replica gets the value only when somebody reads it.');}},
+
+/* ---------- PART 2: QUORUMS ---------- */
+{part:1,src:'Chapter 5 · Quorums for reading and writing',run(L){
+  L.h(L.kick('learn','Quorums')+'<h1 class="q">n, w and r</h1>'+
+   L.list([['n','The number of replicas that store each value.'],['w','How many replicas must confirm a write for it to count.'],['r','How many replicas you must hear from on each read.']],1)+
+   L.prose('If <b>w + r &gt; n</b>, the replicas you wrote to and the replicas you read from must overlap in at least one node, so at least one reply should be up to date. Think of w and r as the votes needed for a valid write or read. That’s a '+L.g('quorum','quorum')+'.')+
+   L.prose('Reads and writes still go to all n replicas; w and r just say how many replies to wait for. Writes keep working with up to <b>n − w</b> nodes down, reads with <b>n − r</b>. Fewer than w or r replies means an error, whatever the reason: crash, full disk or network.')+
+   L.note('Common choice: n odd (3 or 5) and w = r = a majority. A read-heavy system might pick w = n, r = 1: fast reads, but one dead node fails every write. You can even pick w + r ≤ n: lower latency and more availability, but stale reads become more likely.','scale'));
+  L.done();}},
+{part:1,src:'Chapter 5 · Quorums for reading and writing',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The location store uses n = 3, w = 2, r = 2. How many unavailable replicas can it tolerate and still both read and write?</h1>');
+  L.mc(L.card,['None','One','Two'],1,
+   'Writes need 2 of 3 and reads need 2 of 3, so one replica can be down. 2 + 2 > 3, so the sets still overlap.',
+   'n − w = 1 and n − r = 1. With two replicas down, only one is left, fewer than the 2 that reads and writes need. With none down it obviously works, but it can lose one.');}},
+{part:1,src:'Chapter 5 · Quorums for reading and writing',pts:1,
+ solve:async L=>{L.$('#w3').click();L.$('#r3').click();L.$('#qchk').click();},
+ run(L){
+  const n=5;let w=1,r=1,first=true;
+  L.h(L.kick('pr','Tune the quorum')+'<h1 class="q">For Peak Week, Kwame moves the location store to n = 5. Kwame wants every read to overlap the latest write, and reads <i>and</i> writes to keep working with two nodes down. Set w and r.</h1>'+
+   '<div class="small" style="margin-top:4px">Write quorum w</div><div id="wc"></div><div class="small">Read quorum r</div><div id="rc"></div>'+
+   '<div id="nodes" style="display:flex;gap:6px;margin:12px 0 8px"></div><div id="qs" style="font-size:14.5px;line-height:1.6"></div>'+
+   '<button class="btn pri" id="qchk" style="margin-top:12px">'+L.ic('check')+'Check</button><div id="qf"></div>');
+  const chips=(host,pre,get,set)=>{for(let k=1;k<=n;k++){const b=document.createElement('button');b.className='chip';b.id=pre+k;b.textContent=k;b.onclick=()=>{if(L.$('#qchk').disabled)return;set(k);draw();};L.$(host).appendChild(b);}};
+  chips('#wc','w',()=>w,k=>w=k);chips('#rc','r',()=>r,k=>r=k);
+  function draw(){
+    for(let k=1;k<=n;k++){L.$('#w'+k).classList.toggle('sel',k===w);L.$('#r'+k).classList.toggle('sel',k===r);}
+    let h='';for(let j=0;j<n;j++){const iw=j<w,ir=j>=n-r,both=iw&&ir;
+      h+='<div style="flex:1;min-width:0;text-align:center;border-radius:12px;padding:10px 0;font-weight:700;font-size:13px;border:2px solid '+(both?'var(--ok-line)':'var(--line)')+';background:'+(both?'var(--ok-bg)':iw?'var(--h1-bg)':ir?'var(--h3-bg)':'var(--soft)')+';color:'+(both?'var(--ok)':iw?'var(--h1)':ir?'var(--h3)':'var(--muted)')+'">'+(both?'W+R':iw?'W':ir?'R':'·')+'</div>';}
+    L.$('#nodes').innerHTML=h;
+    const ov=w+r>n;
+    L.$('#qs').innerHTML='<div>w + r = '+(w+r)+(ov?' &gt; ':' ≤ ')+n+': '+(ov?'<b style="color:var(--ok)">reads always overlap the latest write</b>':'<b style="color:var(--no)">a read can miss every node with the latest write</b>')+'</div>'+
+      '<div>Writes keep working with up to <b>'+(n-w)+'</b> node'+(n-w===1?'':'s')+' down</div><div>Reads keep working with up to <b>'+(n-r)+'</b> node'+(n-r===1?'':'s')+' down</div>'+
+      '<div class="small">Worst case shown: writes landed on the left nodes, the read asked the right ones.</div>';}
+  draw();
+  L.$('#qchk').onclick=()=>{L.$('#qf').innerHTML='';
+    if(w===3&&r===3){if(first)L.award(true);L.$('#qchk').disabled=true;
+      L.sheet('ok',first?'Spot on!':'Got it','w = 3 and r = 3: 3 + 3 &gt; 5, so reads overlap writes, and each can lose 2 nodes. It’s the only pair that does both: a majority for each.');L.done();}
+    else{if(first){L.award(false);first=false;}
+      L.fb(L.$('#qf'),w+r<=n?'<b>No overlap.</b> With w + r ≤ 5, a read can miss every node holding the newest value.':(n-w<2?'<b>Writes too fragile.</b> With w = '+w+', only '+(n-w)+' node'+(n-w===1?'':'s')+' can be down for writes.':'<b>Reads too fragile.</b> With r = '+r+', only '+(n-r)+' node'+(n-r===1?'':'s')+' can be down for reads.'),'no');}};}},
+{part:1,src:'Chapter 5 · Quorums for reading and writing',pts:3,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which setting fits? (n = 3)',['w = 3, r = 1','w = 1, r = 3','w = 2, r = 2'],[
+   ['The location store must keep reading and writing with any one replica down.',2,'Each side can lose one node (3 − 2 = 1), and 2 + 2 > 3 keeps the overlap.'],
+   ['A courier-profile store is read thousands of times per write. Kwame accepts that one dead replica blocks all writes.',0,'Fast reads from a single replica; the price is that writes need every replica. This is the book’s read-heavy example.'],
+   ['Pings must be accepted even with two replicas down. Reads may wait for all three.',1,'With w = 1, writes survive two nodes down. r = 3 keeps w + r > n, but every read needs all three replicas.']]);}},
+
+/* ---------- PART 3: LIMITS AND SLOPPY QUORUMS ---------- */
+{part:2,src:'Chapter 5 · Limitations of Quorum Consistency',run(L){
+  L.h(L.kick('learn','Where quorums stop protecting you')+'<h1 class="q">Even with w + r &gt; n, stale reads can happen. Tap each card.</h1>');
+  L.flips(L.card,[
+   ['Sloppy quorums','Writes may land on stand-in nodes, so the w written nodes and the r read nodes may not overlap at all. (More in a moment.)'],
+   ['Concurrent writes','If two writes happen at once, it isn’t clear which came first. Picking a winner by timestamp can lose writes when clocks disagree.'],
+   ['A write during a read','If a write is still reaching replicas while you read, you may get the old value or the new one.'],
+   ['A failed write that stays','A write that reached fewer than w replicas is reported as failed, but isn’t undone on the replicas that took it. Later reads may or may not return it.'],
+   ['A node restored from an old copy','If a node holding the new value fails and is rebuilt from a stale replica, fewer than w nodes may hold the new value.'],
+   ['Unlucky timing','Even when everything works, some timing edge cases return stale values (chapter 9 explains them).']],
+   'Quorums don’t need to be majorities; what matters is that read and write sets overlap. But w and r only shift the odds of stale reads. Dynamo-style stores suit apps that tolerate eventual consistency, and usually don’t give read-your-writes, monotonic reads or consistent prefix reads.');}},
+{part:2,src:'Chapter 5 · Limitations of Quorum Consistency',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">With w = 2, a new position for courier Ravi reaches only replica 1, then replica 2’s disk turns out to be full. The write is reported as failed. Tobias says “then it’s gone.” What can later reads return?</h1>');
+  L.mc(L.card,['Never the new position: failed writes are undone','The new position or the old one, depending on which replicas answer','Only an error until an operator fixes it'],1,
+   'Right. Replica 1 still holds the “failed” write, because it isn’t rolled back. A read that hears from replica 1 may return it.',
+   'Leaderless stores don’t roll back a write that missed its quorum. Replica 1 keeps it, so some reads may return the new position and some the old one.');}},
+{part:2,src:'Chapter 5 · Monitoring staleness',run(L){
+  L.h(L.kick('learn','Monitoring staleness')+'<h1 class="q">Measure how “eventual” eventual is</h1>'+
+   L.prose('Even if your app can live with stale reads, you need to know how far behind replicas are, and get an alert when it grows, so you can find the cause (a network problem, an overloaded node).')+
+   L.lanes([['list','Leader-based','Writes are applied in the same order everywhere, and each node has a position in the log. Leader position minus follower position = the lag. Easy to chart.',2],
+            ['alert','Leaderless','There’s no fixed order of writes, so there’s no simple position to subtract. With read repair only, a rarely read value on a stale replica can be ancient.',4]])+
+   L.prose('Research exists on predicting the share of stale reads from n, w and r, but it wasn’t common practice. The book argues staleness should be a standard metric: “eventual” is vague, and operators need to put a number on it.'));
+  L.done();}},
+{part:2,src:'Chapter 5 · Sloppy Quorums and Hinted Handoff',run(L){
+  L.h(L.kick('learn','Sloppy quorums')+'<h1 class="q">Locked out of your house? Sleep on the neighbour’s couch.</h1>'+
+   L.prose('In a big cluster, each value lives on n “home” nodes. A network fault can cut a client off from those nodes while it can still reach others. The designers must choose: return errors, or accept the write on nodes that are reachable but aren’t home?')+
+   L.list([['home','Sloppy quorum','Still need w and r replies, but they may come from nodes outside the home n. Like asking a neighbour if you can sleep on their couch.'],
+     ['arrow','Hinted handoff','When the network is fixed, the stand-in nodes send those writes on to the home nodes. The neighbour asks you to go home.']],3)+
+   L.quote('A sloppy quorum actually isn’t a quorum at all in the traditional sense.','Martin Kleppmann, chapter 5')+
+   L.prose('It boosts write availability: any w reachable nodes will do. But it only promises the data is stored on w nodes <i>somewhere</i>. A read of r home nodes may miss it until '+L.g('hinted','hinted handoff')+' finishes. Riak turns '+L.g('sloppy','sloppy quorums')+' on by default; Cassandra and Voldemort turn them off.')+
+   '<p class="small">Across datacenters: Cassandra and Voldemort count replicas in all datacenters in n but usually wait only for a quorum in the local one. Riak keeps n inside one datacenter and copies between datacenters in the background, much like multi-leader replication.</p>');
+  L.done();}},
+{part:2,src:'Chapter 5 · Sloppy Quorums and Hinted Handoff',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">A broken switch in Eastvale</h1>');
+  L.beats(L.card,[
+   ['The fault','The Eastvale location-store cluster has 12 nodes. Ravi’s position lives on 3 home nodes. A switch fails, and the courier-app servers can’t reach those 3 nodes, though they can reach the other 9.'],
+   ['Sloppy quorum','The store is set to allow sloppy quorums. Ravi’s new positions are written to 3 reachable stand-in nodes, each tagged with a hint: “this belongs to the home nodes.” Couriers’ pings never fail.'],
+   ['Stale reads','The tracking-page servers can still reach the home nodes. They read Ravi’s position there and show where Ravi was 20 minutes ago. Every read had r replies, yet missed the latest write.'],
+   ['Handoff','The switch is replaced. The stand-in nodes send the hinted writes home, and the tracking page catches up.']],
+   'Sloppy quorums kept every write flowing, but during the fault w + r > n promised nothing about reads.');}},
+{part:2,src:'Chapter 5 · Leaderless Replication',pts:4,run(L){
+  L.h(L.kick('pr','Name the mechanism')+'<h1 class="q">Which mechanism is at work in each case?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Read repair','Anti-entropy','Sloppy quorum','Hinted handoff'],[
+   ['A nightly job compares two replicas and copies a courier’s missing shift record across',1,'A background process that looks for differences: anti-entropy.'],
+   ['The dispatch map gets version 9 from one replica and 8 from another, and writes 9 back',0,'Fixing the stale copy during a read: read repair.'],
+   ['During a network split, a ping is stored on nodes that aren’t its usual home',2,'Counting replies from stand-in nodes: a sloppy quorum.'],
+   ['After the split heals, stand-in nodes send their borrowed writes to the right nodes',3,'Passing writes back to their home: hinted handoff.']],
+   'Read repair and anti-entropy fill gaps; sloppy quorums and hinted handoff keep writes flowing when home nodes are unreachable.');}},
+
+/* ---------- PART 4: CONCURRENT WRITES ---------- */
+{part:3,src:'Chapter 5 · Detecting Concurrent Writes',run(L){
+  L.h(L.kick('learn','Concurrent writes')+'<h1 class="q">Writes arrive in different orders at different nodes</h1>'+
+   L.prose('Clients A and B write the same key at once to three nodes. Node 1 never gets B’s write; node 2 gets A then B; node 3 gets B then A. If each node just overwrote the value, nodes would disagree forever. Conflicts can also arise during read repair or hinted handoff.')+
+   L.prose('<b>Last write wins</b> forces an order: attach a timestamp to each write, keep the biggest, drop the rest. It’s the only method in Cassandra and optional in Riak. Copies do converge, but at a price:')+
+   L.note('With several concurrent writes to a key, all reported as successful, only one survives. The others are <b>silently discarded</b>. '+L.g('lww','LWW')+' can even drop writes that weren’t concurrent, because clocks drift.','alert')+
+   L.prose('That may be fine for a cache. Otherwise, the only safe way to use LWW is to write each key once and never change it, for example by using a fresh unique ID (UUID) as the key of every write.'));
+  L.done();}},
+{part:3,src:'Chapter 5 · Last write wins (discarding concurrent writes)',pts:4,run(L){
+  L.h(L.kick('pr','Is LWW safe here?')+'<h1 class="q">Zainab reviews which data could use last write wins. Sort each one.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['LWW is fine','LWW risks real loss'],[
+   ['A courier’s live position, where losing an occasional ping does no harm',0,'Like a cache: only the latest position matters, and a lost ping is acceptable.'],
+   ['Delivery notes that a merchant and Signe’s support team may edit at the same time',1,'Two edits at once means one person’s note silently disappears.'],
+   ['Scan events, each stored under its own new UUID and never changed',0,'Each key is written once, so there are no concurrent updates to lose.'],
+   ['A count of parcels loaded onto a van, updated by two hub scanners at once',1,'One scanner’s update would be thrown away, and the count would be wrong.']],
+   'LWW converges by throwing data away. Use it only where losing writes is acceptable, or where each key is written once.');}},
+{part:3,src:'Chapter 5 · The “happens-before” relationship and concurrency',run(L){
+  L.h(L.kick('learn','Happens-before')+'<h1 class="q">What does “concurrent” really mean?</h1>'+
+   L.prose('Operation A <b>happens before</b> B if B knows about A, depends on A, or builds on A. Two operations are '+L.g('concurrent','concurrent')+' if neither happens before the other: neither knew about the other.')+
+   L.flow([['arrow','A before B','B built on A. B should overwrite A.','',2],['arrow','B before A','A built on B. A should overwrite B.','',3],['alert','Concurrent','Neither knew of the other. That’s a conflict to resolve.','',4]],false)+
+   L.note('<b>Clock time doesn’t decide it.</b> Two writes minutes apart are still concurrent if a slow or broken network meant neither could know about the other. Exact timing is also very hard to measure across machines.','clock'));
+  L.done();}},
+{part:3,src:'Chapter 5 · The “happens-before” relationship and concurrency',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Ordered or concurrent?',['First happened before second','Concurrent'],[
+   ['Tobias reads van 7’s load list, then writes a new list built from what Tobias read.',0,'The second write builds on the first one, so it happened after it.'],
+   ['Hub scanners in Westport and Eastvale each update the same parcel. Neither had seen the other’s update.',1,'Neither knew about the other: concurrent.'],
+   ['Joss writes 10 minutes after Ana, but a network outage meant Joss’s client never saw Ana’s write.',1,'Ten minutes apart, yet neither knew of the other. Clock time doesn’t matter.'],
+   ['Ravi’s app records “picked up”, then later “delivered” for the same parcel, building on its own last state.',0,'The later write knows about the earlier one, so there’s a clear order.']]);}},
+{part:3,src:'Chapter 5 · Capturing the happens-before relationship',run(L){
+  L.h(L.kick('ex','A worked example')+'<h1 class="q">Two dispatchers fill van 7, and no write is lost</h1>');
+  L.beats(L.card,[
+   ['Version 1','Dispatcher Ana adds parcel P1. The server stores [P1] as version 1 and sends back the value and its version.'],
+   ['Version 2','Dispatcher Joss, unaware of Ana, adds P2. Joss’s write isn’t based on any version Joss had seen, so the server keeps <b>both</b> [P1] and [P2], calls this version 2, and returns both.'],
+   ['Version 3','Ana adds P3 and sends [P1, P3] “based on version 1.” The server overwrites [P1], which Ana had seen, but keeps [P2], which Ana hadn’t. Now: [P1, P3] and [P2].'],
+   ['Version 4','Joss merges what they got back, [P1] and [P2], adds P4, and sends [P1, P2, P4] “based on version 2.” The server overwrites [P2] but keeps [P1, P3]. Two '+L.g('siblings','siblings')+' remain.'],
+   ['The merge','Whoever writes next merges the siblings, here by taking the union: [P1, P2, P3, P4]. Nothing either dispatcher added was lost.']],
+   'The book tells this with two clients filling a shopping cart. The server never looks inside the values; the version numbers alone tell it what to overwrite and what to keep.');}},
+{part:3,src:'Chapter 5 · Merging concurrently written values',run(L){
+  L.h(L.kick('learn','The rules, and merging')+'<h1 class="q">How the server tracks versions</h1>'+
+   L.list([['Version per key','The server bumps a key’s version on every write and stores it with the value.'],
+     ['Read before you write','A read returns every value not yet overwritten, plus the latest version.'],
+     ['Write with the version','A write sends the version from its last read and merges all values it got back.'],
+     ['Overwrite or keep','The server overwrites values with that version or lower, and keeps higher ones: they’re concurrent with this write. A write with no version overwrites nothing.']],1)+
+   L.prose('Merging siblings is the application’s job, and it’s the same problem as conflict resolution between leaders. Picking one by timestamp loses data. Taking the union works for adding items, but not for removing them: an item removed in only one sibling comes back. So a removal must leave a marker with a version number, a '+L.g('tombstone','tombstone')+'. CRDTs can do this merging automatically.'));
+  L.done();}},
+{part:3,src:'Chapter 5 · Merging concurrently written values',pts:1,
+ solve:async L=>{const c=L.$('#mm').children;c[0].click();c[1].click();},
+ run(L){
+  const M=[['Plain union','<div>P1, P2, P3, P4</div><div style="margin-top:6px"><b style="color:var(--no)">P2 is back on van 7.</b> Ana’s removal existed only as a missing item, and the union filled it back in.</div>'],
+           ['Union with tombstones','<div>P1, P3, P4 <span class="small">(P2 marked removed)</span></div><div style="margin-top:6px"><b style="color:var(--ok)">P2 stays off the van.</b> The tombstone tells the merge that P2’s absence was a removal, not a gap.</div>']];
+  const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Ana removes P2 (it was damaged) and adds P3. Concurrently, Joss adds P4. The siblings are Ana’s [P1, P3] and Joss’s [P1, P2, P4]. Merge them both ways.</h1><div id="mm"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:100px;font-size:14.5px;line-height:1.55" id="mo"><span class="small">Choose a merge above.</span></div><div id="mq"></div>');
+  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'shield':'layers')+m[0];
+    b.onclick=()=>{[...L.$('#mm').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#mo').innerHTML=m[1];seen.add(j);
+      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Why did the damaged parcel come back with a plain union?</h2>';
+        L.mc(q,['The union saw no record that P2 was removed','Joss’s write had a newer timestamp than Ana’s','Version numbers were missing from the writes'],0,
+         'A union keeps anything that appears in either sibling. Without a tombstone, a removal looks just like “never added.” This is the shopping-cart bug from the book, where removed items reappeared.',
+         'Timestamps and version numbers weren’t the problem; the siblings were kept correctly. The union simply had no record that P2 was removed, so a tombstone is needed.');}};
+    L.$('#mm').appendChild(b);});}},
+{part:3,src:'Chapter 5 · Version vectors',run(L){
+  L.h(L.kick('learn','Many replicas, no leader')+'<h1 class="q">From one version number to a version vector</h1>'+
+   L.prose('The van example used one replica. With several replicas all taking writes, one number per key isn’t enough. Each replica keeps <b>its own</b> version number per key, increments it on each write it handles, and tracks the numbers it has seen from the other replicas.')+
+   L.prose('That collection is a '+L.g('version-vector','version vector')+'. It travels like the single version number did: sent to the client on a read, and sent back with the next write. (Riak encodes it as a string it calls the causal context.)')+
+   L.list([['check','Overwrite or sibling?','The vector lets the database tell an overwrite from a concurrent write.'],
+     ['cycle','Any replica will do','It’s safe to read from one replica and write back to another. That may create siblings, but nothing is lost if they’re merged correctly.']],2)+
+   '<p class="small" style="margin-top:10px">Version vectors are sometimes called vector clocks, but the two aren’t quite the same. For comparing the state of replicas, the book says version vectors are the right tool.</p>');
+  L.done();}},
+{part:3,src:'Chapter 5 · Version vectors',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The dispatch app reads van 7’s list from replica 1, then its next write happens to reach replica 3 instead. The store uses version vectors. What happens?</h1>');
+  L.mc(L.card,['The write is rejected: it must go back to replica 1','At worst it creates siblings, which get merged','The newer clock time decides, and one write is dropped'],1,
+   'The version vector says which state the write was based on, so replica 3 can tell what it overwrites and what to keep as siblings. No data is lost.',
+   'Version vectors make it safe to write to a different replica than you read from, and they don’t rely on clock time. At worst you get siblings to merge.');}},
+{part:3,src:'Chapter 5 · Summary',run(L){
+  L.h(L.kick('learn','Chapter 5 in one screen')+'<h1 class="q">Three ways to replicate</h1>'+
+   L.prose('Replication buys <b>high availability</b>, <b>disconnected operation</b>, <b>lower latency</b> and <b>read scalability</b>. Simple to state, tricky to do: unavailable nodes and network interruptions are the minimum to handle.')+
+   L.tiers([['person','Single-leader','All writes go to one leader, which streams changes to followers. Reads from followers may be stale. Popular because it’s easy to understand and has no conflicts to resolve.','Lessons 0010–0011'],
+            ['layers','Multi-leader','Several leaders accept writes and stream changes to each other and to followers.','Lesson 0011'],
+            ['people','Leaderless','Clients write to several nodes and read from several, to detect and fix stale data.','This lesson']])+
+   L.prose('Multi-leader and leaderless cope better with faulty nodes, network interruptions and latency spikes, but are harder to reason about and give only very weak consistency.'));
+  L.done();}},
+{part:3,src:'Chapter 5 · Summary',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which replication approach?',['Single-leader','Multi-leader','Leaderless'],[
+   ['Each Otterpost region accepts bookings locally and sends its changes to the other regions.',1,'Several nodes accepting writes and forwarding to each other: multi-leader.'],
+   ['When a replica is down, writes simply go to the others, and there is no failover at all.',2,'No leader, so nothing to fail over: leaderless.'],
+   ['Easiest to reason about and never needs conflict resolution, but every write passes through one node.',0,'One leader orders every write, so there are no conflicts: single-leader.'],
+   ['Reads go to several replicas at once so stale copies can be spotted and repaired.',2,'Parallel reads with read repair are the leaderless way.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

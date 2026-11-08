@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Partitioning Data and Secondary Indexes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0013', title:'Partitioning data and secondary indexes', minutes:20, icon:'layers',
+  goals:['Explain why a big database is split into partitions, and how that fits with replication','Choose between key-range and hash partitioning, and calm a hot key','Pick a local or a global secondary index for a partitioned database'],
+  parts:['Why split','Key ranges','Hashing','Secondary indexes'],
+  read:'Read the first half of chapter 6 of the book (up to “Rebalancing Partitions”) for the encyclopedia, sensor and used-car examples.',
+  glossary:{
+    'skew':'Skew: an unfair split, where some partitions get much more data or many more requests than others.',
+    'hot-spot':'Hot spot: a partition (or node) that gets far more load than the rest, so it becomes the bottleneck while others sit idle.',
+    'hash-fn':'Hash function: a function that turns any key into a number that looks random. The same key always gives the same number, and similar keys give very different numbers.',
+    'range-query':'Range query: a request for every key between a minimum and a maximum, such as all courier IDs from C-0100 to C-0199.',
+    'secondary-index':'Secondary index: an extra index on a column other than the primary key, such as all parcels of one merchant. Its keys don’t have to be unique.',
+    'scatter-gather':'Scatter/gather: sending the same query to every partition, then combining all the answers. The query is only as fast as the slowest partition.',
+    'local-index':'Local (document-partitioned) index: each partition keeps a secondary index covering only its own records.',
+    'global-index':'Global (term-partitioned) index: one secondary index covering all records, itself split into partitions by the value being searched for (the term).'
+  },
+  cheatsheet:[
+    '<b>Partitioning</b> splits the data so each record lives in exactly one partition. Each partition is still <b>replicated</b>, so a node leads some partitions and follows others.',
+    'The goal is an even spread of data and queries. <b>Skew</b> ruins it, and the overloaded partition is a <b>hot spot</b>.',
+    '<b>Key range</b>: keys stay sorted, so range scans are easy, but keys written close together (like timestamps) pile onto one partition. Boundaries must follow the data.',
+    '<b>Hash of key</b>: spreads keys evenly but loses their order, so range queries go to every partition. Don’t call it “consistent hashing”.',
+    '<b>Compound key</b>: hash the first part to pick the partition, sort by the rest. Fix the first part and you can range-scan the rest.',
+    '<b>One very hot key</b> still lands on one partition. The app can add a random number to the key, but then reads must combine every piece.',
+    '<b>Local index</b>: a write touches one partition, but a search asks every partition (scatter/gather).',
+    '<b>Global index</b>: a search asks one index partition, but a write may touch several, and the index is often updated asynchronously.'
+  ],
+  steps:[
+/* ---------- PART 1: WHY SPLIT ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · from the last chapter')+'<h1 class="q">Peak Week is coming and Otterpost’s writes will triple. Each region’s Parcel DB has one leader and several followers. Will adding more followers take some of the writes?</h1>');
+  L.mc(L.card,['Yes, each new follower takes a share of the writes','No, every write still goes through the one leader'],1,
+   'Followers copy every write the leader makes, so they help with reads, not writes. To spread the <i>writes</i>, the data itself has to be split up. That’s this chapter.',
+   'With leader-based replication every write goes to the leader, and every follower then applies that same write. More followers help with reads. To spread writes, the data must be split.');}},
+{part:0,src:'Chapter 6 · Partitioning',run(L){
+  L.h(L.kick('learn','Copying versus splitting')+'<h1 class="q">When copies aren’t enough, you cut the data into pieces</h1>'+
+   L.prose('Replication puts the <b>same</b> data on several '+L.g('node','nodes')+'. For a very large dataset or a very heavy query load, that isn’t enough. You also need to break the data into '+L.g('partition','partitions')+'.')+
+   L.flow([['layers','Replication','Every node holds the same parcels','copies'],['box','Partitioning','Each node holds a different slice of parcels','pieces']],false)+
+   L.prose('Normally each record belongs to <b>exactly one</b> partition, and each partition acts like a small database of its own. The main reason to do it is scalability: in a shared-nothing cluster, the data spreads over many disks and the queries over many processors.')+
+   L.note('A query that needs only one partition runs on that partition’s node alone, so adding nodes adds capacity. A big query that spans many partitions can be run in parallel too, but that is much harder.','info')+
+   '<p class="small" style="margin-top:10px">Careful with the word: this has nothing to do with a <i>network</i> partition (a broken link between machines). That comes in chapter 8.</p>');
+  L.done();}},
+{part:0,src:'Chapter 6 · Partitioning (Terminological confusion)',run(L){
+  L.h(L.kick('learn','One idea, many names')+'<h1 class="q">Every product calls a partition something different. Tap each card.</h1>');
+  L.flips(L.card,[
+   ['Shard','The word in MongoDB, Elasticsearch and SolrCloud. Splitting data this way is often called <b>sharding</b>.'],
+   ['Region','HBase’s name. It’s a range of keys, not a place on a map.'],
+   ['Tablet','Bigtable’s name for a partition.'],
+   ['vnode','Cassandra and Riak say vnode. It’s a slice of the data, not a virtual machine.'],
+   ['vBucket','Couchbase’s name for a partition.']],
+   'All five mean <b>partition</b>, the book’s word and the one this course uses. The idea is old: products like Teradata and Tandem NonStop SQL partitioned data in the 1980s, and NoSQL databases and Hadoop-based warehouses rediscovered it.');}},
+{part:0,src:'Chapter 6 · Partitioning and Replication',run(L){
+  L.h(L.kick('learn','Both at once')+'<h1 class="q">Each partition is split off, and then copied</h1>'+
+   L.prose('In practice, partitioning and '+L.g('replication','replication')+' go together. A parcel belongs to one partition, but that partition is stored on several nodes, so it survives a dead machine.')+
+   L.prose('With '+L.g('leader','leaders and followers')+', each partition has its own leader on one node and followers on other nodes. So the roles belong to <b>partitions</b>, not to machines:')+
+   L.tiers([['layers','Node A','Leader for partition 1, follower for partition 3'],
+            ['layers','Node B','Leader for partition 2, follower for partition 1'],
+            ['layers','Node C','Leader for partition 3, follower for partition 2']])+
+   '<p class="small" style="margin-top:10px">Everything from the replication chapter applies to each partition. How you split and how you copy are mostly separate choices, so the rest of this chapter sets copying aside.</p>');
+  L.done();}},
+{part:0,src:'Chapter 6 · Partitioning and Replication',pts:1,
+ solve:async L=>{L.$('#kill').click();},
+ run(L){
+  const N={A:[['P1','L'],['P4','F'],['P5','L']],B:[['P1','F'],['P2','L'],['P6','L']],C:[['P2','F'],['P3','L'],['P5','F']],D:[['P3','F'],['P4','L'],['P6','F']]};
+  const box=k=>'<div id="n'+k+'" style="background:var(--soft);border-radius:14px;padding:10px;transition:opacity .3s"><b style="display:block;margin-bottom:6px">Node '+k+'</b>'+N[k].map(c=>'<span class="chip static" style="font-size:13px;padding:5px 9px;'+(c[1]==='L'?'font-weight:700':'')+'">'+c[0]+' '+(c[1]==='L'?'leader':'follower')+'</span>').join('')+'</div>';
+  L.h(L.kick('try','See it happen')+'<h1 class="q">Kwame’s test cluster: 4 nodes, 6 partitions, two copies of each. Pull the plug on node B.</h1>'+
+   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+['A','B','C','D'].map(box).join('')+'</div>'+
+   '<button class="btn pri" id="kill" style="margin-top:14px">'+L.ic('x')+'Node B dies</button><div id="kq"></div>');
+  L.$('#kill').onclick=function(){this.remove();const b=L.$('#nB');b.style.opacity='.35';b.querySelectorAll('.chip').forEach(c=>c.classList.add('no'));
+    const q=L.$('#kq');q.innerHTML='<h2 class="sub">How many partitions now need a new leader?</h2>';
+    L.mc(q,['One: only partition 2','Two: partitions 2 and 6','Three: partitions 1, 2 and 6'],1,
+     'Node B led P2 and P6, so those two fail over: their followers on C and D get promoted. P1 just lost a follower, and its leader on A carries on.',
+     'Count only the partitions B <i>led</i>: P2 and P6. B was a mere follower for P1, so P1’s leader on node A keeps working; it just needs a new copy later.');};}},
+
+/* ---------- PART 2: KEY RANGES ---------- */
+{part:1,src:'Chapter 6 · Partitioning of Key-Value Data',run(L){
+  L.h(L.kick('learn','The goal: a fair share')+'<h1 class="q">Ten nodes should do ten times the work. Unless the split is unfair.</h1>'+
+   L.prose('The aim of partitioning is to spread the data <b>and</b> the queries evenly. If every node gets a fair share, 10 nodes can, in theory, hold 10 times the data and handle 10 times the reads and writes of one node.')+
+   L.prose('If the split is unfair, it is '+L.g('skew','skewed')+'. In the worst case all the load lands on one partition: 9 nodes sit idle and the busy one is your bottleneck. That busy partition is a '+L.g('hot-spot','hot spot')+'.')+
+   L.lanes([['cycle','Place records at random','Data spreads evenly. But to read one parcel you don’t know where it is, so you must ask <b>every</b> node.',4],
+            ['target','Place records by key','The key tells you the partition, so you go straight to the right node. Now: which rule for the key?',2]]));
+  L.done();}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',run(L){
+  L.h(L.kick('learn','Partitioning by key range')+'<h1 class="q">Like the volumes of a paper encyclopedia</h1>'+
+   L.prose('Give each partition one continuous range of keys, from some minimum to some maximum. If you know the boundaries, you know which partition holds a key, and you can go straight to its node, just as you pick the right volume off the shelf.')+
+   L.flow([['book','Volume 1','A and B','two letters, many words',1],['book','Volume 12','T to Z','six letters, fewer words',3]],false)+
+   L.prose('The ranges are <b>not</b> evenly spaced, because the data isn’t. One volume per two letters would make some volumes huge. The boundaries must follow the data, set by an administrator or chosen by the database.')+
+   L.note('Inside each partition the keys stay sorted. So a '+L.g('range-query','range scan')+' is easy: “every reading from March” is one quick read. Bigtable, HBase, RethinkDB and MongoDB before version 2.4 work this way.','list'));
+  L.done();}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',run(L){
+  L.h(L.kick('ex','The book’s sensor example, at Otterpost')+'<h1 class="q">Linh keys the scan-event table by time. What could go wrong?</h1>');
+  L.beats(L.card,[
+   ['The book’s case','A sensor network stores readings keyed by timestamp, partitioned by key range (say, one partition per day). Fetching a month of readings is a single range scan.'],
+   ['The catch','Readings are written as they happen, so <b>all</b> writes go to today’s partition. It overloads while the others sit idle.'],
+   ['At Otterpost','Linh wants Parcel DB scan events keyed by scan time, so “every scan on 9 December” is one range scan. During Peak Week every one of the day’s scans would hit the same partition.'],
+   ['The fix','Put something else first in the key. The book prefixes the sensor name; Linh prefixes the <b>courier ID</b>: <i>courier, then scan time</i>. With about 3,000 couriers scanning at once, writes spread out.'],
+   ['The cost','“All scans between 9 and 10 this morning” is no longer one range scan. It is a separate range query for <b>each courier</b>.']],
+   'Key-range partitioning makes range scans cheap, but keys written close together in time crowd onto one partition.');}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab range-partitions parcels by tracking code into four partitions. Codes start with a region letter: W (Westport, 70% of parcels), E (Eastvale, 25%), N (Nordhaven, 5%). Where should the boundaries go?</h1>');
+  L.mc(L.card,['Even slices of the alphabet: A–F, G–L, M–R, S–Z','One partition per region letter, plus one kept spare','Wherever each partition ends up with about a quarter of parcels'],2,
+   'Boundaries follow the data, like the encyclopedia’s uneven volumes. Westport alone needs most of the four partitions.',
+   'That splits by letters, not by data. Westport’s 70% would crowd into one or two partitions. Boundaries should give each partition a fair share of the parcels.');}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',pts:1,
+ solve:async L=>{L.$('#k0').click();L.$('#k1').click();},
+ run(L){
+  const M=[{lab:['1–7 Dec','8–14 Dec','15–21 Dec','22–31 Dec'],v:[0,8000,0,0]},{lab:['Couriers 1–750','Couriers 751–1500','Couriers 1501–2250','Couriers 2251–3000'],v:[1950,2080,2010,1960]}];const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">It’s 9 December, Peak Week. About 8,000 scans arrive each minute. Try both keys and watch where the writes land.</h1>'+
+   '<div id="kk"></div><div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0">'+
+   [0,1,2,3].map(j=>'<div class="meterrow" style="margin:8px 0"><div class="lb" id="lb'+j+'" style="width:auto;flex:0 0 125px;font-size:13px">Partition '+(j+1)+'</div><div class="meter"><div id="mt'+j+'" style="background:var(--h3);transition:width .8s"></div></div><b id="nv'+j+'" style="font-size:13px;width:44px;text-align:right">–</b></div>').join('')+
+   '<div class="small" id="kc">Pick a key above.</div></div><div id="hq"></div>');
+  ['Key: scan time','Key: courier ID + scan time'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.id='k'+j;b.innerHTML=L.ic('pencil')+n;
+    b.onclick=()=>{[...L.$('#kk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      M[j].v.forEach((v,x)=>{L.$('#lb'+x).textContent=M[j].lab[x];L.$('#mt'+x).style.width=Math.round(v/80)+'%';L.$('#mt'+x).style.background=j?'var(--ok-strong)':'var(--no-strong)';L.$('#nv'+x).textContent=v.toLocaleString('en');});
+      L.$('#kc').innerHTML=j?'<b>Four partitions share the load.</b> Each courier’s scans are still sorted by time inside its partition.':'<b>One hot spot.</b> Every scan today has a key inside 8–14 Dec, so one partition takes everything.';
+      if(seen.size===2&&!L.$('#hq').innerHTML){const q=L.$('#hq');q.innerHTML='<h2 class="sub">The courier-first key fixed the hot spot. What did it cost?</h2>';
+        L.mc(q,['One courier’s scans for a day now sit on every partition','A time range across all couriers needs one query per courier','Each scan is now written to two partitions instead of one'],1,
+         'Right. The key now sorts by courier first, so “9 to 10 am for everyone” becomes about 3,000 small range queries.',
+         'One courier’s scans all share a courier ID, so they sit together on one partition, sorted by time, and each scan is still written once. The price is a time-range query across <i>all</i> couriers: one range query per courier.');}};
+    L.$('#kk').appendChild(b);});}},
+
+/* ---------- PART 3: HASHING ---------- */
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key',run(L){
+  L.h(L.kick('learn','Partitioning by hash of key')+'<h1 class="q">Scramble the key first, then split the numbers</h1>'+
+   L.prose('To avoid skew, many datastores run each key through a '+L.g('hash-fn','hash function')+'. A 32-bit hash turns any string into a number between 0 and about 4.3 billion. Even keys that look almost alike come out evenly spread.')+
+   L.flow([['pencil','Key','OP-48213','the tracking code',1],['cycle','Hash','2,917,402,551','made-up number',2],['layers','Partition 3','owns hashes 2.1 to 3.2 billion','',3]])+
+   L.prose('Each partition owns a <b>range of hashes</b> instead of a range of keys. The hash needn’t be cryptographically strong: Cassandra and MongoDB use MD5, and Voldemort uses the Fowler–Noll–Vo function.')+
+   L.note('Don’t grab your language’s built-in hash. Some, like Java’s <code>Object.hashCode()</code>, can give the same key a <b>different</b> number in a different process. Then two nodes would disagree about where a parcel lives.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key',run(L){
+  L.h(L.kick('learn','What hashing costs')+'<h1 class="q">Even spread, but the keys lose their order</h1>'+
+   L.prose('Keys that were neighbors now land on random partitions, so efficient range queries on the key are gone. In MongoDB’s hash mode, a range query goes to every partition. Riak, Couchbase and Voldemort don’t support range queries on the primary key at all.')+
+   L.prose('Cassandra finds a middle way with a <b>compound primary key</b> made of several columns. Only the <b>first</b> part is hashed to pick the partition. The other parts sort the data inside that partition.')+
+   L.lanes([['check','Works','Fix the first part, scan a range of the rest: one user’s posts between two dates, in order.',2],
+            ['x','Doesn’t','A range over the first part itself, which was scrambled by the hash.',4]])+
+   L.note('Some call hash partitioning with random boundaries “consistent hashing”. That term comes from spreading load across web caches, and its “consistent” has nothing to do with replicas agreeing or with ACID. The book suggests just saying <b>hash partitioning</b>.','info'));
+  L.done();}},
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Zainab picks a compound key for Otterpost’s scan events</h1>');
+  L.beats(L.card,[
+   ['The need','The tracking page shows one parcel’s scans in order: picked up, at hub, out for delivery, delivered. It is read far more than anything else.'],
+   ['The key','Zainab chooses <b>(tracking code, scan time)</b>. The tracking code is hashed to pick the partition. Scan time sorts the rows inside it.'],
+   ['Writes','Hundreds of thousands of parcels hash to random partitions, so scans spread evenly. No “today” hot spot.'],
+   ['The page’s read','“All scans for OP-48213, in time order” goes to <b>one</b> partition and is a single range scan.'],
+   ['The trade-off','“Every scan between 9 and 10 this morning” can’t use the key, since tracking codes are scrambled. It must ask every partition.']],
+   'Hash the part you always know (the parcel), sort by the part you scan over (time). One-to-many data like this fits a compound key well.');}},
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Bookings are keyed by (merchant ID, booked at), and only the merchant ID is hashed. Which query is cheap?</h1>');
+  L.mc(L.card,['Every parcel booked in the last hour, across all merchants','All merchants whose ID falls between M-1000 and M-2000','One merchant’s bookings from last week, in time order'],2,
+   'The merchant ID picks one partition, and inside it bookings are sorted by time. One range scan.',
+   'The cheap query fixes the hashed first part, then ranges over the rest. Last hour across all merchants, or a range of merchant IDs, both have to ask every partition.');}},
+{part:2,src:'Chapter 6 · Skewed Workloads and Relieving Hot Spots',run(L){
+  L.h(L.kick('learn','When one key is the hot spot')+'<h1 class="q">Hashing spreads different keys. It can’t split one key.</h1>'+
+   L.prose('The same key always hashes to the same number. So if a huge share of reads and writes hit <b>one</b> key, they all hit one partition. The book’s example: a celebrity with millions of followers does something, and a storm of activity hits one user ID.')+
+   L.prose('Most data systems can’t fix this automatically, so it’s the application’s job. For a key known to be hot, add a random number to its start or end. A two-digit number splits it into 100 keys that land on different partitions.')+
+   L.list([['scale','Reads pay','A read must now fetch all 100 keys and combine them.'],
+           ['list','Bookkeeping','Only do it for the few hot keys, and keep track of which keys are split.']],3));
+  L.done();}},
+{part:2,src:'Chapter 6 · Skewed Workloads and Relieving Hot Spots',pts:1,run(L){
+  L.h(L.kick('pr','Tobias’s idea')+'<h1 class="q">Bramble & Bolt’s flash sales overload one partition: every booking writes to its merchant key. Tobias suggests adding a random two-digit number to <i>every</i> merchant’s key, “to be safe”. What’s the problem?</h1>');
+  L.mc(L.card,['Every merchant’s reads now gather 100 pieces','Nothing: every merchant gets spread out evenly','Hashing already splits hot keys, so it does nothing'],0,
+   'Splitting is only worth its cost for the few hot keys. For a small shop it makes every read combine 100 pieces for no gain. Split Bramble & Bolt’s key only, and record that it’s split.',
+   'Hashing can’t split one key: the same ID always lands on the same partition. Splitting works, but every split key costs reads 100 lookups, so do it only for hot keys like Bramble & Bolt’s.');}},
+{part:2,src:'Chapter 6 · Partitioning of Key-Value Data',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'What happens here?',['A hot spot','A query that asks every partition','Works well'],[
+   ['Parcels are range-partitioned by booking time. Peak Week Monday morning, bookings pour in.',0,'New bookings all have keys near “now”, so they crowd onto the newest range.'],
+   ['Parcels are hash-partitioned by tracking code. A recipient opens the tracking page for one parcel.',2,'The tracking code gives the hash, the hash gives the partition: one hop.'],
+   ['Parcels are hash-partitioned by tracking code. Linh wants codes OP-10000 to OP-19999.',1,'Hashing scattered neighboring codes, so the range is spread over every partition.'],
+   ['Bookings are hash-partitioned by merchant ID. Bramble & Bolt runs a flash sale.',0,'One very busy key hashes to one partition. Hashing can’t split it.'],
+   ['Scans keyed by (courier ID, scan time), hashing courier ID. Show courier Ravi’s scans today, in order.',2,'Fixed first part, range over the rest: one partition, one scan.'],
+   ['Same key. Show every scan between 9 and 10 am, across all couriers.',1,'Courier IDs are scrambled by the hash, so a time range across all of them asks everywhere.']]);}},
+
+/* ---------- PART 4: SECONDARY INDEXES ---------- */
+{part:3,src:'Chapter 6 · Partitioning and Secondary Indexes',run(L){
+  L.h(L.kick('learn','The problem with secondary indexes')+'<h1 class="q">The key tells you where a record lives. A postcode doesn’t.</h1>'+
+   L.prose('So far, every request came with the primary key, and the key told us the partition. A '+L.g('secondary-index','secondary index')+' is different: it searches for every record with some value. All parcels to postcode WP4. All parcels from Bramble & Bolt.')+
+   L.prose('Relational databases rely on them, document databases use them a lot, and search servers like Solr and Elasticsearch exist for them. Some key-value stores left them out because they are hard to build. The trouble is that they don’t map neatly onto partitions.')+
+   L.note('Otterpost now hash-partitions parcels by tracking code. Signe’s support team searches by postcode, and the merchant dashboard lists parcels by merchant. Neither value tells you the partition.','people')+
+   '<p class="small" style="margin-top:10px">Tempted to build the index yourself in application code? The book warns that crashes and race conditions easily leave a hand-made index out of sync with the data.</p>');
+  L.done();}},
+{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Document',run(L){
+  L.h(L.kick('learn','Option 1: a local index')+'<h1 class="q">Each partition indexes only its own records</h1>'+
+   L.prose('In a <b>document-partitioned</b> index, each partition keeps its own secondary index, covering only the records it holds. The book’s example is a used-car site: partition 0 lists its own red cars, partition 1 lists its own.')+
+   L.lanes([['check','Writes: easy','Adding or changing a record touches one partition: the one holding that record and its index entries.',2],
+            ['alert','Reads: costly','Red cars could be anywhere. A search goes to <b>every</b> partition and the answers are combined.',4]])+
+   L.prose('That second pattern is '+L.g('scatter-gather','scatter/gather')+'. Even run in parallel, it waits for the slowest partition, so it suffers tail latency amplification (from chapter 1). Still, MongoDB, Riak, Cassandra, Elasticsearch, SolrCloud and VoltDB all use local indexes.'));
+  L.done();}},
+{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Document',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Parcels sit on 8 partitions, each with a local index on postcode. Signe searches for WP4. How many partitions answer?</h1>');
+  L.mc(L.card,['All 8, then the answers are combined','Only the one that holds postcode WP4','Two: the leader and a follower'],0,
+   'Parcels to WP4 can be on any partition, so the search scatters to all 8 and gathers the results.',
+   'With a local index no partition “holds” a postcode: WP4 parcels are scattered by their tracking codes. The search must ask all 8.');}},
+{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',run(L){
+  L.h(L.kick('learn','Option 2: a global index')+'<h1 class="q">One index for everything, split by the value you search for</h1>'+
+   L.prose('A '+L.g('global-index','global index')+' covers the records in every partition. It can’t sit on one node, or that node becomes the bottleneck. So it is partitioned too, but by the searched value, which the book calls the <b>term</b>.')+
+   L.flow([['list','Index partition 0','postcodes A–M','EV2, KR8, …',1],['list','Index partition 1','postcodes N–Z','WP4, SN1, …',2]],false)+
+   L.prose('You can split by the term itself (handy for range scans, like a price range) or by a hash of it (a more even spread). A search now asks just <b>one</b> index partition.')+
+   L.note('The price: one new parcel can touch several index partitions, one per indexed field. Keeping them all in step instantly needs a distributed transaction, which not every database supports. So global indexes are often updated <b>asynchronously</b>: right after a write, the index may not show it yet. Amazon DynamoDB says its global indexes usually catch up within a fraction of a second, longer when something fails.','clock'));
+  L.done();}},
+{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',pts:1,
+ solve:async L=>{L.$('#ix0').click();L.$('#ix1').click();},
+ run(L){
+  const P=['Data 1','Data 2','Data 3','Data 4'],I=['Postcode A–M','Postcode N–Z','Merchant A–M','Merchant N–Z'];
+  const R=[{s:[['d',0],['d',1],['d',2],['d',3]],w:[['d',2]]},{s:[['i',1]],w:[['d',2],['i',1],['i',2]]}];const seen=new Set();
+  const row=(lab,hits,j)=>{const all=P.map((p,x)=>['d',x,p]).concat(j?I.map((p,x)=>['i',x,p]):[]);
+    const on=all.filter(a=>hits.some(h=>h[0]===a[0]&&h[1]===a[1]));
+    return '<div style="margin:10px 0"><b style="font-size:14.5px">'+lab+'</b> <span class="small">· touches '+on.length+' partition'+(on.length>1?'s':'')+'</span><div style="margin-top:6px">'+all.map(a=>{const h=on.includes(a);return '<span class="chip static'+(h?' ok':'')+'" style="font-size:12.5px;padding:5px 8px;'+(h?'':'opacity:.4')+'">'+a[2]+'</span>';}).join('')+'</div></div>';};
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Same parcels, two kinds of index. Try both and count the partitions each action touches.</h1><div id="ix"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:6px 14px;margin:8px 0;min-height:90px"><div id="ir" style="padding:8px 0"><span class="small">Choose an index above.</span></div></div><div id="iq"></div>');
+  ['Local index','Global index'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.id='ix'+j;b.innerHTML=L.ic('list')+n;
+    b.onclick=()=>{[...L.$('#ix').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#ir').innerHTML=row('Signe looks up postcode WP4',R[j].s,j)+row('Bramble & Bolt books a parcel to WP4',R[j].w,j);
+      if(seen.size===2&&!L.$('#iq').innerHTML){const q=L.$('#iq');q.innerHTML='<h2 class="sub">Which sentence matches what you just saw?</h2>';
+        L.mc(q,['Global index: one-partition writes, but searches ask everywhere','Local index: one-partition writes, but searches ask everywhere','Either index: every search has to ask every partition'],1,
+         'Local keeps writes simple and makes searches scatter. Global flips it: one index partition per search, but a booking touched three partitions.',
+         'Look again: with the local index the booking touched one partition and the search touched four. With the global index the search touched one, and the booking touched three.');}};
+    L.$('#ix').appendChild(b);});}},
+{part:3,src:'Chapter 6 · Partitioning and Secondary Indexes',pts:5,run(L){
+  L.h(L.kick('pr','Local or global?')+'<h1 class="q">For each need, which kind of index fits better?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Local index','Global index'],[
+   ['Searches are rare, but Peak Week bookings must stay as cheap as possible',0,'A local index keeps each write inside one partition.'],
+   ['Signe’s team searches all day long, and each search must be quick',1,'A global index answers from one index partition, with no scatter/gather.'],
+   ['The slowest of 40 partitions keeps dragging search times up',1,'That’s tail latency amplification from scatter/gather. A global index avoids asking all 40.'],
+   ['Each booking must write only to the partition that stores the parcel itself',0,'A local index sits in the same partition as the record, so one partition is enough.'],
+   ['Merchants refresh their dashboards all day; bookings are far fewer',1,'Reads dominate, so make each read hit one index partition and accept heavier writes.']],
+   'Local: cheap writes, scattered reads. Global: targeted reads, heavier and often delayed writes.');}},
+{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',pts:1,run(L){
+  L.h(L.kick('pr','A puzzled merchant')+'<h1 class="q">The merchant dashboard uses a global index on merchant ID. Bramble & Bolt books a parcel, refreshes right away, and the parcel isn’t listed. A second later it is. What happened?</h1>');
+  L.mc(L.card,['The parcel was first written to the wrong partition','The index partition for B is a hot spot that drops writes','The global index is updated asynchronously, so it lagged'],2,
+   'The parcel was saved, but its entry in the global index arrived a moment later. Zainab should tell Tobias the dashboard can be briefly behind.',
+   'Nothing was lost or misplaced: the parcel appeared a second later. That’s the usual asynchronous update of a global index, which can lag behind the data.');}}
+  ]
+});
+</script>
+</body>
+</html>

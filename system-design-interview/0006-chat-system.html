@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a Chat System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0006', title:'Design a chat system', minutes:22, icon:'chat',
+  goals:['Choose how a server pushes new messages to a phone, and say why','Pick storage and message IDs that keep chat history in order','Trace a message to one person, to a group and across devices, and show who’s online'],
+  parts:['Connections','The design','Storage','Flows and presence'],
+  read:'Read chapter 12 of the book for its sequence diagrams of polling, long polling, WebSocket and the message flows.',
+  glossary:{
+    polling:'Polling: the app asks the server “anything new?” again and again on a timer, usually getting “no”.',
+    'long-polling':'Long polling: the app asks “anything new?” and the server keeps the question open until there is a message or a time limit passes; then the app asks again.',
+    websocket:'WebSocket: a connection the app opens once and keeps open, so both the app and the server can send at any moment.',
+    'service-discovery':'Service discovery: a service that keeps a list of available chat servers and tells each app which one to connect to.',
+    'kv-store':'Key-value store: a database that stores each item under a key and fetches it by that key very fast. Easy to spread across many machines.',
+    'sync-queue':'Message sync queue: a per-recipient inbox of new messages waiting to be delivered.',
+    heartbeat:'Heartbeat: a small “I’m still here” signal the app sends every few seconds, so the server knows it is connected.',
+    pubsub:'Publish-subscribe: a sender publishes an event to a channel, and everyone subscribed to that channel receives it.'
+  },
+  cheatsheet:[
+    'Clients never talk directly; a chat service receives, relays, and <b>holds messages for offline users</b>.',
+    'Sending can use HTTP; receiving needs the server to push. <b>Polling</b> wastes requests, <b>long polling</b> has drawbacks, <b>WebSocket</b> is two-way and persistent: use it both ways.',
+    'Three kinds of service: <b>stateless</b> (login, profile, service discovery), <b>stateful</b> (chat servers), <b>third-party</b> (push). 1M connections × 10 KB ≈ 10 GB fits one box, but that box is a single point of failure.',
+    'Profiles and friend lists in a relational DB; <b>chat history in a key-value store</b>. Group table key: (channel_id, message_id).',
+    'Message IDs must be <b>unique and sortable by time</b>: a global snowflake ID or a simpler <b>local sequence per channel</b>. Not created_at.',
+    '1-on-1 flow: chat server → ID generator → <b>message sync queue</b> → key-value store → online: forward to the recipient’s chat server; offline: push notification.',
+    'Each device keeps <b>cur_max_message_id</b> and fetches anything newer. Small groups copy each message into every member’s inbox.',
+    'Presence: <b>heartbeat</b> (offline after x seconds of silence) and a <b>publish-subscribe</b> channel per friend pair; big groups fetch status on demand.'
+  ],
+  steps:[
+/* ---------- PART 1: CONNECTIONS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mira sends Ben a message while Ben’s phone is switched off. What should happen to it?</h1>');
+  L.mc(L.card,['It’s dropped; Mira resends it later','The server holds it until Ben is back'],1,
+   'Exactly what the book asks of a chat service: receive messages, relay them to the right people, and hold them for anyone offline.',
+   'Nobody wants to resend. The book’s chat service holds the message on the server until the recipient comes online.');}},
+{part:0,src:'Chapter 12 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','The book’s interview')+'<h1 class="q">First, agree which chat app you’re designing</h1>'+
+   L.prose('One-on-one apps, office group chat and gaming chat are very different problems. The candidate asks; the interviewer answers:')+
+   L.list([['Kind','Both 1-on-1 and group chat, on mobile and web.'],
+     ['Scale','50 million '+L.g('dau','daily active users')+'.'],
+     ['Groups','At most 100 members.'],
+     ['Features','1-on-1, group chat, an online indicator. Text only, under 100,000 characters. No end-to-end encryption for now.'],
+     ['History','Kept forever.']],1)+
+   L.prose('The book adds two more: one account logged in on <b>several devices</b> at once, and <b>push notifications</b>. Clients never talk directly; each connects to a chat service that receives messages, relays them, and holds them for anyone offline.'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','The receiver problem')+'<h1 class="q">Sending is easy. Receiving is the hard part.</h1>'+
+   L.prose('The sender can use plain HTTP: the app opens a connection and sends the message. A keep-alive header keeps that connection open, so it’s efficient.')+
+   L.prose('But HTTP is started by the client. How does the <i>server</i> start talking when a message arrives for Ben? Three techniques:')+
+   L.tiers([['cycle','Polling','The app asks “anything new?” on a timer. Mostly the answer is no, which wastes server resources.'],
+     ['clock','Long polling','The server holds the question open until a message arrives or a time limit passes. Drawbacks: the message may land on a different server than the one holding Ben’s request; the server can’t easily tell if Ben disconnected; quiet users still reconnect after every time limit.'],
+     ['arrow','WebSocket','Opened by the app, then kept open, and two-way. It starts as HTTP and is “upgraded”, and uses the usual web ports, so it generally works through firewalls.',true,'Chosen']])+
+   '<p class="small">WebSocket is two-way, so the book uses it for sending too. That makes the design simpler.</p>');
+  L.done();}},
+{part:0,src:'Chapter 12 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of “Maker chat”</h1>');
+  L.beats(L.card,[
+   ['Tamsin','“What are we building, and how big is it?”'],
+   ['You ask, Dario answers','1-on-1 messages between makers and <b>workshop groups</b> of up to 100. A green online dot. Phone and laptop in sync. Text only for now. History kept.'],
+   ['Lior’s idea','“Each app asks the server for new messages every second.” Tamsin: “For hundreds of thousands of open apps? Almost every answer is ‘no’.”'],
+   ['Your answer','Each app opens a <b>WebSocket</b> to a chat server and keeps it. The server pushes Ben’s messages the moment they arrive; Mira sends on the same connection.'],
+   ['Hana','“Does sign-up need a WebSocket too?” No: login, sign-up and profiles stay ordinary HTTP requests. Only chat needs the open line.']],
+   'WebSocket for the chat itself, both ways. Ordinary HTTP for everything else.');}},
+{part:0,src:'Chapter 12 · Long polling',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kitebird tries long polling. Mira’s message reaches chat server 1, but Ben’s waiting request sits on chat server 2. Which drawback is this?</h1>');
+  L.mc(L.card,['The server can’t tell when Ben disconnects','Sender and receiver may be on different servers','Quiet users keep reconnecting after time limits'],1,
+   'HTTP servers are usually stateless and traffic is spread round-robin, so the server with the message may not hold Ben’s connection.',
+   'The message and Ben’s waiting request are on two different servers. That’s the book’s first long-polling drawback.');}},
+{part:0,src:'Chapter 12 · WebSocket',pts:1,
+ solve:async L=>{const g=L.$('#md').children;g[0].click();g[1].click();g[2].click();},
+ run(L){
+  /* 20 one-second cells; messages for Ben arrive at 7 s and 15 s */
+  const M=[
+   {n:'Polling every 2 s',c:i=>i%2===0?(i===8||i===16?'m':'r'):'',s:'<b>10 requests</b>, 8 answered “no”. Each message waited up to 2 seconds for the next ask.'},
+   {n:'Long polling',c:i=>(i===7||i===15)?'m':'h',s:'<b>3 requests</b>, each held open until a message came. No waiting, but a new request after every message or time limit, and it may hit the wrong server.'},
+   {n:'WebSocket',c:i=>(i===7||i===15)?'m':'o',s:'<b>1 connection</b>, opened once. Both messages pushed the moment they arrived, and Ben can send on it too.'}];
+  const seen=new Set();const col={r:'var(--line2)',m:'var(--ok-strong)',h:'var(--h3-bg)',o:'var(--h1-bg)','':'transparent'};
+  L.h(L.kick('pr','Compare all three')+'<h1 class="q">For 20 seconds, Ben waits for messages. Two arrive, at 7 s and 15 s. Tap each technique.</h1><div id="md"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0 6px"><div id="tl" style="display:flex;gap:2px;height:28px"></div><div class="small" style="display:flex;justify-content:space-between"><span>0 s</span><span>20 s</span></div><div id="out" class="small" style="margin-top:8px">Pick a technique above. Green = message delivered.</div></div><div id="mq"></div>');
+  const draw=j=>{L.$('#tl').innerHTML=Array.from({length:20},(_,i)=>{const k=j<0?'':M[j].c(i);return '<div style="flex:1;min-width:0;border-radius:4px;border:1px solid var(--line);background:'+col[k]+'"></div>';}).join('');};draw(-1);
+  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=m.n;b.onclick=()=>{[...L.$('#md').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);draw(j);L.$('#out').innerHTML=m.s;
+    if(seen.size===3&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Which should Maker chat use for sending and receiving?</h2>';
+      L.mc(q,['Polling every 2 seconds','Long polling','WebSocket'],2,
+       'One persistent, two-way connection: no wasted asks, no delay, and sending works on the same line.',
+       'Polling wastes requests and adds delay; long polling still reconnects and can land on the wrong server. The book picks <b>WebSocket</b>, for both directions.');}};L.$('#md').appendChild(b);});}},
+
+/* ---------- PART 2: THE DESIGN ---------- */
+{part:1,src:'Chapter 12 · High-level design',run(L){
+  L.h(L.kick('learn','Three kinds of service')+'<h1 class="q">Only one part of a chat app needs to remember who’s connected</h1>'+
+   L.list([['home','Stateless services','Login, sign-up, user profile: ordinary request and response behind a load balancer. Many can be bought rather than built. One matters a lot: '+L.g('service-discovery','service discovery')+', which tells the app which chat server to connect to.'],
+     ['lock','Stateful service','The <b>chat service</b>. Each app keeps a persistent connection to one chat server, and normally stays on it while that server is up.'],
+     ['people','Third-party integration','<b>Push notifications</b>, the most important one: they tell people about new messages even when the app isn’t running.']],2)+
+   '<p class="small">Push notifications work as in the notification system lesson (Kitebird pings).</p>');
+  L.done();}},
+{part:1,src:'Chapter 12 · Scalability',run(L){
+  L.h(L.kick('learn','Could one server do it?')+'<h1 class="q">In theory yes. In an interview, never stop there.</h1>'+
+   L.prose('The book’s rough sum: 1 million users connected at once, about 10 KB of memory per connection, is about <b>10 GB</b>. One modern server could hold that.')+
+   L.prose('But a single-server design is a red flag, mostly because it’s a '+L.g('spof','single point of failure')+'. Starting with one server is fine, as long as you say it’s only a starting point. The adjusted design:')+
+   L.list([['chat','Chat servers','Send and receive messages over WebSockets.'],
+     ['eye','Presence servers','Manage online and offline status.'],
+     ['home','API servers','Login, sign-up, profile changes, everything else.'],
+     ['alert','Notification servers','Send push notifications.'],
+     ['layers','Key-value store','Keeps chat history, so someone coming online sees past messages.']],3));
+  L.done();}},
+{part:1,src:'Chapter 12 · Scalability',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Obi runs the numbers for Maker chat</h1>');
+  L.beats(L.card,[
+   ['The guess','Kitebird has 4 million daily users. Obi guesses at most <b>400,000</b> are connected to chat at the same moment.'],
+   ['The sum','400,000 × 10 KB ≈ <b>4 GB</b> of memory. One server could hold it.'],
+   ['Obi’s pager story','“Last year one box ran the whole forum. It died during a sale and took everything with it for an hour.”'],
+   ['The decision','Start the sketch with one chat server, say out loud it’s a starting point, then split into chat, presence, API and notification servers, plus a key-value store.']],
+   'The memory sum says one box is possible; the single point of failure says don’t.');}},
+{part:1,src:'Chapter 12 · Scalability',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The book’s numbers: 1 million connections at about 10 KB each. Roughly how much memory?</h1>');
+  L.mc(L.card,['About 1 GB','About 10 GB','About 100 GB'],1,
+   '1,000,000 × 10 KB = 10,000,000 KB, about 10 GB.',
+   '1,000,000 × 10 KB = 10,000,000 KB. A million KB is about a GB, so that’s about <b>10 GB</b>.');}},
+{part:1,src:'Chapter 12 · High-level design',pts:5,run(L){
+  L.h(L.kick('pr','Sort the services')+'<h1 class="q">Which kind of service handles each Maker chat job?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Stateless','Stateful','Third-party'],[
+   ['Mira signs up and logs in',0,'Ordinary request and response behind a load balancer.'],
+   ['Ben changes their profile photo',0,'Another plain HTTP request; no open connection needed.'],
+   ['Mira’s message appears in Ben’s open app instantly',1,'It travels over the chat server’s persistent connection.'],
+   ['Ben’s phone buzzes while Kitebird is closed',2,'Push notifications go through an outside service.'],
+   ['The app asks which chat server to connect to',0,'Service discovery is one of the stateless services.']],
+   'Only chat itself needs a server that holds open connections.');}},
+
+/* ---------- PART 3: STORAGE ---------- */
+{part:2,src:'Chapter 12 · Storage',run(L){
+  L.h(L.kick('learn','Two kinds of data')+'<h1 class="q">Profiles and chat history want different databases</h1>'+
+   L.lanes([['person','Generic data','Profiles, settings, friend lists. Stored in reliable <b>relational databases</b>, with '+L.g('replication','replication')+' and '+L.g('sharding','sharding')+'.',1],
+            ['chat','Chat history','Huge volume (the book cites 60 billion messages a day for Messenger and WhatsApp). Mostly recent chats are read. Still needs search and jumps to old messages. About as many reads as writes in 1-on-1 chat.',2]])+
+   L.prose('For chat history the book picks a '+L.g('kv-store','key-value store')+':')+
+   L.list([['Scales out easily','Add machines as history grows.'],
+     ['Very low latency','Fast to fetch by key.'],
+     ['Handles the long tail','Relational indexes grow large, and random access to old data gets expensive.'],
+     ['Proven','Facebook Messenger uses HBase; Discord uses Cassandra.']],2));
+  L.done();}},
+{part:2,src:'Chapter 12 · Data models',run(L){
+  L.h(L.kick('learn','Tables and IDs')+'<h1 class="q">Order comes from the message ID, not the clock</h1>'+
+   L.prose('In the 1-on-1 table the key is <b>message_id</b>, which decides the order. The created_at time can’t, because two messages can be created at the same moment. The group table uses <b>(channel_id, message_id)</b>, with channel_id as the partition key, since every group query works inside one channel.')+
+   L.prose('So message IDs must be <b>unique</b> and <b>sortable by time</b> (newer means higher). Three ways:')+
+   L.tiers([['x','auto_increment','Most NoSQL databases don’t offer it.'],
+     ['layers','Global 64-bit generator','A snowflake-style ID, as in the unique ID lesson (Kite IDs). Works everywhere.'],
+     ['list','Local sequence per channel','IDs only unique inside one conversation. Enough, since order only matters within a chat, and easier to build.']]));
+  L.done();}},
+{part:2,src:'Chapter 12 · Message ID',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Two carvers hit send at once</h1>');
+  L.beats(L.card,[
+   ['The group','The workshop group <b>Spoon Carvers</b> is channel 88. Its rows live together, because channel_id is the partition key.'],
+   ['The clash','Ben and Cleo both send a message in the same millisecond. Their created_at times are identical, so the clock can’t order them.'],
+   ['Local IDs','Channel 88’s sequence hands out <b>412</b> to Ben’s message and <b>413</b> to Cleo’s. Every member sees the same order.'],
+   ['Elsewhere','Mira and Ben’s 1-on-1 chat has its own sequence; its IDs may also reach 412. That’s fine: IDs only need to be unique inside a conversation.']],
+   'Store by (channel_id, message_id), and let a per-channel sequence decide the order.');}},
+{part:2,src:'Chapter 12 · Data models',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why can’t created_at decide the order of messages?</h1>');
+  L.mc(L.card,['Timestamps take too much storage space','Key-value stores can’t hold timestamps','Two messages can be created at the same time'],2,
+   'A tie can’t be ordered. A unique, time-sortable message ID can.',
+   'The book’s reason is ties: two messages can share the same created_at, so the message ID decides.');}},
+{part:2,src:'Chapter 12 · Storage',pts:4,run(L){
+  L.h(L.kick('pr','Where does it live?')+'<h1 class="q">Relational database or key-value store?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Relational DB','Key-value store'],[
+   ['Mira’s profile and notification settings',0,'Generic data goes in a reliable relational database.'],
+   ['Every message between Mira and Ben, forever',1,'Chat history: huge, mostly recent reads. Key-value store.'],
+   ['The list of makers Ben is friends with',0,'Friend lists are generic data too.'],
+   ['All messages ever sent in Spoon Carvers',1,'Group history, keyed by channel_id and message_id.']],
+   'Generic data in relational databases; chat history in a key-value store.');}},
+{part:2,src:'Chapter 12 · Message ID',pts:1,run(L){
+  L.h(L.kick('pr','Design decision')+'<h1 class="q">Hana: “Our key-value store has no auto_increment. What’s the simplest way to keep messages in order inside each chat?”</h1>');
+  L.mc(L.card,['Sort each chat by its created_at time','Use a local sequence number per chat','Ask the store to add auto_increment'],1,
+   'Order only matters inside a conversation, so a per-chat sequence is enough, and the book says it’s easier than global IDs. Kite IDs would also work.',
+   'created_at can tie, and NoSQL stores usually lack auto_increment. The book’s simpler choice is a <b>local sequence per chat</b>.');}},
+
+/* ---------- PART 4: FLOWS AND PRESENCE ---------- */
+{part:3,src:'Chapter 12 · Message flows',run(L){
+  L.h(L.kick('learn','From login to delivery')+'<h1 class="q">How a message travels from Mira to Ben</h1>'+
+   L.prose('<b>Login.</b> Mira’s login goes through the load balancer to API servers. Once Mira is authenticated, service discovery (Apache ZooKeeper is the book’s example) picks the best chat server by location and capacity, say server 1. Mira’s app opens a WebSocket to it.')+
+   L.list([['Send','Mira sends a message to chat server 1.'],
+     ['ID','Chat server 1 gets a message ID from the ID generator.'],
+     ['Queue','It puts the message on the '+L.g('sync-queue','message sync queue')+'.'],
+     ['Store','The message is saved in the key-value store.'],
+     ['Route','Ben online: forward to chat server 2, where Ben is connected. Ben offline: push notification servers alert Ben.'],
+     ['Deliver','Chat server 2 sends it to Ben over Ben’s WebSocket.']],4));
+  L.done();}},
+{part:3,src:'Chapter 12 · Message synchronization across multiple devices',run(L){
+  L.h(L.kick('learn','Many devices, small groups')+'<h1 class="q">Each device keeps a bookmark; each member gets an inbox</h1>'+
+   L.prose('<b>Several devices.</b> Each device keeps <b>cur_max_message_id</b>, the newest message ID it has. A message is new for that device when it’s addressed to the logged-in user and its ID is bigger than that number. So each device fetches just what it’s missing from the key-value store.')+
+   L.prose('<b>Small groups.</b> A message is <b>copied into each member’s message sync queue</b>, like an inbox. Each app only checks its own inbox, and with few members the copies are cheap. WeChat does something similar and caps groups at 500. For very large groups, one copy per member is too costly.')+
+   L.note('<b>Beyond the book:</b> with per-chat IDs, one cur_max_message_id per device doesn’t quite work, since IDs repeat across chats. In practice a device keeps one bookmark per conversation.','info'));
+  L.done();}},
+{part:3,src:'Chapter 12 · Small group chat flow',run(L){
+  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Mira posts in Spoon Carvers, and Ben’s laptop catches up</h1>');
+  L.beats(L.card,[
+   ['The send','Mira writes “Who has a hook knife to lend?” in Spoon Carvers (12 members).'],
+   ['The copies','Mira’s message is copied into the other 11 members’ inboxes. Each app reads only its own inbox.'],
+   ['Ben’s phone','Ben is online on their phone, so it arrives right away.'],
+   ['Ben’s laptop','Ben’s laptop was closed. Its cur_max_message_id is behind, so when Ben opens it, it fetches every newer message addressed to Ben.'],
+   ['Cleo','Cleo is offline. Kitebird pings sends Cleo a push notification.']],
+   'Inbox copies keep small groups simple; a per-device bookmark keeps every device in sync.');}},
+{part:3,src:'Chapter 12 · Message synchronization across multiple devices',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben’s laptop has cur_max_message_id = 1041. The store holds messages to Ben numbered 1039 to 1046. What does the laptop fetch?</h1>');
+  L.mc(L.card,['Messages 1042 to 1046','Messages 1041 to 1046','Messages 1039 to 1046'],0,
+   'Only IDs bigger than 1041 are new to this device.',
+   'The laptop already has everything up to and including 1041. It fetches only IDs <b>greater</b> than that: 1042 to 1046.');}},
+{part:3,src:'Chapter 12 · 1 on 1 chat flow',pts:1,run(L){
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Ben is online. Order the steps of Mira’s 1-on-1 message.</h1>');
+  L.order(L.card,['Mira sends the message to chat server 1','Chat server 1 gets a message ID from the ID generator','Chat server 1 puts it on the message sync queue','The message is stored in the key-value store','It is forwarded to chat server 2, where Ben is connected','Chat server 2 sends it to Ben over Ben’s WebSocket'],
+   'Get an ID, queue it, store it, then route it. If Ben had been offline, the last two steps become a push notification.');}},
+{part:3,src:'Chapter 12 · Online presence',run(L){
+  L.h(L.kick('learn','The green dot')+'<h1 class="q">Showing who’s online, without flicker</h1>'+
+   L.list([['Login','After the WebSocket opens, the user’s status (online) and last_active_at time are saved in the key-value store.'],
+     ['Logout','The status changes to offline in the key-value store.'],
+     ['Disconnection','Marking someone offline on every dropped connection makes the dot flicker, for example in a train tunnel. Instead, the app sends a '+L.g('heartbeat','heartbeat')+' to presence servers. No heartbeat for <b>x seconds</b> means offline. The book’s example: a heartbeat every 5 seconds, x = 30.'],
+     ['Telling friends','Presence servers use '+L.g('pubsub','publish-subscribe')+': one channel per friend pair. Mira’s change is published to channels Mira-Ben, Mira-Cleo and Mira-Dev, which those friends subscribe to.']],1)+
+   '<p class="small">That fanout suits small groups. In a group of 100,000, every change would mean 100,000 events, so fetch status only when someone enters the group or refreshes the friend list.</p>');
+  L.done();}},
+{part:3,src:'Chapter 12 · User disconnection',pts:1,
+ solve:async L=>{L.$('#po').children[0].click();L.$('#run').click();},
+ run(L){
+  /* 20 cells of 5 s each. Tunnels: 21-33 s and 46-90 s. Heartbeat every 5 s, offline after 30 s silence (at 75 s). */
+  const sig=i=>!((i>=4&&i<=6)||(i>=9&&i<=17)),naive=sig,beat=i=>!(i>=15&&i<=17);let p=null;
+  const row=(lab,id)=>'<div class="small" style="margin-top:8px">'+lab+'</div><div id="'+id+'" style="display:flex;gap:2px;height:22px"></div>';
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Mira rides a train for 100 seconds: a 12-second tunnel, then a 44-second one. With heartbeats (x = 30 s), what does Ben see during the <b>short</b> tunnel?</h1><div id="po"></div>'+
+   '<div id="sim" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><div class="small">Train time</div><div class="week" id="wk">0 s</div></div><button class="btn pri" id="run">'+L.ic('play')+'Ride the train</button></div>'+
+   row('Mira’s signal','r0')+row('Ben sees · naive: offline on every drop','r1')+row('Ben sees · heartbeat: offline after 30 s silence','r2')+'</div>');
+  ['Mira stays online (green)','Mira shows offline for 12 s','Mira shows offline for 30 s'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
+  const paint=(id,f,upto,dark)=>{const el=L.$('#'+id);if(!el)return;el.innerHTML=Array.from({length:20},(_,i)=>'<div style="flex:1;min-width:0;border-radius:4px;background:'+(i>=upto?'var(--soft2)':f(i)?(dark?'var(--h2)':'var(--ok-strong)'):'var(--no-line)')+'"></div>').join('');};
+  ['r0','r1','r2'].forEach(r=>paint(r,sig,0));
+  L.$('#run').onclick=function(){this.remove();let t=0;
+    const tm=setInterval(()=>{t+=2;const wk=L.$('#wk');if(!wk){clearInterval(tm);return;}wk.textContent=(t*5)+' s';paint('r0',sig,t,true);paint('r1',naive,t);paint('r2',beat,t);
+      if(t>=20){clearInterval(tm);L.award(p===0);
+        L.sheet(p===0?'ok':'no',p===0?'The dot stayed green':'Mira stayed online','Naive: Ben saw the dot change <b>4 times</b>. Heartbeat: <b>2 times</b>. The short tunnel left only a 15-second gap between heartbeats, under 30, so nothing changed. In the long tunnel the dot went grey 30 seconds after Mira’s last heartbeat, and turned green when Mira reconnected.');L.done();}},200);};}},
+{part:3,src:'Chapter 12 · Step 4 - Wrap up',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Tamsin’s curveballs',['Heartbeat timeout','Channel per friend pair','Fetch status on demand','Service discovery'],[
+   ['“Mira’s dot flickers every time Mira’s train goes under a bridge.”',0,'Only mark Mira offline after x seconds without a heartbeat.'],
+   ['“Mira comes online. How do Ben, Cleo and Dev find out right away?”',1,'Mira’s status is published to Mira-Ben, Mira-Cleo and Mira-Dev, which they subscribe to.'],
+   ['“Dario wants online dots in a 100,000-member community.”',2,'Pushing every change to 100,000 people is too costly. Fetch status when someone opens the group or refreshes.'],
+   ['“A chat server holding 200,000 connections crashes.”',3,'Service discovery gives those clients a new chat server to connect to.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

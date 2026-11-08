@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leaders and Followers</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0010', title:'Leaders and followers', minutes:20, icon:'layers',
+  goals:['Say why and how data gets spread across several machines','Weigh synchronous against asynchronous followers, and plan a failover','Pick the right kind of replication log for a job'],
+  parts:['Why distribute','Leaders and followers','Outages and failover','Replication logs'],
+  read:'Read the Part II introduction and the first section of chapter 5 (“Leaders and Followers”) for the full detail, including the GitHub failover incident.',
+  glossary:{
+    'shared-nothing':'Shared-nothing architecture: spreading the load over several machines, each with its own processor, memory and disks, that coordinate only over the network.',
+    'sync':'Synchronous replication: the leader waits until a follower confirms it has the write before telling the client the write succeeded. Asynchronous replication: the leader sends the change and does not wait.',
+    'semi-sync':'Semi-synchronous: one follower is synchronous and the rest are asynchronous, so every confirmed write is on at least two nodes.',
+    'snapshot':'Consistent snapshot: a copy of the whole database as it was at one exact moment, tied to a position in the leader’s replication log.',
+    'failover':'Failover: when the leader fails, a follower is promoted to be the new leader, clients send their writes to it, and the other followers start copying from it.',
+    'split-brain':'Split brain: two nodes both believe they are the leader and both accept writes, which can lose or corrupt data.',
+    'wal':'Write-ahead log (WAL, also called a redo log): an append-only file where every change is written before it is applied, so the database can repair itself after a crash.',
+    'cdc':'Change data capture: reading a database’s log of row changes so another system (a warehouse, a search index, a cache) can copy them.'
+  },
+  cheatsheet:[
+    'Spread data over machines for <b>scalability</b>, <b>fault tolerance</b> and <b>latency</b>. Shared-nothing is the usual way.',
+    '<b>Replication</b> = the same data on several nodes. <b>Partitioning</b> = splitting data into pieces on different nodes. They often go together.',
+    '<b>Leader-based replication:</b> all writes go to the leader; followers apply its log <b>in the same order</b>; reads can go anywhere.',
+    '<b>Synchronous</b> followers are safe but can block writes. <b>Asynchronous</b> never blocks, but a confirmed write can be lost if the leader dies. <b>Semi-synchronous</b> = one sync follower.',
+    'New follower: <b>consistent snapshot</b> + its log position, then catch up on everything since.',
+    'Follower failure: <b>catch-up recovery</b> from its own log. Leader failure: <b>failover</b> (detect by timeout, choose, reconfigure).',
+    'Failover risks: lost writes, clashes with other systems, <b>split brain</b>, and a timeout that is too long or too short.',
+    'Log formats: <b>statement-based</b> (breaks on NOW(), RAND()), <b>WAL shipping</b> (tied to the storage engine), <b>logical row-based</b> (decoupled, good for change data capture), <b>trigger-based</b> (flexible, slower).'
+  ],
+  steps:[
+/* ---------- PART 1: WHY DISTRIBUTE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">All of Otterpost’s parcel data lives on one Parcel DB server in Westport. At 9 a.m. on a Monday its power supply dies. What happens to merchants trying to book parcels?</h1>');
+  L.mc(L.card,['Bookings slow down a little','Bookings stop until it’s fixed'],1,
+   'With one server there is no spare to take over. This chapter is about keeping copies on several machines so one failure doesn’t stop the business.',
+   'There’s no other machine holding the data, so nothing can answer. Bookings stop until the server is back. That’s the problem replication solves.');}},
+{part:0,src:'Part II · Distributed Data',run(L){
+  L.h(L.kick('learn','Why use more than one machine?')+'<h1 class="q">Three reasons to spread a database across machines</h1>'+
+   L.prose('Part I of the book looked at data on a single machine. Part II asks what changes when several machines store and serve the data. The book gives three reasons to go there:')+
+   L.list([['trend','Scalability','The data, the reads or the writes grow beyond what one machine can handle, so you share the load. Otterpost: Peak Week triples parcel volume.'],
+     ['shield','Fault tolerance (high availability)','If one machine, the network or a whole datacenter goes down, another machine takes over. Otterpost: the Monday power cut.'],
+     ['map','Latency','Servers near each group of users answer faster, because data doesn’t cross the world. Otterpost: Nordhaven is overseas.']],1));
+  L.done();}},
+{part:0,src:'Part II · Shared-Nothing Architectures',run(L){
+  L.h(L.kick('learn','Three ways to grow')+'<h1 class="q">Bigger machine, shared disks, or many separate machines?</h1>'+
+   L.tiers([['box','Shared memory (scaling up)','Buy one more powerful machine. Simple, but cost grows <b>faster than linearly</b>, a machine twice the size can’t always handle twice the load, and it sits in one place.','Twice the hardware, more than twice the price'],
+            ['layers','Shared disk','Several machines with their own CPUs and memory share one array of disks. Used for some data warehouses, but locking and contention limit how far it scales.','Rare outside warehouses'],
+            ['people','Shared nothing (scaling out)','Each '+L.g('node','node')+' has its own CPUs, memory and disks. Nodes coordinate in software over a normal network. Any hardware works, and nodes can sit in different regions.','The focus of Part II',true,'This part']])+
+   L.note('The book focuses on '+L.g('shared-nothing','shared-nothing')+' not because it’s always best, but because it needs the most care from you. It adds complexity, and a simple single-threaded program can sometimes beat a cluster with over 100 CPU cores.','alert'));
+  L.done();}},
+{part:0,src:'Part II · Scaling to Higher Load',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">For Peak Week, Femi suggests replacing the Parcel DB server with one that has twice the CPUs, memory and disks. What does the book warn about this?</h1>');
+  L.mc(L.card,['It can survive a datacenter outage','It handles exactly twice the load','It costs over double, maybe without double the capacity'],2,
+   'Right. Bigger machines get expensive faster than they get powerful, bottlenecks mean double size isn’t double capacity, and it’s still one machine in one place.',
+   'A bigger machine still sits in one datacenter, so it can’t survive that datacenter going down. And because of bottlenecks, twice the size doesn’t mean twice the load. Its cost also grows faster than linearly.');}},
+{part:0,src:'Part II · Replication Versus Partitioning',run(L){
+  L.h(L.kick('learn','Two ways to spread data')+'<h1 class="q">Copies of the same data, or pieces of the data?</h1>'+
+   L.lanes([['layers','Replication','Keep a copy of the <b>same</b> data on several nodes, maybe in different places. If some nodes are down, the others still serve it. Copies can also share the read load. (Chapter 5)',1],
+            ['box','Partitioning','Split a big database into smaller pieces called '+L.g('partition','partitions')+' (also called shards) and give each node some of them. (Chapter 6)',2]])+
+   L.prose('The two often go together: a database split into two partitions, with two copies of each.')+
+   L.prose('In this chapter, assume each machine can hold the whole dataset. If the data never changed, replication would be easy: copy it once and you’re done. <b>All the difficulty is in handling changes.</b> Almost every distributed database uses one of three ways to copy changes: <b>single-leader</b>, <b>multi-leader</b> or <b>leaderless</b> replication.'));
+  L.done();}},
+{part:0,src:'Part II · Replication Versus Partitioning',pts:4,run(L){
+  L.h(L.kick('pr','Copies or pieces?')+'<h1 class="q">Kwame lists ideas for Otterpost’s data. Is each one replication or partitioning?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Replication','Partitioning'],[
+   ['Keep a full copy of the Parcel DB in Eastvale so a Westport outage doesn’t stop bookings',0,'Same data, second place: that’s replication for fault tolerance.'],
+   ['Store GPS pings for couriers A–M on one machine and N–Z on another',1,'Each machine holds a different slice of the data: partitioning.'],
+   ['Add three read-only copies so the tracking page’s reads are shared out',0,'More copies of the same data to serve more reads: replication for scalability.'],
+   ['The scan-event table is too big for one disk, so split it by month across nodes',1,'Too much data for one machine means splitting it: partitioning.']],
+   'Replication copies the same data; partitioning splits it. Big systems usually do both.');}},
+
+/* ---------- PART 2: LEADERS AND FOLLOWERS ---------- */
+{part:1,src:'Chapter 5 · Leaders and Followers',run(L){
+  L.h(L.kick('learn','Leader-based replication')+'<h1 class="q">One node takes the writes. The others copy it.</h1>'+
+   L.prose('Each node holding a copy of the database is a <b>replica</b>. Every write has to reach every replica. The most common way to do that is '+L.g('leader','leader-based replication')+':')+
+   L.flow([['pencil','1 · Leader','Clients send every write here. It saves the change to its own storage first.','also: primary, master'],
+           ['list','2 · Replication log','The leader sends each change to the followers, in order.','also: change stream'],
+           ['layers','3 · Followers','Each applies the changes <b>in the same order</b> as the leader. Clients can read from them but not write.','also: read replicas']])+
+   L.prose('PostgreSQL, MySQL, MongoDB and even message brokers like Kafka work this way.'));
+  L.done();}},
+{part:1,src:'Chapter 5 · Leaders and Followers',pts:1,
+ solve:async L=>{L.$('#play').click();},
+ run(L){
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">The leader’s log has two changes for parcel OP-4471. Follower B gets them over the network in the wrong order and applies them as they arrive. Play the log.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin-bottom:12px;font-size:14.5px"><b>Leader’s log</b><div>#1 · status = At hub</div><div>#2 · status = Out for delivery</div></div>'+
+   L.lanes([['layers','Follower A','Applies #1, then #2 (log order)<div class="res" id="fa"></div>',2],
+            ['layers','Follower B','Applies #2, then #1 (arrival order)<div class="res" id="fb2"></div>',4]])+
+   '<button class="btn pri" id="play" style="margin-top:14px">'+L.ic('play')+'Play the log</button><div id="pq"></div>');
+  L.$('#play').onclick=function(){this.remove();
+    L.$('#fa').innerHTML='<span style="color:var(--ok)">Ends at “Out for delivery”, same as the leader.</span>';
+    L.$('#fb2').innerHTML='<span style="color:var(--no)">Ends at “At hub”. The recipient is told the parcel went backwards.</span>';
+    const q=L.$('#pq');q.innerHTML='<h2 class="sub">Why must followers follow the leader’s order?</h2>';
+    L.mc(q,['Applying the same writes in a different order can give different data','Applying changes in order is faster for the follower’s disk'],0,
+     'Same writes, different order, different result. The leader decides the order, and every follower replays it exactly.',
+     'Speed isn’t the issue. Follower B ended with different data from the same two writes. Order is what keeps the copies identical.');};}},
+{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',run(L){
+  L.h(L.kick('learn','Wait or don’t wait?')+'<h1 class="q">When does the leader say “done”?</h1>'+
+   L.lanes([['clock','Synchronous follower','The leader waits until this follower confirms it has the write, <i>then</i> tells the client it worked.<div class="res" style="color:var(--ok)">+ The follower is guaranteed to be up to date.</div><div class="res" style="color:var(--no)">− If it doesn’t answer, the leader must block all writes.</div>',2],
+            ['arrow','Asynchronous follower','The leader sends the change and doesn’t wait for a reply.<div class="res" style="color:var(--ok)">+ The leader keeps taking writes even if followers fall behind.</div><div class="res" style="color:var(--no)">− If the leader dies, writes not yet copied are lost, even ones the client was told succeeded.</div>',3]])+
+   L.prose('Copying is usually fast, under a second in most databases. But there’s <b>no guarantee</b>: a follower can fall minutes behind while it recovers from a failure, when the system is near capacity, or when the network has problems.'));
+  L.done();}},
+{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Kwame adds followers to the Parcel DB</h1>');
+  L.beats(L.card,[
+   ['The plan','Kwame keeps the leader in Westport and adds two followers: one in Westport, one in Eastvale. The tracking page now reads from the followers, which takes load off the leader.'],
+   ['The setting','The database’s default is <b>fully asynchronous</b>. A merchant books a parcel, the leader saves it and answers “booked” at once. The followers apply it a fraction of a second later.'],
+   ['The rehearsal','In a Peak Week load test, the link to Eastvale gets congested. That follower falls <b>four minutes</b> behind. The leader doesn’t notice and keeps taking bookings.'],
+   ['The question','Kwame asks: “If the leader died right now, what would we lose?” With fully async, the answer is: every booking the followers haven’t got yet, even though merchants were told “booked.”']],
+   'Fully asynchronous replication keeps writes flowing, but it weakens '+L.g('sync','durability')+': a confirmed write isn’t guaranteed to survive a leader crash.');}},
+{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',pts:1,
+ solve:async L=>{const c=L.$('#modes').children;c[0].click();c[1].click();},
+ run(L){
+  const M=[['Fully asynchronous','<div>Follower 1 has: B1, B2</div><div>Follower 2 has: B1</div><div style="margin-top:6px">Promote follower 1 → <b style="color:var(--no)">B3 is gone</b>, though its merchant was told “booked.”</div>'],
+           ['Semi-synchronous','<div>Follower 1 (sync) has: B1, B2, B3</div><div>Follower 2 (async) has: B1</div><div style="margin-top:6px">Promote follower 1 → <b style="color:var(--ok)">nothing confirmed is lost.</b> Each booking was confirmed only after follower 1 had it.</div>']];
+  const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">The leader confirms bookings B1, B2 and B3, then crashes. Pick a setting to see what survives.</h1><div id="modes"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:110px;font-size:14.5px;line-height:1.55" id="mo"><span class="small">Choose a setting above.</span></div><div id="mq"></div>');
+  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'shield':'arrow')+m[0];
+    b.onclick=()=>{[...L.$('#modes').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#mo').innerHTML=m[1];seen.add(j);
+      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">So why is fully asynchronous still so widely used?</h2>';
+        L.mc(q,['Reads from followers are always up to date','Followers can never fall behind the leader','The leader keeps taking writes even if followers lag'],2,
+         'That’s the trade. Async never makes writes wait for a slow or distant follower, which matters when there are many followers or they’re far apart.',
+         'Async followers <i>can</i> fall behind, so their reads can be stale. What async buys is that the leader never waits for them.');}};
+    L.$('#modes').appendChild(b);});}},
+{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias says: “Let’s make all the followers synchronous so we never lose a booking.” What happens if one follower’s disk gets slow?</h1>');
+  L.mc(L.card,['Every booking waits for that one slow disk','Bookings get faster because all copies agree','Only reads from that follower slow down'],0,
+   'Right. If every follower is synchronous, any one slow or dead node blocks all writes. That’s why turning on synchronous replication usually means just one synchronous follower: '+L.g('semi-sync','semi-synchronous')+'.',
+   'With every follower synchronous, the leader can’t confirm a write until <i>all</i> of them answer. One slow disk stalls every booking. In practice only one follower is synchronous (semi-synchronous).');}},
+{part:1,src:'Chapter 5 · Setting Up New Followers',run(L){
+  L.h(L.kick('learn','Adding a follower')+'<h1 class="q">You can’t just copy the files while the database is busy</h1>'+
+   L.prose('Writes keep arriving while you copy, so a plain file copy would catch different parts of the database at different moments. The result might make no sense. Locking the database for the copy would stop writes, which defeats the point. Instead:')+
+   L.list([['Take a consistent snapshot','A '+L.g('snapshot','snapshot')+' of the leader at one moment, ideally without locking. Most databases can do this because backups need it too.'],
+     ['Copy it to the new node','The snapshot is tied to an exact position in the leader’s log (PostgreSQL calls it the log sequence number; MySQL, the binlog coordinates).'],
+     ['Ask for everything since','The follower requests all changes after that position.'],
+     ['Caught up','Once it has worked through the backlog, it follows live changes like any other follower.']],2));
+  L.done();}},
+{part:1,src:'Chapter 5 · Setting Up New Followers',pts:1,run(L){
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Kwame is adding a third follower for Nordhaven. Tap the steps in order.</h1>');
+  L.order(L.card,['Take a snapshot of the leader, noting its log position','Copy the snapshot to the Nordhaven node','Request every change since that log position','Apply the backlog until caught up','Follow live changes from the leader'],
+   'No downtime: the leader keeps taking bookings throughout, and the log position tells the new follower exactly where to pick up.');}},
+
+/* ---------- PART 3: OUTAGES AND FAILOVER ---------- */
+{part:2,src:'Chapter 5 · Handling Node Outages',run(L){
+  L.h(L.kick('learn','When a node goes down')+'<h1 class="q">A follower failing is easy. A leader failing is not.</h1>'+
+   L.prose('Nodes go down from faults, but just as often for planned work, like a reboot to install a security patch. The goal is to keep the whole system running while single nodes come and go.')+
+   L.lanes([['layers','Follower fails','<b>Catch-up recovery.</b> Each follower keeps a log of changes it received. After a restart, it knows the last transaction it processed, asks the leader for everything since, and catches up.',2],
+            ['alert','Leader fails','<b>'+L.g('failover','Failover')+'.</b> A follower must become the new leader, clients must send writes to it, and other followers must copy from it. Done by hand or automatically.',4]])+
+   L.list([['Detect it','There’s no foolproof test, so most systems use a <b>timeout</b>: no answer for, say, 30 seconds means “dead.”'],
+     ['Choose a new leader','By election among the remaining replicas or by a controller node. The best pick is usually the most up-to-date follower. Agreeing on it is a '+L.g('consensus','consensus')+' problem (chapter 9).'],
+     ['Reconfigure','Send writes to the new leader. If the old leader comes back, it must step down and become a follower.']],4));
+  L.done();}},
+{part:2,src:'Chapter 5 · Handling Node Outages',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The Eastvale follower was offline for 10 minutes for a security patch. Bookings carried on meanwhile. What does it do when it restarts?</h1>');
+  L.mc(L.card,['Copy a fresh snapshot of the whole database','Ask for every change since its last processed one','Take over as leader, since it’s the newest node'],1,
+   'Catch-up recovery: its own log says where it stopped, so it only fetches the missing 10 minutes.',
+   'A restarted follower doesn’t need a full copy and doesn’t become leader. Its own log tells it the last change it processed, so it fetches only what it missed.');}},
+{part:2,src:'Chapter 5 · Handling Node Outages',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">The night the Parcel DB failed over</h1>');
+  L.beats(L.card,[
+   ['02:10','The Westport follower is rebooting for a kernel patch. Then the Westport <b>leader</b> crashes. After the 30-second timeout, automatic failover promotes the only follower left: Eastvale, which is 3 seconds behind.'],
+   ['Lost writes','The last 3 seconds of bookings never reached Eastvale. They’re discarded, though merchants were told “booked.”'],
+   ['Reused IDs','Eastvale’s parcel-ID counter was behind, so it hands out IDs the old leader had already used. The tracking-page cache still holds the old parcels under those IDs. Some recipients briefly see a stranger’s name and address.'],
+   ['The book’s case','This mirrors a real incident the book describes at GitHub: a lagging MySQL follower was promoted, reused primary keys that a Redis store also used, and private data reached the wrong users.'],
+   ['02:40','The old leader restarts and still thinks it’s the leader. One merchant API server with old settings keeps writing to it. Now two nodes accept writes. Kwame shuts the old leader down by hand.']],
+   'Failover can lose confirmed writes, break other systems that depend on the database, and leave two leaders. Afterwards Kwame makes one follower synchronous.');}},
+{part:2,src:'Chapter 5 · Handling Node Outages',run(L){
+  L.h(L.kick('learn','What goes wrong in failover')+L.quote('Failover is fraught with things that can go wrong.','Martin Kleppmann, chapter 5')+'<h1 class="q" style="margin-top:12px">Tap each card to see one of the four classic problems.</h1>');
+  L.flips(L.card,[
+   ['Lost writes','With async replication the new leader may lack the old leader’s last writes. Usually they’re just discarded, which breaks clients’ expectation that confirmed writes last.'],
+   ['Other systems out of step','Discarding writes is worse when other systems, like a cache, already used that data. The GitHub key reuse is the example.'],
+   ['Split brain','Two nodes both believe they’re the leader. If both accept writes with no way to resolve conflicts, data is lost or corrupted. A safety catch that shuts one down can, if badly designed, shut down both.'],
+   ['The wrong timeout','Too long: slow recovery after a real failure. Too short: needless failovers, say during a load spike or a network glitch, which make a struggling system worse.']],
+   'There are no easy fixes, which is why some teams prefer to fail over by hand even when the software can do it automatically.');}},
+{part:2,src:'Chapter 5 · Handling Node Outages',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which failover problem?',['Lost writes','Split brain','Timeout too short','Timeout too long'],[
+   ['During a Peak Week spike, the leader answers slowly for 8 seconds. Failover kicks in, and the cluster spends 10 minutes reshuffling while overloaded.',2,'The leader wasn’t dead, just busy. A short timeout turned a slow moment into an unneeded failover that made things worse.'],
+   ['The leader really died, but nothing happened for 5 minutes. No bookings could be made the whole time.',3,'A long timeout means a long wait before recovery starts after a real failure.'],
+   ['After failover, a merchant finds that a parcel they booked just before the crash doesn’t exist.',0,'The new leader never received it, and the old leader’s unreplicated writes were discarded.'],
+   ['A network glitch cuts the leader off. A follower is promoted, but the old leader is still running and taking writes from some servers.',1,'Two nodes both acting as leader is split brain. Writes on both sides can clash or get lost.']]);}},
+
+/* ---------- PART 4: REPLICATION LOGS ---------- */
+{part:3,src:'Chapter 5 · Implementation of Replication Logs',run(L){
+  L.h(L.kick('learn','What goes in the log?')+'<h1 class="q">Four ways to describe changes to followers</h1>'+
+   L.tiers([['pencil','Statement-based','Send each write statement (INSERT, UPDATE, DELETE) to followers to run again. Compact, but breaks on <b>NOW()</b> or <b>RAND()</b>, on auto-incrementing columns or statements that depend on existing data (they must run in exactly the same order), and on triggers or other side effects. MySQL used it before version 5.1.','Same statement, maybe different data'],
+            ['list','Write-ahead log shipping','Send the storage engine’s own '+L.g('wal','write-ahead log')+': which bytes changed in which disk blocks. PostgreSQL and Oracle do this. But it ties replication to the storage format, so leader and followers usually must run the same database version.','Exact copy, tightly coupled'],
+            ['layers','Logical (row-based) log','A separate log of row changes: the new values for an inserted row, the key of a deleted row, the key and new values of an updated row, then a “committed” record. MySQL’s binlog can do this.','Decoupled from the engine',true,'Most flexible'],
+            ['cycle','Trigger-based','Application code runs on each change (a trigger) and logs it to a table that another process copies out. Lets you copy only some data, or into a different kind of database. Slower and buggier than built-in replication.','Replication in your own code']]));
+  L.done();}},
+{part:3,src:'Chapter 5 · Implementation of Replication Logs',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias’s booking code runs this on the leader: “set the pickup code to RAND()”. With statement-based replication, what do followers get?</h1>');
+  L.mc(L.card,['The same pickup code as the leader','No pickup code, since RAND() isn’t replicated','Probably a different random code each'],2,
+   'Each follower runs RAND() again and gets its own value. The leader could pin the value when logging, but there are so many edge cases that other methods are now preferred.',
+   'The statement is replayed, not its result. Each follower runs RAND() itself and almost certainly gets a different code. A row-based log would send the actual value.');}},
+{part:3,src:'Chapter 5 · Write-ahead log (WAL) shipping',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Upgrade day: why the log format matters</h1>');
+  L.beats(L.card,[
+   ['The goal','Kwame wants to move the Parcel DB to a new major version of the database software with <b>no downtime</b>.'],
+   ['The plan','Upgrade the followers first while the old leader keeps working, then fail over to an upgraded follower. Finally upgrade the old leader.'],
+   ['With WAL shipping','The log describes bytes in disk blocks. If the new version changes the storage format, the followers can’t read the leader’s log. The plan fails, and the upgrade needs downtime.'],
+   ['With a logical log','The log describes rows, not disk blocks, so it can stay compatible across versions, or even across storage engines. The rolling plan works.'],
+   ['A bonus','Linh notices that a row-based log is easy for other programs to read. They could feed every Parcel DB change into the analytics warehouse. That’s '+L.g('cdc','change data capture')+', which comes back in chapter 11.']],
+   'Log format looks like an internal detail, but it decides whether upgrades need downtime and whether other systems can follow your changes.');}},
+{part:3,src:'Chapter 5 · Implementation of Replication Logs',pts:4,run(L){
+  L.h(L.kick('pr','Pick the log')+'<h1 class="q">Which replication method fits, or explains, each situation?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Statement','WAL shipping','Logical','Trigger'],[
+   ['Followers end up with different “booked at” times because the statement used NOW()',0,'Replaying a statement re-runs NOW() on each follower.'],
+   ['Only Nordhaven parcels must be copied into a partner company’s different database',3,'Copying a subset into another kind of database needs application logic: triggers.'],
+   ['Followers must run the exact same version as the leader, so upgrades need downtime',1,'WAL shipping copies disk-block changes, so it’s tied to the storage format.'],
+   ['Linh wants a stream of row changes to feed the warehouse and the support search',2,'A logical row-based log is easy for outside systems to read: change data capture.']],
+   'Statement-based is compact but fragile; WAL shipping is exact but coupled; logical logs are decoupled and readable; triggers are flexible but slower.');}},
+{part:3,src:'Chapter 5 · Logical (row-based) log replication',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence explains why Kwame should prefer a logical log.</h1>');
+  L.sentence(L.card,[['A write-ahead log','A logical log','A statement log'],['records disk bytes','records SQL text','records row values'],['so leader and followers must run','so leader and followers can run'],['different versions','the same version']],[1,2,1,0],
+   [['A write-ahead log is the coupled one: it describes disk blocks.','A statement log replays SQL, which breaks on NOW() and RAND().'],['Disk bytes are what WAL shipping sends, not a logical log.','SQL text is what statement-based replication sends.'],['“Must run” describes the coupled WAL case.'],['Needing the same version is the WAL-shipping limitation.']],
+   'A logical log describes rows, not storage internals, so followers can run newer software, which makes zero-downtime upgrades possible.');}}
+  ]
+});
+</script>
+</body>
+</html>

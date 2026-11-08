@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design Google Drive</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0009', title:'Design Google Drive', minutes:20, icon:'lock',
+  goals:['Scope a file sync service and grow it from one server','Explain block servers, delta sync and how sync conflicts resolve','Walk the upload, download and notification flows, and handle failures'],
+  parts:['Scope and first steps','Blocks and conflicts','Flows and notifications','Space, failures, wrap-up'],
+  read:'Read chapter 15 of the book for the sequence diagrams of the upload and download flows and the metadata schema.',
+  glossary:{
+    namespace:'Namespace: a user’s root folder. Each file is identified by its namespace plus its path inside it.',
+    resumable:'Resumable upload: an upload that can continue from where it stopped after a network break, instead of starting again.',
+    block:'Block: a piece of a file (at most 4 MB here). Each block has a hash, a short fingerprint of its content, and is stored as its own object.',
+    delta:'Delta sync: when a file changes, send only the blocks that changed, not the whole file.',
+    acid:'ACID: guarantees a relational database gives every change: it happens fully or not at all, keeps data valid, doesn’t clash with other changes, and survives crashes.',
+    longpoll:'Long polling: the client asks the server “anything new?” and the server holds the request open until something happens or time runs out; then the client asks again.',
+    cold:'Cold storage: cheap storage for data nobody has touched in months or years. Slower to read, much cheaper to keep.'
+  },
+  cheatsheet:[
+    '<b>Scope:</b> upload, download, sync, revisions, sharing, notifications; any file up to 10 GB; encrypted at rest; 10M DAU. No real-time co-editing.',
+    '<b>Numbers:</b> 50M users × 10 GB = 500 PB allocated; 10M × 2 uploads a day ≈ 240 upload QPS, peak 480.',
+    '<b>Grow from one server:</b> shard, move files to S3 with cross-region replication, add a load balancer and web servers, move the metadata DB out.',
+    '<b>Block servers:</b> split → compress → encrypt → upload, 4 MB blocks. <b>Delta sync</b> sends only changed blocks.',
+    '<b>Conflicts:</b> the first version processed wins; the other user gets both copies to merge or override.',
+    '<b>Strong consistency:</b> relational DB (ACID), cache invalidated on every DB write. Tables: user, device, namespace, file, file_version, block.',
+    '<b>Flows:</b> upload sends metadata (status “pending”) and blocks in parallel, then “uploaded”. Notification service uses <b>long polling</b>: one-way, infrequent.',
+    '<b>Save space:</b> dedupe blocks by hash, limit versions, move cold data to cold storage. Every component has a failure plan.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE AND FIRST STEPS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Ines fixes one page of a 200-page quilt pattern PDF on a laptop. What should Kitebird Locker send to Ines’s phone?</h1>');
+  L.mc(L.card,['The whole 200-page file, again','Just the part that changed'],1,
+   'Sending only what changed saves time and mobile data. That idea, delta sync, is at the heart of this design.',
+   'Resending all 200 pages wastes bandwidth, which hurts most on a phone plan. Only the changed part needs to travel.');}},
+{part:0,src:'Chapter 15 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','Narrow it down')+'<h1 class="q">Kitebird Locker is the team’s version of Google Drive. First, the book’s scope questions.</h1>');
+  L.flips(L.card,[
+   ['Most important features?','Upload and download files, <b>file sync</b>, and notifications.'],
+   ['Mobile, web or both?','<b>Both.</b>'],
+   ['Which file formats?','<b>Any</b> file type.'],
+   ['Encryption?','<b>Yes.</b> Files in storage must be encrypted.'],
+   ['File size limit?','Files must be <b>10 GB</b> or smaller.'],
+   ['How many users?','<b>10 million</b> '+L.g('dau','DAU')+'.']],
+   'Features in focus: add files (drag and drop), download, sync across devices, see revisions, share, and notify when a file is edited, deleted or shared. Out of scope: Google Docs-style editing by many people at once.');}},
+{part:0,src:'Chapter 15 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','How it must behave')+'<h1 class="q">Five qualities matter as much as the features</h1>'+
+   L.list([['shield','Reliability','Data loss is unacceptable for a storage system.'],
+     ['clock','Fast sync','If syncing drags, people give up on the product.'],
+     ['down','Low bandwidth','Wasted network traffic annoys users, most of all on mobile data plans.'],
+     ['trend','Scalability','Handles high volumes of traffic.'],
+     ['cycle','High availability','Still usable when some servers are offline, slow or hit by network errors.']],1));
+  L.done();}},
+{part:0,src:'Chapter 15 · Back of the envelope estimation',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">The book’s '+L.g('estimate','estimate')+' in four lines</h1>');
+  L.beats(L.card,[
+   ['Assumptions','<b>50 million</b> sign-ups, <b>10 million</b> DAU. Everyone gets <b>10 GB</b> free. Users upload <b>2 files</b> a day, averaging <b>500 KB</b>. Reads and writes are 1:1.'],
+   ['Space allocated','50 million × 10 GB = <b>500 petabytes</b>.'],
+   ['Upload QPS','10 million × 2 uploads ÷ 86,400 seconds ≈ <b>240</b> '+L.g('qps','QPS')+'.'],
+   ['Peak','Twice the average: <b>480</b> QPS.']],
+   'Huge storage, modest request rate. The hard parts here are keeping files safe and in sync, not raw traffic.');}},
+{part:0,src:'Chapter 15 · Back of the envelope estimation',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why is total space 500 PB when only 10 million people use the product each day?</h1>');
+  L.mc(L.card,['Every sign-up gets 10 GB, whether active or not','Each daily user stores 50 GB on average','Each file is stored ten times across regions'],0,
+   'Space is allocated per account: 50 million sign-ups × 10 GB each.',
+   'The sum is allocated space: 50 million sign-ups × 10 GB free each = 500 PB. Daily users drive the QPS, not the allocation.');}},
+{part:0,src:'Chapter 15 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','Start with one server')+'<h1 class="q">The book begins small, then scales up</h1>'+
+   L.prose('One web server for uploads and downloads, one database for metadata (users, logins, file info), and a <code>drive/</code> folder with 1 TB of space. Inside it, each user gets a '+L.g('namespace','namespace')+'. A file is identified by namespace + path.')+
+   '<h2 class="sub">Three APIs</h2>'+
+   L.list([['box','Upload','<b>Simple</b> for small files. <b>'+L.g('resumable','Resumable')+'</b> for large files or shaky networks: get a resumable URL, upload while watching progress, resume if interrupted.'],
+     ['down','Download','Takes the file’s <code>path</code>, e.g. <code>/recipes/soup/best_soup.txt</code>.'],
+     ['clock','List revisions','Takes the <code>path</code> and a <code>limit</code>: how many past versions to return.']],2)+
+   '<p class="small">Every API needs the user to be logged in and runs over HTTPS, so data is encrypted in transit.</p>');
+  L.done();}},
+{part:0,src:'Chapter 15 · Move away from single server',run(L){
+  L.h(L.kick('ex','The book’s story')+'<h1 class="q">One server fills up. What happens next?</h1>');
+  L.beats(L.card,[
+   ['The alarm','A “space full” alert: only <b>10 MB</b> left. Nobody can upload.'],
+   ['Shard it','An all-nighter: '+L.g('sharding','shard')+' the files across several storage servers by <code>user_id</code>. The fire’s out, but a storage server outage could still lose data.'],
+   ['Move to S3','A friend points out that Netflix and Airbnb use Amazon S3. Files move there, '+L.g('replication','replicated')+' within a region and across regions, so one region’s loss doesn’t lose data.'],
+   ['Decouple the rest','Add a '+L.g('load-balancer','load balancer')+' and more web servers. Move the metadata database off the server, with replication and sharding. Keep files in two regions.']],
+   'Web servers, metadata and file storage now live apart, so each can scale and fail on its own.');}},
+{part:0,src:'Chapter 15 · APIs',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which API call?',['Simple upload','Resumable upload','Download','List revisions'],[
+   ['Kofi saves a 30 KB text note over fast home wifi.',0,'Small file, stable network: a simple upload is enough.'],
+   ['Ines uploads a 6 GB CAD file from a moving train.',1,'Large file, likely network breaks: resumable, so it continues instead of restarting.'],
+   ['Ines wants the last 20 versions of star-block.pdf.',3,'List revisions with the path and a limit of 20.'],
+   ['Kofi’s phone fetches /patterns/quilt/star-block.pdf.',2,'Download takes the file’s path.'],
+   ['A 2 GB upload stops halfway when the laptop goes to sleep.',1,'A resumable upload picks up where it stopped.']]);}},
+
+/* ---------- PART 2: BLOCKS AND CONFLICTS ---------- */
+{part:1,src:'Chapter 15 · High-level design',run(L){
+  L.h(L.kick('learn','The full picture')+'<h1 class="q">The high-level design, part by part</h1>'+
+   L.list([['Block servers','Split files into '+L.g('block','blocks')+' and upload them to cloud storage. Each block has a unique hash kept in the metadata DB. Blocks join in order to rebuild the file. Max block size: <b>4 MB</b>, as Dropbox does.'],
+     ['Cloud storage · cold storage','Blocks live in cloud storage (S3). '+L.g('cold','Cold storage')+' holds files nobody has touched in a long time.'],
+     ['Load balancer · API servers','API servers do almost everything except uploading: login, profiles, updating file metadata.'],
+     ['Metadata DB · metadata cache','Data about users, files, blocks and versions. The files themselves stay in the cloud.'],
+     ['Notification service','Publish-subscribe: tells clients when a file is added, edited or removed elsewhere, so they pull the changes.'],
+     ['Offline backup queue','Keeps the change info for an offline client, so it syncs once it’s back online.']],3));
+  L.done();}},
+{part:1,src:'Chapter 15 · Block servers',run(L){
+  L.h(L.kick('learn','Block servers do the heavy lifting')+'<h1 class="q">Send less: delta sync and compression</h1>'+
+   L.prose('Sending a big file on every edit wastes bandwidth. Two fixes:')+
+   L.lanes([['layers','Delta sync','When a file changes, sync <b>only the changed blocks</b>. If blocks 2 and 5 change, only those two are uploaded.',2],
+            ['box','Compression','Compress each block with a method that suits the file type: gzip or bzip2 for text, other methods for images and video.',3]])+
+   L.flow([['layers','Split','into blocks',''],['box','Compress','each block',''],['lock','Encrypt','each block',''],['arrow','Upload','to cloud storage','']])+
+   L.note('<b>Beyond the book:</b> with fixed-size blocks, inserting bytes near the start shifts every block after it, so real sync tools cut blocks by content instead.','info'));
+  L.done();}},
+{part:1,src:'Chapter 15 · Block servers',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A new file reaches a block server. Tap the steps in order.</h1>');
+  L.order(L.card,['Split the file into blocks','Compress each block','Encrypt each block','Upload blocks to cloud storage'],
+   'Split, compress, encrypt, upload. Encryption comes before anything leaves for cloud storage.');}},
+{part:1,src:'Chapter 15 · Block servers',pts:1,
+ solve:async L=>{['3','6'].forEach(k=>L.$('[data-b="'+k+'"]').click());L.$('#sync').click();},
+ run(L){
+  const OLD=['a91f','03bc','7c1e','e2d4','5f08','b6a3','19ce','d470'],NEW=['a91f','03bc','c3a9','e2d4','5f08','40f2','19ce','d470'];const pick=new Set();let done=false;
+  L.h(L.kick('pr','See delta sync')+'<h1 class="q">Ines edits star-block.pdf (32 MB, eight 4 MB blocks). Each block shows its hash before → after the edit. Tap the blocks delta sync must upload.</h1>'+
+   '<div id="bl" style="margin:6px 0"></div><button class="btn pri" id="sync">'+L.ic('arrow')+'Sync</button><div id="bo"></div>');
+  OLD.forEach((h,j)=>{const b=document.createElement('button');b.className='chip';b.dataset.b=String(j+1);b.style.cssText='font-family:ui-monospace,Menlo,monospace;font-size:13px';
+    b.innerHTML='B'+(j+1)+' · '+h+' → '+NEW[j];b.onclick=()=>{if(done)return;const k=j+1;pick.has(k)?pick.delete(k):pick.add(k);b.classList.toggle('sel',pick.has(k));};L.$('#bl').appendChild(b);});
+  L.$('#sync').onclick=()=>{if(done)return;if(!pick.size){L.err('Tap at least one block');return;}done=true;
+    const R=[3,6],ok=pick.size===2&&R.every(k=>pick.has(k));
+    [...L.$('#bl').children].forEach(b=>{const k=+b.dataset.b;b.classList.remove('sel');if(R.includes(k))b.classList.add('ok');else if(pick.has(k))b.classList.add('no');});
+    L.$('#sync').remove();
+    L.$('#bo').innerHTML='<div class="meterrow"><div class="lb">Whole file</div><div class="meter"><div style="width:100%;background:var(--no-strong)"></div></div><b style="width:52px;text-align:right">32 MB</b></div>'+
+     '<div class="meterrow"><div class="lb">Delta sync</div><div class="meter"><div style="width:25%;background:var(--ok-strong)"></div></div><b style="width:52px;text-align:right">8 MB</b></div>';
+    L.award(ok);L.sheet(ok?'ok':'no',ok?'Only two blocks travel':'Look at the hashes','Blocks 3 and 6 have new hashes, so their content changed. The other six are identical and stay put: 8 MB sent instead of 32 MB, before compression shrinks it further.');L.done();};}},
+{part:1,src:'Chapter 15 · Sync conflicts',run(L){
+  L.h(L.kick('learn','Sync conflicts')+'<h1 class="q">Two people change the same file at the same time. Who wins?</h1>'+
+   L.prose('The book’s rule is simple: <b>the first version the system processes wins</b>. The version processed later gets a <b>sync conflict</b>.')+
+   L.flow([['person','User 1','Update processed first: it goes through','',2],['person','User 2','Update processed second: conflict','',4]],false)+
+   L.prose('User 2 isn’t left stuck. The system shows <b>both copies</b>: their local copy and the latest version from the server. They can merge the two, or override one with the other.')+
+   L.note('Keeping one document in sync while many people edit it live is a hard problem of its own, and out of this design’s scope.','info'));
+  L.done();}},
+{part:1,src:'Chapter 15 · Sync conflicts',pts:1,run(L){
+  L.h(L.kick('pr','Kitebird case')+'<h1 class="q">Ines and Kofi both edit star-block.pdf offline, then reconnect. Kofi’s change reaches the server and is processed first. What happens?</h1>');
+  L.mc(L.card,['Ines wins, since Ines started editing first','The server quietly merges both edits','Kofi wins; Ines sees both copies to resolve'],2,
+   'First processed wins. Ines gets their local copy and the server’s latest side by side, to merge or override.',
+   'Neither start time nor automatic merging decides it. The first version <i>processed</i> wins, and Ines gets both copies to merge or override.');}},
+
+/* ---------- PART 3: FLOWS AND NOTIFICATIONS ---------- */
+{part:2,src:'Chapter 15 · High consistency requirement',run(L){
+  L.h(L.kick('learn','Strong consistency, by default')+'<h1 class="q">A file must never look different on two devices at once</h1>'+
+   L.prose('Caches are '+L.g('eventual','eventually consistent')+' by default: replicas may briefly disagree. So the design keeps cache replicas in line with the primary, and <b>invalidates the cache on every database write</b>.')+
+   L.prose('The metadata DB is <b>relational</b>, because it gives '+L.g('acid','ACID')+' guarantees built in. NoSQL databases don’t by default, so you’d have to write that logic yourself.')+
+   '<h2 class="sub">The six main tables</h2>'+
+   L.list([['User','Name, email, profile photo.'],['Device','One row per device; push_id for mobile push. A user can have many.'],['Namespace','A user’s root folder.'],
+     ['File','Everything about the latest version.'],['File_version','Version history. Rows are read-only, to protect it.'],['Block','Each block, so any version can be rebuilt in order.']],2));
+  L.done();}},
+{part:2,src:'Chapter 15 · Upload flow',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Ines uploads a new pattern. Two requests leave Ines’s laptop in parallel.</h1>');
+  L.beats(L.card,[
+   ['Request 1 · metadata','The laptop sends the new file’s metadata. It’s saved in the metadata DB with status <b>“pending”</b>.'],
+   ['Heads-up','The notification service tells relevant clients, like Kofi’s laptop, that a file is being uploaded.'],
+   ['Request 2 · content','Meanwhile, the file goes to the block servers. They chunk, compress and encrypt it, and upload the blocks to cloud storage.'],
+   ['Callback','When the upload completes, cloud storage calls back to the API servers. The status changes to <b>“uploaded”</b>.'],
+   ['Done','The notification service tells Kofi’s laptop the file is fully uploaded. Editing a file follows the same flow.']],
+   'Metadata and content travel separately. The status moves from “pending” to “uploaded”, and other devices hear about both.');}},
+{part:2,src:'Chapter 15 · Upload flow',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kofi’s laptop lists Ines’s new file as “pending”. What does that mean?</h1>');
+  L.mc(L.card,['The file is fully uploaded and ready','Its metadata is saved; blocks are still uploading','The upload failed and will be retried'],1,
+   'The metadata request finished first; the content is still on its way. “Uploaded” comes after the cloud storage callback.',
+   '“Pending” is set when the metadata is saved, before the blocks finish. It flips to “uploaded” after cloud storage confirms.');}},
+{part:2,src:'Chapter 15 · Download flow',run(L){
+  L.h(L.kick('learn','The download flow')+'<h1 class="q">How a device learns about a change, then fetches it</h1>'+
+   L.lanes([['eye','Online','The notification service tells the client a file changed elsewhere, so it pulls the latest data.',2],
+            ['clock','Offline','The change is saved (the offline backup queue keeps it). When the client comes back online, it pulls the latest changes.',3]])+
+   L.flow([['chat','Told','Notification service: “something changed”',''],['list','Metadata','Client asks API servers; they read the metadata DB',''],['layers','Blocks','Client asks block servers; they fetch from cloud storage',''],['check','Rebuild','Client joins the new blocks into the file','']]));
+  L.done();}},
+{part:2,src:'Chapter 15 · Notification service',run(L){
+  L.h(L.kick('learn','The notification service')+'<h1 class="q">Long polling, not WebSocket</h1>'+
+   L.prose('Every local change must reach other clients quickly, to reduce conflicts. Two options both work: '+L.g('longpoll','long polling')+' (Dropbox uses it) and WebSocket (a lasting two-way connection). The book picks long polling, for two reasons:')+
+   L.list([['arrow','One-way traffic','The server tells clients about changes. Clients don’t talk back on this channel.'],
+     ['clock','Rare, no bursts','Notifications come now and then. WebSocket suits real-time two-way traffic, like chat.']],1)+
+   L.note('<b>How it runs:</b> each client holds a long-poll connection open. When a change is detected, the client closes it and fetches the latest changes from the metadata server. After a response or a timeout, it opens a new request right away.','cycle'));
+  L.done();}},
+{part:2,src:'Chapter 15 · Metadata database',pts:5,run(L){
+  L.h(L.kick('pr','Where does it live?')+'<h1 class="q">Five pieces of Kitebird Locker data. Which table holds each?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Device','Namespace','File','File_version','Block'],[
+   ['The push_id of Kofi’s new tablet.',0,'Device rows hold push_id, and one user can have many devices.'],
+   ['Ines’s root folder in Locker.',1,'A namespace is a user’s root directory.'],
+   ['The 14 earlier versions of star-block.pdf.',3,'Version history lives in file_version, and its rows are read-only.'],
+   ['The hash and position of each 4 MB piece.',4,'The block table lets any version be rebuilt by joining blocks in order.'],
+   ['The name and latest details of star-block.pdf.',2,'The file table holds everything about the latest version.']],
+   'Latest file in file, history in file_version, pieces in block, root folders in namespace, devices in device.');}},
+{part:2,src:'Chapter 15 · Notification service',pts:1,run(L){
+  L.h(L.kick('pr','Spot the mistake')+'<h1 class="q">Lior says: “We used WebSocket for maker chat, so let’s use it for Locker sync alerts too.” Tamsin disagrees. Why?</h1>');
+  L.mc(L.card,['Changes flow one way, and only now and then','Long polling keeps a two-way channel open','WebSocket can’t work on mobile networks'],0,
+   'Chat is two-way and real-time, which suits WebSocket. Locker alerts are one-way and infrequent, which suits long polling.',
+   'Long polling isn’t two-way, and WebSocket works on phones. The reason is the traffic: one-way, infrequent alerts don’t need a lasting two-way connection.');}},
+
+/* ---------- PART 4: SPACE, FAILURES, WRAP-UP ---------- */
+{part:3,src:'Chapter 15 · Save storage space',run(L){
+  L.h(L.kick('learn','Save storage space')+'<h1 class="q">Keeping every version everywhere fills storage fast</h1>'+
+   L.prose('Versions are kept for history and copied across data centers for reliability. Three ways to cut the cost:')+
+   L.list([['layers','De-duplicate blocks','Two blocks with the same hash are identical, so store them once per account.'],
+     ['clock','Smarter backups','Set a version <b>limit</b>: the oldest is replaced when it’s reached. Or keep only <b>valuable</b> versions: a heavily edited file could be saved over 1,000 times in a short time, so weight recent versions more. Experiment to find the right number.'],
+     ['box','Cold storage','Move data untouched for months or years to cold storage such as Amazon S3 Glacier, much cheaper than S3.']],4));
+  L.done();}},
+{part:3,src:'Chapter 15 · Save storage space',pts:4,run(L){
+  L.h(L.kick('pr','Hana’s storage bill')+'<h1 class="q">Which saving fits each Kitebird Locker case?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['De-duplicate blocks','Limit versions','Cold storage'],[
+   ['Ines drops the same 40 MB photo set into two project folders.',0,'Same content means same block hashes, so each block is stored once.'],
+   ['A pattern file autosaves 1,200 versions in one afternoon.',1,'Cap the versions or keep only the valuable ones, weighting recent ones.'],
+   ['CAD files from a 2021 project nobody has opened since.',2,'Data untouched for years belongs in cheaper cold storage.'],
+   ['Kofi re-uploads a file identical to one already in Kofi’s account.',0,'Identical blocks, same hashes: nothing new needs storing.']],
+   'Same hash → store once. Too many versions → limit them. Untouched for ages → cold storage.');}},
+{part:3,src:'Chapter 15 · Failure Handling',run(L){
+  L.h(L.kick('learn','Failure handling')+'<h1 class="q">Every part has a plan for when it dies</h1>'+
+   L.list([['Load balancer','A secondary takes over. They watch each other with a heartbeat, a regular “I’m alive” signal; no heartbeat for a while means failed.'],
+     ['Block server','Other block servers pick up its unfinished and pending jobs.'],
+     ['Cloud storage','S3 buckets are replicated across regions; fetch from another region.'],
+     ['API server','Stateless, so the load balancer sends traffic to the others.'],
+     ['Metadata cache · DB','Cache: read another replica, start a new server. DB primary down: promote a replica (the book: “master” and “slave”).'],
+     ['Notification service','Each server holds many long-poll connections; Dropbox reported over 1 million per machine. If one dies, clients reconnect elsewhere, which is slow.'],
+     ['Offline backup queue','Queues are replicated; consumers re-subscribe to the backup queue.']],1));
+  L.done();}},
+{part:3,src:'Chapter 15 · Failure Handling',pts:1,
+ solve:async L=>{[...L.$('#pg').children].forEach(b=>b.click());},
+ run(L){
+  const F=[['Load balancer','The secondary notices the missing heartbeats and takes over.'],['Block server','Other block servers pick up its pending jobs.'],['Cloud storage (one region)','Files are fetched from a copy in another region.'],['API server','Stateless: traffic moves to the other API servers.'],
+    ['Metadata cache node','Reads go to another replica; a new cache server replaces it.'],['Metadata DB primary','A replica is promoted to primary; a new replica is added.'],['Notification server','Its long-poll connections all drop. Clients reconnect to other servers, slowly: one machine held over a million.'],['Offline backup queue','A replica takes over; consumers re-subscribe to it.']];
+  const seen=new Set();
+  L.h(L.kick('pr','Pull the plug')+'<h1 class="q">Obi runs a failure drill on Kitebird Locker. Pull the plug on every part and watch the system cope.</h1>'+
+   '<div id="pg"></div><div id="pl" style="margin-top:6px"></div><div id="pq"></div>');
+  F.forEach((f,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('x')+f[0];
+    b.onclick=()=>{if(seen.has(j))return;seen.add(j);b.classList.add('no');
+      L.$('#pl').insertAdjacentHTML('beforeend','<div class="small" style="margin:0 0 6px"><b>'+f[0]+':</b> '+f[1]+'</div>');
+      if(seen.size===F.length){const q=L.$('#pq');q.innerHTML='<h2 class="sub">Obi asks which failure takes longest to recover from. What does the book say?</h2>';
+        L.mc(q,['A metadata DB primary going down','A block server crashing mid-job','A notification server going down'],2,
+         'One machine can hold over a million long-poll connections, and they can’t all reconnect at once. The book calls it a relatively slow process.',
+         'Those have quick fixes: promote a replica, or let other servers take the jobs. Re-connecting a million long-poll clients after a notification server dies is the slow one.');}};
+    L.$('#pg').appendChild(b);});}},
+{part:3,src:'Chapter 15 · Step 4 - Wrap up',pts:1,run(L){
+  L.h(L.kick('learn','Wrap-up talking points')+'<h1 class="q">No perfect design, only trade-offs</h1>'+
+   L.prose('The book closes by stressing trade-offs. With a few minutes left, discuss alternatives:')+
+   L.tiers([['arrow','Upload straight to cloud storage?','Faster: the file travels once, not via block servers. But the chunk, compress and encrypt logic must be rebuilt for iOS, Android and web (error-prone, lots of work), and a client can be hacked, so encrypting there isn’t ideal.'],
+     ['people','A separate presence service?','Move the online/offline logic out of the notification servers, so other services can use it too.']])+
+   '<div id="wq"><h2 class="sub">Hana suggests the Locker apps upload straight to S3 to save a hop. What’s the book’s main concern?</h2></div>');
+  L.mc(L.$('#wq'),['Uploads get slower, since files travel twice','Logic copied to every app, and clients can be hacked','Cloud storage can’t accept files from phones'],1,
+   'Speed is the upside. The cost is duplicated chunk, compress and encrypt code on every platform, and encryption on a device that could be tampered with.',
+   'Direct upload is actually faster. The worry is repeating the block logic on iOS, Android and web, and trusting encryption to a client that can be hacked.');}}
+  ]
+});
+</script>
+</body>
+</html>

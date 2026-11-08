@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relational Versus Document Models</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+const CODE=s=>'<div style="background:var(--soft);border-radius:14px;padding:12px 14px;margin:12px 0;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere">'+s+'</div>';
+Course.lesson({
+  id:'0003', title:'Relational versus document models', minutes:20, icon:'layers',
+  goals:['Tell when data is a tree that fits one document, and when it needs joins','Explain why IDs and normalization beat copied text, and what history taught us','Choose between schema-on-read and schema-on-write for a real change'],
+  parts:['Why models','Documents','Links','Today'],
+  read:'Read the first half of chapter 2 of the book for the LinkedIn résumé example and the full history of IMS and CODASYL.',
+  glossary:{
+    'data-model':'Data model: the general shape you give your data so a database can store it, such as tables (relational), nested documents, or a graph.',
+    'document-model':'Document model: data kept as self-contained documents, usually JSON, where items that belong to a record are nested inside it.',
+    'impedance':'Impedance mismatch (object-relational mismatch): the awkward gap between the objects in application code and the tables, rows and columns of a relational database.',
+    'polyglot':'Polyglot persistence: using several kinds of datastore side by side, each for the job it suits best.',
+    'one-to-many':'One-to-many relationship: one record owns several items, like a parcel and its scan events. Data made of these forms a tree.',
+    'many-to-one':'Many-to-one relationship: many records point at the same item, like many parcels sent by one merchant.',
+    'many-to-many':'Many-to-many relationship: items on both sides link to many on the other side, like parcels and the hubs they pass through.',
+    'normalization':'Normalization: storing each human-meaningful fact in only one place and referring to it by ID everywhere else, instead of copying it into every record.',
+    'join':'Join: combining records that refer to each other, for example a parcel with its merchant’s details, at the time you read them.',
+    'optimizer':'Query optimizer: the part of a database that decides how to run a query: which indexes to use, which join method, and in what order.',
+    'access-path':'Access path: in old network (CODASYL) databases, the chain of links a program had to follow by hand to reach a record.',
+    'schema-on-read':'Schema-on-read: the database doesn’t enforce a structure. The code that reads the data assumes one and interprets it at read time.',
+    'schema-on-write':'Schema-on-write: the schema is explicit, and the database checks that every write fits it (the traditional relational approach).',
+    'locality':'Locality: data that is read together is stored together, so one read fetches it all.'
+  },
+  cheatsheet:[
+    'A <b>data model</b> is a layer: each one hides the messy layer below it. It shapes which tasks are easy and which are awkward.',
+    '<b>Document</b> = a tree of one-to-many items loaded together: one read, good locality, no shredding into tables.',
+    'Store <b>IDs, not copied text</b>, for things many records share. That is normalization: one place to change, no stale copies.',
+    'Many-to-one and many-to-many links need <b>joins</b>. Document databases handle them poorly, so the work moves into your code.',
+    'History repeats: IMS was a tree, CODASYL made you follow <b>access paths</b> by hand, and the relational <b>query optimizer</b> won.',
+    '<b>Schema-on-read</b> (implicit, checked by the reader) suits varied data from outside. <b>Schema-on-write</b> documents and enforces a shared shape.',
+    'Locality only pays when you need most of the document. Keep documents small; avoid writes that grow them.',
+    'The two models are converging: JSON columns in relational databases, joins in some document databases.'
+  ],
+  steps:[
+/* ---------- PART 1: WHY MODELS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tobias wants to store each Otterpost parcel as one big JSON blob instead of rows in the Parcel DB. Femi says, “It’s just storage, it won’t change anything.” Is Femi right?</h1>');
+  L.mc(L.card,['Yes, the shape is a detail nobody above it sees','No, the shape makes some jobs easy and others hard'],1,
+   'The way you shape data decides which questions are easy to ask and how much work lands in your own code. That is what this lesson is about.',
+   'The book argues the opposite: the shape of your data changes how the software is written and even how you think about the problem.');}},
+{part:0,src:'Chapter 2 · Data Models and Query Languages',run(L){
+  L.h(L.kick('learn','Data models come in layers')+'<h1 class="q">Every layer hides the one below it</h1>'+
+   L.quote('The limits of my language mean the limits of my world.','Ludwig Wittgenstein, quoted at the start of chapter 2')+
+   L.prose('A '+L.g('data-model','data model')+' is the shape you give your data. The book calls it perhaps the most important part of building software. Most apps stack one model on another:')+
+   L.tiers([['box','The real world','Parcels, couriers, hubs, merchants, money.','what Otterpost deals with'],
+            ['pencil','Objects in code','A <i>Parcel</i> object in the courier app, with a list of scans.','chosen by app developers'],
+            ['layers','A general-purpose model','Tables in the Parcel DB, or JSON documents, or a graph.','what this chapter compares',true,'Chapter 2'],
+            ['list','Bytes','How the database lays those tables out in memory and on disk.','chosen by database engineers'],
+            ['flame','Signals','Electric current, light pulses, magnetic fields.','chosen by hardware engineers']])+
+   '<p class="small" style="margin-top:10px">Each model assumes how it will be used: some jobs feel natural, others are awkward or slow.</p>');
+  L.done();}},
+{part:0,src:'Chapter 2 · Data Models and Query Languages',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The database vendor rewrites how the Parcel DB lays out bytes on disk. What must Otterpost’s app code change?</h1>');
+  L.mc(L.card,['Nothing, since the tables it uses look the same','Its queries, to fit the new byte layout','Its objects, to match the new disk format'],0,
+   'The table model hides the byte layout below it. That clean boundary lets the vendor’s engineers and Otterpost’s developers work without tripping over each other.',
+   'The app talks to tables, not bytes. Each layer hides the one below, so a new byte layout leaves the app untouched.');}},
+{part:0,src:'Chapter 2 · Relational Model Versus Document Model',run(L){
+  L.h(L.kick('learn','A short history')+'<h1 class="q">The relational model has outlasted every rival so far</h1>'+
+   L.prose('In 1970 Edgar Codd proposed the <b>relational model</b>: data sits in <i>relations</i> (tables in SQL), and each relation is an unordered collection of <i>tuples</i> (rows). Many doubted it could run fast. By the mid-1980s it was the default, and it stayed on top for 25 to 30 years.')+
+   L.prose('It grew out of business data processing on 1960s and 70s mainframes: <b>transaction processing</b> (sales, bank transfers, airline bookings, warehouse stock) and <b>batch processing</b> (invoices, payroll, reports). Its goal was to hide how data is stored inside a cleaner interface.')+
+   L.list([['Network and hierarchical models','The main rivals in the 1970s and early 80s.'],
+           ['Object databases','Came and went in the late 80s and early 90s.'],
+           ['XML databases','Early 2000s, niche use only.']],3)+
+   '<p class="small" style="margin-top:10px">Each rival came with hype, and none lasted. Relational databases spread far beyond business data, to much of the web.</p>');
+  L.done();}},
+{part:0,src:'Chapter 2 · The Birth of NoSQL',run(L){
+  L.h(L.kick('learn','The birth of NoSQL')+'<h1 class="q">A Twitter hashtag that stuck</h1>'+
+   L.prose('“NoSQL” names no technology. It was a catchy hashtag for a 2009 meetup about open source, distributed, nonrelational databases, later reread as <i>Not Only SQL</i>. The book lists four forces behind it:')+
+   L.list([['trend','Scale','Very large datasets or very high write throughput, beyond what relational databases easily handle.'],
+           ['people','Open source','A wide preference for free, open source software over commercial databases.'],
+           ['compass','Special queries','Query operations the relational model doesn’t support well.'],
+           ['cycle','Schema freedom','Frustration with strict relational schemas; a wish for a more dynamic, expressive model.']],2)+
+   L.note('Different jobs need different tools, so relational databases will likely keep running <b>alongside</b> nonrelational stores. That mix is called '+L.g('polyglot','polyglot persistence')+'.','layers'));
+  L.done();}},
+{part:0,src:'Chapter 2 · The Birth of NoSQL',pts:4,run(L){
+  L.h(L.kick('pr','Which force is talking?')+'<h1 class="q">Four Otterpost engineers grumble about the Parcel DB. Match each grumble to the force behind it.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Scale','Open source','Special queries','Schema freedom'],[
+   ['Kwame: “Courier phones send tens of millions of GPS pings a day. We need huge write throughput.”',0,'Very high write throughput is the scalability force.'],
+   ['Femi: “The licence for our commercial database doubles next year.”',1,'Preferring free, open source software over a paid product is its own force.'],
+   ['Linh: “Asking which hubs connect to which, through any number of roads, is painful in tables.”',2,'A kind of query the relational model doesn’t support well.'],
+   ['Tobias: “Every new field a merchant sends needs a schema change first.”',3,'That is frustration with restrictive schemas.']],
+   'Different needs pull toward different stores. Otterpost already runs a cache and a search index beside the Parcel DB: polyglot persistence.');}},
+
+/* ---------- PART 2: DOCUMENTS ---------- */
+{part:1,src:'Chapter 2 · The Object-Relational Mismatch',run(L){
+  L.h(L.kick('learn','The object-relational mismatch')+'<h1 class="q">Objects in code, rows in tables: something has to translate</h1>'+
+   L.prose('Most app code works with objects. If the data lives in tables, rows and columns, you need an awkward translation layer between the two. That gap is called the '+L.g('impedance','impedance mismatch')+', a term borrowed from electronics. ORM tools (object-relational mappers) cut the boilerplate, but they can’t hide the difference fully.')+
+   L.prose('The book’s example is a résumé on a LinkedIn profile: one person, but <b>many</b> jobs, many schools and many contact details. That is a '+L.g('one-to-many','one-to-many')+' relationship. There are three ways to store it in SQL:')+
+   L.list([['Separate tables','Jobs, education and contacts each get a table that points back to the user. The classic, normalized way.'],
+           ['A structured column','Newer SQL versions allow XML or JSON inside one row, and can query and index inside it.'],
+           ['JSON as plain text','Put the JSON in a text column and let the app read it. The database can’t look inside.']],1));
+  L.done();}},
+{part:1,src:'Chapter 2 · The Object-Relational Mismatch',run(L){
+  L.h(L.kick('ex','Otterpost’s parcel, two ways')+'<h1 class="q">What does it take to draw Mrs. Okoro’s tracking page?</h1>');
+  L.beats(L.card,[
+   ['The parcel','Parcel OP-48213 is going to Mrs. Okoro. Some facts appear <b>once</b>: tracking code, recipient, address, size.'],
+   ['The lists','Other facts come in lists: about 6 <b>scan events</b> (picked up, at hub, out for delivery…) and any <b>delivery attempts</b>. Each belongs to this one parcel.'],
+   ['As tables','The Parcel DB keeps a <i>parcels</i> table, a <i>scans</i> table and an <i>attempts</i> table, each row tagged with the parcel’s ID. To draw the page: three queries, or one messy multi-table join.'],
+   ['As a document','Store one JSON document for the parcel with the scans and attempts nested inside it. To draw the page: <b>one</b> query. Everything sits in one place.'],
+   ['The shape','Parcel at the top, lists hanging below, each item with one parent: a <b>tree</b>. The document makes that tree explicit.']],
+   'One-to-many data forms a tree. A document stores the tree in one place, which gives it better '+L.g('locality','locality')+' than spreading it over several tables.');}},
+{part:1,src:'Chapter 2 · The Object-Relational Mismatch',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias saves each parcel’s scans as JSON in a plain <i>text</i> column. Signe’s support team asks the database: “Which parcels got a ‘damaged’ scan this week?” What happens?</h1>');
+  L.mc(L.card,['The database answers quickly using its JSON index','The database can’t look inside; code must parse each one','The database rejects the text until it has a schema'],1,
+   'To the database, that column is just a string. Only the app knows it is JSON, so the database can’t query or index what’s inside.',
+   'A plain text column is opaque. A real JSON or XML column type could be queried and indexed, but plain text can’t be. The app must read and parse every parcel.');}},
+{part:1,src:'Chapter 2 · The Object-Relational Mismatch',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence explains why Tobias’s parcel document works well.</h1>');
+  L.sentence(L.card,[['Each scan belongs to many parcels,','Each scan belongs to one parcel,'],['so the data forms a tree','so the data forms a web'],['that needs a join to read','that fits inside one document'],['and loads in many reads.','and loads in one read.']],[1,0,1,1],
+   [['A scan happens to one parcel. If items had many owners, it wouldn’t be a tree.'],['A web is what you get when items link to many others. One owner each makes a tree.'],['A tree of items owned by one parcel can nest inside the parcel itself. No join needed.'],['Nested in one document, the whole tree comes back in a single read.']],
+   'One-to-many items with a single parent form a tree, and a tree fits in one document that loads in one read.');}},
+
+/* ---------- PART 3: LINKS ---------- */
+{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',run(L){
+  L.h(L.kick('learn','IDs versus copied text')+'<h1 class="q">Why does a parcel store <i>M-17</i> instead of “Bramble & Bolt”?</h1>'+
+   L.prose('In the book’s résumé, the region and the industry are stored as IDs, not as text. Picking from a fixed list instead of typing free text gives you:')+
+   L.list([['check','Consistency','Same spelling and style everywhere.'],['eye','No ambiguity','Two towns with the same name stay apart.'],['pencil','Easy updates','The name lives in one place, so one change fixes it everywhere.'],['chat','Translation','The list can be shown in each viewer’s language.'],['compass','Better search','The list can know that a zone lies inside a region, which free text can’t tell you.']],2)+
+   L.prose('An ID means nothing to humans, so it never needs to change. Anything meaningful to humans might change one day, and every copy would need updating. Removing those copies is the core of '+L.g('normalization','normalization')+'.'));
+  L.done();}},
+{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',pts:1,
+ solve:async L=>{L.$('#pp').children[0].click();L.$('#rn').click();},
+ run(L){
+  let p=null;const P=['OP-1041','OP-1042','OP-1043','OP-1044','OP-1045','OP-1046'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt renames itself “Bramble & Bolt Home.” In which design can the rename leave some parcels showing the old name?</h1><div id="pp"></div>'+
+   '<div id="sim" hidden>'+L.lanes([['list','Name copied into each parcel','<div id="ra"></div>',3],['lock','Parcel stores merchant ID','<div class="small" id="mt" style="margin-bottom:6px">merchants: M-17 = Bramble & Bolt</div><div id="rb"></div>',2]])+
+   '<button class="btn pri" id="rn" style="margin-top:12px">'+L.ic('play')+'Rename the merchant</button><div id="rr"></div></div>');
+  const row=(c,t,col)=>'<div style="font-size:13.5px;padding:3px 0;'+(col?'color:'+col:'')+'">'+c+' · '+t+'</div>';
+  const drawA=n=>{L.$('#ra').innerHTML=P.map((c,j)=>row(c,j<n?'Bramble & Bolt Home':'Bramble & Bolt',j<n?'var(--ok)':'')).join('');};
+  const drawB=nw=>{L.$('#rb').innerHTML=P.map(c=>row(c,'M-17'+(nw?' → Home':''),nw?'var(--ok)':'')).join('');};
+  drawA(0);drawB(false);
+  ['Copied name','Merchant ID','Neither'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pp').appendChild(b);});
+  L.$('#rn').onclick=function(){this.remove();L.$('#mt').innerHTML='merchants: M-17 = <b style="color:var(--ok)">Bramble & Bolt Home</b>';drawB(true);let n=0;
+    const t=setInterval(()=>{if(!L.$('#ra')){clearInterval(t);return;}n++;drawA(n);
+      if(n>=4){clearInterval(t);L.$('#ra').innerHTML=P.map((c,j)=>row(c,j<4?'Bramble & Bolt Home':'Bramble & Bolt  ✗ stale',j<4?'var(--ok)':'var(--no)')).join('');
+        L.fb(L.$('#rr'),'<b>The update job crashed after four rows.</b> With copies, two parcels still show the old name. With the ID, one row changed and every parcel reads the new name through it.','info');
+        L.award(p===0);
+        L.sheet(p===0?'ok':'no',p===0?'You called it!':'Copies are the risk','Every copy of a human-meaningful name must be rewritten when it changes. That costs extra writes and can leave some copies stale. With an ID the name lives in one place. The price: reading a parcel now needs a lookup, a '+L.g('join','join')+', to fetch the name.');L.done();}},300);};}},
+{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',run(L){
+  L.h(L.kick('learn','Where documents struggle')+'<h1 class="q">Shared things need joins, and documents are bad at joins</h1>'+
+   L.prose('Normalizing creates '+L.g('many-to-one','many-to-one')+' links: many parcels point at one merchant, many profiles at one region. Relational databases handle these with joins easily. Many document databases, at the time the book was written, had weak join support or none.')+
+   L.prose('With no joins in the database, you fake them in the app with extra queries. That works, but the join work has moved from the database into your code.')+
+   L.note('Data also tends to get <b>more connected</b> as features are added. In the book’s résumé, companies and schools become pages of their own, and a recommendation must show the writer’s <i>current</i> photo. Both need references to other records, and references need joins.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',run(L){
+  L.h(L.kick('ex','The parcel document grows links')+'<h1 class="q">Tobias’s neat parcel document meets new features</h1>');
+  L.beats(L.card,[
+   ['Version 1','A parcel document with its scans nested inside. A clean tree. One read per tracking page.'],
+   ['Feature: hub pages','Each hub gets its own page with address and opening hours. Scans now need to <b>point</b> at a hub, and a hub is shared by thousands of parcels.'],
+   ['Feature: merchant stats','Bramble & Bolt’s dashboard needs “all our parcels this week.” Each parcel must point at its merchant.'],
+   ['Feature: courier photo','The tracking page shows the courier’s name and current photo. If a courier changes their photo, every parcel must show the new one. So the parcel must point at the courier’s profile.'],
+   ['The result','A parcel passes through several hubs, and each hub handles many parcels. These are '+L.g('many-to-many','many-to-many')+' links. Each one is a reference that needs a join or a follow-up query.']],
+   'Version 1 fit a document perfectly. Features added links that leave the tree, and every link needs a join.');}},
+{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias instead <i>copies</i> the courier’s name and photo into each parcel document. Ravi, a courier, changes their photo. What happens?</h1>');
+  L.mc(L.card,['Every parcel updates itself, since documents link up','The database blocks the change until all copies match','Old parcels show the old photo unless code fixes each copy'],2,
+   'Copying (denormalizing) makes reads simple but puts the job of keeping every copy in step on your code.',
+   'Copies don’t know about each other. The database won’t sync them for you. Your code must find and rewrite every copy, or the old photo stays.');}},
+{part:2,src:'Chapter 2 · Are Document Databases Repeating History?',run(L){
+  L.h(L.kick('learn','Have we been here before?')+'<h1 class="q">The 1970s had the same argument</h1>'+
+   L.prose('The most popular business database of the 1970s was IBM’s IMS, first built for stock-keeping in the Apollo space program and released in 1968. It used the <b>hierarchical model</b>: all data was a tree of records nested in records, much like JSON.')+
+   L.prose('Like document databases, it was good at one-to-many and bad at many-to-many, with no joins. Developers had to copy data or chase references by hand. Two fixes were proposed:')+
+   L.lanes([['map','Network model (CODASYL)','A record may have <b>several parents</b>. Links work like pointers. To reach a record you follow an '+L.g('access-path','access path')+' from a root, link by link. Change the paths and you rewrite lots of query code.',3],
+            ['list','Relational model','Lay the data out in the open: a table is just a set of rows. Read any rows that match a condition. No paths to follow.',2]]));
+  L.done();}},
+{part:2,src:'Chapter 2 · Are Document Databases Repeating History?',run(L){
+  L.h(L.kick('learn','Why the relational model won')+'<h1 class="q">The access path still exists, but the database picks it</h1>'+
+   L.prose('In a relational database the '+L.g('optimizer','query optimizer')+' decides which parts of a query run first and which indexes to use. That <i>is</i> an access path, but the database chooses it, not the programmer.')+
+   L.flow([['pencil','Add an index','for a new kind of question'],['cycle','Queries unchanged','no code rewritten'],['check','Optimizer uses it','automatically']])+
+   L.prose('Optimizers are hard to build, but you build one once and every app on the database benefits. Hand-coded paths were efficient on slow 1970s tape drives, yet they made new features hard.')+
+   L.note('<b>And documents today?</b> They went back to the tree for nested records. For many-to-one and many-to-many links they work like relational databases: the linked item has an ID (a <i>foreign key</i> or a <i>document reference</i>), resolved at read time by a join or a follow-up query. They have not gone the CODASYL way.','info'));
+  L.done();}},
+{part:2,src:'Chapter 2 · Are Document Databases Repeating History?',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which model is this?',['Hierarchical (IMS)','Network (CODASYL)','Relational'],[
+   ['Every parcel record sits under exactly one merchant record, and nothing can sit under two parents.',0,'One parent each, one big tree: the hierarchical model.'],
+   ['To find Bramble & Bolt’s late parcels, the code starts at a root record and follows a chain of links, one by one.',1,'Following links by hand from a root is an access path, the network model’s way.'],
+   ['Linh adds an index on delivery date, and their existing reports get faster without any edits.',2,'The optimizer picks up new indexes automatically. Queries stay unchanged.'],
+   ['A parcel record links to its merchant and to its hub, so it has two parents.',1,'Several parents per record is exactly what the network model added to the tree.'],
+   ['There are no joins, so the team copies the merchant’s name into every parcel.',0,'With a strict tree and no joins, copying data was the usual workaround.'],
+   ['Zainab writes what rows they want, and the database chooses the order to read the tables in.',2,'Declaring what you want and letting the optimizer choose the path is the relational way.']]);}},
+
+/* ---------- PART 4: TODAY ---------- */
+{part:3,src:'Chapter 2 · Relational Versus Document Databases Today',run(L){
+  L.h(L.kick('learn','Which gives simpler code?')+'<h1 class="q">It depends on how your data is connected</h1>'+
+   L.lanes([['box','For documents','Schema flexibility, better speed from locality, and a shape closer to the app’s own objects.',2],
+            ['list','For relational','Better joins, and better support for many-to-one and many-to-many links.',3]])+
+   L.list([['A tree, loaded whole','Use documents. Splitting a tree into many tables (<i>shredding</i>) makes clumsy schemas and code. One catch: you can’t point straight at a nested item, only say “the 2nd scan of parcel OP-48213.” Fine if nesting stays shallow.'],
+           ['Lots of many-to-many','Documents get awkward. Copying data means your code must keep the copies consistent. Faking joins in the app is usually slower than a join inside the database.'],
+           ['Highly connected','Documents are awkward, relational is acceptable, and graph models fit best (next lesson).']],1));
+  L.done();}},
+{part:3,src:'Chapter 2 · Relational Versus Document Databases Today',pts:4,run(L){
+  L.h(L.kick('pr','Document or relational?')+'<h1 class="q">For each piece of Otterpost data, which model leads to simpler code?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Document','Relational'],[
+   ['Each merchant’s label settings: always loaded whole, nothing else points at them',0,'A self-contained tree read in one go is the document sweet spot.'],
+   ['Parcels that point at merchants, couriers, hubs and prices',1,'Lots of many-to-one links need joins, which relational databases do well.'],
+   ['A log of courier-app events (which screen, when), never joined to anything',0,'The book notes an analytics log of events may never need many-to-many links, so weak joins don’t matter.'],
+   ['Courier shifts that dispatch, billing and support all refer to',1,'One record shared by many others is many-to-one. Copying it into documents would leave stale copies.']],
+   'Ask two questions: is it a tree loaded whole, and how many other records point at it?');}},
+{part:3,src:'Chapter 2 · Schema flexibility in the document model',run(L){
+  L.h(L.kick('learn','“Schemaless” is a myth')+'<h1 class="q">There is always a schema. The question is who checks it</h1>'+
+   L.prose('Most document databases don’t enforce a schema. People call them <i>schemaless</i>, but the code that reads the data still assumes certain fields. The schema is implicit.')+
+   L.lanes([['eye',L.g('schema-on-read','Schema-on-read'),'Structure is implicit and only interpreted when data is read. Like type checks that happen while a program runs.',2],
+            ['lock',L.g('schema-on-write','Schema-on-write'),'Structure is explicit; the database checks every write against it. Like type checks done before a program runs.',3]])+
+   L.prose('Neither is right or wrong in general. Schema-on-read helps when records don’t share one shape: many kinds of objects, or a shape set by outside systems you don’t control. When all records should look alike, an enforced schema documents and protects that shape.'));
+  L.done();}},
+{part:3,src:'Chapter 2 · Schema flexibility in the document model',run(L){
+  L.h(L.kick('ex','One change, two ways')+'<h1 class="q">Support search needs the postcode as its own field</h1>');
+  L.beats(L.card,[
+   ['Today','Each parcel stores the delivery address as one line of text, postcode at the end. Signe’s team wants to search by postcode alone.'],
+   ['Schema-on-read','Start writing new parcels with a separate <i>postcode</i> field. In the reading code, add a rule: if an old parcel has no postcode, take it from the end of the address line.'],
+   ['Schema-on-write','Zainab runs a migration on the Parcel DB:'+CODE('ALTER TABLE parcels ADD COLUMN postcode text;\nUPDATE parcels SET postcode = ...;  -- every row')],
+   ['The cost','Adding the column takes milliseconds in most databases. (MySQL was a known exception: it copied the whole table.) The UPDATE is the slow part: every row is rewritten.'],
+   ['A middle path','Zainab can skip the big UPDATE, leave old rows empty, and fill the postcode in when a parcel is read, just like the document approach.']],
+   'Schema changes don’t have to mean downtime. Schema-on-read moves the work into the reading code; schema-on-write does it up front.');}},
+{part:3,src:'Chapter 2 · Schema flexibility in the document model',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Merchants attach their own extras to parcels: one sends “fragile,” one an age check, one a gift message. They change formats without warning. Which fits these extras?</h1>');
+  L.mc(L.card,['Schema-on-write: a column per merchant field','Schema-on-write: reject any unknown field','Schema-on-read: store them, interpret on read'],2,
+   'The shape is set by outside systems you don’t control and varies by merchant. Here a strict schema hurts more than it helps.',
+   'Outside systems decide this shape and change it at will. A strict schema would keep breaking or rejecting merchants’ data. Schema-on-read fits.');}},
+{part:3,src:'Chapter 2 · Data locality for queries',pts:1,
+ solve:async L=>{const b=L.$('#acts').children;b[0].click();b[1].click();b[2].click();},
+ run(L){
+  const A=[['Show the whole tracking page',['One read: it’s all in one place','Three lookups, more disk seeks'],0],
+           ['Read only the current status',['Loads the whole document anyway','One small row from one table'],1],
+           ['Add one more scan',['Rewrites the whole, bigger document','Inserts one new row'],1]];const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">A document is stored as one continuous string. Try each action and see who wins.</h1><div id="acts"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:110px" id="out"><span class="small">Pick an action above.</span></div><div id="lq"></div>');
+  A.forEach((a,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=a[0];b.onclick=()=>{[...L.$('#acts').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+    L.$('#out').innerHTML=['One document','Split across tables'].map((n,k)=>'<div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><span class="chip static'+(a[2]===k?' ok':'')+'" style="margin:0;flex:0 0 auto;white-space:nowrap">'+(a[2]===k?L.ic('check'):L.ic('clock'))+n+'</span><span class="small" style="padding-top:8px">'+a[1][k]+'</span></div>').join('');
+    if(seen.size===3&&!L.$('#lq').innerHTML){const q=L.$('#lq');q.innerHTML='<h2 class="sub">So when does the parcel document’s locality pay off?</h2>';
+      L.mc(q,['When you read one small field of a big document','When new scans keep being added to it','When you need most of the document at once'],2,
+       'Exactly. The book advises keeping documents small and avoiding writes that make them grow. Locality isn’t only for documents either: some relational databases can store a child table’s rows inside the parent’s.',
+       'The database usually loads the whole document even for one field, and rewrites it whole when it grows. Locality only pays when you need most of it at once.');}};L.$('#acts').appendChild(b);});}},
+{part:3,src:'Chapter 2 · Convergence of document and relational databases',pts:1,run(L){
+  L.h(L.kick('learn','The models are converging')+'<h1 class="q">Relational databases learned JSON; document databases learned joins</h1>'+
+   L.list([['list','Relational gets documents','Most relational databases (not MySQL) have handled XML since the mid-2000s. PostgreSQL 9.3, MySQL 5.7 and DB2 10.5 added similar JSON support: query and index inside a document.'],
+           ['box','Documents get joins','RethinkDB supports relational-style joins. Some MongoDB drivers resolve references for you, a join done by the client, usually slower than one inside the database.'],
+           ['book','An old idea','Codd’s original 1970 paper already allowed a value in a row to be a nested table, much like a JSON document.']],4)+
+   L.prose('The book sees a hybrid of the two as a good direction: handle document-like data <i>and</i> run relational queries on it.')+
+   '<div id="fq"><h2 class="sub">Tobias proposes moving the whole Parcel DB to a document database “because the tracking page reads parcels as trees.” What should Zainab suggest?</h2></div>');
+  L.mc(L.$('#fq'),['Move it all; documents are newer and so simpler','Keep it relational; add a JSON column for the extras','Split each parcel into one table per scan type'],1,
+   'Parcels link to merchants, couriers, hubs and credit, which needs joins. The tree-like, merchant-specific extras can live in a JSON column. That is the hybrid the book recommends.',
+   'Parcels have many many-to-one links, so a document store would push joins into app code. Keep the Parcel DB relational, and use a JSON column for the tree-like extras.');}}
+  ]
+});
+</script>
+</body>
+</html>

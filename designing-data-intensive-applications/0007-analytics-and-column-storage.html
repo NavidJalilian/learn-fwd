@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Analytics and Column Storage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+const CELL=(t,kind)=>'<div style="padding:10px 4px;border-radius:12px;font-weight:600;overflow-wrap:anywhere;'+(kind===1?'background:var(--h1-bg);color:var(--h1);border:2px solid var(--h1)':kind===2?'background:var(--h2-bg);color:var(--h2)':'')+'">'+t+'</div>';
+const TD='padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)';
+Course.lesson({
+  id:'0007', title:'Analytics and column storage', minutes:20, icon:'trend',
+  goals:['Tell a transaction workload from an analytics workload, and say why warehouses exist','Lay out a star schema for Otterpost’s deliveries','Explain how column storage, compression and cubes make analytics fast'],
+  parts:['OLTP or analytics','Warehouses and stars','Column storage','Sorting, writes and cubes'],
+  read:'Read the rest of chapter 3, from “Transaction Processing or Analytics?”, for the grocery-store star schema and the chapter summary.',
+  glossary:{
+    'oltp':'OLTP (online transaction processing): the access pattern of user-facing apps: many small, fast reads and writes of a few records, found by key.',
+    'olap':'OLAP (online analytic processing): the access pattern of analytics: queries that scan huge numbers of records and compute totals, counts or averages.',
+    'warehouse':'Data warehouse: a separate, read-only copy of the data from a company’s operational systems, shaped for analysts to query without slowing those systems down.',
+    'etl':'ETL (Extract–Transform–Load): pulling data out of operational databases, reshaping and cleaning it, and loading it into a data warehouse.',
+    'star-schema':'Star schema: a warehouse layout with one big fact table of events in the middle, linked to dimension tables that describe those events.',
+    'fact-table':'Fact table: the central warehouse table, where each row is one event, such as one delivery or one sale.',
+    'dimension-table':'Dimension table: a warehouse table describing the who, what, where, when, how and why of the events in the fact table.',
+    'column-store':'Column-oriented storage: keeping all the values of each column together, instead of all the values of each row, so a query reads only the columns it needs.',
+    'bitmap':'Bitmap encoding: storing a column as one string of bits per distinct value: 1 where a row has that value, 0 where it doesn’t.',
+    'rle':'Run-length encoding: compressing a sequence by writing how many times each value repeats in a row, instead of writing every value.',
+    'materialized-view':'Materialized view: a stored copy of a query’s results, written to disk and updated when the data changes, so the query isn’t recomputed each time.',
+    'data-cube':'Data cube (OLAP cube): a grid of precomputed totals, grouped by several dimensions such as date and hub.'
+  },
+  cheatsheet:[
+    '<b>OLTP:</b> users, small reads and writes by key, the latest state. <b>OLAP:</b> analysts, scans and totals over history.',
+    '<b>Data warehouse:</b> a separate read-only copy, loaded by <b>ETL</b>, so heavy scans don’t slow the live systems.',
+    '<b>Star schema:</b> a fact table of events in the middle, dimension tables (who, what, where, when, how, why) around it. Snowflake = dimensions split further.',
+    '<b>Column storage:</b> each column stored together, so a query reads only the few columns it uses. Rows are rebuilt by position.',
+    '<b>Compression:</b> one bitmap per distinct value, run-length encoded. Filters become bitwise AND and OR, and compact data feeds the CPU faster.',
+    '<b>Sort order:</b> sort whole rows by the columns queries filter on. The first sort key compresses best. Replicas can hold different sort orders.',
+    '<b>Writes</b> go to an in-memory store first, then merge into the column files in bulk, as in an LSM-tree.',
+    '<b>Materialized views and data cubes:</b> precomputed totals, fast but inflexible. Keep the raw facts.'
+  ],
+  steps:[
+/* ---------- PART 1: OLTP OR ANALYTICS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Which question makes Otterpost’s database read more rows: “Where is parcel OP-4471 now?” or “What share of Eastvale deliveries were late last month?”</h1>');
+  L.mc(L.card,['Where parcel OP-4471 is now','Eastvale’s late share last month'],1,
+   'One parcel is one record, found by its code. The late share has to look at every Eastvale delivery of the month and count. Two very different jobs, and this lesson is about that difference.',
+   'Finding one parcel reads one record, found by its code. The late share has to look at every Eastvale delivery of the month and count them. That’s far more rows.');}},
+{part:0,src:'Chapter 3 · Transaction Processing or Analytics?',run(L){
+  L.h(L.kick('learn','Two ways to use a database')+'<h1 class="q">Transactions for users, analytics for decision-makers</h1>'+
+   L.prose('Early on, a database write usually matched a business deal: a sale, an order, a salary payment. The word “transaction” stuck even as databases spread to blog comments, games and address books. It now means a group of reads and writes that form one logical unit, and it needn’t have the ACID properties of chapter 7.')+
+   L.prose('The access pattern stayed much the same: look up a few records by key using an index, and insert or update records based on what a user typed. Users interact with it live, so it’s called '+L.g('oltp','online transaction processing (OLTP)')+'.')+
+   L.prose('Analytics looks very different. A query scans a huge number of records, reads only a few columns of each, and returns a total, count or average instead of raw data. Business analysts write these queries for reports that help management decide (“business intelligence”). This is '+L.g('olap','online analytic processing (OLAP)')+'.'));
+  L.done();}},
+{part:0,src:'Chapter 3 · Transaction Processing or Analytics?',run(L){
+  L.h(L.kick('learn','Side by side')+'<h1 class="q">Five ways the two workloads differ. Tap each one.</h1>');
+  L.flips(L.card,[
+   ['Main read pattern','<b>OLTP:</b> a few records per query, fetched by key.<br><b>OLAP:</b> totals over a large number of records.'],
+   ['Main write pattern','<b>OLTP:</b> random-access, low-latency writes from user input.<br><b>OLAP:</b> bulk imports (ETL) or a stream of events.'],
+   ['Who uses it','<b>OLTP:</b> end users and customers, through a web app.<br><b>OLAP:</b> internal analysts, for decision support.'],
+   ['What the data shows','<b>OLTP:</b> the latest state, right now.<br><b>OLAP:</b> the history of events over time.'],
+   ['Dataset size','<b>OLTP:</b> gigabytes to terabytes.<br><b>OLAP:</b> terabytes to petabytes.']],
+   'The line isn’t always sharp, but these are the typical differences. SQL handles both kinds of query well.');}},
+{part:0,src:'Chapter 3 · Transaction Processing or Analytics?',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these is an analytic (OLAP) query at Otterpost?</h1>');
+  L.mc(L.card,['Book one parcel for a merchant through the API','Mark parcel OP-4471 as delivered after a scan','Total fees billed per merchant over last year'],2,
+   'It scans a year of history and adds it up per merchant: many records in, a few totals out.',
+   'Booking and marking delivered each touch one record, right away, for a user: that’s OLTP. Adding up a year of fees per merchant scans history and aggregates it.');}},
+{part:0,src:'Chapter 3 · Transaction Processing or Analytics?',pts:6,run(L){
+  L.h(L.kick('pr','Sort the requests')+'<h1 class="q">Six things that hit Otterpost’s data today. Which kind is each?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['OLTP','OLAP'],[
+   ['A recipient refreshes the tracking page for one parcel',0,'One record, found by its tracking code, for an end user.'],
+   ['Average delivery time per zone, by weekday, for last quarter',1,'Scans a quarter of history and returns averages.'],
+   ['A courier scans a parcel as delivered',0,'A small, low-latency write from user input.'],
+   ['Bramble & Bolt’s on-time rate for each month this year',1,'Aggregates a year of deliveries for a report.'],
+   ['A merchant books a parcel through the API',0,'One new record, written right away for a customer.'],
+   ['Parcels per hub in Peak Week versus a normal week',1,'Counts across millions of events to compare two periods.']],
+   'Users touching one record at a time is OLTP. Analysts adding up history is OLAP.');}},
+
+/* ---------- PART 2: WAREHOUSES AND STARS ---------- */
+{part:1,src:'Chapter 3 · Data Warehousing',run(L){
+  L.h(L.kick('learn','Data warehouses')+'<h1 class="q">Give analysts their own copy of the data</h1>'+
+   L.prose('A large company runs dozens of transaction systems: the website, the checkout tills, stock tracking, vehicle route planning, suppliers, staff. They must stay available and fast, so their administrators guard them and don’t like analysts running ad hoc queries that scan huge parts of the data and slow down live transactions.')+
+   L.prose('So analysts get a '+L.g('warehouse','data warehouse')+': a separate, read-only copy of the data from all those systems, which they can query as hard as they like. Getting the data in is '+L.g('etl','ETL')+':')+
+   L.flow([['down','Extract','Pull data out of each OLTP database, by a periodic dump or a continuous stream of updates.','',1],['cycle','Transform','Reshape it into an analysis-friendly schema and clean it up.','',2],['box','Load','Write it into the warehouse.','',3]])+
+   '<p class="small">Almost every large enterprise has one. Small companies rarely do: their data fits in an ordinary SQL database or even a spreadsheet. The big win of a separate warehouse is that it can be built for analytic access patterns, which the indexes of the last two lessons don’t serve well.</p>');
+  L.done();}},
+{part:1,src:'Chapter 3 · The divergence between OLTP databases and data warehouses',run(L){
+  L.h(L.kick('learn','Same SQL, different insides')+'<h1 class="q">A warehouse looks like an OLTP database, until you open it up</h1>'+
+   L.prose('Warehouses are mostly relational, because SQL suits analytic queries. Analysts often use graphical tools that write the SQL for them and let them explore: drill down into detail, or slice and dice the data by different dimensions.')+
+   L.lanes([['eye','On the surface','Both a warehouse and an OLTP database accept SQL queries. They look alike.',2],
+            ['layers','Underneath','The storage and query engines are built very differently, because they serve opposite query patterns.',3]])+
+   L.prose('Many vendors now focus on one side only. Some products, such as Microsoft SQL Server and SAP HANA, support both, but increasingly as two separate engines behind one shared SQL interface.')+
+   '<p class="small">In 2017 the field held commercial warehouses such as Teradata, Vertica and Amazon Redshift, and young open source “SQL-on-Hadoop” projects such as Hive, Spark SQL, Impala and Presto.</p>');
+  L.done();}},
+{part:1,src:'Chapter 3 · Data Warehousing',run(L){
+  L.h(L.kick('ex','An Otterpost story')+'<h1 class="q">Why Linh built the analytics warehouse</h1>');
+  L.beats(L.card,[
+   ['Early days','When Femi ran Otterpost as one app on one database, reports ran straight on it. The data was small, so that was fine.'],
+   ['The scare','One Peak Week, a manager ran “late deliveries per zone, for the whole year” at 2 pm. It scanned millions of rows and slowed bookings and the tracking page for everyone.'],
+   ['The split','Linh built a nightly ETL job: extract from the Parcel DB, dispatch and billing; transform into an analysis-friendly shape; load into the analytics warehouse.'],
+   ['Today','Route-efficiency and on-time reports query the warehouse as hard as they like. The Parcel DB serves couriers, merchants and recipients.']],
+   'The warehouse is '+L.g('derived','derived data')+': a reshaped copy that keeps heavy analytic scans away from the systems the business runs on.');}},
+{part:1,src:'Chapter 3 · Data Warehousing',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A new analyst wants to run a year-long route-efficiency query on the Parcel DB, “just once, at lunchtime.” What should Kwame say?</h1>');
+  L.mc(L.card,['Use the warehouse: big scans slow live work','Go ahead: the SQL is the same on both','Fine, as long as the query uses an index'],0,
+   'A year-long scan competes with couriers, merchants and recipients for the Parcel DB. The warehouse exists so analysts never have to.',
+   'Matching SQL doesn’t make the workloads alike, and an index doesn’t stop a year-long scan from reading millions of rows. Run it on the warehouse, away from live users.');}},
+{part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',run(L){
+  L.h(L.kick('learn','Stars and snowflakes')+'<h1 class="q">Most warehouses lay their tables out like a star</h1>'+
+   L.prose('Warehouses mostly follow one formula, the '+L.g('star-schema','star schema')+' (also called dimensional modelling). In the middle sits a '+L.g('fact-table','fact table')+': each row is one event at a particular time. In the book’s grocery example, each row is one customer buying one product.')+
+   '<div style="display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:6px;margin:14px 0;text-align:center;font-size:13px">'+
+    CELL('')+CELL('dim_date',2)+CELL('')+CELL('dim_hub',2)+CELL('fact_deliveries',1)+CELL('dim_merchant',2)+CELL('')+CELL('dim_courier',2)+CELL('')+'</div>'+
+   L.prose('Some columns are attributes, like the fee charged. Others are foreign keys to '+L.g('dimension-table','dimension tables')+' that describe the event’s who, what, where, when, how and why. Even dates get a table, so it can record things like public holidays.')+
+   '<p class="small">Facts are kept as individual events for maximum flexibility, so fact tables get huge. A <b>snowflake schema</b> splits dimensions into sub-dimensions, such as a separate region table. That is more normalized, but analysts usually find stars simpler to work with.</p>');
+  L.done();}},
+{part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',pts:5,run(L){
+  L.h(L.kick('pr','Design the star')+'<h1 class="q">Linh sketches the warehouse tables for deliveries. Where does each one belong?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Fact table','Dimension','Sub-dimension'],[
+   ['One row per delivery attempt: its time, fee and minutes late, plus keys for courier, hub, merchant and date',0,'Each row is one event, so this is the fact table.'],
+   ['One row per merchant: name, size, signup date, line of business',1,'It describes the “who” behind each delivery.'],
+   ['One row per calendar day: weekday, public holiday or not, inside Peak Week or not',1,'Dates get their own dimension, so queries can compare holidays, weekdays and Peak Week.'],
+   ['One row per hub: name, number of loading bays, opening date',1,'It describes the “where” of each delivery.'],
+   ['One row per region, which the hub table points to instead of storing the region’s name',2,'Splitting a dimension into a smaller table like this turns the star into a snowflake.']],
+   'Events in the middle, descriptions around them. Split the descriptions further and the star becomes a snowflake.');}},
+{part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',pts:1,run(L){
+  L.h(L.kick('pr','Growth check')+'<h1 class="q">Which of Linh’s tables grows by about 400,000 rows every day?</h1>');
+  L.mc(L.card,['dim_hub, with one row per hub','fact_deliveries, with one row per delivery','dim_date, with one row per calendar day'],1,
+   'Facts are individual events, so the fact table grows with every delivery. Dimension tables change slowly.',
+   'Hubs and calendar days barely change: those dimensions gain a row now and then. Every delivery is a new event, so the fact table grows by about 400,000 rows a day.');}},
+
+/* ---------- PART 3: COLUMN STORAGE ---------- */
+{part:2,src:'Chapter 3 · Column-Oriented Storage',run(L){
+  L.h(L.kick('learn','Column-oriented storage')+'<h1 class="q">Store each column together, not each row</h1>'+
+   L.prose('Fact tables get enormous, and they are wide: often over 100 columns. Yet a typical warehouse query touches only 4 or 5 of them.')+
+   L.lanes([['list','Row-oriented','Most OLTP databases keep all the values of a row next to each other. Even with an index to find the right rows, the engine must load every one of them, all 100+ columns, parse them and filter them.',4],
+            ['layers','Column-oriented','Keep all the values of each column together, say one file per column. A query reads and parses only the columns it uses.',2]])+
+   L.prose('Every column file keeps the rows in the same order. To rebuild row 23, take the 23rd entry from each column file. That is '+L.g('column-store','column-oriented storage')+'.')+
+   '<p class="small">It isn’t only for relational data: Parquet is a column format that supports a document data model.</p>');
+  L.done();}},
+{part:2,src:'Chapter 3 · Column-Oriented Storage',pts:1,
+ solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();await L.sleep(1500);},
+ run(L){
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Linh’s query, “late deliveries per weekday in Eastvale last year,” needs 3 of fact_deliveries’ 120 columns. Which layout reads less data?</h1><div id="po"></div>'+
+   '<div id="race" hidden><div class="meterrow"><div class="lb">Row store</div><div class="meter"><div id="m0" style="background:var(--h4)"></div></div></div>'+
+   '<div class="meterrow"><div class="lb">Column store</div><div class="meter"><div id="m1" style="background:var(--ok-strong)"></div></div></div>'+
+   '<p class="small" id="rd" style="margin:6px 0 10px">Data read for the same rows</p><button class="btn pri" id="run">'+L.ic('play')+'Run the query</button></div>');
+  ['The row store','The column store','About the same'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#race').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#run').onclick=function(){this.remove();let t=0;
+    const iv=setInterval(()=>{const m0=L.$('#m0');if(!m0){clearInterval(iv);return;}t++;
+      m0.style.width=(t*10)+'%';L.$('#m1').style.width=Math.max(3,Math.round(t*0.25))+'%';
+      L.$('#rd').innerHTML='Row store: <b>'+(t*12)+' of 120</b> columns read · Column store: <b>3 of 120</b>';
+      if(t>=10){clearInterval(iv);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'You called it':'The column store reads far less','A row store has to load whole rows, all 120 columns, even though the query uses only 3. The column store opens just 3 column files: for the same rows, about a fortieth of the data.');L.done();}},120);};}},
+{part:2,src:'Chapter 3 · Column Compression',run(L){
+  L.h(L.kick('learn','Column compression')+'<h1 class="q">Columns compress beautifully</h1>'+
+   L.prose('The values in one column are often repetitive, and repetition compresses well. One technique that works especially well in warehouses is '+L.g('bitmap','bitmap encoding')+'.')+
+   L.prose('A column usually has far fewer distinct values than rows: a retailer may have billions of sales but only 100,000 products. For a column with n distinct values, make n bitmaps, one per value, with one bit per row: 1 if the row has that value. When n is bigger, most bits are 0, so each bitmap can be shrunk further with '+L.g('rle','run-length encoding')+'.')+
+   L.list([['Product is 30, 68 or 69','Load those three bitmaps and combine them with a bitwise OR.'],
+     ['Product 31 sold in store 3','Combine the two bitmaps with a bitwise AND. It works because every column keeps its rows in the same order.']],3)+
+   L.note('<b>It helps the CPU too.</b> A chunk of compressed column data fits in the CPU’s small, fast L1 cache, where the engine runs through it in a tight loop with no function calls. Operators like AND and OR can work on the compressed chunks directly. This is <b>vectorized processing</b>.','bulb'));
+  L.done();}},
+{part:2,src:'Chapter 3 · Column Compression',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Bitmaps for eight deliveries</h1>');
+  L.beats(L.card,[
+   ['A small column','Eight rows of fact_deliveries. The hub column reads: W1, W1, E2, W1, E2, E2, W1, W1.'],
+   ['One bitmap per value','Hub W1 → 1 1 0 1 0 0 1 1. Hub E2 → 0 0 1 0 1 1 0 0. Each bit is one row, in the same order as every other column.'],
+   ['Run-length encode','Instead of every bit, write how long each run is, starting with zeros. W1 becomes <b>0, 2, 1, 1, 2, 2</b>: no zeros, two ones, one zero, one one, two zeros, two ones. With billions of rows and long runs, this gets very compact.'],
+   ['Answer a query','“Late deliveries at E2?” The late column’s “yes” bitmap is 0 1 1 0 0 1 0 0. AND it with E2’s bitmap: <b>0 0 1 0 0 1 0 0</b>. Rows 3 and 6.']],
+   'Bitmaps turn filters into fast bit operations, and run-length encoding makes them small.');}},
+{part:2,src:'Chapter 3 · Column Compression',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why can the engine simply AND the hub-E2 bitmap with the late-“yes” bitmap?</h1>');
+  L.mc(L.card,['Both bitmaps were compressed the same way','Both columns keep the rows in the same order','The hub column is sorted by late status'],1,
+   'Bit k in every column’s bitmaps refers to the same row k, so lining them up and ANDing them is safe.',
+   'Compression style and sorting aren’t what matters. What matters is that bit k in every column refers to the same row k, so the bitmaps line up.');}},
+{part:2,src:'Chapter 3 · Column-oriented storage and column families',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'True or false?',['True','False'],[
+   ['A column store reads only the columns a query uses.',0,'That’s the whole idea: each column lives in its own file.'],
+   ['Each column file can be sorted on its own, independently of the others.',1,'Then you could no longer line up the kth value of each column into one row. Rows are sorted as a whole.'],
+   ['The “column families” of Bigtable-style databases, such as Cassandra and HBase, make them column-oriented.',1,'Within each column family they store all of a row’s columns together, without column compression. That model is still mostly row-oriented.'],
+   ['Compressing columns can help the CPU, not just the disk.',0,'More rows fit in the CPU’s fast cache, where the engine processes them in tight loops.'],
+   ['A column with few distinct values suits bitmap encoding well.',0,'Few distinct values means few bitmaps, with long runs that compress well.']]);}},
+
+/* ---------- PART 4: SORTING, WRITES AND CUBES ---------- */
+{part:3,src:'Chapter 3 · Sort Order in Column Storage',run(L){
+  L.h(L.kick('learn','Sort order')+'<h1 class="q">Sort whole rows, even though you store columns</h1>'+
+   L.prose('Rows can simply stay in the order they arrived; then adding a row is just an append to each column file. But you can also impose an order, as SSTables do, and use it as an index.')+
+   L.prose('You can’t sort each column on its own, or you’d lose track of which values belong to the same row. Rows are sorted as a whole. The administrator picks sort columns from the common queries. If most queries target date ranges, make the date the first sort key, and a “last month” query reads only last month’s rows. A second key, such as hub, groups the rows that share a date.')+
+   L.note('<b>Sorting helps compression.</b> The first sort key ends up in long runs of the same value, so run-length encoding can shrink it to a few kilobytes even across billions of rows. The second and third keys compress less, and later columns look random.','layers')+
+   '<p class="small">C-Store, and the commercial warehouse Vertica, take this further: data must be copied to several machines anyway, so each copy can be sorted differently, and each query uses the best one. Unlike secondary indexes in a row store, there are no pointers to rows elsewhere, only columns of values.</p>');
+  L.done();}},
+{part:3,src:'Chapter 3 · Sort Order in Column Storage',pts:1,run(L){
+  L.h(L.kick('pr','Pick the sort order')+'<h1 class="q">Nearly every query Linh runs covers a recent date range, and many then group by hub within it. How should fact_deliveries be sorted?</h1>');
+  L.mc(L.card,['Hub first, then date','Each column sorted on its own','Date first, then hub'],2,
+   'Date first lets a “last two weeks” query read one small stretch, and the date column compresses into long runs. Hub second groups each day’s rows by hub.',
+   'Sorting columns separately breaks the rows apart. Hub first scatters every date range across all the hubs’ sections. Date first, then hub, matches how the queries filter.');}},
+{part:3,src:'Chapter 3 · Writing to Column-Oriented Storage',run(L){
+  L.h(L.kick('learn','Writing to column storage')+'<h1 class="q">Fast to read, awkward to write</h1>'+
+   L.prose('Column storage, compression and sorting all speed up reads, and most warehouse load is large read-only queries. The price is paid on writes. Compressed columns can’t be updated in place the way B-tree pages are. Inserting one row in the middle of a sorted table would mean rewriting every column file, since rows are identified by their position in each column.')+
+   L.prose('The fix is the LSM-tree idea from lesson 5:')+
+   L.flow([['pencil','In memory','New writes go into a sorted store in memory. Row or column layout, either works.','',1],['layers','Bulk merge','When enough pile up, they are merged with the column files and written to new files in one go.','',2],['eye','Queries','Read the files on disk and the recent writes in memory, and combine them.','',3]])+
+   L.prose('The query optimizer hides the split, so an analyst sees inserts, updates and deletes in their very next query. This is essentially what Vertica does.'));
+  L.done();}},
+{part:3,src:'Chapter 3 · Aggregation: Data Cubes and Materialized Views',run(L){
+  L.h(L.kick('learn','Precomputed answers')+'<h1 class="q">Materialized views and data cubes</h1>'+
+   L.prose('Many warehouse queries use the same totals (COUNT, SUM, AVG, MIN, MAX). Why crunch the raw data every time? A '+L.g('materialized-view','materialized view')+' stores a query’s results on disk. A normal (virtual) view is only a shortcut: the database expands it into its query each time.')+
+   L.prose('Because it’s a copy, a materialized view must be updated when the data changes. That makes writes more expensive, so OLTP databases rarely use them; read-heavy warehouses can. A common special case is the '+L.g('data-cube','data cube')+': a grid of totals by dimension. Deliveries by hub and day:')+
+   '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums"><tr><th style="'+TD+';text-align:left">Hub</th><th style="'+TD+'">Mon</th><th style="'+TD+'">Tue</th><th style="'+TD+'">Wed</th><th style="'+TD+'">Total</th></tr>'+
+   [['W1',410,380,450,1240],['W2',300,310,290,900],['E2',220,260,240,720],['Total',930,950,980,2860]].map(r=>'<tr>'+r.map((c,j)=>'<td style="'+TD+(j===0?';text-align:left;font-weight:600':'')+(j===4||r[0]==='Total'?';font-weight:700':'')+'">'+c+'</td>').join('')+'</tr>').join('')+'</table></div>'+
+   '<p class="small" style="margin-top:10px">Sum along a row or column and you get totals with one dimension removed. Real facts have more dimensions (date, hub, merchant, courier…), making a hypercube, but the idea is the same. Fast for the questions it was built for, but no use for anything else. So warehouses keep the raw facts and use cubes only as a speed boost for certain queries.</p>');
+  L.done();}},
+{part:3,src:'Chapter 3 · Aggregation: Data Cubes and Materialized Views',pts:1,run(L){
+  L.h(L.kick('pr','Cube or raw facts?')+'<h1 class="q">Femi asks Linh three questions. Which one can’t the hub-by-day cube answer?</h1>');
+  L.mc(L.card,['Deliveries at hub W1 across the whole week','Deliveries on Tuesday across all the hubs','Share of deliveries for parcels over 5 kg'],2,
+   'Weight isn’t a dimension of the cube, so no cell holds that number. Linh must go back to the raw facts, which is why warehouses keep them.',
+   'Hub totals and day totals are the cube’s row and column sums, ready instantly. Parcel weight isn’t a dimension, so that question needs the raw facts.');}},
+{part:3,src:'Chapter 3 · Summary',pts:1,run(L){
+  L.h(L.kick('pr','Wrap up the chapter')+'<h1 class="q">Tap each piece until this matches the chapter’s summary: “A typical analytic query…”</h1>');
+  L.sentence(L.card,[['scans millions of rows,','fetches a few rows by key,'],['so disk bandwidth is the bottleneck,','so disk seek time is the bottleneck,'],['and column-oriented storage helps.','and more indexes help.']],[0,0,0],
+   [['Fetching a few rows by key is the OLTP pattern. An analytic query scans huge numbers of rows.'],['Seek time limits OLTP lookups that jump to scattered records. Scanning millions of rows is limited by bandwidth.'],['Indexes help find a few rows. A scan reads millions, so reading fewer bytes matters more.']],
+   'Analytic queries read millions of rows, so what matters is how many bytes they pull off the disk. Column storage and compression shrink that number.');}}
+  ]
+});
+</script>
+</body>
+</html>

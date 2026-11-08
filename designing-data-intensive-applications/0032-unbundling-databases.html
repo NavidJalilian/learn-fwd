@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Unbundling Databases</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0032', title:'Unbundling databases', minutes:20, icon:'layers',
+  goals:['See Otterpost’s pipelines as one big database turned inside out','Choose between federating reads, unbundling writes or one integrated database','Move work between the write path and the read path, all the way to a phone'],
+  parts:['Inside a database','Unbundling','Dataflow apps','Observing state'],
+  read:'Read “Unbundling Databases” in chapter 12 for the spreadsheet comparison, the exchange-rate example and the write path and read path in full.',
+  glossary:{
+    idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
+    cdc:'Change data capture: reading a database’s log of row changes so another system (a warehouse, a search index, a cache) can copy them.',
+    'unbundling':'Unbundling the database: taking features a database has built in (indexes, materialized views, replication) and providing them instead with separate tools joined by event logs.',
+    'federated':'Federated database (polystore): one query interface over several different storage systems, so you can read from all of them in one place. It does not keep their writes in sync.',
+    'materialized-view':'Materialized view: a stored copy of a query’s results, written to disk and updated when the data changes, so the query isn’t recomputed each time.',
+    'write-path':'Write path: the work done eagerly as soon as data comes in, such as updating indexes and views, whether or not anyone has asked for it yet.',
+    'read-path':'Read path: the work done only when someone asks, such as looking up an index and building the response.'
+  },
+  cheatsheet:[
+    'A database’s index is <b>derived data</b>. CREATE INDEX = snapshot, catch up, then follow every write, like a new follower or CDC.',
+    'Across an organization, pipelines act like one big database: stream jobs are its <b>triggers and view maintenance</b>, derived systems its <b>index types</b>.',
+    '<b>Federated</b> databases unify reads. <b>Unbundled</b> databases unify writes, through an ordered event log and idempotent consumers.',
+    'Logs give <b>loose coupling</b>: a slow consumer can’t stall the rest, and teams can work independently. But if one product does everything you need, use it.',
+    'Think of application code as a <b>derivation function</b>, run outside the database. Derived data needs stable order and no lost messages.',
+    'Subscribe to changes instead of querying another service: <b>local, faster and more robust</b>. Watch out for time-dependent joins.',
+    'Indexes, caches and views shift the boundary between the <b>write path</b> (eager) and the <b>read path</b> (lazy).',
+    'Push state changes all the way to the client. Reads can be events too, recording what a user saw.'
+  ],
+  steps:[
+/* ---------- PART 1: INSIDE A DATABASE ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Zainab adds an index on postcode to the Parcel DB. Then Tobias’s code inserts a new parcel. Does Tobias’s code also have to update the index?</h1>');
+  L.mc(L.card,['Yes, or the index goes stale','No, the database keeps it in step'],1,
+   'Inside one database, keeping indexes up to date is built in. This lesson asks what happens when the “index” is a whole separate system, like support search.',
+   'The database updates its own indexes on every write. This lesson asks who does that job when the “index” is a whole separate system, like support search.');}},
+{part:0,src:'Chapter 12 · Unbundling Databases',run(L){
+  L.h(L.kick('learn','Two philosophies')+'<h1 class="q">Unix and relational databases solve the same problem differently</h1>'+
+   L.prose('At the most abstract level, databases, Hadoop and operating systems do the same thing: they store data and let you process and query it. Both a filesystem and a database are information management systems. But they grew from opposite philosophies:')+
+   L.lanes([['list','Unix','A thin, fairly low-level layer over the hardware. Files and pipes are just sequences of bytes. “Simple” because there’s little in the way.',1],
+            ['layers','Relational databases','A high-level layer that hides disk structures, concurrency and crash recovery. SQL and transactions. “Simple” because a short query draws on a lot of machinery.',2]])+
+   L.prose('The tension has lasted since both appeared in the early 1970s. Kleppmann reads the NoSQL movement as applying the Unix style of low-level tools to distributed OLTP storage. In this section he tries to combine the best of both.'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Creating an index',run(L){
+  L.h(L.kick('learn','Creating an index')+'<h1 class="q">CREATE INDEX is a small data pipeline</h1>'+
+   L.prose('Think about what a relational database does when you create an '+L.g('index','index')+' without locking the table:')+
+   L.flow([['eye','Snapshot','Scan a consistent snapshot; pick out and sort the values'],['cycle','Catch up','Apply writes made since the snapshot'],['pencil','Follow','Update the index on every new write']])+
+   L.prose('That’s almost exactly how you set up a new follower, and how you start '+L.g('cdc','change data capture')+' with an initial snapshot. In effect the database reprocesses the existing data and derives the index as a new view of it.'));
+  L.done();}},
+{part:0,src:'Chapter 12 · Creating an index',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh is building support search from scratch, fed from the Parcel DB, while bookings keep coming in. Put the steps in order.</h1>');
+  L.order(L.card,['Take a consistent snapshot of parcels','Load the snapshot into search','Apply changes made since the snapshot','Keep applying every new change'],
+   'Snapshot, load, catch up, follow. The same shape as CREATE INDEX, only across two systems.');}},
+{part:0,src:'Chapter 12 · The meta-database of everything',run(L){
+  L.h(L.kick('learn','The meta-database of everything')+'<h1 class="q">Zoom out, and the whole company looks like one database</h1>'+
+   L.prose('Kleppmann argues that the dataflow across an organization starts to look like one huge database. Whenever a batch, stream or ETL job moves data from one place and form to another, it’s acting like the part of a database that keeps indexes and views up to date.')+
+   L.tiers([['cycle','Batch and stream jobs','are like triggers, stored procedures and view-maintenance routines.','Linh’s jobs reading the event log'],
+            ['layers','Derived data systems','are like different index types: B-tree, hash, spatial…','support search, tracking cache, warehouse'],
+            ['people','The difference','The pieces run as separate software, on separate machines, run by separate teams.','not one integrated product']]));
+  L.done();}},
+{part:0,src:'Chapter 12 · The meta-database of everything',pts:5,run(L){
+  L.h(L.kick('pr','Inside and outside twins')+'<h1 class="q">Each Otterpost system plays the role of a database feature. Which one?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Index','Materialized view','Trigger'],[
+   ['Support search, fed by CDC, for finding parcels by phone or postcode',0,'It exists to look records up by a field’s value: an index outside the database.'],
+   ['A table of on-time counts per merchant, kept current by a stream job',1,'A precomputed query result kept up to date: a materialized view.'],
+   ['A consumer that sends a merchant’s status webhook whenever a parcel changes',2,'Code that runs in reaction to a change, like a trigger firing.'],
+   ['A key-value store of parcels by tracking-code prefix, fed from the log',0,'Another lookup structure keyed by a field: an index type.'],
+   ['The tracking cache holding each parcel’s ready-to-show page',1,'A precomputed result shaped for display: a cache, which is a kind of materialized view.']],
+   'Otterpost has rebuilt, outside the Parcel DB, the features a database has inside it.');}},
+
+/* ---------- PART 2: UNBUNDLING ---------- */
+{part:1,src:'Chapter 12 · Composing Data Storage Technologies',run(L){
+  L.h(L.kick('learn','Two ways to compose')+'<h1 class="q">Unify the reads, or unify the writes</h1>'+
+   L.prose('If no single data model fits every access pattern, Kleppmann sees two ways to make many tools act as one system:')+
+   L.lanes([['eye','Federated: unify reads','One query interface over many storage engines (a '+L.g('federated','polystore')+'), like PostgreSQL’s foreign data wrappers. Relational tradition: a high-level language, a complicated inside. It doesn’t sync writes.',1],
+            ['list','Unbundled: unify writes','Plug systems together with CDC and event logs so every change reaches every place, even with faults. Unix tradition: small tools, a uniform low-level interface (pipes), composed by a higher-level language.',2]])+
+   L.prose('He calls them two sides of one coin. Mapping data models for reads is manageable; keeping writes in sync is the harder problem, so that’s his focus: '+L.g('unbundling','unbundling')+' the database’s index-maintenance features.'));
+  L.done();}},
+{part:1,src:'Chapter 12 · Composing Data Storage Technologies',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Signe wants one query that combines support search with warehouse reports, only to read. Which approach fits?</h1>');
+  L.mc(L.card,['A federated query interface over both','An unbundled pipeline that syncs writes','Merge both systems into one database'],0,
+   'Read-only querying across several systems is exactly what federation offers. Each system keeps working directly as before.',
+   'Signe only needs to read across two systems. Federation gives one query interface over both. Unbundling is about writes, and merging them loses what each is good at.');}},
+{part:1,src:'Chapter 12 · Making unbundling work',run(L){
+  L.h(L.kick('learn','Making unbundling work')+'<h1 class="q">An event log with idempotent writes, not transactions across systems</h1>'+
+   L.prose('The traditional way to sync writes across different systems is a distributed transaction. Kleppmann thinks that’s the wrong tool between different technologies: there’s no standard transaction protocol they all speak. An ordered log of events with '+L.g('idempotence','idempotent')+' consumers is a much simpler abstraction, so it’s far easier to implement everywhere.')+
+   '<h2 class="sub">The big win is loose coupling, in two ways</h2>'+
+   L.list([['shield','System level','If one consumer is slow or down, the log buffers its messages. The producer and other consumers carry on, and the broken one catches up later without missing data. A distributed transaction would spread the fault.'],
+     ['people','Human level','Different teams build and improve their pieces independently. The event log is a clear interface: strong enough to keep order and durability, general enough for almost any data.']],2));
+  L.done();}},
+{part:1,src:'Chapter 12 · Making unbundling work',pts:1,
+ solve:async L=>{L.$('#mt').click();L.$('#ml').click();},
+ run(L){
+  const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Support search crashes for 20 minutes during a Bramble & Bolt flash sale. Run it both ways.</h1>'+
+   L.lanes([['lock','Distributed transaction','Each booking commits to the Parcel DB, the ledger and search together.<div class="res" id="xa"></div>',4],
+            ['list','Event log','Each booking goes to the Parcel DB; the others follow the log.<div class="res" id="xb"></div>',2]])+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="mt">'+L.ic('play')+'Crash search: transaction</button><button class="btn" id="ml">'+L.ic('play')+'Crash search: log</button></div><div id="mq"></div>');
+  const ask=()=>{const q=L.$('#mq');if(!q||seen.size<2||q.innerHTML)return;q.innerHTML='<h2 class="sub">Which kind of loose coupling did the log just show?</h2>';
+    L.mc(q,['System level: one fault stays inside one consumer','Human level: each team deploys on its own','Neither: the log just made search faster'],0,
+     'The log buffered search’s changes while bookings, billing and notifications carried on. Search then caught up without missing anything.',
+     'Watch what happened during the crash: the log held search’s backlog, everything else kept running, and search caught up. That’s system-level loose coupling.');};
+  L.$('#mt').onclick=function(){this.disabled=true;L.$('#xa').innerHTML='Search can’t vote “yes”, so every booking waits, then aborts. <span style="color:var(--no)">Bramble & Bolt’s sale stops for 20 minutes.</span>';seen.add(0);ask();};
+  L.$('#ml').onclick=function(){this.disabled=true;let t=0;const box=L.$('#xb');
+    const iv=setInterval(()=>{t++;const b=L.$('#xb');if(!b){clearInterval(iv);return;}
+      const lag=t<=8?t*1500:Math.max(0,12000-(t-8)*2400);
+      b.innerHTML='Bookings, billing and notifications: <span style="color:var(--ok)">running</span><br>Search behind by <b>'+lag.toLocaleString('en-US')+'</b> events'+(t>8?' (fixed, catching up)':'');
+      if(t>=13){clearInterval(iv);b.innerHTML+='<br><span style="color:var(--ok)">Caught up. Nothing lost.</span>';seen.add(1);ask();}},100);
+    box.textContent='Starting…';};}},
+{part:1,src:'Chapter 12 · Unbundled versus integrated systems',run(L){
+  L.h(L.kick('learn','Unbundled versus integrated systems')+'<h1 class="q">Unbundling is for breadth, not for beating a database</h1>'+
+   L.prose('Even if unbundling wins, databases stay as needed as ever: to hold stream processors’ state and to serve the outputs of batch and stream jobs. Specialized engines, like MPP warehouses for analytic queries, still matter.')+
+   L.prose('Running many pieces of infrastructure has a cost: each has a learning curve, configuration issues and quirks. So deploy as few moving parts as you can. One integrated product may also perform better on the work it’s built for. And building for scale you don’t need is premature optimization.')+
+   L.note('<b>The rule of thumb:</b> if one technology does everything you need, use it. Unbundling pays off only when no single piece of software meets all your requirements.','scale')+
+   '<p class="small" style="margin-top:12px"><b>What’s missing?</b> Kleppmann wants an unbundled equivalent of the Unix shell: declare something like <code>mysql | elasticsearch</code> and have it index everything and then follow every change, with no custom code. He’d like caches to be declared as materialized views too. Research such as differential dataflow points that way.</p>');
+  L.done();}},
+{part:1,src:'Chapter 12 · Unbundled versus integrated systems',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'One product, or compose tools?',['Use one integrated database','Compose specialized tools'],[
+   ['A small tool for 50 hub staff to sign up for extra shifts. It only needs to store and look up rows.',0,'One database does everything needed. Extra moving parts would only add learning curves and quirks.'],
+   ['Parcel data must serve bookings, fuzzy search by partial phone number, on-time analytics and ETA training.',1,'No single product does all of this well. That’s when composing tools pays off.'],
+   ['Tobias wants the merchant dashboard prototype on an event log, a search cluster and a cache, “for when we’re huge”.',0,'Building for scale you don’t need is premature optimization. Start with one database.'],
+   ['Signe’s team needs typo-tolerant name search that the Parcel DB’s built-in text search can’t do.',1,'Specialist search is a real requirement the database can’t meet. Feed a search index from the Parcel DB through CDC.']]);}},
+{part:1,src:'Chapter 12 · What’s missing?',pts:1,run(L){
+  L.h(L.kick('pr','The missing shell')+'<h1 class="q">Suppose Linh could type one line, <code>parcel_db | support_search</code>, as Kleppmann wishes. What would it have to do to match CREATE INDEX?</h1>');
+  L.mc(L.card,['Copy all parcels into search once each night','Let search query the Parcel DB live on demand','Copy all parcels, then apply every later change'],2,
+   'Like CREATE INDEX: load everything, then keep following changes automatically, with no custom code.',
+   'A nightly copy goes stale between runs, and querying live isn’t an index at all. The unbundled CREATE INDEX copies everything and then follows every change.');}},
+
+/* ---------- PART 3: DATAFLOW APPS ---------- */
+{part:2,src:'Chapter 12 · Designing Applications Around Dataflow',run(L){
+  L.h(L.kick('learn','Designing applications around dataflow')+'<h1 class="q">What spreadsheets got right</h1>'+
+   L.prose('Kleppmann’s name for this approach is the “database inside-out”, after a 2014 talk he gave. He calls it a design pattern rather than a new architecture, built from other people’s ideas: dataflow languages, functional reactive programming, logic programming. The term “unbundling” comes from Jay Kreps.')+
+   L.prose('In a spreadsheet, a formula cell recalculates whenever any input changes. That’s what we want from data systems: change a record, and every index, cache and view that depends on it refreshes by itself.')+
+   L.flow([['pencil','Change','A parcel’s price is corrected'],['cycle','Recompute','Merchant’s balance view updates'],['eye','Refresh','Dashboard total updates']])+
+   L.prose('The difference: data systems also need to be fault-tolerant, scalable and durable, and to join together technologies written by different people over time.'));
+  L.done();}},
+{part:2,src:'Chapter 12 · Application code as a derivation function',run(L){
+  L.h(L.kick('learn','Application code as a derivation function')+'<h1 class="q">Every derived dataset comes from some function</h1>'+
+   L.prose('When one dataset is derived from another, a transformation function sits in between. Some are standard, some need custom code:')+
+   L.tiers([['list','Secondary index','Pick out the indexed values and sort by them. So common that databases build it in.','Standard: just CREATE INDEX'],
+            ['eye','Full-text index','Detect language, split words, stem, fix spelling, find synonyms, then build an inverted index.','Partly built in, often tuned'],
+            ['bulb','Machine learning model','Derived from training data through feature extraction and statistics.','Very application-specific'],
+            ['layers','Cache','Data shaped the way the screen shows it. Change the screen, and the cache must be redefined and rebuilt.','Custom, tied to the UI']])+
+   '<p class="small" style="margin-top:10px">Custom code is where many databases struggle: triggers, stored procedures and user-defined functions were an afterthought in their design.</p>');
+  L.done();}},
+{part:2,src:'Chapter 12 · Application code as a derivation function',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias redesigns the tracking page to show a map of the courier’s route. Which derived dataset must be redefined and rebuilt?</h1>');
+  L.mc(L.card,['The postcode index in the Parcel DB','The ETA model trained on delivery history','The cache of each ready-to-show tracking page'],2,
+   'The cache holds data in the shape the screen shows it, so a new screen means a new cache definition and a rebuild.',
+   'The index and the ETA model don’t depend on the page layout. The cache does: it stores data shaped for the screen.');}},
+{part:2,src:'Chapter 12 · Separation of application code and state',run(L){
+  L.h(L.kick('learn','Separation of application code and state')+'<h1 class="q">Keep code and state apart, then let state talk back</h1>'+
+   L.prose('Databases could in theory run any application code, but they handle modern needs badly: package management, version control, rolling upgrades, monitoring, metrics, calls to other services. Tools built to run code (Kubernetes, Docker, YARN, Mesos) do it much better.')+
+   L.prose('So most web apps are stateless services with the state in a database. The database works like a shared variable over the network: you can read it and write it. But, as with a variable in most languages, you can’t <i>subscribe</i> to it. To find out if something changed, you poll, asking again and again.')+
+   L.note('Dataflow thinking changes this: code reacts to a state change in one place by causing a state change somewhere else. Unbundling takes what a trigger or index update does inside a database and applies it, with stream processing, to caches, search indexes, ML and analytics outside it.','cycle'));
+  L.done();}},
+{part:2,src:'Chapter 12 · Dataflow: Interplay between state changes and application code',run(L){
+  L.h(L.kick('learn','Derived data is not a job queue')+'<h1 class="q">Two strict demands that ordinary messaging doesn’t meet</h1>'+
+   L.prose('Message queues were traditionally built to run jobs asynchronously. Keeping derived data correct is stricter:')+
+   L.list([['list','Order matters','Several views derived from one log must apply events in the same order to stay consistent. Many brokers redeliver unacknowledged messages out of order. Dual writes are out, too.'],
+     ['alert','No message may be lost','Lose a single message and the derived dataset is out of sync with its source for good. Many actor systems keep state and messages in memory, so a crash loses them.']],4)+
+   L.prose('These demands are stringent, but Kleppmann notes they’re far cheaper and sturdier than distributed transactions. Modern stream processors meet them at scale and run application code as operators that chain like Unix pipes.'));
+  L.done();}},
+{part:2,src:'Chapter 12 · Dataflow: Interplay between state changes and application code',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'What’s wrong with this design?',['Messages can arrive out of order','Messages are lost in a crash','App logic is inside the database','Nothing, for this kind of job'],[
+   ['The tracking view is fed by a queue that redelivers unacknowledged status changes after newer ones.',0,'A late “at hub” could overwrite a newer “out for delivery”. Derived views need a stable order.'],
+   ['The support search updater keeps unprocessed changes only in memory, and restarts drop them.',1,'One lost change leaves search out of sync with the Parcel DB for good.'],
+   ['Tobias puts label-pricing logic in a stored procedure inside the Parcel DB.',2,'Databases are poor at versioning, rolling upgrades, monitoring and network calls. Run the code in tools built for it.'],
+   ['A queue of “send this courier a shift reminder” jobs where two sometimes run out of order.',3,'This is plain asynchronous job execution, what queues were made for. No derived view depends on the order.']]);}},
+{part:2,src:'Chapter 12 · Stream processors and services',run(L){
+  L.h(L.kick('ex','Stream processors and services')+'<h1 class="q">Nordhaven merchants are billed in their own currency</h1>'+
+   L.quote('The fastest and most reliable network request is no network request at all!','Martin Kleppmann, chapter 12'));
+  L.beats(L.card,[
+   ['The setup','Prices are set in Westport’s currency, but Nordhaven merchants pay in theirs. Every booking needs the current exchange rate. This mirrors the book’s own currency example.'],
+   ['Microservices way','The booking code calls the exchange-rate service for each booking: a synchronous request. If that service is slow or down, bookings suffer.'],
+   ['Dataflow way','The booking code subscribes in advance to a stream of rate updates and keeps the latest rate in a local database. Each booking just reads locally.'],
+   ['The difference','A network call becomes a local lookup: faster, and robust to the rate service failing. In stream terms it’s a stream-table join between bookings and rate updates.'],
+   ['The catch','The join depends on time. If Linh reprocesses last March’s bookings, Linh needs the rate <i>as it was</i> at each booking, not today’s, whichever way rates are fetched.']],
+   'Both styles split work across teams. Dataflow uses one-way asynchronous streams instead of request and response, so data is already local when it’s needed.');}},
+
+/* ---------- PART 4: OBSERVING STATE ---------- */
+{part:3,src:'Chapter 12 · Observing Derived State',run(L){
+  L.h(L.kick('learn','Observing derived state')+'<h1 class="q">Where the write path meets the read path</h1>'+
+   L.lanes([['pencil','Write path','Done eagerly as data comes in, whether or not anyone asked: every stage of batch and stream processing until each derived dataset is updated.',2],
+            ['eye','Read path','Done lazily, only when someone asks: read the derived dataset, maybe process a bit, respond.',3]])+
+   L.prose('The derived dataset is where the two paths meet. It’s a trade-off between work at write time and work at read time. (Programmers will recognize eager and lazy evaluation.)')+
+   L.prose('So caches, indexes and '+L.g('materialized-view','materialized views')+' all play one role: they shift the boundary, doing more on the '+L.g('write-path','write path')+' to save effort on the '+L.g('read-path','read path')+'. The book’s Twitter timeline example in chapter 1 was this same choice, so after 500 pages it comes full circle.'));
+  L.done();}},
+{part:3,src:'Chapter 12 · Materialized views and caching',pts:1,
+ solve:async L=>{[...L.$('#bc').children].forEach(b=>b.click());},
+ run(L){
+  const S=[['No index',6,100,'Writes just store the parcel. Every search scans everything, like grep. Fine for a handful, hopeless for millions.'],
+           ['Search index',40,30,'Writes update the entries for every term; reads look up each term and combine the results. Both paths do some work.'],
+           ['Index + cached common searches',60,12,'Popular searches are precomputed. A new parcel that matches one must update it on the write path. Rare searches still use the index.'],
+           ['Precompute every search',100,3,'Reads would be instant, but the possible searches are endless, so the write path could never finish.']];
+  const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Move the boundary for support search. Try all four strategies.</h1><div id="bc"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:10px 0 6px"><div class="meterrow"><div class="lb">Write path</div><div class="meter"><div id="bw" style="background:var(--h2);width:0"></div></div></div>'+
+   '<div class="meterrow"><div class="lb">Read path</div><div class="meter"><div id="br" style="background:var(--h3);width:0"></div></div></div><p class="small" id="bt" style="margin:8px 0 0">Choose a strategy above.</p></div><div id="bq"></div>');
+  S.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0];
+    b.onclick=()=>{[...L.$('#bc').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#bw').style.width=s[1]+'%';L.$('#br').style.width=s[2]+'%';L.$('#bt').textContent=s[3];
+      const q=L.$('#bq');if(seen.size===S.length&&!q.innerHTML){q.innerHTML='<h2 class="sub">Signe’s team runs “Bramble & Bolt, today” hundreds of times a day, so its results are cached. A new Bramble & Bolt parcel is booked. Which path pays to keep that answer right?</h2>';
+        L.mc(q,['The read path, next time someone searches','The write path, when the parcel comes in','Neither, since a cache is just old results'],1,
+         'A cached common query is really a materialized view: it’s updated when new matching data arrives, on the write path.',
+         'The book treats a cache of common searches as a materialized view that must be updated when matching data appears. That work happens on the write path.');}};
+    L.$('#bc').appendChild(b);});}},
+{part:3,src:'Chapter 12 · Pushing state changes to clients',run(L){
+  L.h(L.kick('learn','Clients and the write path')+'<h1 class="q">Extend the write path all the way to the phone</h1>'+
+   L.prose('<b>Stateful, offline-capable clients.</b> Web apps taught us that clients hold no state and servers own the data. But single-page apps and mobile apps now keep plenty of state on the device, and offline-first apps sync in the background. Then the on-device state is a cache of the server’s: the pixels are a materialized view of the app’s model objects, which are a local replica of state in a datacenter.')+
+   L.prose('<b>Pushing state changes.</b> A normal web page reads data once, then goes stale until you reload or poll (RSS is polling too). Server-sent events and WebSockets keep a connection open so the server can push changes. That extends the write path to the end user: read once to start, then follow a stream of changes.')+
+   L.note('Offline for a while? It’s a solved problem: like a consumer of a log-based broker, the device reconnects from its last offset and misses nothing. Each device is a small subscriber to a small stream.','cycle'));
+  L.done();}},
+{part:3,src:'Chapter 12 · End-to-end event streams',run(L){
+  L.h(L.kick('ex','End-to-end event streams')+'<h1 class="q">Mrs. Okoro watches a parcel on the tracking page</h1>');
+  L.beats(L.card,[
+   ['Open','Mrs. Okoro opens the tracking page. Their phone uses the read path once to load the current status: “At Eastvale hub”.'],
+   ['Subscribe','The page keeps a connection open and subscribes to changes for the parcel, instead of polling every minute.'],
+   ['Scan','Courier Ravi scans the parcel “out for delivery”. The scan goes into the event log, the tracking view updates, and the change is pushed to Mrs. Okoro’s phone, all in under a second.'],
+   ['Lift','They step into a lift and lose signal while Ravi marks “two stops away”. On reconnecting, the phone resumes from its last offset and gets the missed update.'],
+   ['Why not always?','UI tools like Elm and React with Flux or Redux already manage screen state as a stream of events. The obstacle is that request and response are deeply built into databases, libraries and protocols; few datastores let you subscribe. Kleppmann thinks the switch to publish and subscribe is worth the effort.']],
+   'The tracking page is a materialized view pushed to the recipient’s phone. The write path runs from Ravi’s scanner to Mrs. Okoro’s screen.');}},
+{part:3,src:'Chapter 12 · Reads are events too',run(L){
+  L.h(L.kick('learn','Reads are events too')+'<h1 class="q">Send the reads through the stream as well</h1>'+
+   L.prose('Normally writes go through the event log, while reads are passing network requests that go straight to the store. Kleppmann suggests reads can be events too: send them through a stream processor, which answers by emitting the result to an output stream.')+
+   L.lanes([['eye','A one-off read','is a stream-table join: the request passes through the join and is forgotten.',2],
+            ['cycle','A subscription','is a lasting join with past and future events on the other side.',3]])+
+   L.prose('Logging reads records what a user saw before deciding. The book’s example: an online shop’s predicted shipping date and stock level may decide a purchase. That helps trace causal dependencies, at a cost in storage and I/O; making it cheap is still open research.')+
+   '<p class="small" style="margin-top:10px"><b>Multi-partition processing.</b> Streams are overkill for a one-partition query, but can run queries that combine many partitions, like counting everyone who saw a link (a union of many follower lists) or fraud checks joining several differently partitioned reputation stores. A database that already does such joins is probably simpler.</p>');
+  L.done();}},
+{part:3,src:'Chapter 12 · Observing Derived State',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'What would Kleppmann reach for?',['Push changes to the client','Log the read as an event','Use a database’s own joins'],[
+   ['Recipients complain the tracking page still says “At hub” an hour after the van left, unless they reload.',0,'The page read once and went stale. Push state changes so the write path reaches the phone.'],
+   ['Bramble & Bolt disputes which delivery promise a shopper was shown before buying.',1,'Recording the read, with an ID, lets you reconstruct what the shopper saw before deciding.'],
+   ['Kwame needs a fraud score per booking from several partitioned stores, and their MPP database already joins them well.',2,'Kleppmann says a database that offers multi-partition joins is probably simpler than building it on streams.'],
+   ['A courier’s app loses signal in a tunnel and must not miss any route changes sent meanwhile.',0,'Pushed changes plus a stored offset: on reconnect, the device resumes where it left off.']]);}}
+  ]
+});
+</script>
+</body>
+</html>

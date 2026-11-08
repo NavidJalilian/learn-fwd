@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replication Lag and Multi-Leader Replication</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0011', title:'Replication lag and multi-leader replication', minutes:20, icon:'clock',
+  goals:['Name the three replication-lag bugs users notice, and fix each one','Say when several leaders are worth their cost','Choose a way to handle write conflicts between leaders'],
+  parts:['Replication lag','Reading in order','Multi-leader','Conflicts'],
+  read:'Read “Problems with Replication Lag” and “Multi-Leader Replication” in chapter 5, including the Mr. Poons and Mrs. Cake dialog and the replication topologies.',
+  glossary:{
+    'eventual':'Eventual consistency: if writes stop and you wait, every copy will end up the same. Until then, copies can disagree, and there is no limit on how long “eventually” takes.',
+    'ryw':'Read-after-write consistency (also called read-your-writes): after you save something and reload, you always see your own change. It promises nothing about other people’s changes.',
+    'monotonic':'Monotonic reads: if you read several times in a row, you never see older data after you have seen newer data. Time never seems to go backward.',
+    'prefix':'Consistent prefix reads: if writes happen in a certain order, anyone reading them sees them in that same order, so an answer never appears before its question.',
+    'multi-leader':'Multi-leader replication: more than one node accepts writes. Each leader sends its changes to the others, so each leader is also a follower of the rest.',
+    'conflict':'Write conflict: two leaders accept different changes to the same data at the same time, so the copies disagree and something must decide the final value.',
+    'lww':'Last write wins (LWW): resolve a conflict by keeping the write with the latest timestamp and silently dropping the others. Everyone ends up the same, but data is lost.',
+    'crdt':'CRDT (conflict-free replicated datatype): a data structure, like a set, counter or list, that several people can change at once and that merges the changes automatically in a sensible way.'
+  },
+  cheatsheet:[
+    'Reading from <b>asynchronous followers</b> scales reads, but they lag. “Eventually consistent” has no time limit: seconds or minutes under load.',
+    '<b>Read-after-write:</b> you always see your own changes. Read things you may have edited from the leader, or make sure the replica is at least as new as your last write.',
+    '<b>Monotonic reads:</b> never go back in time. Send each user to the same replica (for example, by hash of user ID).',
+    '<b>Consistent prefix reads:</b> answers never appear before questions. Keep causally related writes in the same partition.',
+    'Ask “what if the lag hit an hour?” Don’t pretend async is sync; stronger guarantees are why transactions exist.',
+    '<b>Multi-leader</b> fits several datacenters, apps that work offline, and real-time collaborative editing. Rarely worth it in one datacenter.',
+    'Conflicts: <b>avoid</b> them (one home leader per record), or <b>converge</b>: last write wins (loses data), merge, or keep both and resolve in code on write or on read.',
+    'Topologies: circular and star have single points of failure; all-to-all can deliver writes out of order. Read the docs and test.'
+  ],
+  steps:[
+/* ---------- PART 1: REPLICATION LAG ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s tracking page reads from a copy of the Parcel DB that runs a few seconds behind. Courier Ravi scans Mrs. Okoro’s parcel as delivered, and Mrs. Okoro refreshes at once. What might the page show?</h1>');
+  L.mc(L.card,['Still “Out for delivery”','An error page'],0,
+   'The copy hasn’t received the scan yet, so it shows the old status. Nothing is broken; the copy is just behind. This lesson is about when that delay hurts.',
+   'Nothing has failed, so there’s no error. The copy simply hasn’t got the new scan yet, so it shows the old status, “Out for delivery.”');}},
+{part:0,src:'Chapter 5 · Problems with Replication Lag',run(L){
+  L.h(L.kick('learn','Scaling reads with followers')+'<h1 class="q">Many followers serve the reads. They are always a little behind.</h1>'+
+   L.prose('Most web traffic is reads. So a tempting setup is: one leader for writes, and many followers to share out the reads, placed near users. Need more read capacity? Add followers.')+
+   L.prose('This only works with <b>asynchronous</b> followers. If the leader had to wait for all of them, one dead follower or network fault would stop every write. And the more nodes you have, the likelier one is down.')+
+   L.note('A follower that’s behind gives older answers than the leader. Stop writing and wait, and the followers catch up. That is '+L.g('eventual','eventual consistency')+'. “Eventually” is deliberately vague: the '+L.g('lag','replication lag')+' is usually a fraction of a second, but near capacity or with network trouble it can reach seconds or minutes.','clock')+
+   '<p class="small" style="margin-top:10px">This isn’t only a NoSQL thing: followers of an asynchronously replicated relational database behave the same way.</p>');
+  L.done();}},
+{part:0,src:'Chapter 5 · Problems with Replication Lag',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The tracking page now reads from six followers. Tobias asks: “Why not make all six synchronous so nobody sees old data?”</h1>');
+  L.mc(L.card,['Synchronous followers can’t serve reads','One down follower would stop every write','Six followers is too few for synchronous mode'],1,
+   'Right. The leader would have to wait for all six, so any one failure blocks every booking, and with more nodes, some node is down more often.',
+   'Synchronous followers can serve reads; the problem is writes. The leader would wait for all six, so one dead follower or network fault would stop every booking.');}},
+{part:0,src:'Chapter 5 · Reading Your Own Writes',run(L){
+  L.h(L.kick('learn','The first lag bug')+'<h1 class="q">“I just saved it. Where did it go?”</h1>'+
+   L.flow([['pencil','Write','A user saves a change. It goes to the leader.','',2],['eye','Read','They reload at once. The read goes to a follower.','',3],['x','Stale','The follower hasn’t got the change yet. It looks lost.','',4]])+
+   L.prose('The fix is a guarantee called '+L.g('ryw','read-after-write consistency')+' (or read-your-writes): if a user reloads, they always see the updates <i>they</i> submitted.')+
+   L.prose('Notice what it doesn’t promise: other users’ updates may still take a while to show up. It only reassures each user that their own input was saved.'));
+  L.done();}},
+{part:0,src:'Chapter 5 · Reading Your Own Writes',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">The address that wouldn’t stick</h1>');
+  L.beats(L.card,[
+   ['10:14','Ada runs Pip & Thistle, a small shop. On the merchant dashboard, they fix a typo in a recipient’s street and press Save. The change goes to the Parcel DB leader.'],
+   ['10:14 + 1 s','The dashboard reloads the parcel from a follower. It’s 3 seconds behind, so it shows the <b>old</b> address.'],
+   ['10:15','Ada thinks the save failed, fixes it again, and emails support: “Your dashboard loses my edits.”'],
+   ['Zainab looks','Nothing was lost. Both saves reached the leader. Ada just read from a copy that hadn’t caught up. Zainab’s question: “What does our setup actually promise a merchant who just saved something?” Right now: nothing.']],
+   'The data was safe, but the user experience said otherwise. Ada needed read-after-write consistency.');}},
+{part:0,src:'Chapter 5 · Reading Your Own Writes',run(L){
+  L.h(L.kick('learn','How to read your own writes')+'<h1 class="q">Four ways to make sure users see their own changes</h1>'+
+   L.list([['person','Read your own things from the leader','If only the owner can edit something (like a user’s own profile), read the owner’s copy from the leader and everyone else’s from a follower.'],
+     ['clock','Use a time window','If users can edit almost everything, the first rule sends most reads to the leader. Instead: for one minute after a user’s last update, read from the leader. Or stop using any follower more than a minute behind.'],
+     ['list','Remember the last write','The client remembers when it last wrote. Only a replica at least that up to date may answer; otherwise try another replica or wait. A log position works; a clock time works only if clocks agree.'],
+     ['map','Mind the datacenters','With replicas in several datacenters, any read that must go to the leader has to be routed to the leader’s datacenter.']],1));
+  L.done();}},
+{part:0,src:'Chapter 5 · Reading Your Own Writes',pts:1,run(L){
+  L.h(L.kick('pr','Pick a fix')+'<h1 class="q">On the merchant dashboard, merchants can edit nearly everything: addresses, labels, notes, pickup times. Which rule should Zainab use?</h1>');
+  L.mc(L.card,['Read everything a merchant could edit from the leader','Read from a follower that has seen the merchant’s last write','Read from a random follower, then retry if it looks wrong'],1,
+   'The dashboard remembers the position of the merchant’s last write; any follower that has reached it can answer. Reads stay spread out, and merchants see their edits.',
+   'Since merchants can edit almost everything, “read editable things from the leader” sends nearly all reads to the leader and loses the point of followers. Random follower with retries can’t tell old data from new. Remembering the last write solves both.');}},
+{part:0,src:'Chapter 5 · Reading Your Own Writes',pts:1,run(L){
+  L.h(L.kick('learn','One user, two devices')+'<h1 class="q">Cross-device read-after-write</h1>'+
+   L.prose('People use the same service from a laptop and a phone. If they enter something on one, they expect to see it on the other. Two extra problems appear:')+
+   L.list([['Shared memory of the last write','Code on the phone doesn’t know what the laptop just wrote. So the “time of last write” has to be stored centrally, not on one device.'],
+     ['Different routes','Home broadband and mobile data may reach different datacenters. If your fix reads from the leader, you may first need to route all of a user’s devices to the same datacenter.']],2)+
+   '<div id="cd"><h2 class="sub">Ada saves a pickup time on their laptop, then checks the dashboard app on their phone. The phone shows the old time. What’s missing?</h2></div>');
+  L.mc(L.$('#cd'),['The phone doesn’t know about the laptop’s last write','The laptop’s write never reached the leader'],0,
+   'The laptop remembered its own last write, but the phone can’t see that. Store it centrally so any device can check.',
+   'The write reached the leader fine; the laptop showed it. The phone just doesn’t know a newer write exists, because the “last write” was remembered only on the laptop.');}},
+
+/* ---------- PART 2: READING IN ORDER ---------- */
+{part:1,src:'Chapter 5 · Monotonic Reads',run(L){
+  L.h(L.kick('learn','The second lag bug')+'<h1 class="q">Things appear, then vanish again</h1>'+
+   L.prose('If each refresh goes to a random follower, a user can read a fresh follower and then a lagging one. The second read shows the database at an earlier moment. Something they just saw disappears.')+
+   L.prose(L.g('monotonic','Monotonic reads')+' is the guarantee that this can’t happen. You might still see an old value, but once you’ve seen newer data you never see older data after it. It’s weaker than always-latest, but stronger than plain eventual consistency.')+
+   L.note('<b>One fix:</b> each user always reads from the same replica, chosen for example by a hash of their user ID rather than at random. If that replica fails, the user has to be moved to another.','pointer'));
+  L.done();}},
+{part:1,src:'Chapter 5 · Monotonic Reads',pts:1,
+ solve:async L=>{const c=L.$('#rt').children;c[0].click();c[1].click();},
+ run(L){
+  const R=[['Random follower',[['10:03','F1','Out for delivery',0],['10:04','F2','At hub',1],['10:05','F1','Out for delivery',0],['10:06','F2','At hub',1],['10:07','F1','Out for delivery',0]]],
+           ['Same follower every time',[['10:03','F2','At hub',0],['10:04','F2','At hub',0],['10:05','F2','At hub',0],['10:06','F2','At hub',0],['10:07','F2','Out for delivery',0]]]];
+  const seen=new Set();
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">At 10:02 Mrs. Okoro’s parcel goes “Out for delivery.” Follower F1 is up to date; F2 is 5 minutes behind. Mrs. Okoro refreshes once a minute. Try both routing rules.</h1><div id="rt"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0;min-height:150px" id="ro"><span class="small">Choose a routing rule above.</span></div><div id="rq"></div>');
+  R.forEach((r,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'pointer':'cycle')+r[0];
+    b.onclick=()=>{[...L.$('#rt').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#ro').innerHTML=r[1].map(x=>'<div style="display:flex;gap:10px;align-items:center;padding:4px 0;font-size:14.5px"><span class="small" style="width:44px">'+x[0]+'</span><span class="small" style="width:22px">'+x[1]+'</span><b style="color:'+(x[3]?'var(--no)':'var(--ink)')+'">'+x[2]+'</b>'+(x[3]?'<span style="color:var(--no);font-size:13px">back in time</span>':'')+'</div>').join('');
+      if(seen.size===2&&!L.$('#rq').innerHTML){const q=L.$('#rq');q.innerHTML='<h2 class="sub">What did sticking to one follower give Mrs. Okoro?</h2>';
+        L.mc(q,['The newest status, every time','A status that never goes backward','Their own edits always showing up'],1,
+         'That’s monotonic reads. The status was old for a while, but it only ever moved forward.',
+         'The status stayed old for four minutes, so not the newest. And Mrs. Okoro made no edits, so read-your-writes isn’t the point. The gain is that the status never went backward.');}};
+    L.$('#rt').appendChild(b);});}},
+{part:1,src:'Chapter 5 · Consistent Prefix Reads',run(L){
+  L.h(L.kick('learn','The third lag bug')+'<h1 class="q">The answer arrives before the question</h1>'+
+   L.prose('The book’s example is a two-line dialog. Mr. Poons asks how far into the future Mrs. Cake can see; Mrs. Cake answers, “About ten seconds usually.” The answer depends on the question.')+
+   L.prose('Now someone follows the chat through followers. Mrs. Cake’s words come through a follower with little lag; Mr. Poons’s through one with more. The observer hears the answer first.')+
+   L.quote('Such psychic powers are impressive, but very confusing.','Martin Kleppmann, chapter 5')+
+   L.prose('The guarantee that prevents this is '+L.g('prefix','consistent prefix reads')+': writes that happen in some order are seen in that order. It’s mainly a problem in partitioned databases, where partitions work independently and there is no global order of writes.')+
+   L.note('<b>One fix:</b> write things that depend on each other to the same partition. When that’s not efficient, there are algorithms that track these dependencies, which come later in this chapter.','layers'));
+  L.done();}},
+{part:1,src:'Chapter 5 · Consistent Prefix Reads',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The tracking page has a chat. Recipients’ messages are stored in one partition, couriers’ in another. Signe in support sees Ravi’s “Done, it’s in the porch” above Mrs. Okoro’s “Could you leave it in the porch?” What fixes this?</h1>');
+  L.mc(L.card,['Store each whole conversation in one partition','Add a cache in front of both partitions','Make the tracking page refresh more often'],0,
+   'The reply depends on the question. If both live in the same partition, they’re written and read in order.',
+   'A cache or faster refreshes still read two partitions that lag by different amounts. Keep the conversation’s messages in one partition so they keep their order.');}},
+{part:1,src:'Chapter 5 · Solutions for Replication Lag',run(L){
+  L.h(L.kick('learn','Designing for lag')+'<h1 class="q">Ask: what if the lag reached an hour?</h1>'+
+   L.prose('With an eventually consistent system, imagine the lag growing to several minutes or hours. If the answer is “no problem,” great. If users would suffer, design for a stronger guarantee, such as read-after-write.')+
+   L.note('Pretending replication is synchronous when it’s really asynchronous causes problems later.','alert')+
+   L.prose('Applications can work around lag themselves, for example by reading some things from the leader. But that code is complex and easy to get wrong. It would be better if developers could trust the database to do the right thing. That is why '+L.g('transaction','transactions')+' exist.')+
+   L.prose('Many distributed databases dropped transactions, saying they cost too much and eventual consistency is unavoidable at scale. The book says there’s some truth in that, but it’s too simple; chapters 7 and 9 return to it.'));
+  L.done();}},
+{part:1,src:'Chapter 5 · Problems with Replication Lag',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which guarantee is missing?',['Read-after-write','Monotonic reads','Consistent prefix'],[
+   ['Ravi marks a parcel “failed delivery” in the courier app. The app reloads it and shows “Out for delivery.”',0,'Ravi can’t see their own change. That’s read-after-write.'],
+   ['Signe refreshes a parcel’s history. The “Delivered” scan is there, then gone on the next refresh.',1,'Signe saw newer data, then older. Time went backward: monotonic reads.'],
+   ['A merchant’s dashboard shows the note “Refund sent” before the “Parcel arrived damaged” claim it answers. They’re in different partitions.',2,'The reply shows up before the thing it replies to: consistent prefix reads.'],
+   ['A merchant uploads a new logo for their labels, reloads, and sees the old logo.',0,'Their own write isn’t visible to them: read-after-write.'],
+   ['Mrs. Okoro’s “parcels on the way” count goes from 3 to 2, then back to 3 on refresh.',1,'Mrs. Okoro saw the newer count, then an older one: monotonic reads.']]);}},
+
+/* ---------- PART 3: MULTI-LEADER ---------- */
+{part:2,src:'Chapter 5 · Multi-Leader Replication',run(L){
+  L.h(L.kick('learn','More than one leader')+'<h1 class="q">Let several nodes accept writes</h1>'+
+   L.prose('Single-leader replication has one big weakness: every write goes through one node. If you can’t reach it, say the network between you and it is down, you can’t write at all.')+
+   L.prose('The natural extension: let more than one node accept writes. Each leader forwards its changes to the others, so each leader is also a follower of the others. This is '+L.g('multi-leader','multi-leader replication')+' (also called master–master or active/active).')+
+   L.note('Inside a single datacenter, it rarely pays off: the benefits seldom outweigh the extra complexity. It earns its place in three situations, starting with several datacenters.','info')+
+   L.lanes([['map','One leader, many datacenters','Every write crosses the internet to the leader’s datacenter, which adds latency. If that datacenter fails, a follower elsewhere must be promoted. Writes depend on the link between datacenters.',3],
+            ['layers','A leader per datacenter','Writes are handled locally and copied to the others asynchronously, so users don’t feel the distance. Each datacenter keeps working if another fails, and a broken link doesn’t stop writes.',2]]));
+  L.done();}},
+{part:2,src:'Chapter 5 · Use Cases for Multi-Leader Replication',run(L){
+  L.h(L.kick('learn','Two more use cases')+'<h1 class="q">A phone can be a “datacenter” too</h1>'+
+   L.list([['cal','Clients that work offline','A calendar on your phone and laptop must let you read and add meetings with no connection. Each device keeps a local database that accepts writes: a leader. Devices sync later, so the lag can be hours or days. It’s multi-datacenter replication taken to the extreme, with a very unreliable network. Broken calendar syncs show how hard this is.'],
+     ['pencil','Collaborative editing','Tools like Google Docs apply each edit to the user’s local copy at once and send it to others asynchronously. Locking the document while one person edits would be like single-leader replication. Editing tiny units, like keystrokes, without locks is faster but brings multi-leader conflicts.']],3)+
+   L.note('The catch: the same data can be changed in two places at once. Those <b>write conflicts</b> must be resolved. Multi-leader is also bolted onto many databases, so auto-incrementing keys, triggers and integrity rules can misbehave. It’s often called dangerous territory, to avoid if possible.','alert'));
+  L.done();}},
+{part:2,src:'Chapter 5 · Use Cases for Multi-Leader Replication',run(L){
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Nordhaven opens, overseas</h1>');
+  L.beats(L.card,[
+   ['The complaint','Nordhaven’s merchants book through the Parcel DB leader in Westport. Every booking crosses the ocean, and when the link wobbles, bookings fail.'],
+   ['Kwame’s sketch','A leader in each datacenter: Westport, Eastvale and Nordhaven. Bookings are written locally and copied to the other regions in the background.'],
+   ['Zainab’s worry','“If the same parcel is edited in two regions at once, which edit wins?” Kwame suggests each merchant gets a <b>home region</b>, and all their writes go there.'],
+   ['Tobias’s surprise','Linh points out Otterpost already runs a multi-leader system: the courier app. In a basement with no signal, Ravi’s phone still records scans. Each phone is a leader that syncs hours later.']],
+   'Multi-leader hides distance and survives outages, but every extra leader is another place where conflicting writes can happen.');}},
+{part:2,src:'Chapter 5 · Use Cases for Multi-Leader Replication',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ravi’s courier app records scans offline and syncs when it gets a signal. In replication terms, what is Ravi’s phone?</h1>');
+  L.mc(L.card,['A follower that is temporarily lagging','A leader that accepts writes locally','A cache in front of the Parcel DB'],1,
+   'It accepts writes (scans) on its own and syncs them later, exactly like a leader in a multi-leader setup with a very slow network.',
+   'A follower or a cache never accepts writes on its own. Ravi’s phone does, then syncs later. That makes it a leader in a multi-leader setup.');}},
+{part:2,src:'Chapter 5 · Use Cases for Multi-Leader Replication',pts:4,run(L){
+  L.h(L.kick('pr','Worth it?')+'<h1 class="q">Is multi-leader replication a good fit for each idea?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Good fit','Not worth it'],[
+   ['Two leaders for the billing database, both in the Westport datacenter',1,'Inside one datacenter the extra complexity rarely pays off.'],
+   ['A leader in Nordhaven so local merchants can book even when the ocean link drops',0,'Several datacenters with an unreliable link between them is the classic use case.'],
+   ['A route-planning sheet that several dispatchers edit at the same time, keystroke by keystroke',0,'Real-time collaborative editing behaves like multi-leader replication.'],
+   ['A second leader in the same server room “just in case” the first one is slow',1,'Same datacenter again. Use followers and failover instead.']],
+   'Multi-leader pays off across datacenters, for offline devices, and for live co-editing, not inside one datacenter.');}},
+
+/* ---------- PART 4: CONFLICTS ---------- */
+{part:3,src:'Chapter 5 · Handling Write Conflicts',run(L){
+  L.h(L.kick('learn','Write conflicts')+'<h1 class="q">Both edits succeed. Then they collide.</h1>'+
+   L.prose('Two people edit the same wiki page title at once: one changes A to B, the other A to C, each on their own leader. Both saves succeed. The '+L.g('conflict','conflict')+' is only detected later, when the changes are copied across, and by then it may be too late to ask the users.')+
+   L.prose('With a single leader, the second writer would wait or be told to retry. You could make multi-leader detection synchronous too, but then you lose its main benefit; you might as well use one leader.')+
+   L.note('<b>Simplest strategy: avoid conflicts.</b> If all writes for a record go through the same leader, they can’t conflict. For example, route each user to a “home” datacenter. This breaks down when the home must change: a datacenter fails, or a user moves.','shield')+
+   '<p class="small" style="margin-top:10px">Some conflicts are subtle. A meeting-room system must never double-book a room, yet two bookings for the same slot made on two different leaders can both pass the availability check.</p>');
+  L.done();}},
+{part:3,src:'Chapter 5 · Handling Write Conflicts',run(L){
+  L.h(L.kick('learn','Converging')+'<h1 class="q">Every copy must end up with the same value</h1>'+
+   L.prose('If each leader just applied writes in the order it saw them, leader 1 would end with C and leader 2 with B, forever. Resolution must be <b>convergent</b>: all copies reach the same final value. Ways to do that:')+
+   L.list([['Highest ID wins','Give each write a unique ID and keep the highest. With timestamps this is '+L.g('lww','last write wins')+'. Popular, but prone to losing data.'],
+     ['Higher replica wins','Writes from a higher-numbered replica always beat lower ones. Also loses data.'],
+     ['Merge the values','For example, sort and join them: the title becomes “B/C”.'],
+     ['Record the conflict','Keep all versions in a structure, and let application code resolve it later, maybe by asking the user.']],4)+
+   L.lanes([['pencil','Custom code on write','Runs as soon as the conflict appears in the replication log. Runs in the background, must be quick, and can’t ask a user.',1],
+            ['eye','Custom code on read','All versions are stored. The next read returns them all; the app (or the user) picks or merges and writes back.',2]])+
+   '<p class="small" style="margin-top:10px">Resolution usually works per row or document, not per transaction: a transaction’s writes are each resolved separately.</p>');
+  L.done();}},
+{part:3,src:'Chapter 5 · Automatic Conflict Resolution',run(L){
+  L.h(L.kick('learn','Automatic conflict resolution')+'<h1 class="q">Custom conflict code is easy to get wrong. Tap each card.</h1>');
+  L.flips(L.card,[
+   ['The shopping cart','The book’s cautionary tale: a cart’s conflict handler kept items that were added, but not removals. Customers saw items they had removed come back.'],
+   ['CRDTs','Conflict-free replicated datatypes: sets, maps, ordered lists, counters and more that many users can change at once and that '+L.g('crdt','merge automatically')+' in sensible ways.'],
+   ['Mergeable persistent data structures','Track history explicitly, like the Git version control system, and use a three-way merge.'],
+   ['Operational transformation','The algorithm behind collaborative editors such as Google Docs, built for editing an ordered list of items, like the characters of a document.']],
+   'These were still young in databases when the book was written, but automatic resolution could make multi-leader sync much simpler to use.');}},
+{part:3,src:'Chapter 5 · Handling Write Conflicts',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which way of handling conflicts?',['Conflict avoidance','Last write wins','Resolve on read','Resolve on write'],[
+   ['Every write for a merchant goes to the leader in that merchant’s home region.',0,'One leader per record means no conflicts, until the home has to change.'],
+   ['When two edits to a delivery note clash, the one with the later timestamp is kept and the other silently dropped.',1,'Keep the latest timestamp, drop the rest: last write wins. It converges but loses an edit.'],
+   ['Both clashing versions are stored. The dashboard shows both to the merchant next time and asks which to keep.',2,'All versions are kept and handed to the app at read time.'],
+   ['A handler runs in the background the moment a clash appears in the replication log, and joins the two notes into one.',3,'Code triggered by the replication log, with no user to ask: resolution on write.']]);}},
+{part:3,src:'Chapter 5 · Multi-Leader Replication Topologies',run(L){
+  L.h(L.kick('learn','Who sends to whom?')+'<h1 class="q">Replication topologies</h1>'+
+   L.prose('With more than two leaders, a <b>topology</b> says along which paths writes travel:')+
+   L.flow([['cycle','Circular','Each node passes writes, plus its own, to the next. MySQL’s default.','',1],['star','Star','One root node forwards writes to all others. Can grow into a tree.','',2],['people','All-to-all','Every leader sends to every other.','',3]],false)+
+   L.prose('In circular and star topologies, writes pass through several nodes, so each write is tagged with the IDs of nodes it has visited. A node ignores writes carrying its own ID, which prevents endless loops. But if one node fails, it can block the flow for the others until someone reconfigures by hand.')+
+   L.prose('All-to-all has no single point of failure, but some links are faster than others, so one write can <b>overtake</b> another. A node may receive an update to a row before the insert that created it. Timestamps can’t fix the order, because clocks aren’t reliably in sync. A technique called <b>version vectors</b> can.')+
+   L.note('Many multi-leader tools detect conflicts poorly. The book’s advice: read the documentation carefully and test that you really get the guarantees you think you have.','book'));
+  L.done();}},
+{part:3,src:'Chapter 5 · Multi-Leader Replication Topologies',pts:1,run(L){
+  L.h(L.kick('pr','Out of order')+'<h1 class="q">Otterpost’s three regions replicate all-to-all. A parcel is created in Nordhaven, and Westport then updates its status. Eastvale gets the update first, for a parcel it has never heard of. What does Zainab need?</h1>');
+  L.mc(L.card,['Attach a timestamp to each write and sort by it','Have Eastvale skip updates to rows it doesn’t have','Track which write depends on which, with version vectors'],2,
+   'The update depends on the insert. Version vectors capture that dependency, so Eastvale can apply the insert first.',
+   'Clocks on different machines aren’t reliably in sync, so timestamps can put writes in the wrong order. Skipping the update would lose it. What’s needed is tracking that the update depends on the insert: version vectors.');}}
+  ]
+});
+</script>
+</body>
+</html>

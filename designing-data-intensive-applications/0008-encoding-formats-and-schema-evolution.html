@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encoding Formats and Schema Evolution</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0008', title:'Encoding formats and schema evolution', minutes:20, icon:'layers',
+  goals:['Tell backward from forward compatibility, and say why a change needs both','Explain what goes wrong with built-in, JSON, XML and CSV encodings','Change a Protocol Buffers or Avro schema without breaking old or new code'],
+  parts:['Compatibility','Text formats','Field tags','Avro and schemas'],
+  read:'Read chapter 4 of the book, from the start to the end of “The Merits of Schemas”, for the byte-by-byte figures of each format.',
+  glossary:{
+    'rolling-upgrade':'Rolling upgrade: updating a system one machine at a time, so the whole system never has to go down.',
+    'backward-compat':'Backward compatibility: newer code can read data that was written by older code.',
+    'forward-compat':'Forward compatibility: older code can read data that was written by newer code, by ignoring the parts it doesn’t know.',
+    'encoding':'Encoding: turning data held in memory (objects, lists, pointers) into a self-contained sequence of bytes that can be saved or sent over the network. Also called serialization or marshalling. Decoding is the reverse.',
+    'field-tag':'Field tag: a number that stands in for a field’s name in Thrift and Protocol Buffers. The encoded bytes carry the tag, never the name.',
+    'varint':'Variable-length integer: a way of writing numbers where small numbers take fewer bytes and big numbers take more.',
+    'writers-schema':'Writer’s schema: in Avro, the version of the schema a program used when it encoded the data.',
+    'readers-schema':'Reader’s schema: in Avro, the version of the schema the reading program expects. It only has to be compatible with the writer’s schema, not identical.'
+  },
+  cheatsheet:[
+    'Old and new code, and old and new data, live side by side (rolling upgrades, users who don’t update). You need <b>backward</b> (new code reads old data) and <b>forward</b> (old code reads new data) compatibility.',
+    '<b>Encoding</b> = in-memory objects to bytes; <b>decoding</b> = bytes back to objects.',
+    'Your language’s <b>built-in encoding</b>: locks you in, invites security holes, ignores versioning and is often slow. Only for very short-lived data.',
+    '<b>JSON, XML, CSV</b>: readable and everywhere, but vague about numbers (above 2<sup>53</sup>) and binary data (Base64, +33%). Fine for exchanging data between organizations.',
+    '<b>Thrift and Protocol Buffers</b>: field tags instead of names. Rename freely; never change or reuse a tag; new fields must be optional or have a default.',
+    '<b>Avro</b>: no tags. The reader resolves the <b>writer’s schema</b> against its own <b>reader’s schema</b> by field name. Only add or remove fields that have a default.',
+    'The reader must find the writer’s schema: once per file, a version number per record, or agreed when a connection opens.',
+    'Schemas give you compact data, documentation that can’t go stale, compatibility checks before deploy, and type-checked code.'
+  ],
+  steps:[
+/* ---------- PART 1: COMPATIBILITY ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost ships courier app version 43 on Monday. On Wednesday, which app versions are sending scan events to Otterpost’s servers?</h1>');
+  L.mc(L.card,['Only version 43, the new one','Version 43 and several older ones'],1,
+   'Couriers update their phones when they get round to it, and some take weeks. So old and new versions always run side by side. This whole lesson is about living with that.',
+   'Otterpost can’t force every courier’s phone to update at once. Many couriers run old versions for weeks, so old and new versions send data side by side.');}},
+{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',run(L){
+  L.h(L.kick('learn','Change never stops')+'<h1 class="q">New features mean new shapes of data</h1>'+
+   L.quote('Everything changes and nothing stands still.','Heraclitus, the line that opens chapter 4')+
+   L.prose('Most feature changes also change the data: a new field, a new kind of record, or old data shown in a new way. A relational database has exactly one '+L.g('schema','schema')+' at a time, changed by a migration. A schema-on-read database lets old and new formats sit side by side.')+
+   L.prose('Either way, the code that reads and writes the data must change too, and in a big system it can’t change everywhere at once:')+
+   L.lanes([['layers','On servers','A '+L.g('rolling-upgrade','rolling upgrade')+' puts the new version on a few '+L.g('node','nodes')+' at a time, checks it, then moves on. No downtime, so you can release more often.',1],
+            ['person','On phones and desktops','You are at the mercy of the user, who may not install the update for some time.',3]])+
+   '<p class="small" style="margin-top:12px">So old code, new code, old data and new data all exist at the same time.</p>');
+  L.done();}},
+{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',run(L){
+  L.h(L.kick('learn','Two directions')+'<h1 class="q">Compatibility has to work both ways</h1>'+
+   L.lanes([['arrow','Backward compatibility','<b>New code reads old data.</b><br>Usually easy: whoever writes the new code knows the old format, and can keep the old reading code if needed.',2],
+            ['cycle','Forward compatibility','<b>Old code reads new data.</b><br>Trickier: the old code must ignore additions made by a version it has never seen.',4]])+
+   L.note('A way to remember: name it from the <b>reader’s</b> side. Backward = the reader looks back at older data. Forward = an old reader meets data from the future.','bulb')+
+   L.prose('The rest of the lesson asks one question of every format: how does it keep both directions working while the schema changes?'));
+  L.done();}},
+{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',run(L){
+  L.h(L.kick('ex','Otterpost, one ordinary week')+'<h1 class="q">One new field, two directions of trouble</h1>');
+  L.beats(L.card,[
+   ['Monday','Tobias ships courier app v43. Scan events now carry a new field, <code>leftWith</code>, such as “neighbour at no. 12”.'],
+   ['The phones','Ravi updates that evening. Amara won’t update for three weeks. All week, both phones send scan events.'],
+   ['The servers','Kwame rolls the new scan-ingest service out two servers at a time, out of six. For an hour, old and new server code run side by side.'],
+   ['Backward','An upgraded server reads a scan from Amara’s v42 app, with no <code>leftWith</code>. New code, old data: it needs <b>backward</b> compatibility and must cope with the missing field.'],
+   ['Forward','A server not yet upgraded receives Ravi’s v43 scan, with <code>leftWith</code> in it. Old code, new data: it needs <b>forward</b> compatibility and must skip the field, not crash.']],
+   'During any change, both directions happen at once. A format that handles only one of them will break something during the rollout.');}},
+{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What does forward compatibility mean?</h1>');
+  L.mc(L.card,['Old code can read data that new code wrote','New code can read data that old code wrote'],0,
+   'Forward compatibility is old code coping with data from a newer version, usually by ignoring what it doesn’t know.',
+   'That one is backward compatibility. Forward means old code reading data written by newer code.');}},
+{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',pts:5,run(L){
+  L.h(L.kick('pr','Which direction?')+'<h1 class="q">For each situation, which kind of compatibility is needed?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Backward','Forward'],[
+   ['Ravi’s phone updates to v43, then sends the scans it saved offline while it was still v42.',0,'The v43 app reads data its own older version wrote: new code, old data.'],
+   ['Amara’s v42 app downloads a route list from a server that has added a new field to it.',1,'Old app code reads data written by newer server code.'],
+   ['An upgraded ingest server reads scans from phones still on old app versions.',0,'New server code reads data written by older app code.'],
+   ['Halfway through the rollout, a server not yet upgraded reads a scan written by v43.',1,'Old server code meets data from a newer version.'],
+   ['Linh’s new report job reads a parcels export file written last year.',0,'Today’s code reads data written by last year’s code.']],
+   'Ask two questions: which code is reading, and which code wrote the data? New reading old is backward; old reading new is forward.');}},
+
+/* ---------- PART 2: TEXT FORMATS ---------- */
+{part:1,src:'Chapter 4 · Formats for Encoding Data',run(L){
+  L.h(L.kick('learn','Encoding')+'<h1 class="q">Data lives in two shapes</h1>'+
+   L.prose('Inside a program, data sits in objects, lists and hash tables, linked by <b>pointers</b> (memory addresses). That shape is built for the CPU. But a pointer means nothing to another process, so to save data to a file or send it over the network, you must turn it into a self-contained sequence of bytes.')+
+   L.flow([['box','In the phone’s memory','a scan object','points to a parcel object',1],['arrow','Bytes','sent over the network','encode',3],['box','In the server’s memory','a scan object again','decode',2]])+
+   L.prose('Going from memory to bytes is '+L.g('encoding','<b>encoding</b>')+' (also called serialization or marshalling). Going back is <b>decoding</b> (parsing, deserialization).')+
+   '<p class="small">The book says “encoding” because “serializable” means something quite different for transactions (chapter 7). And encoding has nothing to do with encryption.</p>');
+  L.done();}},
+{part:1,src:'Chapter 4 · Language-Specific Formats',run(L){
+  L.h(L.kick('learn','The built-in shortcut')+'<h1 class="q">Your language can already save objects. That’s the trap.</h1>'+
+   L.prose('Java has <code>Serializable</code>, Python has <code>pickle</code>, Ruby has <code>Marshal</code>. They save and restore objects with almost no code. The book lists four deep problems:')+
+   L.list([['lock','Locked to one language','Reading the bytes from another language is very hard. You commit to today’s language for a long time, and can’t easily share data with other organizations.'],
+     ['shield','A security hole','To rebuild objects, the decoder can create any class. If attackers can feed it bytes, they can often run code of their choice on your server.'],
+     ['cycle','Versioning is an afterthought','Forward and backward compatibility are often ignored.'],
+     ['clock','Efficiency is an afterthought','Encoding can be slow and bulky. Java’s built-in serialization is notorious for it.']],4)+
+   '<p class="small" style="margin-top:10px">So use them only for very short-lived purposes, never for data you store or send between systems.</p>');
+  L.done();}},
+{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',run(L){
+  L.h(L.kick('learn','JSON, XML and CSV')+'<h1 class="q">Readable and everywhere, but vague in subtle ways</h1>'+
+   L.prose('These text formats work in every language and people can mostly read them. But they hide four problems:')+
+   L.list([['Numbers','XML and CSV can’t tell the number 42 from the text “42”. JSON can, but it doesn’t separate whole numbers from decimals, or say how precise they are. Whole numbers above 2<sup>53</sup> can come out wrong in JavaScript.'],
+     ['Binary data','JSON and XML handle text well but not raw bytes (like a photo). People turn bytes into text with Base64, which works but is hacky and makes the data 33% bigger.'],
+     ['Schemas are optional','JSON Schema and XML Schema exist but are complicated, and many JSON tools skip them. Then each app must hard-code how to read numbers and Base64.'],
+     ['CSV has no schema','The app decides what each column means. And what if a value contains a comma or a line break? Not every parser follows the escaping rules.']],2)+
+   L.note('Still, they’re good enough for many jobs, especially sending data <b>between organizations</b>. Getting different organizations to agree on anything is the hard part, so a format everyone already knows wins.','info'));
+  L.done();}},
+{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',run(L){
+  L.h(L.kick('ex','A bug at Otterpost')+'<h1 class="q">The parcel ID that changed on its way to the browser</h1>');
+  L.beats(L.card,[
+   ['The setup','Inside Otterpost, every parcel has a 64-bit numeric ID. The merchant API returns it as a JSON number.'],
+   ['The report','Bramble & Bolt’s dashboard shows parcel <b>9007199254740992</b>. Otterpost’s records say <b>9007199254740993</b>. Their support team can’t find the parcel.'],
+   ['The cause','JavaScript reads every JSON number as a floating-point number, which can hold whole numbers exactly only up to 2<sup>53</sup>. This ID is just above that, so it gets rounded.'],
+   ['The book’s case','Twitter hit the same thing with 64-bit tweet IDs. Its API sends each ID twice: once as a number and once as a string of digits.'],
+   ['Otterpost’s fix','Zainab adds the ID as a string next to the number in every API response. Text can’t be rounded.']],
+   'JSON is vague about numbers. If a reader in another language interprets a value differently, the data changes silently.');}},
+{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants to put each proof-of-delivery photo (raw bytes) inside a JSON scan event. What happens?</h1>');
+  L.mc(L.card,['JSON stores the raw bytes exactly as they are','The bytes become Base64 text, about a third bigger','JSON shrinks the photo so that it fits as text'],1,
+   'JSON has no type for raw bytes, so the photo is written as Base64 text, which makes it about 33% bigger.',
+   'JSON only supports text strings, not raw bytes. The usual workaround is Base64, which is hacky and adds about 33% to the size.');}},
+{part:1,src:'Chapter 4 · Language-Specific Formats',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Name the problem',['Locked to one language','A security hole','Numbers lose precision','Bytes need Base64','CSV escaping breaks'],[
+   ['The Android app saves its offline scan queue with Java’s built-in serializer. The new route tool, written in Python, can’t read it.',0,'Built-in encodings tie the data to one programming language.'],
+   ['The ingest server decodes whatever bytes a phone sends with its language’s built-in object decoder. Someone sends crafted bytes.',1,'Built-in decoders can create arbitrary classes, which attackers can use to run their own code.'],
+   ['A merchant’s JavaScript page shows a parcel ID a little different from the one Otterpost stored.',2,'Whole numbers above 2<sup>53</sup> can’t be held exactly by JavaScript’s numbers.'],
+   ['Signature images sent inside JSON make every delivered scan about a third larger.',3,'JSON has no type for raw bytes, so they become Base64 text, which is 33% bigger.'],
+   ['The address “Flat 2, 14 Mill Lane” splits into two columns in an export file.',4,'CSV is vague about commas inside values, and not every parser follows the escaping rules.']]);}},
+
+/* ---------- PART 3: FIELD TAGS ---------- */
+{part:2,src:'Chapter 4 · Binary encoding',run(L){
+  L.h(L.kick('learn','Going binary')+'<h1 class="q">Binary JSON saves less than you’d think</h1>'+
+   L.prose('For data that stays inside one organization, you can pick a more compact or faster format. For small datasets the gain is tiny, but at terabytes it matters.')+
+   L.prose('The first idea is a binary version of JSON, like MessagePack or BSON. They keep JSON’s data model and add some types. But with no schema, <b>every record still spells out its field names</b>.')+
+   L.flow([['pencil','Text JSON','81 bytes','the book’s sample record',1],['box','MessagePack','66 bytes','names still inside',3]])+
+   L.prose('The book finds that small saving may not be worth losing readability. To do much better, you have to stop sending the field names, and for that you need a schema.'));
+  L.done();}},
+{part:2,src:'Chapter 4 · Thrift and Protocol Buffers',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">How a field-tag format encodes one Otterpost scan</h1>');
+  L.beats(L.card,[
+   ['The schema','Tobias describes a scan event in a schema file: field <b>1</b> is <code>trackingCode</code> (text), <b>2</b> is <code>status</code> (text), <b>3</b> is <code>hubCode</code> (text). Thrift and Protocol Buffers both work like this.'],
+   ['Generated code','A code generator turns the schema into classes for the Android app and for the server. Each side calls them to encode and decode.'],
+   ['Encoding','The scan OP-48213, at hub, WP3 becomes: <b>[tag 1, text, 8 long]</b> OP-48213 <b>[tag 2, text, 6 long]</b> at_hub <b>[tag 3, text, 3 long]</b> WP3.'],
+   ['No names','The name <code>trackingCode</code> never appears. The number 1 stands in for it. That’s a '+L.g('field-tag','field tag')+'. If a field isn’t set, it’s simply left out.'],
+   ['Packing tighter','Thrift’s CompactProtocol and Protocol Buffers squeeze tag and type into one byte and use '+L.g('varint','variable-length integers')+'. The book’s number 1337 takes two bytes instead of eight.'],
+   ['Required or optional?','Marking a field “required” changes nothing in the bytes. It only adds a check that fails at runtime if the field is missing, which helps catch bugs.']],
+   'Field-tag formats send each value with a small number, never the field name. The schema maps numbers back to names.');}},
+{part:2,src:'Chapter 4 · Thrift and Protocol Buffers',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In Protocol Buffers bytes, what tells the reader which field a value belongs to?</h1>');
+  L.mc(L.card,['The field name, written in short form','Nothing at all; the values are in order','A small number, the field’s tag'],2,
+   'Each value carries its field tag (and a type). The schema says which name goes with which tag.',
+   'Field names never appear in the bytes, and the values aren’t identified by order alone. Each one carries its tag number.');}},
+{part:2,src:'Chapter 4 · Thrift and Protocol Buffers',pts:1,
+ solve:async L=>{L.$('#pk').children[1].click();L.$('#enc').click();},
+ run(L){
+  let p=null;const P=['Binary JSON (MessagePack)','A schema with field tags'];
+  const F=[['Text JSON',81],['MessagePack',66],['Thrift Binary',59],['Thrift Compact',34],['Protocol Buffers',33]],C=['var(--h3)','var(--h4)','var(--h1)','var(--h2)','var(--ok-strong)'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias wants smaller scan events. Which switch shrinks a record more?</h1><div id="pk"></div>'+
+   '<div id="bars" hidden><p class="small" style="margin:10px 0 6px">The book encodes the same small record (a name, a number and two interests) in each format.</p>'+
+   F.map((f,j)=>'<div class="meterrow"><div class="lb">'+f[0]+' <span id="n'+j+'"></span></div><div class="meter"><div id="b'+j+'" style="background:'+C[j]+'"></div></div></div>').join('')+
+   '<button class="btn pri" id="enc" style="margin-top:12px">'+L.ic('play')+'Encode the record</button></div>');
+  P.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#bars').hidden=false;};L.$('#pk').appendChild(b);});
+  L.$('#enc').onclick=function(){this.remove();let k=0;
+    const t=setInterval(()=>{const el=L.$('#b'+k);if(!el){clearInterval(t);return;}el.style.width=Math.round(F[k][1]/81*100)+'%';L.$('#n'+k).textContent='· '+F[k][1]+' bytes';k++;
+      if(k>=F.length){clearInterval(t);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'Right: drop the names':'The tags win by far','Binary JSON only went from 81 to 66 bytes, because every field name is still inside. Formats with a schema and field tags drop the names and get down to 33 or 34 bytes. Avro, next, gets to 32.');L.done();}},280);};}},
+{part:2,src:'Chapter 4 · Field tags and schema evolution',run(L){
+  L.h(L.kick('learn','Changing a tagged schema')+'<h1 class="q">Five changes. Tap each to see the rule.</h1>');
+  L.flips(L.card,[
+   ['Rename a field','<b>Fine.</b> The bytes never contain names, only tags.'],
+   ['Change a field’s tag','<b>Never.</b> Every record already stored would suddenly mean something else.'],
+   ['Add a field','<b>Fine, with a new tag.</b> Old code skips tags it doesn’t know; the type tells it how many bytes to skip (forward). But the new field must be optional or have a default, or new code would reject old records (backward).'],
+   ['Remove a field','<b>Only if it was optional.</b> And never use its tag again: old data with that tag is still out there.'],
+   ['Change a type','<b>Check the docs.</b> 32-bit to 64-bit: new code reads old data fine, but old code may cut a big new value down to 32 bits. In Protocol Buffers, a single field can become “repeated”: old code then sees only the last item.']],
+   'The tag is the field’s identity. Names can change; tags are forever. New fields are optional or have a default.');}},
+{part:2,src:'Chapter 4 · Field tags and schema evolution',pts:1,
+ solve:async L=>{const g=L.$('#tg').children;g[0].click();g[1].click();},
+ run(L){
+  const O=['Reuse tag 5 (it’s free now)','Give it a new tag, 6'],seen=new Set();
+  const R=['<b>Decoded:</b> trackingCode OP-48213 · status delivered · <b>weightGrams 2500</b><br><span style="color:var(--no)">Wrong! That 2500 was $25.00 cash on delivery, not a weight.</span>',
+           '<b>Decoded:</b> trackingCode OP-48213 · status delivered · weightGrams (not set)<br><span style="color:var(--ok)">Tag 5 is unknown now, so it’s skipped. Nothing is misread.</span>'];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tag 5 was <code>codCents</code>, a cash-on-delivery amount. Otterpost dropped cash on delivery and removed the field. Now Tobias adds <code>weightGrams</code>. Try both choices on a scan stored in 2022.</h1>'+
+   '<div id="tg"></div><div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:72px"><div class="small" style="margin-bottom:6px">Stored 2022 scan: tag 1 = OP-48213 · tag 2 = delivered · tag 5 = 2500</div><div id="out" class="small">Pick a tag above.</div></div><div id="tq"></div>');
+  O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{[...L.$('#tg').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);L.$('#out').innerHTML=R[j];
+    if(seen.size===2&&!L.$('#tq').innerHTML){const q=L.$('#tq');q.innerHTML='<h2 class="sub">Which rule did this show?</h2>';
+      L.mc(q,['Never remove a field from a schema','Always make new fields required','Never reuse the tag of a removed field'],2,
+       'Old records with tag 5 still exist. If the tag gets a new meaning, those old values are silently misread as the new field.',
+       'Removing an optional field is allowed, and new fields must <i>not</i> be required. The bug came from giving an old tag a new meaning.');}};L.$('#tg').appendChild(b);});}},
+
+/* ---------- PART 4: AVRO AND SCHEMAS ---------- */
+{part:3,src:'Chapter 4 · Avro',run(L){
+  L.h(L.kick('learn','Avro')+'<h1 class="q">No tags at all: just values, one after another</h1>'+
+   L.prose('Avro started in 2009 as part of Hadoop. It also uses a schema, but the schema has <b>no tag numbers</b>, and the bytes hold no field names and no types. A text value is just a length and the letters. The book’s record takes 32 bytes, the smallest yet.')+
+   L.prose('So to decode, you walk through the fields in the order the schema lists them. That only works if you know the <b>exact schema the data was written with</b>.')+
+   L.lanes([['pencil','Writer’s schema','The schema version the program used to <b>encode</b> the data, for example the one built into it.',1],
+            ['eye','Reader’s schema','The schema version the reading program <b>expects</b>. Its code may have been generated from it.',2]])+
+   L.note('The key idea: the two don’t have to be the same, only <b>compatible</b>. When reading, the Avro library compares them side by side and translates the data from the writer’s schema into the reader’s.','bulb'));
+  L.done();}},
+{part:3,src:'Chapter 4 · The writer’s schema and the reader’s schema',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh’s job reads an Avro file of parcels from last year</h1>');
+  L.beats(L.card,[
+   ['Two schemas','The file was written with last year’s '+L.g('writers-schema','writer’s schema')+': <code>status</code>, <code>parcelId</code>, <code>merchantId</code>, <code>courierNote</code>. Linh’s ETA job uses today’s '+L.g('readers-schema','reader’s schema')+': <code>parcelId</code>, <code>merchantId</code>, <code>status</code>, <code>timeSlot</code> (default: null).'],
+   ['Order','The fields are in a different order. No problem: Avro matches fields <b>by name</b>.'],
+   ['Writer only','<code>courierNote</code> is in the writer’s schema but not the reader’s. It’s <b>ignored</b>.'],
+   ['Reader only','<code>timeSlot</code> is in the reader’s schema but not the writer’s. It’s <b>filled in with the default</b> from the reader’s schema: null.'],
+   ['Result','Every parcel arrives in exactly the shape Linh’s code expects, even though it was written by a different version.']],
+   'Avro resolves differences at read time: match by name, ignore extra fields, fill missing fields with the reader’s defaults.');}},
+{part:3,src:'Chapter 4 · The writer’s schema and the reader’s schema',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The reader’s schema has <code>weightGrams</code> with a default of 0. The writer’s schema has no such field. What does the reader get?</h1>');
+  L.mc(L.card,['An error, because the two schemas differ','Whatever bytes come next in the record','The default from its own schema: 0'],2,
+   'A field the reader expects but the writer never wrote is filled with the default from the reader’s schema.',
+   'The schemas only need to be compatible, not equal, and Avro never guesses from leftover bytes. The missing field gets the reader’s default, 0.');}},
+{part:3,src:'Chapter 4 · Schema evolution rules',run(L){
+  L.h(L.kick('learn','Avro’s rules for change')+'<h1 class="q">Defaults are what make change safe</h1>'+
+   L.prose('In Avro, <b>forward</b> compatibility means a new writer’s schema with an old reader’s schema. <b>Backward</b> means a new reader with an old writer.')+
+   L.list([['check','Add or remove only fields with a default','Add one without a default, and new readers can’t read old data (breaks backward). Remove one without a default, and old readers can’t read new data (breaks forward).'],
+     ['shield','Null is opt-in','A field can be null only if its type is a union that includes null, such as “null or long”. That’s wordier but stops bugs. Avro uses unions and defaults instead of optional and required.'],
+     ['pencil','Renames and unions work one way','The reader’s schema can list aliases for old field names, so renaming is backward compatible but not forward. Adding a type to a union is the same.']],3)+
+   '<p class="small" style="margin-top:10px">Changing a field’s type works if Avro can convert between the two types.</p>');
+  L.done();}},
+{part:3,src:'Chapter 4 · Schema evolution rules',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which reads still work?',['Safe both ways','Backward only','Forward only'],[
+   ['Linh adds <code>vanId</code> to the parcels schema, with a default of null.',0,'Old readers ignore it; new readers fill in null for old records. A field with a default is safe both ways.'],
+   ['Linh adds <code>zoneCode</code> with <b>no</b> default.',2,'Old readers just ignore the new field (forward is fine). But new readers find nothing to fill in when reading old data, so backward breaks.'],
+   ['Linh removes <code>hubCode</code>, which had <b>no</b> default.',1,'New readers simply ignore it in old data (backward is fine). Old readers still expect it in new data and have no default, so forward breaks.'],
+   ['Linh renames <code>status</code> to <code>scanType</code>, with the old name as an alias in the reader’s schema.',1,'The new reader can match the old name through the alias. Old readers don’t know the new name, so renaming is backward but not forward compatible.'],
+   ['Linh removes <code>courierNote</code>, which had a default of null.',0,'Old readers fill in the default when it’s missing; new readers ignore it in old data. Safe both ways.'],
+   ['Linh lets <code>weight</code> be “long or text” instead of just “long”.',1,'Adding a branch to a union is backward compatible: new readers handle both. Old readers can’t handle the new text values.']]);}},
+{part:3,src:'Chapter 4 · But what is the writer’s schema?',pts:1,run(L){
+  L.h(L.kick('learn','Where the writer’s schema lives')+'<h1 class="q">The reader must find the writer’s schema somehow</h1>'+
+   L.prose('Sending the full schema with every record would often take more space than the data itself. So it depends on the setting:')+
+   L.list([['book','A big file of similar records','Write the schema once at the start of the file. Avro defines a file format for this (object container files).'],
+     ['layers','A database of records written over years','Put a schema version number at the start of each record, and keep every schema version in the database. LinkedIn’s Espresso works this way.'],
+     ['chat','A network connection','Agree on the schema version when the connection opens, then use it for the whole connection.']],1)+
+   '<p class="small" style="margin-top:8px">A database of schema versions is worth having anyway: it documents the data and lets you check compatibility. The version can be a counter or a hash of the schema.</p>'+
+   '<div id="wq"><h2 class="sub">Linh writes one nightly export file of 2 million parcel rows, all with the same schema. Where should the writer’s schema go?</h2></div>');
+  L.mc(L.$('#wq'),['Once, at the very start of the file','In front of every single row, to be safe','In a separate email to the readers'],0,
+   'All rows share one schema, so writing it once at the start of the file is enough. Avro’s object container files do exactly this.',
+   'Repeating the schema on every row would waste more space than the data, and readers need it reliably. Write it once at the start of the file.');}},
+{part:3,src:'Chapter 4 · Dynamically generated schemas',pts:1,run(L){
+  L.h(L.kick('learn','Generated schemas and generated code')+'<h1 class="q">Why no tags can be an advantage</h1>'+
+   L.prose('Say you dump a relational database to files. With Avro you can <b>generate</b> the schema from the tables: one record per table, one field per column, named after the column. If a column is added or dropped, just generate a new schema. Fields match by name, so old readers still work.')+
+   L.prose('With Thrift or Protocol Buffers, someone would have to map each column to a tag by hand, and never reuse an old tag. Generated schemas were simply not their design goal.')+
+   L.lanes([['lock','Code generation helps…','in statically typed languages (Java, C++, C#): efficient objects, type checks and autocomplete.',1],
+            ['leaf','…and is optional in Avro','Dynamic languages (JavaScript, Ruby, Python) gain little from it. An Avro file carries its schema, so you can open it like a JSON file.',2]])+
+   '<div id="dq"><h2 class="sub">Why does Avro suit Linh’s Parcel DB export better than Protocol Buffers?</h2></div>');
+  L.mc(L.$('#dq'),['Fields match by name, so there are no tags to assign','Avro files are plain text that people can read','Avro needs no schema for reading at all'],0,
+   'The export can regenerate the schema every night from the tables, with no hand-kept list of column-to-tag numbers.',
+   'Avro is binary and does need the writer’s schema. Its advantage here is matching by name, so a generated schema needs no tag numbers.');}},
+{part:3,src:'Chapter 4 · The Merits of Schemas',pts:1,run(L){
+  L.h(L.kick('learn','The merits of schemas')+'<h1 class="q">Why the book likes binary formats with a schema</h1>'+
+   L.prose('Their schema languages are simpler than XML Schema or JSON Schema, so they work in many languages. The idea is old: ASN.1, standardized in 1984, used tag numbers too, but it’s complex and badly documented.')+
+   L.list([['box','Compact','They can leave field names out of the data.'],['book','Documentation that stays true','The schema is needed to decode, so it can’t drift out of date.'],['check','Checked before deploy','A database of schemas lets you test forward and backward compatibility first.'],['lock','Type-checked code','Generated code catches mistakes at compile time.']],2)+
+   '<p class="small" style="margin-top:8px">The cost: people can’t read the data until it’s decoded. Overall, you get the flexibility of schemaless JSON with better guarantees and tools.</p>'+
+   '<h2 class="sub">Tap each piece until the sentence is true.</h2><div id="sq"></div>');
+  L.sentence(L.$('#sq'),[['The field names','The schema','The Base64 text'],['is needed to decode the data,','is optional for readers,','is kept in a separate wiki,'],['so it never goes out of date.','so it slows every read.','so it must be checked by hand.']],[1,0,0],
+   [['Field names are exactly what these formats leave out of the data.','Base64 is a workaround for bytes in JSON, not part of a schema.'],['If readers could skip it, nothing would force it to stay current.','A wiki is the kind of documentation that drifts away from reality.'],['Using a schema doesn’t make reads slow.','The point is that nobody has to check it by hand.']],
+   'Because decoding needs the schema, the schema is documentation that can never quietly fall out of date.');}}
+  ]
+});
+</script>
+</body>
+</html>

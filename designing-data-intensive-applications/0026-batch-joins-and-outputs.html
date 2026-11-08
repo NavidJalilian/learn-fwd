@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Joins and Outputs of Batch Jobs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0026', title:'Joins and outputs of batch jobs', minutes:20, icon:'layers',
+  goals:['Pick the right batch join for two datasets: reduce-side, broadcast, partitioned or merge','Ship a batch job’s output safely, without writing into a live database','Explain how Hadoop differs from an MPP database, and why MapReduce expects tasks to die'],
+  parts:['Reduce-side joins','Map-side joins','Batch outputs','Hadoop vs MPP'],
+  read:'Read the second half of the MapReduce section in chapter 10 for the join algorithms and the Google preemption numbers.',
+  glossary:{
+    mapper:'Mapper: in MapReduce, your function that is called once for every input record and pulls a key and a value out of it.',
+    reducer:'Reducer: in MapReduce, your function that is called once per key, with all the values for that key, and writes output records.',
+    sortmerge:'Sort-merge join: a reduce-side join. Mappers tag every record from both inputs with the join key; the framework sorts by key, so matching records meet in the same reducer call.',
+    secondary:'Secondary sort: arranging the records within one key in a chosen order, such as “the profile record first, then events by time.”',
+    hotkey:'Hot key: a key with far more records than the others (a “celebrity”). It makes one reducer do much more work than the rest, which is called skew.',
+    broadcast:'Broadcast hash join: a map-side join where the small input is loaded whole into a hash table in every mapper, and each mapper scans its part of the large input.',
+    mpp:'MPP (massively parallel processing): analytics databases that split one complex query into stages and pieces, and run many of them at once on different nodes.'
+  },
+  cheatsheet:[
+    'Batch jobs join <b>whole datasets</b> by scanning them, not by looking up one record at a time. Copy the other dataset into the cluster instead of querying a live database per record.',
+    '<b>Sort-merge join</b> (reduce-side): mappers emit the join key, the shuffle brings matches together, a <b>secondary sort</b> puts the profile record first. Works on any input.',
+    '<b>Hot keys</b> cause skew: spread them over several reducers (and copy the other side’s record to each), or aggregate in two stages.',
+    'Map-side joins skip the sort: <b>broadcast hash</b> (one side fits in memory), <b>partitioned hash</b> (both sides partitioned the same way), <b>merge</b> (also sorted the same way).',
+    'A join’s output layout matters for the next job: reduce-side output follows the join key, map-side output follows the large input.',
+    'Build outputs (search indexes, key-value files) as <b>new immutable files</b>, then switch servers to them. Never write record by record into a live database.',
+    'Immutable inputs + replaced outputs = <b>human fault tolerance</b>: roll back the code and rerun, or switch back to the old output.',
+    'Hadoop vs MPP: store any raw data, run any code, and retry single tasks, because preemption makes tasks die often.'
+  ],
+  steps:[
+/* ---------- PART 1: REDUCE-SIDE JOINS ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Linh needs yesterday’s on-time rate by vehicle type: cargo bike or van. The 2.4 million scans only hold a courier ID. Which plan sounds better?</h1>');
+  L.mc(L.card,['Ask the live Parcel DB for each scan’s courier, one query per scan','Copy the courier table next to the scans and match them all in one pass'],1,
+   'Millions of tiny round trips would be slow and would hammer the live database. This lesson shows how batch jobs join whole datasets in bulk.',
+   'One query per scan means 2.4 million round trips to a live database. Copying the courier table and matching in bulk is how batch jobs join.');}},
+{part:0,src:'Chapter 10 · Reduce-Side Joins and Grouping',run(L){
+  L.h(L.kick('learn','Joins in batch jobs')+'<h1 class="q">A batch job joins everything at once</h1>'+
+   L.prose('A join is needed whenever code must see records on both sides of a reference: a foreign key, a document reference or a graph edge. When a database answers a small query, it uses an '+L.g('index','index')+' to find the few records it needs.')+
+   L.prose('MapReduce has no indexes in that sense. It reads <b>all</b> of its input files, what a database would call a full table scan. That is outrageously expensive for a few records, but reasonable for analytics over a great many, especially spread across machines.')+
+   L.note('So in batch processing, a join means resolving <b>every</b> occurrence of a link across the whole dataset: all couriers’ scans at once, not one courier’s.','info')+
+   L.prose('The book’s example is a log of website <b>activity events</b> joined with a database of <b>user profiles</b>, to see which pages are popular with which age groups. The events hold only a user ID. Copying the whole profile into every event would be too wasteful, so the two must be joined. Think of it as a star schema: the events are the fact table, the users a dimension.'));
+  L.done();}},
+{part:0,src:'Chapter 10 · Example: analysis of user activity events',run(L){
+  L.h(L.kick('learn','Why not just query the database?')+'<h1 class="q">One remote lookup per record is the wrong shape for batch</h1>'+
+   L.prose('The simplest join would walk through the events and ask the user database, over the network, about each user ID. It works, but the book lists why it performs badly:')+
+   L.list([['clock','Round trips','Throughput is capped by the time each request takes to reach the database and come back.'],
+     ['layers','Caching is luck','How much a local cache helps depends heavily on how the data happens to be spread.'],
+     ['flame','Overload','Running many queries in parallel could easily swamp the database.'],
+     ['cycle','Changing answers','The remote data may change while the job runs, so the job is no longer deterministic: run it twice, get different results.']],4)+
+   L.prose('The better way: take a <b>copy</b> of the user database (for example, extracted from a backup by an ETL process) and put it in the same distributed filesystem as the events. Then MapReduce can bring matching records together and process them on the same machine.'));
+  L.done();}},
+{part:0,src:'Chapter 10 · Sort-merge joins',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh joins scans with couriers, step by step</h1>');
+  L.beats(L.card,[
+   ['Two kinds of mapper','One set of '+L.g('mapper','mappers')+' reads the scans and emits <b>(courier ID, scan)</b>. Another reads the copied courier table and emits <b>(courier ID, vehicle type)</b>.'],
+   ['Partition and sort','The framework partitions and sorts by key. Every record for courier C-0017, from both inputs, now sits side by side in one reducer’s input.'],
+   ['Secondary sort','Linh arranges the order within each key: the courier record first, then that courier’s scans in time order. This is a '+L.g('secondary','secondary sort')+'.'],
+   ['Reduce','The '+L.g('reducer','reducer')+' runs once per courier ID. It reads the first value, stores “van” in a local variable, then walks the scans and outputs (van, on time?) for each.'],
+   ['Next job','A later job counts on-time rates per vehicle type from that output.'],
+   ['Why it’s cheap','The reducer holds one courier record in memory at a time and never makes a network request.']],
+   'This is a '+L.g('sortmerge','sort-merge join')+': mapper output is sorted by key, and the reducer merges the two sorted lists of records.');}},
+{part:0,src:'Chapter 10 · Sort-merge joins',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What makes a courier’s own record reach the reducer before that courier’s scans?</h1>');
+  L.mc(L.card,['The reducer loads every courier record into memory first','The courier table being much smaller than the scans','A secondary sort that orders records within each key'],2,
+   'The secondary sort puts the courier record first and the scans after it in time order, so the reducer never has to buffer scans while waiting.',
+   'The main sort only groups records by key; it doesn’t say which comes first within a key. That is the secondary sort’s job. Size and loading everything into memory play no part.');}},
+{part:0,src:'Chapter 10 · Bringing related data together in the same place',run(L){
+  L.h(L.kick('learn','The key is an address')+'<h1 class="q">Joins and grouping use the same trick</h1>'+
+   L.prose('You can think of mappers as sending messages to reducers. The key works like a delivery address: every pair with the same key is delivered to the same place, one reducer call. Having all the data lined up in advance, the reducer can be simple, single-threaded code that runs fast with little memory.')+
+   L.prose('This separates <b>getting data to the right machine</b> (the framework’s job) from <b>processing it</b> (your code). Compare a normal app, where database queries sit deep inside application code. Because the framework does all network communication, it can also quietly retry tasks that fail, without your logic noticing.')+
+   L.lanes([['list','Grouping (GROUP BY)','Emit the grouping key, and the reducer aggregates each group: count it, sum a field, or pick the top k.',1],
+            ['person','Sessionization','Gather every event for one user (or session) from many web servers’ logs, to see what they did in order. Useful for A/B tests or judging a marketing campaign.',2]]));
+  L.done();}},
+{part:0,src:'Chapter 10 · GROUP BY',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which key should the mapper emit?',['Courier ID','Merchant ID','Hub name'],[
+   ['Count how many scans each hub handled yesterday.',2,'Group by hub, and the reducer counts each group.'],
+   ['Join parcels with merchant records to total each merchant’s label spend.',1,'The join key is the merchant ID that links each parcel to its merchant.'],
+   ['Rebuild each courier’s day from scans scattered across many hub servers’ logs.',0,'That is sessionization: bring every event for one courier together, in time order.'],
+   ['Join scans with the courier table to add each courier’s vehicle type.',0,'The scans and the courier records share the courier ID.'],
+   ['Find each merchant’s ten busiest postcodes.',1,'Group by merchant, then pick the top ten inside each group.']]);}},
+{part:0,src:'Chapter 10 · Handling skew',run(L){
+  L.h(L.kick('learn','Handling skew')+'<h1 class="q">When one key is far bigger than the rest</h1>'+
+   L.prose('Sending every record for a key to one place breaks down when one key has a huge amount of data. The book’s example is a celebrity with millions of followers. Such keys are called '+L.g('hotkey','hot keys')+' (or linchpin objects). The reducer that gets one has far more work than the others: that imbalance is called <b>skew</b>, or a hot spot.')+
+   L.note('A MapReduce job is only finished when its <b>slowest</b> reducer is finished, and every later job waits for it.','clock')+
+   L.list([['Skewed join (Pig)','A sampling job first finds the hot keys. Mappers then send each hot-key record to one of several reducers, chosen at random. The other input’s records for that key are copied to all of those reducers.'],
+     ['Sharded join (Crunch)','The same idea, but you name the hot keys yourself instead of sampling.'],
+     ['Skewed join (Hive)','Hot keys are listed in the table’s metadata and stored in separate files, then joined with a map-side join.'],
+     ['Two-stage grouping','To aggregate a hot key, first send its records to random reducers that each produce a partial total, then a second job combines the partial totals.']],3));
+  L.done();}},
+{part:0,src:'Chapter 10 · Handling skew',pts:1,
+ solve:async L=>{L.$('#spr').click();},
+ run(L){
+  const before=[22,22,100,22,22,22],after=[22,42,42,42,42,22];
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh joins all parcels with merchant records, keyed by merchant ID. Bramble & Bolt sends about 15% of all parcels.</h1>'+
+   '<div id="bars">'+before.map((v,j)=>'<div class="meterrow"><div class="lb">Reducer '+(j+1)+(j===2?' <b>(Bramble & Bolt)</b>':'')+'</div><div class="meter"><div id="b'+j+'" style="width:'+v+'%;transition:width .8s;background:'+(j===2?'var(--no)':'var(--h2)')+'"></div></div></div>').join('')+'</div>'+
+   '<p class="small" id="tm">6 of the job’s 20 reducers shown. The job ends when the slowest reducer ends: <b>19 units of work</b>, while most reducers have about 4.</p>'+
+   '<button class="btn pri" id="spr">'+L.ic('play')+'Spread Bramble & Bolt over 4 reducers</button><div id="hq"></div>');
+  L.$('#spr').onclick=function(){this.remove();after.forEach((v,j)=>{const b=L.$('#b'+j);b.style.width=v+'%';b.style.background=(v>30?'var(--h3)':'var(--h2)');});
+    L.$('#tm').innerHTML='Bramble & Bolt’s parcels now go to reducers 2 to 5 at random. The slowest reducer has about <b>8 units</b>, so the whole job finishes more than twice as fast.';
+    const q=L.$('#hq');q.innerHTML='<h2 class="sub">What must now happen to the single Bramble & Bolt merchant record?</h2>';
+    L.mc(q,['It goes to one of the four, picked by hash','It is copied to all four of those reducers','It is dropped and joined in a later job'],1,
+     'Each of the four reducers has some Bramble & Bolt parcels, so each needs the merchant record. That copying is the price of spreading the work.',
+     'Each of the four reducers now holds some Bramble & Bolt parcels, and each must join them. So the merchant record is copied to all four. That copying is the cost of spreading the work.');};}},
+
+/* ---------- PART 2: MAP-SIDE JOINS ---------- */
+{part:1,src:'Chapter 10 · Map-Side Joins',run(L){
+  L.h(L.kick('learn','Skip the sort')+'<h1 class="q">If you know your inputs, you can drop the reducers</h1>'+
+   L.lanes([['layers','Reduce-side join','Assumes nothing about the input: the mappers can always prepare it. But all the sorting, copying to reducers and merging is expensive. Data may be written to disk several times on the way.',1],
+            ['pointer','Map-side join','Possible only if you can make certain assumptions about the inputs. A cut-down job with <b>no reducers and no sorting</b>: each mapper reads one input block and writes one output file. That’s all.',2]])+
+   L.prose('The next screen shows three map-side joins. Each one depends on a different assumption about the inputs.'));
+  L.done();}},
+{part:1,src:'Chapter 10 · Broadcast hash joins',run(L){
+  L.h(L.kick('learn','Three map-side joins')+'<h1 class="q">Each works under a different assumption</h1>'+
+   L.tiers([['box','Broadcast hash join','<b>One side is small enough to fit in memory.</b> There is one mapper per block of the large input, and each one first loads the whole small input into an in-memory hash table, then scans its block and looks up each record. The small input is “broadcast” to every mapper. A variant keeps the small side in a read-only index on local disk, mostly served from the operating system’s cache.','Pig calls it a replicated join, Hive a MapJoin',true,'Simplest'],
+            ['layers','Partitioned hash join','<b>Both sides are partitioned the same way:</b> same key, same hash function, same number of partitions. Say both are split by the last digit of the user ID. Mapper 3 loads only users ending in 3, then scans only events for those users. Each hash table is much smaller.','Hive calls these bucketed map joins'],
+            ['list','Map-side merge join','<b>Both sides are partitioned the same way and also sorted by the same key.</b> A mapper reads both files in key order and matches records, just as a reducer would. Size no longer matters.','Usually means earlier jobs already put the data in this shape']]));
+  L.done();}},
+{part:1,src:'Chapter 10 · Broadcast hash joins',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh joins 2.4 million scans with Otterpost’s 3,000 couriers. Nobody knows how the two are partitioned. Which join is the simplest good fit?</h1>');
+  L.mc(L.card,['Broadcast hash join','Map-side merge join','Reduce-side sort-merge join'],0,
+   '3,000 courier records fit easily in each mapper’s memory. Every mapper loads them into a hash table and scans its block of scans: no sorting, no reducers.',
+   'A merge join needs both sides partitioned and sorted the same way, which nobody knows here. A sort-merge join would work but pays for sorting and shuffling. With a small courier table, a broadcast hash join is simplest.');}},
+{part:1,src:'Chapter 10 · Map-Side Joins',pts:5,run(L){
+  L.h(L.kick('pr','Pick the join')+'<h1 class="q">Which join fits each of Linh’s jobs best?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Broadcast hash','Partitioned hash','Map-side merge','Reduce-side'],[
+   ['All of yesterday’s scans joined with the small table of hubs',0,'The hub table easily fits in every mapper’s memory.'],
+   ['Parcels and delivery attempts, both split into 32 partitions by the same hash of parcel ID',1,'Same key, same hash, same number of partitions: each mapper joins one matching pair of partitions.'],
+   ['Parcels and delivery attempts, split the same way and also sorted by parcel ID',2,'Partitioned and sorted alike, so a mapper can merge the two files in key order.'],
+   ['Two huge datasets from other teams; nobody knows how either is partitioned',3,'With no safe assumptions and neither side small, the reduce-side join is the one that always works.'],
+   ['Parcels split by merchant ID into 16 parts, addresses split by postcode into 16 parts',3,'Same number of parts but different keys, so matching records may sit in different partitions. Reduce-side it is.']],
+   'Small side? Broadcast. Same partitioning? Partitioned hash. Same partitioning and sort order? Merge. Otherwise, the reduce-side join.');}},
+{part:1,src:'Chapter 10 · MapReduce workflows with map-side joins',run(L){
+  L.h(L.kick('learn','Layout is part of the output')+'<h1 class="q">Your join choice decides how the next job sees the data</h1>'+
+   L.lanes([['layers','After a reduce-side join','Output is partitioned and sorted by the <b>join key</b>.',1],
+            ['pointer','After a map-side join','Output is partitioned and sorted like the <b>large input</b>, because one map task runs per block of it.',2]])+
+   L.prose('Because map-side joins assume things about size, sorting and partitioning, you need to know a dataset’s physical layout. Knowing its file format and directory is not enough. You also need the number of partitions and the keys it is partitioned and sorted by.')+
+   L.note('In the Hadoop world, this metadata is often kept in HCatalog and the Hive metastore.','book'));
+  L.done();}},
+{part:1,src:'Chapter 10 · MapReduce workflows with map-side joins',pts:1,run(L){
+  L.h(L.kick('pr','Plan the next job')+'<h1 class="q">Job 1 broadcast-joins the scans (stored as one file per hour) with the hub table. Job 2 wants a partitioned hash join of job 1’s output with couriers, by courier ID. Can it run directly?</h1>');
+  L.mc(L.card,['Yes, a join’s output is always partitioned by its key','Yes, since the hub table was sent to every mapper','No, the output is laid out like the hourly scan files'],2,
+   'A map-side join’s output follows the large input, here the hourly scan files, not courier ID. Job 2 would need a reduce-side join, or a step that repartitions by courier ID first.',
+   'Only a reduce-side join’s output follows the join key. A broadcast join runs one mapper per block of the large input, so the output keeps the scans’ hourly layout, not courier ID.');}},
+
+/* ---------- PART 3: BATCH OUTPUTS ---------- */
+{part:2,src:'Chapter 10 · The Output of Batch Workflows',run(L){
+  L.h(L.kick('learn','What batch jobs produce')+'<h1 class="q">Often not a report, but a structure other systems use</h1>'+
+   L.prose('Batch processing is neither transaction processing nor quite analytics. Like analytics it scans large parts of its input, but its output is often not a report for a manager. It is some other kind of structure.')+
+   L.lanes([['eye','Search indexes','Google first used MapReduce to build its search index, with a workflow of 5 to 10 jobs. Mappers partition the documents, each reducer builds the index for its partition, and the index files are written out. Searching is read-only, so the files never change. When documents change, either rerun the whole workflow and swap in the new files, or update incrementally.',1],
+            ['box','Key-value stores','Batch jobs build machine-learning classifiers (spam filters, image recognition) and recommendation systems (people you may know, related products). The output is a database the web application queries, say by user ID or product ID.',2]])+
+   L.note('Otterpost example: Linh’s nightly job could produce a lookup table of typical delivery windows by postcode and hour, which the tracking page queries all day.','map'));
+  L.done();}},
+{part:2,src:'Chapter 10 · Key-value stores as batch process output',run(L){
+  L.h(L.kick('learn','Getting results out')+'<h1 class="q">Don’t write into the live database, row by row</h1>'+
+   L.prose('The obvious move is to call the production database from inside each mapper or reducer, one record at a time. The book calls this a bad idea, for three reasons:')+
+   L.list([['Too slow','A network request per record is orders of magnitude slower than a batch task’s normal speed, even with batching.'],
+     ['It floods the database','Many parallel tasks writing at batch speed can overwhelm it, hurting the queries real users are making.'],
+     ['It leaks partial results','MapReduce normally gives all-or-nothing output. Writes to an outside system are visible side effects: results from half-done jobs, retried task attempts and speculative execution can all leak out.']],4)+
+   L.prose('<b>The better way:</b> build a brand-new database as files in the job’s output directory, then bulk-load them into servers that answer read-only queries. Voldemort, Terrapin, ElephantDB and HBase bulk loading support this. Read-only files can use simple structures, without even a write-ahead log. Voldemort keeps serving the old files while copying the new ones, then switches over in one step, and can switch back if anything goes wrong.'));
+  L.done();}},
+{part:2,src:'Chapter 10 · Key-value stores as batch process output',pts:1,
+ solve:async L=>{L.$('#pa').click();L.$('#pb').click();},
+ run(L){
+  const P={a:['200 tasks start writing rows straight into the live lookup database.','The database is flooded; tracking page responses slow down for recipients.','A task crashes and is retried; then the whole job fails at 60%.','Result: recipients see a mix of tonight’s and last night’s delivery windows.'],
+           b:['Tasks write a brand-new set of lookup files to HDFS. Servers keep using last night’s files.','The new files are copied to the lookup servers, which switch to them in one step.','A bad build? Switch back: last night’s files are still there, unchanged.','Result: recipients only ever see one complete version.']};
+  let seen=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Two ways to ship tonight’s delivery-window lookup table. Play both.</h1>'+
+   L.lanes([['alert','Plan A: write directly','<div id="la"></div><button class="btn" id="pa" style="margin-top:8px">'+L.ic('play')+'Run plan A</button>',4],
+            ['shield','Plan B: build files, then switch','<div id="lb"></div><button class="btn" id="pb" style="margin-top:8px">'+L.ic('play')+'Run plan B</button>',2]])+'<div id="pq"></div>');
+  const play=(k,el,btn)=>{btn.remove();P[k].forEach((t,j)=>setTimeout(()=>{const box=L.$(el);if(!box)return;box.innerHTML+='<p class="small" style="margin:6px 0">'+(j===3?'<b>'+t+'</b>':t)+'</p>';
+    if(j===3){seen++;if(seen===2){const q=L.$('#pq');q.innerHTML='<h2 class="sub">In plan A, a task was retried after writing 1,000 rows. What can recipients see that plan B keeps hidden?</h2>';
+      L.mc(q,['Older delivery windows from last night’s files','Rows from task attempts and a job that never finished','Nothing, since MapReduce discards failed output'],1,
+       'MapReduce can only throw away failed output inside its own output directory. Rows already written into an outside database stay visible.',
+       'MapReduce discards failed output only in its own output directory. Rows a task already wrote into an outside database are visible side effects, from attempts and a job that never finished.');}}},350*(j+1)));};
+  L.$('#pa').onclick=function(){play('a','#la',this);};
+  L.$('#pb').onclick=function(){play('b','#lb',this);};}},
+{part:2,src:'Chapter 10 · Philosophy of batch process outputs',run(L){
+  L.h(L.kick('learn','The Unix idea, at scale')+'<h1 class="q">Immutable input, replaced output, no side effects</h1>'+
+   L.prose('Like a Unix command, a well-behaved batch job leaves its input unchanged, completely replaces any previous output, and does nothing else. So you can rerun it as often as you like. The book lists what that buys:')+
+   L.list([['shield','Human fault tolerance','Ship a bug and the output is wrong? Roll back the code and rerun, or switch back to the old output kept in another directory. A database written by buggy code has no such fix: rolling back the code leaves the bad data in place.'],
+     ['trend','Faster feature work','Mistakes can be undone, so teams can move faster. The book calls this minimizing irreversibility.'],
+     ['cycle','Safe retries','A failed task is simply rerun on the same input. A real bug keeps failing and the job stops; a passing glitch is absorbed. Safe only because inputs never change and failed output is discarded.'],
+     ['eye','Many readers','The same input files can feed many jobs, including monitoring jobs that compare tonight’s output with last night’s.'],
+     ['people','Logic vs wiring','One team writes a job that does one thing well; others decide where and when it runs.']],2)+
+   '<p class="small" style="margin-top:10px">One difference from Unix: instead of parsing untyped text, Hadoop jobs often use structured formats such as Avro and Parquet, whose schemas can evolve.</p>');
+  L.done();}},
+{part:2,src:'Chapter 10 · Philosophy of batch process outputs',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Does rolling back the code fix the data?',['Yes: rerun, or switch back','No: the bad data stays'],[
+   ['A bug in Linh’s nightly job doubled one hub’s scan counts in the on-time report. Old outputs are kept in dated directories.',0,'Inputs are untouched, so fixing the code and rerunning gives a correct report. Or point readers back at yesterday’s directory.'],
+   ['A merchant dashboard bug wrote wrong delivery addresses straight into the Parcel DB for an hour.',1,'Read-write databases don’t have this property: the bad addresses stay until someone repairs them.'],
+   ['The delivery-window job built bad files, but the lookup servers still have last night’s files.',0,'Switch the servers back to the old files, which are still there and unchanged, then fix and rebuild.'],
+   ['A batch job wrote its results row by row into the live billing tables, with a bug in the price formula.',1,'Writing into an outside database gives up the batch job’s safety net. Rolling back the code doesn’t undo the rows.']]);}},
+
+/* ---------- PART 4: HADOOP VS MPP ---------- */
+{part:3,src:'Chapter 10 · Comparing Hadoop to Distributed Databases',run(L){
+  L.h(L.kick('learn','Hadoop vs MPP databases')+'<h1 class="q">The join algorithms weren’t new. The platform was.</h1>'+
+   L.prose('Hadoop is a bit like a distributed Unix: HDFS is the filesystem and MapReduce a quirky process that always runs a sort between map and reduce. Every parallel join in this lesson had already been built a decade earlier in '+L.g('mpp','MPP databases')+', such as Gamma, Teradata and Tandem NonStop SQL.')+
+   L.prose('The big difference: MPP databases run analytic SQL in parallel. MapReduce plus a distributed filesystem is closer to a general-purpose operating system that runs any program. That shows up first in <b>storage</b>.')+
+   L.lanes([['lock','MPP database','Needs careful up-front modeling of data and queries before import into its own storage format.',1],
+            ['box','Hadoop','Files are just bytes: records, text, images, video, sensor readings, genomes. Dump the data in first and work out how to process it later.',2]])+
+   L.quote('raw data is better','the “sushi principle,” cited in chapter 10')+
+   L.prose('Making data available quickly, even in an awkward raw format, is often worth more than agreeing the perfect model first. Interpreting it becomes the consumer’s job (schema-on-read). Hadoop is often used for ETL: dump raw data, clean it with MapReduce, then load it into an MPP warehouse. Modeling still happens, just as a separate step.'));
+  L.done();}},
+{part:3,src:'Chapter 10 · Diversity of storage',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The courier app team wants to dump raw app logs into HDFS today. Nobody has designed a schema yet. Zainab asks them to model it properly first. What would the book say?</h1>');
+  L.mc(L.card,['Load it into the Parcel DB so it gets a schema','Dumping it raw first is often worth more; model later','Raw data is worthless until its schema is designed'],1,
+   'Collecting the data quickly, then letting each consumer interpret it, often beats waiting for the ideal model. Modeling still happens, later and separately.',
+   'The book argues the opposite: making data available fast, even raw, is often more valuable than designing the ideal model first. The Parcel DB is the system of record for parcels, not a dumping ground for logs.');}},
+{part:3,src:'Chapter 10 · Diversity of processing models',run(L){
+  L.h(L.kick('learn','Diversity of processing models')+'<h1 class="q">Not everything is a SQL query</h1>'+
+   L.prose('MPP databases are tightly integrated: storage layout, query planning, scheduling and execution are all tuned together, so they are very fast on the queries they were designed for. And SQL lets business analysts query data without writing code, using graphical tools such as Tableau.')+
+   L.prose('But machine learning, recommendation systems, search indexes with relevance ranking and image analysis need a more general model. They mean writing <b>code</b>, not just queries. MapReduce let engineers run their own code over large datasets, and you can even build SQL on top of it, which is what Hive did.')+
+   L.note('<b>One cluster, many models.</b> Many processing styles can run on one shared cluster, reading the same files. No need to copy data into a separate specialized system for each job. HBase (a random-access OLTP database) and Impala (an MPP-style analytic engine) both store their data in HDFS without using MapReduce.','layers'));
+  L.done();}},
+{part:3,src:'Chapter 10 · Diversity of processing models',pts:4,run(L){
+  L.h(L.kick('pr','Query or code?')+'<h1 class="q">Which approach does each task naturally call for?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['SQL query','Custom code'],[
+   ['A monthly on-time dashboard that managers explore in a BI tool',0,'Aggregations an analyst can express in SQL, which graphical tools understand.'],
+   ['Feature engineering to retrain the ETA model',1,'Very specific to Otterpost’s model. The book names feature engineering as a case that needs code.'],
+   ['Checking proof-of-delivery photos for blurred images',1,'Image analysis needs a general processing model, not a SQL query.'],
+   ['Total parcels per merchant per region last quarter',0,'Grouping and counting: a classic analytic SQL query.']],
+   'SQL suits analytic queries; code suits specialized processing. Hadoop’s openness let both, and more, run over the same files.');}},
+{part:3,src:'Chapter 10 · Designing for frequent faults',run(L){
+  L.h(L.kick('learn','Designing for frequent faults')+'<h1 class="q">Why MapReduce assumes tasks will die</h1>'+
+   L.lanes([['lock','MPP database','If a node crashes, abort the whole query and run it again. Queries take seconds or minutes, so that’s fine. Keep as much as possible in memory.',1],
+            ['cycle','MapReduce','Retry just the failed map or reduce task. Write eagerly to disk, partly for recovery, partly because data is assumed too big for memory.',2]])+
+   L.prose('Hardware failures alone are rare enough that this seems like overkill. The reason lies in Google’s datacenters, where online services and batch jobs share machines. Every task has a priority, and a higher-priority task can <b>preempt</b> (kill) lower-priority ones to take their resources. Batch jobs run at low priority, using whatever is left over.')+
+   L.prose('This lets Google overcommit machines and use them better. But an hour-long MapReduce task there has about a <b>5%</b> chance of being killed, over ten times the rate of hardware failures. So the design is about the freedom to kill tasks, not about bad hardware.')+
+   L.note('Open-source schedulers such as YARN, Mesos and Kubernetes preempted far less at the time of writing. Where tasks are rarely killed, the book says these design decisions make less sense.','info'));
+  L.done();}},
+{part:3,src:'Chapter 10 · Designing for frequent faults',pts:1,
+ solve:async L=>{L.$('#tk').children[2].click();L.$('#tk').children[3].click();},
+ run(L){
+  const N=[1,10,100,1000],p=1-Math.pow(0.95,1/6);const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Each task runs 10 minutes, with Google’s rate of preemption (about 5% an hour, so under 1% per task). Pick a job size.</h1><div id="tk"></div>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:10px 0"><div class="meterrow"><div class="lb">Chance at least one task is killed</div><div class="meter"><div id="pm" style="width:0;transition:width .6s;background:var(--no)"></div></div></div><div class="small" id="pt">Choose a number of tasks.</div></div><div id="pq"></div>');
+  N.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n+(n===1?' task':' tasks');
+    b.onclick=()=>{[...L.$('#tk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);const pr=1-Math.pow(1-p,n);
+      L.$('#pm').style.width=Math.max(2,Math.round(pr*100))+'%';
+      L.$('#pt').innerHTML='<b>'+(pr>0.995?'almost 100':pr<0.1?(pr*100).toFixed(1):Math.round(pr*100))+'%</b> chance. Restart the whole job: '+(n===1?'one task':n+' tasks')+' of work lost. Restart one task: at most 10 minutes lost.';
+      if(seen.size>=2&&!L.$('#pq').innerHTML){const q=L.$('#pq');q.innerHTML='<h2 class="sub">Kwame’s cluster almost never kills tasks. What does the book conclude about such a cluster?</h2>';
+        L.mc(q,['Task-level recovery becomes even more important','Machine failures will now stop most long jobs','Task-level recovery and heavy disk writes make less sense'],2,
+         'MapReduce pays overhead for task-level recovery because tasks get killed often. Where that rarely happens, the trade-off looks worse, which is why other engines (next lesson) choose differently.',
+         'The book says machine failures are fairly rare. MapReduce’s overheads pay off where preemption is frequent; where tasks are rarely killed, its design decisions make less sense.');}};
+    L.$('#tk').appendChild(b);});}}
+  ]
+});
+</script>
+</body>
+</html>

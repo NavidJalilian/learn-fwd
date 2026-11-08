@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Processing Streams</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0030', title:'Processing streams', minutes:20, icon:'clock',
+  goals:['Pick the right use and time window for a stream job, counting by event time','Choose between stream-stream, stream-table and table-table joins','Make a stream job safe to restart, so its effects happen effectively once'],
+  parts:['Uses','Reasoning about time','Stream joins','Fault tolerance'],
+  read:'Read “Processing Streams” in chapter 11, then its summary, for the book’s figures on windowing artifacts and the full search, profile and timeline join examples.',
+  glossary:{
+    eventtime:'Event time vs processing time: event time is when something actually happened (the timestamp inside the event); processing time is when a stream processor gets round to handling it. The two can be far apart.',
+    straggler:'Straggler: an event that arrives after its time window was already declared complete.',
+    idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
+    exactlyonce:'Exactly-once semantics (better called effectively-once): even if some work is retried after a fault, the visible result is as if every input was processed exactly once.'
+  },
+  cheatsheet:[
+    'Do one of three things with a stream: <b>store</b> it, <b>show</b> it to people, or <b>process</b> it into new streams. Streams never end, so no sorting and no restarting from the beginning.',
+    'Uses: <b>complex event processing</b> (stored patterns), <b>stream analytics</b> (windowed aggregates), <b>materialized views</b> (all events ever), <b>search on streams</b> (stored queries).',
+    'Count by <b>event time</b>, not processing time, or a restart creates fake dips and spikes. <b>Stragglers</b>: ignore and measure, or publish a correction.',
+    'Untrusted device clocks: log <b>three timestamps</b> (happened, sent, received) and correct by the offset between sent and received.',
+    'Windows: <b>tumbling</b> (fixed, no overlap), <b>hopping</b> (fixed, overlapping), <b>sliding</b> (within an interval of each other), <b>session</b> (ends after inactivity).',
+    'Joins: <b>stream-stream</b> (two event streams in a window), <b>stream-table</b> (enrich events from a local table kept current by CDC), <b>table-table</b> (maintain a joined view). Join with the version valid at that time.',
+    '<b>Exactly-once really means effectively-once.</b> Microbatching and checkpointing work inside the framework; external side effects need <b>atomic commit</b> or <b>idempotent</b> writes.',
+    'State must survive crashes: keep it remote, copy local state out (snapshots, compacted changelog topic), or rebuild it from the input.'
+  ],
+  steps:[
+/* ---------- PART 1: USES ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kwame wants an alert if a hub stops scanning parcels for 15 minutes on a busy afternoon. Should Linh’s nightly batch job produce it?</h1>');
+  L.mc(L.card,['Yes, the batch job sees all the data','No, the alert has to fire within minutes'],1,
+   'A nightly job would notice tomorrow. Reacting to events as they arrive is what stream processing is for.',
+   'The batch job does see everything, but only the next night. An alert about the last 15 minutes needs a job that processes events as they arrive.');}},
+{part:0,src:'Chapter 11 · Processing Streams',run(L){
+  L.h(L.kick('learn','Processing streams')+'<h1 class="q">Three things you can do with a stream</h1>'+
+   L.list([['box','Store it','Write the events to a database, cache or search index for others to query. It’s the streaming version of a batch job’s output, and works best when the stream consumer is the only writer.'],
+     ['chat','Show it to people','Send email alerts or push notifications, or feed a live dashboard. A human is the final consumer.'],
+     ['cycle','Process it','Turn one or more input streams into new output streams, perhaps through several stages, before they end up stored or shown.']],1)+
+   L.prose('Code that processes streams is called an <b>operator</b> or a <b>job</b>. Like a Unix process or a MapReduce job, it reads its input without changing it and appends its output elsewhere. Partitioning, parallelism, mapping and filtering work much as in batch.')+
+   L.note('The crucial difference: a stream <b>never ends</b>. Sorting makes no sense, so sort-merge joins are out. Fault tolerance changes too: you can restart a few-minutes-old batch task from scratch, but not a stream job that has run for years.','alert'));
+  L.done();}},
+{part:0,src:'Chapter 11 · Uses of Stream Processing',run(L){
+  L.h(L.kick('learn','Uses of stream processing')+'<h1 class="q">What stream processing is used for</h1>'+
+   L.prose('It has long been used for monitoring: spotting a stolen credit card, trading on price moves, watching factory machines, raising military alarms. Other uses followed. Tap each card.'));
+  L.flips(L.card,[
+   ['Complex event processing','Like a regular expression for events: describe a pattern, often in a SQL-like language, and the engine emits a “complex event” when it matches. The roles are reversed: queries are stored long-term and events flow past them.'],
+   ['Stream analytics','Aggregates over many events: a rate, a rolling average, now compared with the same time last week. Computed over a time window, such as the last 5 minutes.'],
+   ['Materialized views','Keep a cache, search index or event-sourced state up to date from a stream of changes. Needs every event since the beginning, not just a recent window.'],
+   ['Search on streams','Store search queries in advance and match each new document against them, like a property site alerting you to new homes. The queries can be indexed too.'],
+   ['Actors and messages','Built on messages too, but not usually called stream processing. Actors manage concurrency, talk one-to-one and briefly, and can loop. Stream jobs form durable, acyclic pipelines with many subscribers.']],
+   'Stream analytics sometimes uses probabilistic algorithms, such as HyperLogLog for counting distinct items. They save a lot of memory in exchange for approximate answers.');}},
+{part:0,src:'Chapter 11 · Stream analytics',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh’s job estimates distinct recipients per day with HyperLogLog. Tobias concludes that stream processing is always approximate. Is Tobias right?</h1>');
+  L.mc(L.card,['Yes, streams are lossy by nature','No, approximation is just an optimization'],1,
+   'There’s nothing inherently approximate about stream processing. Probabilistic algorithms are only a way to use much less memory.',
+   'The book calls this belief wrong: probabilistic algorithms are merely an optimization that saves memory. Stream processing itself can be exact.');}},
+{part:0,src:'Chapter 11 · Uses of Stream Processing',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which use is this?',['Complex event processing','Stream analytics','Materialized view','Search on streams'],[
+   ['Alert if a parcel is scanned “delivered” and then “at hub” within an hour.',0,'A pattern made of several events in sequence: complex event processing.'],
+   ['Average delivery time per zone over the last 5 minutes, compared with last week.',1,'An aggregate over a time window, compared with the past: stream analytics.'],
+   ['Keep the tracking page’s parcel status up to date from every scan ever made.',2,'It needs all events since the beginning, not a window: a materialized view.'],
+   ['Signe saves a query for “fragile” parcels to postcode WP4 and wants an alert for each new match.',3,'A stored query that each new item is matched against: search on streams.'],
+   ['Count failed delivery attempts per hour in Eastvale.',1,'A rate per time interval is classic stream analytics.']]);}},
+
+/* ---------- PART 2: REASONING ABOUT TIME ---------- */
+{part:1,src:'Chapter 11 · Event time versus processing time',run(L){
+  L.h(L.kick('learn','Event time versus processing time')+'<h1 class="q">Whose “last five minutes”?</h1>'+
+   L.prose('A batch job that reads a year of history in a few minutes uses the timestamps <i>inside</i> the events. The clock of the machine running it is irrelevant, and using event timestamps makes reruns give the same result.')+
+   L.prose('Many stream frameworks instead use the local clock of the processing machine: '+L.g('eventtime','processing time')+'. That’s simple, and fine if events are handled almost as soon as they happen. It breaks when there’s lag: queueing, network faults, contention in the broker, a restarted consumer, or replaying old events after a bug fix.')+
+   L.note('Delays also reorder events. A user’s first request is handled by server A and the second by server B, but B’s event reaches the broker first. The book’s analogy: the Star Wars films came out as episodes IV–VI before I–III, so release order (processing time) doesn’t match story order (event time).','clock'));
+  L.done();}},
+{part:1,src:'Chapter 11 · Event time versus processing time',pts:1,
+ solve:async L=>{const c=L.$('#tg').children;c[0].click();c[1].click();},
+ run(L){
+  const T=['10:01','10:02','10:03','10:04','10:05','10:06'],V=[[1000,1000,0,2000,1000,1000],[1000,1000,1000,1000,1000,1000]],N=['By processing time','By event time'];const seen=new Set();
+  const lab=v=>v===2000?'2,000':v===1000?'1,000':'0';
+  const bars=vs=>'<div style="display:flex;align-items:flex-end;gap:6px;height:130px">'+vs.map(v=>'<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%"><span style="font-size:11px;color:var(--muted)">'+lab(v)+'</span><div style="width:100%;height:'+Math.round(v/2000*100)+'px;background:var(--'+(v===2000||v===0?'no':'h2')+');border-radius:6px 6px 0 0"></div></div>').join('')+'</div>'+
+   '<div style="display:flex;gap:6px;margin-top:4px">'+T.map(t=>'<span style="flex:1;text-align:center;font-size:11px;color:var(--muted)">'+t+'</span>').join('')+'</div>';
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Scans arrive steadily, about 1,000 a minute. At 10:03 Linh redeploys the counting job; it’s down for one minute, then works through the backlog. Look at the chart both ways.</h1><div id="tg"></div>'+
+   '<div id="ch" style="background:var(--soft);border-radius:16px;padding:12px;margin:8px 0"><div class="small">Pick a way of counting above.</div></div><div id="cq"></div>');
+  N.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('clock')+n;
+    b.onclick=()=>{[...L.$('#tg').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#ch').innerHTML='<div class="small" style="margin-bottom:6px"><b>Scans per minute</b>, counted '+n.toLowerCase()+'</div>'+bars(V[j]);
+      if(seen.size===2&&!L.$('#cq').innerHTML){const q=L.$('#cq');q.innerHTML='<h2 class="sub">Kwame’s alert fires when the scan rate suddenly doubles. Which count should it use?</h2>';
+        L.mc(q,['Processing time, since it’s simpler','Event time, from the scans’ timestamps'],1,
+         'The dip at 10:03 and the spike at 10:04 are artifacts of the redeploy, not real traffic. Counting by event time shows the steady rate.',
+         'Processing time turned a one-minute pause into a fake dip and a fake spike, which would set off the alert. The real rate was steady, as event time shows.');}};
+    L.$('#tg').appendChild(b);});}},
+{part:1,src:'Chapter 11 · Knowing when you’re ready',run(L){
+  L.h(L.kick('learn','Knowing when you’re ready')+'<h1 class="q">When is a window finished?</h1>'+
+   L.prose('With event time, you can never be sure all events for a window have arrived. Say you count scans per minute, and most new events now belong to 10:38 and 10:39. When do you close 10:37 and publish its count? You can wait until nothing new has arrived for a while, but some events may still be stuck on another machine behind a network problem.')+
+   L.prose('Events that arrive after their window was declared complete are '+L.g('straggler','stragglers')+'. You have two options:')+
+   L.list([['Ignore them','They’re usually a small share. Track how many you drop as a metric, and alert if that number grows.'],
+     ['Publish a correction','Send an updated value for the window with the stragglers included, and maybe retract the earlier one.']],3)+
+   '<p class="small" style="margin-top:10px">A producer can also send a special message: “no more events earlier than time t.” But with many producers on different machines, consumers must track each one separately, which makes adding and removing producers trickier.</p>');
+  L.done();}},
+{part:1,src:'Chapter 11 · Whose clock are you using, anyway?',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Ravi’s phone and the three timestamps</h1>');
+  L.beats(L.card,[
+   ['The problem','Ravi, a courier, scans parcels in a basement with no signal. The courier app keeps the scans and uploads them later, so to consumers they look like very late stragglers.'],
+   ['Which clock?','The event should carry the time of the scan by the phone’s clock. But a phone’s clock can be wrong, by accident or on purpose. The server’s clock is trustworthy, but it only says when the event arrived.'],
+   ['Log three times','So the app records when the scan happened (phone clock), when it was sent (phone clock), and when it was received (server clock).'],
+   ['The numbers','Scan at 10:00 and sent at 10:30, by the phone. Received at 10:23, by the server. Received minus sent is −7 minutes: the phone runs about 7 minutes fast.'],
+   ['The estimate','Apply that offset to the scan time: it really happened at about 09:53.']],
+   'This assumes the network delay is small compared with the accuracy you need, and that the phone’s clock offset didn’t change between the scan and the upload. Batch jobs face the same problem; streaming just makes it more visible.');}},
+{part:1,src:'Chapter 11 · Whose clock are you using, anyway?',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Another upload: scan at 14:10 and sent at 14:40, both by the phone’s clock. Received at 14:35 by the server’s clock. When did the scan really happen?</h1>');
+  L.mc(L.card,['About 14:05','About 14:10','About 14:15'],0,
+   'Received 14:35 minus sent 14:40 is −5 minutes, so the phone runs 5 minutes fast. 14:10 − 5 minutes = 14:05.',
+   'The server got it at 14:35, but the phone claims it sent it at 14:40, so the phone is 5 minutes fast. Correct the scan time: 14:10 − 5 minutes = 14:05.');}},
+{part:1,src:'Chapter 11 · Types of windows',run(L){
+  L.h(L.kick('learn','Types of windows')+'<h1 class="q">Four ways to slice time</h1>'+
+   L.tiers([['cal','Tumbling','Fixed length, and every event belongs to exactly one window.','1-minute windows: 10:03:00–10:03:59, then 10:04:00–10:04:59. Round each timestamp down to the minute.'],
+            ['layers','Hopping','Fixed length, but windows overlap, which smooths the result.','5 minutes long, hopping by 1: 10:03:00–10:07:59, then 10:04:00–10:08:59. Built from 1-minute tumbling windows.'],
+            ['clock','Sliding','All events that occur within some interval of each other.','Events at 10:03:39 and 10:08:12 are under 5 minutes apart, so they share a 5-minute sliding window. Fixed windows would split them.'],
+            ['person','Session','No fixed length: one user’s events that come close together, ending after a period of inactivity.','For example, end the session after 30 minutes with no events. Common in website analytics.']]));
+  L.done();}},
+{part:1,src:'Chapter 11 · Types of windows',pts:5,run(L){
+  L.h(L.kick('pr','Which window?')+'<h1 class="q">Match each of Otterpost’s needs to a window type.</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Tumbling','Hopping','Sliding','Session'],[
+   ['Count scans in each clock minute, each scan in exactly one minute.',0,'Fixed slots that don’t overlap: tumbling.'],
+   ['A 15-minute average of courier speed, refreshed every minute.',1,'Fixed length, with overlapping windows that move on by a minute: hopping.'],
+   ['Flag two failed delivery attempts on one parcel less than 10 minutes apart, whatever the clock says.',2,'“Within 10 minutes of each other,” with no fixed boundaries: sliding.'],
+   ['Group a merchant’s dashboard clicks into visits that end after 30 minutes of inactivity.',3,'No fixed length, ending after a gap: session.'],
+   ['Hourly on-time rate per zone: 9:00–9:59, 10:00–10:59 and so on.',0,'Fixed hours that don’t overlap: tumbling.']],
+   'Tumbling and hopping use fixed boundaries; sliding looks at the gaps between events; session follows one user until they go quiet.');}},
+
+/* ---------- PART 3: STREAM JOINS ---------- */
+{part:2,src:'Chapter 11 · Stream-stream join (window join)',run(L){
+  L.h(L.kick('learn','Stream joins')+'<h1 class="q">Stream-stream join: match events that belong together</h1>'+
+   L.prose('Stream pipelines need joins just as batch jobs do. But a stream can deliver a new event at any moment, which makes joining harder. The book separates three kinds.')+
+   L.prose('In a <b>stream-stream join</b>, both inputs are activity events. The book’s case: to measure click-through rates, join each search event with the click event that has the same session ID. The click may come seconds or weeks later, may arrive <i>before</i> the search because of network delays, or may never come. So you choose a window, such as one hour.')+
+   L.flow([['list','Keep state','the last hour of both kinds, indexed by session ID'],['check','Match','emit “result 3 was clicked”'],['clock','Expire','emit “nothing was clicked”']])+
+   L.note('Copying the search details into the click event is not the same as a join. It only tells you about searches that got a click, never about the ones that didn’t.','info'));
+  L.done();}},
+{part:2,src:'Chapter 11 · Stream-table join (stream enrichment)',run(L){
+  L.h(L.kick('learn','Two more joins')+'<h1 class="q">Stream-table and table-table joins</h1>'+
+   L.lanes([['eye','Stream-table (enrichment)','Activity events joined with a database table, such as adding profile details to each event. A remote query per event is slow and can overload the database, so the processor keeps a <b>local copy</b>, kept current by change data capture. For the table side, the window reaches back to the beginning of time.',1],
+            ['layers','Table-table (view upkeep)','Both inputs are database changelogs. Every change on one side is joined with the latest state of the other. The book’s case: Twitter timelines, updated from tweet and follow events, are a cached result of joining the tweets and follows tables.',2]]));
+  L.done();}},
+{part:2,src:'Chapter 11 · Stream-table join (stream enrichment)',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh enriches scans with merchant details</h1>');
+  L.beats(L.card,[
+   ['The need','Notifications must name the shop a parcel comes from and use that merchant’s chosen wording. Scan events carry only a merchant ID.'],
+   ['The tempting way','Tobias suggests querying the Parcel DB for each of the millions of scans a day. That’s slow, and during Peak Week it could overload the database.'],
+   ['A local copy','Instead the job loads the merchants table into a local hash table, much like a map-side hash join in batch.'],
+   ['Kept current','A batch job uses a fixed snapshot, but this job runs for months while merchants change their settings. So it also subscribes to the merchants table’s change stream and updates its copy.'],
+   ['The result','Two streams in, one out: scans and merchant changes go in; enriched scans come out.']],
+   'A stream-table join is really a join of two streams: the activity events, and the changelog that keeps the local table up to date.');}},
+{part:2,src:'Chapter 11 · Stream Joins',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh wants to know how often a “card left, nobody home” event is followed by the recipient booking a redelivery within 48 hours. Which join is that?</h1>');
+  L.mc(L.card,['A stream-table join','A table-table join','A stream-stream join'],2,
+   'Two kinds of activity events, matched by parcel within a 48-hour window: a stream-stream (window) join.',
+   'Neither input is a database table here. Both are activity events, matched within a time window: a stream-stream join.');}},
+{part:2,src:'Chapter 11 · Time-dependence of joins',run(L){
+  L.h(L.kick('learn','Time-dependence of joins')+'<h1 class="q">Which version of the table do you join with?</h1>'+
+   L.prose('All three joins keep state built from one input and look it up for messages from the other. So the <b>order</b> of the state changes matters: follow then unfollow is not the same as unfollow then follow. A partitioned log keeps order within a partition, but usually not across streams or partitions.')+
+   L.prose('So if a merchant changes its settings just as scans arrive, which scans get the old settings and which the new? If the order across streams isn’t fixed, the join is <b>nondeterministic</b>: rerun the job on the same input and you may get a different result.')+
+   L.note('The book’s example is tax rates. Joining sales with tax rates should use the rate on the day of the sale, not today’s. Data warehouses call this a <b>slowly changing dimension</b>. The fix: give each version of the record its own ID and store that ID with the sale. The join becomes deterministic, but log compaction is no longer possible, since every version must be kept.','scale'));
+  L.done();}},
+{part:2,src:'Chapter 11 · Summary',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which join?',['Stream-stream','Stream-table','Table-table'],[
+   ['Add each courier’s vehicle type, from the couriers table, to every GPS ping.',1,'Activity events enriched from a table kept current by change data capture: stream-table.'],
+   ['Recipients follow several parcels. Keep each “my parcels” page current from changes to the parcels table and the follows table.',2,'Both inputs are changelogs, and the output is a maintained view of their join, just like Twitter timelines: table-table.'],
+   ['Match each “out for delivery” scan with the “delivered” scan for the same parcel within 12 hours.',0,'Two activity events matched within a window. Both come from the same stream, which makes it a self-join.'],
+   ['Attach the current zone name, from the zones table, to each scan event.',1,'Enriching events with table data: stream-table.']]);}},
+{part:2,src:'Chapter 11 · Time-dependence of joins',pts:1,run(L){
+  L.h(L.kick('pr','Old data, new prices')+'<h1 class="q">Otterpost raised its prices on 1 March. In April, Linh reruns February’s bookings to fix an invoice bug, joining each booking with the price table. What goes wrong, and what’s the fix?</h1>');
+  L.mc(L.card,['Nothing goes wrong; today’s prices work fine','February gets March prices; store a price-version ID','Bookings must first be sorted by price to join'],1,
+   'The join must use the price in force at booking time. A version ID on each booking makes the join deterministic, at the cost of keeping every price version.',
+   'Joining with today’s table charges February bookings March prices. As in the book’s tax-rate case, record which price version applied on each booking.');}},
+
+/* ---------- PART 4: FAULT TOLERANCE ---------- */
+{part:3,src:'Chapter 11 · Fault Tolerance',run(L){
+  L.h(L.kick('learn','Fault tolerance')+'<h1 class="q">Exactly-once, or rather effectively-once</h1>'+
+   L.prose('A failed batch task is simply rerun and its partial output thrown away. Inputs never change and output appears only when a task succeeds, so the result looks as if each record was processed <b>exactly once</b>, even if some were really processed twice. '+L.g('exactlyonce','Effectively-once')+' would be a more accurate name.')+
+   L.prose('A stream job can’t hold back its output until it’s finished, because it never finishes. Two ways to get close:')+
+   L.lanes([['box','Microbatching','Cut the stream into blocks of about a second and treat each like a tiny batch job (Spark Streaming). Smaller blocks mean more overhead, bigger ones more delay. It also gives a tumbling window by processing time.',1],
+            ['shield','Checkpointing','Now and then, write a checkpoint of the state to durable storage, triggered by barriers in the stream (Apache Flink). After a crash, restart from the last checkpoint and discard output since then.',2]])+
+   L.note('Both give exactly-once <b>inside</b> the framework. But once output leaves it, as a database write, a message to another broker or an email, it can’t be thrown away. A restarted task then causes that side effect twice.','alert'));
+  L.done();}},
+{part:3,src:'Chapter 11 · Atomic commit revisited',run(L){
+  L.h(L.kick('learn','Atomic commit and idempotence')+'<h1 class="q">Two ways to make side effects count once</h1>'+
+   L.list([['lock','Atomic commit','All the effects of processing an event happen together, or none do: messages sent, emails, database writes, state changes, and moving the consumer offset forward. Chapter 9’s XA had problems, but some systems do this efficiently by keeping the transactions inside the framework and grouping several messages per transaction.'],
+     ['check','Idempotence','An '+L.g('idempotence','idempotent')+' operation has the same effect however many times you do it. Setting a key to a fixed value is idempotent; adding 1 to a counter is not. A little extra data can often fix that: store the offset of the message that caused each write, so a repeat can be spotted and skipped.']],3)+
+   L.note('Idempotence relies on three things: a restarted task replays the same messages in the same order (a log-based broker does), processing is deterministic, and nobody else updates the same value at the same time. When failing over to another node, fencing may be needed so a node wrongly thought dead can’t interfere.','info'));
+  L.done();}},
+{part:3,src:'Chapter 11 · Idempotence',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these can a restarted job safely repeat?</h1>');
+  L.mc(L.card,['Add 1 to parcel 88’s attempt counter','Set parcel 88’s status to “delivered”','Email the recipient that it was delivered'],1,
+   'Setting a key to a fixed value is idempotent: the second write changes nothing.',
+   'Adding 1 twice gives the wrong count, and a second email is a second email. Setting the status to a fixed value is the one that’s safe to repeat.');}},
+{part:3,src:'Chapter 11 · Idempotence',pts:1,
+ solve:async L=>{const c=L.$('#dz').children;c[0].click();c[1].click();},
+ run(L){
+  const D=[['Plain increment',[['Process offset 7,041: counter 1,203 → 1,204',''],['Crash before offset 7,041 is recorded','no'],['Restart replays offset 7,041: counter 1,204 → 1,205','no']],'1,205','Wrong: one delivery counted twice'],
+           ['Store the offset with the value',[['Process offset 7,041: write 1,204, last offset 7,041',''],['Crash before the consumer offset is recorded','no'],['Restart replays 7,041: stored offset is already 7,041, so skip','ok']],'1,204','Right: counted once']];const seen=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh’s job adds 1 to Bramble & Bolt’s “delivered today” counter in an external database for each delivered scan. It crashes after handling offset 7,041 but before recording that offset. Run the crash with each design.</h1><div id="dz"></div>'+
+   '<div id="out" style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0;min-height:110px"><div class="small">Pick a design above.</div></div><div id="iq"></div>');
+  D.forEach((d,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('play')+d[0];
+    b.onclick=()=>{[...L.$('#dz').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
+      L.$('#out').innerHTML=d[1].map((s,k)=>'<div class="small" style="padding:3px 0;'+(s[1]?'color:var(--'+s[1]+');font-weight:600':'')+'">'+(k+1)+'. '+s[0]+'</div>').join('')+
+       '<div class="meterrow"><div class="lb">Counter now</div><b style="font-size:20px">'+d[2]+'</b></div><div class="small" style="color:var(--'+(j?'ok':'no')+')">'+d[3]+'</div>';
+      if(seen.size===2&&!L.$('#iq').innerHTML){const q=L.$('#iq');q.innerHTML='<h2 class="sub">The offset trick only works if one thing is true about the restart. Which?</h2>';
+        L.mc(q,['The database never crashes during a write','The replay brings the same messages in the same order','Counters are naturally idempotent anyway'],1,
+         'If the replay arrived in a different order or with different messages, the stored offset couldn’t tell what was already applied. A log-based broker gives you that same order.',
+         'The database may crash, and counters are not idempotent: that’s the whole problem. The trick relies on the restart replaying the same messages in the same order, as a log-based broker does.');}};
+    L.$('#dz').appendChild(b);});}},
+{part:3,src:'Chapter 11 · Rebuilding state after a failure',run(L){
+  L.h(L.kick('learn','Rebuilding state after a failure')+'<h1 class="q">Getting the state back after a crash</h1>'+
+   L.prose('Windowed counters, averages and the tables used for joins are all state, and must survive a crash. Three approaches:')+
+   L.list([['shield','Keep it remote','Store state in a replicated remote database. Simple, but querying it for every message can be slow.'],
+     ['layers','Keep it local, copy it out','Keep state in the processor and replicate it now and then. Flink snapshots operator state to durable storage such as HDFS. Samza and Kafka Streams send state changes to a log-compacted topic, much like change data capture. VoltDB processes each message on several nodes.'],
+     ['cycle','Rebuild it','Sometimes no copy is needed: replay the input events for a short window, or rebuild a local table from its compacted change stream.']],2)+
+   '<p class="small" style="margin-top:10px">The best choice depends on the hardware. In some systems the network is faster than the disk. There’s no universally ideal trade-off.</p>');
+  L.done();}},
+{part:3,src:'Chapter 11 · Rebuilding state after a failure',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">The merchant-enrichment job crashed. Tap each piece until it’s a sound recovery plan.</h1>');
+  L.sentence(L.card,[['Start with an empty merchants table','Rebuild the merchants table','Ask merchants to resend their settings'],['from the compacted change topic,','from the last hour of scans,','from the courier app’s cache,'],['then add 1 per scan as before.','then write counters only daily.','then store each message’s offset with its write.']],[1,0,2],
+   [['An empty table would enrich scans with nothing until each merchant happened to change something.','Merchants shouldn’t have to do anything. The data is already in a log.'],
+    ['Scan events don’t contain merchant settings, and an hour of them isn’t the whole table.','The courier app doesn’t hold merchant settings, and it isn’t a reliable source.'],
+    ['Plain increments count twice anything replayed after the crash.','Writing once a day defeats the point of a stream job and doesn’t stop double counting.']],
+   'A compacted change topic holds every merchant’s latest settings, so the table can be rebuilt from it. Storing offsets with writes makes replayed messages harmless.');}}
+  ]
+});
+</script>
+</body>
+</html>

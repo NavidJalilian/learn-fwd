@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Design a URL Shortener</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+Course.lesson({
+  id:'0002', title:'Design a URL shortener', minutes:20, icon:'arrow',
+  goals:['Scope a URL shortener and size it with quick sums','Choose between 301 and 302, and between hashing and base 62','Walk through the shortening and redirect flows'],
+  parts:['Scope it','Redirects','Short codes','The flows'],
+  read:'Read chapter 8 of the book for its figures and tables: the redirect diagrams, code length vs. capacity, and the hash-vs-base-62 comparison.',
+  glossary:{
+    redirect:'Redirect: a reply that tells the browser “what you want is at this other address”, so it goes there automatically.',
+    hash:'Hash function: a recipe that turns any input, like a long URL, into a fixed-looking jumble of characters. The same input always gives the same output.',
+    bloom:'Bloom filter: a compact, memory-saving way to check whether an item is already in a set. It answers by probability rather than with certainty, which is why it is so fast and small.',
+    base62:'Base 62: writing numbers with 62 different digits (0–9, a–z, A–Z) instead of the usual 10, so big numbers get short.'
+  },
+  cheatsheet:[
+    'Scope: <b>100 million new URLs a day</b>, as short as possible, 0–9 a–z A–Z, no edits or deletes.',
+    'Estimates: ~<b>1,160 writes/s</b>, ~<b>11,600 reads/s</b> (10:1), <b>365 billion</b> records over 10 years.',
+    'Two APIs: <b>POST</b> the long URL to shorten, <b>GET</b> the short URL to redirect.',
+    '<b>301</b>: the browser caches it, less server load. <b>302</b>: every click comes back, better analytics.',
+    'Store id, shortURL, longURL in a relational table. 62⁷ ≈ 3.5 trillion, so <b>7 characters</b>.',
+    '<b>Hash + collision resolution</b>: fixed length, but clashes to check (a bloom filter speeds that up). <b>Base 62 conversion</b> of a unique ID: no clashes, but needs an ID generator, grows, and can be guessed.',
+    'Shorten: already stored? Return it. Else new ID → base 62 → save. Redirect: cache, then database.',
+    'Wrap-up: rate limiter, stateless web tier, database replication and sharding, analytics.'
+  ],
+  steps:[
+/* ---------- PART 1: SCOPE IT ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Dario wants a short link, like kbird.link/aB3x, that leads back to a Kitebird project. What must Kitebird store for that to work?</h1>');
+  L.mc(L.card,['Each short code paired with its long URL','Only the short code, and nothing else','Only how many times each link was clicked'],0,
+   'A short link is only useful if you can look up where it goes. That pair is the heart of the whole design.',
+   'Without the long URL, a click on the short link has nowhere to go. The service must store each short code with its long URL.');}},
+{part:0,src:'Chapter 8 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('learn','The book’s interview')+'<h1 class="q">A tinyurl-style service: what the interviewer wants</h1>'+
+   L.prose('The interviewer’s example: a long URL full of parameters goes in, and a much shorter alias on tinyurl.com comes out. Clicking the alias sends you to the original. The candidate asks four more questions:')+
+   L.list([['Volume','100 million new URLs a day.'],['Length','As short as possible.'],['Characters','Digits 0–9 and letters a–z and A–Z.'],['Changes','None. For simplicity, short URLs can’t be deleted or updated.']],1)+
+   L.prose('That gives three use cases: <b>shortening</b> (long in, short out), <b>redirecting</b> (short in, sent on to the long one), plus high availability, scalability and fault tolerance.'));
+  L.done();}},
+{part:0,src:'Chapter 8 · Back of the envelope estimation',run(L){
+  L.h(L.kick('learn','The napkin math')+'<h1 class="q">Four sums, said out loud</h1>'+
+   L.tiers([['pencil','Writes','100 million ÷ 24 ÷ 3,600 ≈ <b>1,160 a second</b>.'],
+     ['eye','Reads','Assume 10 reads for every write: <b>11,600 a second</b>.'],
+     ['cal','Records','Over 10 years: 100 million × 365 × 10 = <b>365 billion</b>.'],
+     ['box','Storage','At about 100 bytes per URL, the book writes 365 TB.','A careful recount gives 36.5 TB: the 10 years are already inside the 365 billion records.']])+
+   '<p class="small" style="margin-top:10px">The book stresses walking the interviewer through each '+L.g('estimate','assumption and sum')+' so you both agree on the numbers.</p>');
+  L.done();}},
+{part:0,src:'Chapter 8 · Back of the envelope estimation',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">kbird.link: same method, Kitebird’s numbers</h1>');
+  L.beats(L.card,[
+   ['The ask','Dario wants short links for sharing Kitebird projects on other social apps, plus click counts for marketing campaigns.'],
+   ['Scope','You ask how big. Dario: about <b>5 million</b> new short links a day, each clicked about <b>20 times</b>. Same characters as the book; links never change.'],
+   ['Writes','5 million ÷ 24 ÷ 3,600 ≈ <b>58 a second</b>.'],
+   ['Reads','20 clicks per link: 58 × 20 ≈ <b>1,160 a second</b>.'],
+   ['Records','5 million × 365 × 10 ≈ <b>18 billion</b> links over 10 years.'],
+   ['Storage','18 billion × 100 bytes ≈ <b>1.8 TB</b>. Tamsin: “Good. Now we know what we’re sizing.”']],
+   'The book’s four sums with Kitebird’s inputs: writes per second, reads per second, total records, storage.');}},
+{part:0,src:'Chapter 8 · Back of the envelope estimation',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Dario now expects each kbird.link to be clicked 50 times, not 20. Writes stay at 58 a second. About how many reads a second?</h1>');
+  L.mc(L.card,['About 2,900','About 580','About 29,000'],0,
+   '58 writes × 50 reads each ≈ 2,900 reads a second.',
+   'Multiply writes by the read-to-write ratio: 58 × 50 ≈ 2,900 a second.');}},
+
+/* ---------- PART 2: REDIRECTS ---------- */
+{part:1,src:'Chapter 8 · API Endpoints',pts:1,run(L){
+  L.h(L.kick('learn','The high-level design')+'<h1 class="q">Two doors in: shorten and redirect</h1>'+
+   L.list([['POST api/v1/data/shorten','Send the long URL as {longUrl: …}. You get back the short URL.'],
+     ['GET api/v1/<i>shortUrl</i>','Ask for a short URL. You get back the long URL, used for an HTTP '+L.g('redirect','redirect')+'.']],1)+
+   L.prose('The simplest way to redirect: a hash table holding ⟨shortURL, longURL⟩ pairs. Look up the short URL, get the long one, send the browser there.')+
+   '<p class="small">To make short URLs, the book needs a '+L.g('hash','hash function')+' where each long URL maps to one short value, and each short value maps back to its long URL. The deep dive builds it.</p>'+
+   '<div id="lq"><h2 class="sub">Mae taps “Share” on their cardigan project. Which call does the app make?</h2></div>');
+  L.mc(L.$('#lq'),['GET api/v1/shortUrl','POST api/v1/data/shorten'],1,
+   'Making a new short link sends the long URL with POST.',
+   'GET is for following a short link. Making a new one sends the long URL with POST.');}},
+{part:1,src:'Chapter 8 · URL redirecting',run(L){
+  L.h(L.kick('learn','301 vs 302')+'<h1 class="q">Two kinds of redirect, one big difference</h1>'+
+   L.lanes([['lock','301 redirect','“Moved permanently.” The browser <b>caches</b> the answer, so later clicks on the same short URL go straight to the long URL. The shortener only sees the first one.<div class="res">Pick it to reduce server load.</div>',2],
+            ['cycle','302 redirect','“Moved temporarily.” <b>Every</b> click goes to the shortener first, which then sends the browser on to the long URL.<div class="res">Pick it when analytics matter: click rate and where clicks come from.</div>',3]]));
+  L.done();}},
+{part:1,src:'Chapter 8 · URL redirecting',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Dario and Hana disagree. You settle it.</h1>');
+  L.beats(L.card,[
+   ['Dario','“Marketing needs clicks per campaign: the spring knit-along, the woodturning giveaway. Every click.”'],
+   ['Hana','“With a 301 the browser remembers the answer and stops asking us. Fewer requests, smaller bill.”'],
+   ['You','You lay out the trade-off. A 301 cuts load, but repeat clicks never reach kbird.link, so they can’t be counted. A 302 sends every click through kbird.link, so each one can be counted.'],
+   ['Decision','Click counts are why Dario asked for kbird.link, so Tamsin agrees on 302. Hana asks to revisit it if load ever becomes the problem.']],
+   'Name the priority first. Less load points to 301; analytics points to 302.');}},
+{part:1,src:'Chapter 8 · URL redirecting',pts:1,
+ solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();},
+ run(L){
+  let p=null;const O=['0','1','3'];
+  const E=[['Click 1','kbird.link answers with a 301. The browser caches it.',1],['Click 2','The browser already knows the answer and goes straight to kitebird.com.',0],['Click 3','Straight to kitebird.com again. kbird.link never hears about it.',0]];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Say kbird.link had picked 301 instead. Rafi clicks Mae’s short link three times in the same browser. How many requests reach kbird.link?</h1><div id="po"></div>'+
+   '<div id="sim" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px"><div><div class="small">Requests at kbird.link</div><div class="week" id="ct">0</div></div><button class="btn pri" id="run">'+L.ic('play')+'Click three times</button></div><div id="tl"></div></div>');
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
+  L.$('#run').onclick=function(){this.remove();let k=0,n=0;
+    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}const e=E[k];n+=e[2];L.$('#ct').textContent=n;
+      tl.insertAdjacentHTML('beforeend','<div class="row" style="padding:9px 0"><span class="chip static'+(e[2]?' ok':'')+'" style="margin:0">'+e[0]+'</span><span class="small" style="flex:1 1 200px">'+e[1]+'</span></div>');
+      k++;if(k>=E.length){clearInterval(t);L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'Just one':'Only one reached kbird.link','After the first 301, the browser cached the answer. With a 302, all three clicks would have reached kbird.link, and all three could be counted.');L.done();}},400);};}},
+{part:1,src:'Chapter 8 · URL redirecting',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'301 or 302?',['301 redirect','302 redirect'],[
+   ['Marketing needs click counts for each spring knit-along campaign link.',1,'Counting clicks means every click must reach you: 302.'],
+   ['A permanent link printed in a Kitebird booklet. The redirect servers are strained and nobody reads its stats.',0,'Load matters and analytics don’t: let browsers cache it with a 301.'],
+   ['Dario wants to know which app each click comes from.',1,'The source of a click is analytics, so every click must come through: 302.'],
+   ['Hana’s goal this quarter: cut traffic to the redirect servers.',0,'A 301 lets browsers skip the shortener after the first click.']]);}},
+
+/* ---------- PART 3: SHORT CODES ---------- */
+{part:2,src:'Chapter 8 · Data model and Hash value length',run(L){
+  L.h(L.kick('learn','The deep dive')+'<h1 class="q">Where the pairs live, and how long a code must be</h1>'+
+   L.prose('A hash table in memory is a fine start, but memory is limited and expensive. The book stores the pairs in a <b>relational database</b> table with three columns:')+
+   '<div style="margin:0 0 14px"><span class="chip static">id</span><span class="chip static">shortURL</span><span class="chip static">longURL</span></div>'+
+   L.prose('A code can use 10 + 26 + 26 = <b>62 characters</b>. So find the smallest length n where 62ⁿ covers the 365 billion records:')+
+   L.tiers([['x','6 characters','62⁶ ≈ 56.8 billion. Not enough.'],['check','7 characters','62⁷ ≈ 3.5 trillion. More than enough.','So the book’s short codes are 7 characters long.',true,'Pick']]));
+  L.done();}},
+{part:2,src:'Chapter 8 · Hash value length',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why does the book settle on 7 characters?</h1>');
+  L.mc(L.card,['Seven is the most a browser accepts','It matches the length of a CRC32 hash','62⁷ is the first to cover 365 billion'],2,
+   'Codes should be as short as possible, and 7 is the smallest length with room for 365 billion URLs.',
+   'The length comes from capacity: 62⁶ is about 56.8 billion, too few, and 62⁷ is about 3.5 trillion, enough for 365 billion.');}},
+{part:2,src:'Chapter 8 · Hash value length',pts:1,
+ solve:async L=>{L.$('#up').click();L.$('#up').click();L.$('#lk').click();},
+ run(L){
+  const NEED=18250000000;let n=4,first=true;
+  L.h(L.kick('pr','Climb the ladder')+'<h1 class="q">kbird.link expects about 18 billion links in 10 years. Find the shortest code length that covers them, then lock it in.</h1>'+
+   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:6px 0 12px"><div class="small">Code length</div><div class="week" id="nn"></div><div class="small" id="cap"></div><div class="meterrow"><div class="lb">Room vs. need</div><div class="meter"><div id="mt"></div></div></div><div class="small">Need: 18,250,000,000</div></div>'+
+   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="dn">− 1 character</button><button class="btn" id="up">+ 1 character</button><button class="btn pri" id="lk">'+L.ic('lock')+'Lock it in</button></div><div id="lf"></div>');
+  const draw=()=>{const c=Math.pow(62,n),ok=c>=NEED;L.$('#nn').textContent=n+' characters';L.$('#cap').innerHTML='62<sup>'+n+'</sup> = '+c.toLocaleString('en-US')+' codes';
+    const m=L.$('#mt');m.style.width=Math.min(100,Math.round(Math.log(c)/Math.log(NEED)*100))+'%';m.style.background=ok?'var(--ok-strong)':'var(--no-strong)';};draw();
+  L.$('#up').onclick=()=>{if(n<8){n++;L.$('#lf').innerHTML='';draw();}};
+  L.$('#dn').onclick=()=>{if(n>1){n--;L.$('#lf').innerHTML='';draw();}};
+  L.$('#lk').onclick=()=>{L.$('#lf').innerHTML='';
+    if(n===6){if(first)L.award(true);first=false;L.sheet('ok','6 characters','62⁶ ≈ 56.8 billion covers 18 billion; 62⁵ ≈ 916 million doesn’t. Kitebird’s smaller volume means one character fewer than the book’s 7.');L.done();}
+    else{if(first)L.award(false);first=false;L.fb(L.$('#lf'),n<6?'<b>Too short.</b> 62<sup>'+n+'</sup> codes can’t hold 18 billion links.':'<b>It fits, but it’s longer than needed.</b> The requirement is “as short as possible.” Try one fewer.','no');}};}},
+{part:2,src:'Chapter 8 · Hash + collision resolution',run(L){
+  L.h(L.kick('learn','Approach 1')+'<h1 class="q">Hash + collision resolution</h1>'+
+   L.list([['Hash','Run the long URL through a well-known '+L.g('hash','hash function')+' such as CRC32, MD5 or SHA-1. Even the shortest result, from CRC32, is longer than 7 characters.'],
+     ['Cut','Keep the first 7 characters. Now two different long URLs can get the same code: a <b>collision</b>.'],
+     ['Check and retry','Look the code up in the database. If it’s taken, add a fixed extra string to the long URL and hash again, until no collision is found.'],
+     ['Speed up the check','Querying the database on every request is expensive. A '+L.g('bloom','bloom filter')+' can make the “is it taken?” check faster.']],2));
+  L.done();}},
+{part:2,src:'Chapter 8 · Base 62 conversion',run(L){
+  L.h(L.kick('learn','Approach 2')+'<h1 class="q">Base 62 conversion: write a unique number with 62 digits</h1>'+
+   L.prose('Base conversion writes the same number in a different number system. '+L.g('base62','Base 62')+' uses the 62 allowed characters as digits:')+
+   '<div style="margin:0 0 12px"><span class="chip static">0–9 → 0 to 9</span><span class="chip static">a–z → 10 to 35</span><span class="chip static">A–Z → 36 to 61</span></div>'+
+   L.prose('The book’s example: 11157 = 2 × 62² + 55 × 62 + 59. The digits 2, 55 and 59 become <b>2, T, X</b>, so the short URL ends in <b>2TX</b>.')+
+   '<p class="small">It converts an ID, so you need unique IDs first: chapter 7’s generator. One catch the book notes: if IDs go up by 1, the next short URL is easy to guess, which can be a security concern.</p>'+
+   L.note('<b>Beyond the book:</b> the usual fix for guessable codes is to scramble the ID before converting it.','info'));
+  L.done();}},
+{part:2,src:'Chapter 8 · Base 62 conversion',run(L){
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Converting 11157 by hand</h1>');
+  L.beats(L.card,[
+   ['Divide','11157 ÷ 62 = 179, remainder <b>59</b>. A is 36, so 59 is <b>X</b>.'],
+   ['Divide again','179 ÷ 62 = 2, remainder <b>55</b>. That’s <b>T</b>.'],
+   ['Last digit','2 ÷ 62 = 0, remainder <b>2</b>. Digits 0–9 stay as they are. The result is 0, so stop.'],
+   ['Read upward','Read the remainders from last to first: 2, T, X gives <b>2TX</b>.'],
+   ['Check it','2 × 3,844 + 55 × 62 + 59 = 7,688 + 3,410 + 59 = 11,157.']],
+   'Divide by 62, keep the remainder, repeat until you reach 0, then read the remainders backwards.');}},
+{part:2,src:'Chapter 8 · Base 62 conversion',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What is the number 62 written in base 62?</h1>');
+  L.mc(L.card,['10','Z','zz'],0,
+   '62 is one 62 and nothing left over: digits 1 and 0. Just like 10 in everyday numbers.',
+   'Z is 61, the biggest single digit. 62 is one 62 and nothing left over, so it’s written 10.');}},
+{part:2,src:'Chapter 8 · Base 62 conversion',pts:1,run(L){
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">A test link ID, 10,000, needs a code. 10,000 ÷ 62 = 161 r 18; 161 ÷ 62 = 2 r 37; 2 ÷ 62 = 0 r 2. Tap each character, first one first.</h1>');
+  L.sentence(L.card,[['2','c','C'],['b','B','A'],['I','8','i']],[0,1,2],
+   [['c stands for 12. The last remainder was 2, and digits 0–9 stay as they are.','C stands for 38. The last remainder was 2, which stays 2.'],
+    ['Lowercase b is 11. 37 is in the A–Z range: A = 36, so 37 = B.','A is 36. One more, 37, is B.'],
+    ['Uppercase I is 44. 18 is in the a–z range: a = 10, so 18 = i.','8 would be a remainder of 8. 18 is past the digits: a = 10, so 18 = i.']],
+   '10,000 becomes <b>2Bi</b>. Check: 2 × 3,844 + 37 × 62 + 18 = 10,000.');}},
+{part:2,src:'Chapter 8 · Comparison of the two approaches',pts:6,run(L){
+  L.h(L.kick('pr','Compare the two')+'<h1 class="q">Which approach does each line describe?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Hash + collision','Base 62'],[
+   ['The code is always the same length',0,'Hash, then cut to 7 characters: fixed length.'],
+   ['The code gets longer as IDs grow',1,'Bigger numbers need more base 62 digits.'],
+   ['Needs a unique ID generator',1,'Base 62 converts an ID, so something must hand out unique IDs.'],
+   ['Clashes can happen and must be resolved',0,'Cutting a hash to 7 characters lets two URLs share a code.'],
+   ['Clashes are impossible',1,'Unique IDs give unique codes.'],
+   ['The next code can be guessed if IDs go up by 1',1,'Counting IDs make neighbouring codes predictable.']],
+   'Hash + collision: fixed length and no ID generator, but clashes to check. Base 62: no clashes, but it needs an ID generator, grows and can be guessed. The book’s design uses base 62.');}},
+
+/* ---------- PART 4: THE FLOWS ---------- */
+{part:3,src:'Chapter 8 · URL shortening deep dive',run(L){
+  L.h(L.kick('learn','Shortening')+'<h1 class="q">The shortening flow, step by step</h1>'+
+   L.list([['Long URL in','The client sends the long URL.'],
+     ['Seen it before?','Check whether this long URL is already in the database.'],
+     ['Yes: reuse it','It was shortened before. Fetch its short URL and return it.'],
+     ['No: new ID','The long URL is new. Get a new unique ID from the ID generator (chapter 7’s problem). At Kitebird, kbird.link gets its own link-ID generator, not Kite IDs: a 64-bit Kite ID takes up to 11 characters in base 62, too long for a short link.'],
+     ['Convert','Turn the ID into a short URL with base 62.'],
+     ['Save','Store a new row: ID, short URL, long URL.']],1)+
+   '<p class="small" style="margin-top:10px">In the book’s example, the generator returns ID 2009215674938, which becomes “zn9edcu”.</p>');
+  L.done();}},
+{part:3,src:'Chapter 8 · URL redirecting deep dive',run(L){
+  L.h(L.kick('learn','Redirecting')+'<h1 class="q">The redirect flow: cache first</h1>'+
+   L.prose('There are far more reads than writes, so the book keeps the ⟨shortURL, longURL⟩ pairs in a '+L.g('cache','cache')+' too.')+
+   L.flow([['pointer','Click','a user clicks the short link'],['layers','Load balancer','forwards it to a web server'],['box','Cache','found? return the long URL'],['book','Database','not cached? look it up']])+
+   '<p class="small">The '+L.g('load-balancer','load balancer')+' spreads clicks across web servers. If the short URL isn’t in the database either, the user probably typed an invalid one. Otherwise the long URL goes back to the user.</p>');
+  L.done();}},
+{part:3,src:'Chapter 8 · URL shortening deep dive',pts:1,run(L){
+  L.h(L.kick('pr','Run the flow')+'<h1 class="q">Mae shares a brand-new pattern link. Put kbird.link’s steps in order.</h1>');
+  L.order(L.card,['Receive the long URL','Check if it’s already in the database','Get a new ID from the ID generator','Convert the ID with base 62','Save ID, short URL and long URL'],
+   'The check comes before asking for an ID: if the long URL is already stored, you return its short URL and stop there.');}},
+{part:3,src:'Chapter 8 · URL redirecting deep dive',pts:3,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Where does the answer come from?',['Answer from the cache','Look it up in the database','Treat it as invalid'],[
+   ['Yusuf’s new woodturning video link has been clicked 30,000 times this hour.',0,'A hot link stays in the cache, so the database isn’t touched.'],
+   ['A link from two years ago, rarely clicked, isn’t in the cache.',1,'A cache miss falls through to the database.'],
+   ['Someone types kbird.link/zzzzzzz by hand. It’s in neither the cache nor the database.',2,'Not cached and not stored: most likely an invalid short URL.']]);}},
+{part:3,src:'Chapter 8 · Step 4 - Wrap up',run(L){
+  L.h(L.kick('learn','If time remains')+'<h1 class="q">Talking points for the last few minutes</h1>'+
+   L.list([['shield','Rate limiter','Stops abusers who flood the service with shortening requests, filtering by IP address or other rules.'],
+     ['layers','Scale the web tier','The web servers are '+L.g('stateless','stateless')+', so you add or remove them freely.'],
+     ['box','Scale the database',L.g('replication','Replication')+' and '+L.g('sharding','sharding')+'.'],
+     ['trend','Analytics','Answer questions like how many people click a link, and when.'],
+     ['check','Availability, consistency, reliability','The core of any large system’s success.']],3));
+  L.done();}},
+{part:3,src:'Chapter 8 · Step 4 - Wrap up',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which talking point fixes it?',['Rate limiter','Add web servers','Replicate or shard the DB','Analytics'],[
+   ['A bot submits 50,000 new links a minute from one IP address.',0,'Filter abusive requests by IP address with a rate limiter.'],
+   ['A knit-along launch triples traffic and the web servers are maxed out.',1,'The web tier is stateless, so just add servers.'],
+   ['The links table has outgrown one database server.',2,'Split it across databases (sharding) and keep copies (replication).'],
+   ['Dario asks how many people clicked the giveaway link, and when.',3,'That’s analytics.']]);}}
+  ]
+});
+</script>
+</body>
+</html>
