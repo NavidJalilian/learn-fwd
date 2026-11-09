@@ -13,15 +13,261 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0009 only. Two hands-on models used across the lesson:
+   1. Board – star-block.pdf as eight 4 MB blocks on Ines’s laptop, in cloud
+              storage and on Kofi’s phone: edits, delta sync, compression,
+              dedupe, cache invalidation, the offline queue, sync conflicts.
+   2. Plan  – the high-level design as a tappable diagram: the three flows,
+              the upload sequence step by step, and a failure drill.
+   ===================================================================== */
+const SVGNS='http://www.w3.org/2000/svg';
+const RATIO=0.6; /* illustrative: a compressed block is 60% of its size */
+const BASEH=['a91f','03bc','7c1e','e2d4','5f08','b6a3','19ce','d470'];
+let hseed=97;
+function hx(){let h;do{hseed=(hseed*16807)%2147483647;h=(hseed%65536).toString(16).padStart(4,'0');}while(BASEH.includes(h));return h;}
+const mb=x=>(Math.round(x*10)/10)+' MB';
+const cp=a=>a.map(c=>({h:c.h,w:c.w}));
+const CSS='<style>'+
+ '.lkdev{border:2px solid var(--line);border-radius:14px;padding:7px 7px 8px;background:var(--card);transition:opacity .3s}'+
+ '.lkdev.cloud{background:var(--soft)}.lkdev.off{opacity:.55;border-style:dashed}.lkdev.bad{border-color:var(--no);background:var(--no-bg)}'+
+ '.lkhd{display:flex;justify-content:space-between;align-items:baseline;gap:6px;font-size:13px;font-weight:700;color:var(--ink);margin:0 2px 5px}'+
+ '.lkhd .st{font-size:12px;font-weight:600;color:var(--muted);text-align:right}.lkhd .st.no{color:var(--no)}.lkhd .st.am{color:var(--h3)}'+
+ '.lkg{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:3px}'+
+ '.lkc{min-width:0;min-height:40px;border-radius:8px;border:1.5px solid var(--line2);background:var(--card);color:var(--ink);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px 0;font:inherit;line-height:1.2;cursor:default;transition:background .2s,border-color .2s}'+
+ '.lkc b{font-size:11px;font-weight:700}.lkc span{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--muted)}'+
+ '.lkc.wI{background:var(--h1-bg);border-color:var(--h1)}.lkc.wI span{color:var(--h1)}'+
+ '.lkc.wK{background:var(--h2-bg);border-color:var(--h2)}.lkc.wK span{color:var(--h2)}'+
+ '.lkc.dirty{border-style:dashed;border-width:2px}.lkc.hot{outline:3px solid var(--h3);outline-offset:-1px}.lkc.tap{cursor:pointer}'+
+ '.lkc.good{background:var(--ok-bg);border-color:var(--ok-line)}.lkc.miss{background:var(--no-bg);border-color:var(--no)}'+
+ '.lkpipe{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap;min-height:34px;padding:4px 2px;font-size:12px;color:var(--muted);text-align:center}'+
+ '.lkst{font-size:12px;font-weight:600;padding:3px 7px;border-radius:99px;border:1.5px solid var(--line2);color:var(--muted);background:var(--card)}'+
+ '.lkst.on{border-color:var(--pri);color:var(--pri-deep);background:var(--pri-bg)}.lkst.dn{color:var(--ok);border-color:var(--ok-line)}.lkst.off{opacity:.5;text-decoration:line-through}'+
+ '.lkx{font-size:12px;font-weight:600;color:var(--ink)}.lkar{color:var(--line2);font-size:12px}'+
+ '.lkstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(90px,1fr));gap:6px;margin:8px 0 4px}'+
+ '.lkstats div{background:var(--soft);border-radius:10px;padding:6px 8px;font-size:12px;color:var(--muted);line-height:1.3}'+
+ '.lkstats b{display:block;font-size:16px;color:var(--ink);font-variant-numeric:tabular-nums}'+
+ '.lkrow{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.lkrow .chip{margin:0;min-height:38px;padding:6px 11px;font-size:14px}.lkrow .btn{min-height:42px;padding:8px 12px;flex:0 0 auto}'+
+ '.lkrow .btn[disabled],.lkrow .chip[disabled]{opacity:.5}'+
+ '.lkcf{margin-top:7px;border-top:1.5px dashed var(--line2);padding-top:6px}.lkcf .lbl{font-size:12px;font-weight:600;color:var(--muted);margin:2px 2px 4px}'+
+ '.lknote{font-size:12.5px;color:var(--muted);margin:2px 0 4px}'+
+ '.lklog .fb{margin-top:8px;font-size:14.5px}'+
+ '.cap{background:var(--soft);border-radius:14px;padding:11px 13px;font-size:15px;line-height:1.5;margin:10px 0 6px;min-height:48px}.cap .stp{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.ticks{margin:10px 0 0;padding:0;list-style:none}.ticks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.ticks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none}.ticks li.done{color:var(--ok)}.ticks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.plan svg{width:100%;display:block;touch-action:manipulation}.plan text{font-family:var(--sans)}'+
+ '.pe{stroke:var(--line2);stroke-width:2;transition:stroke .2s}.pe.on{stroke:var(--pri);stroke-width:3.5}'+
+ '.pn{cursor:pointer;outline:none}.pn rect.b{fill:var(--card);stroke:var(--line2);stroke-width:1.6;transition:fill .2s,stroke .2s}'+
+ '.pn text{font-size:12px;font-weight:600;fill:var(--ink);text-anchor:middle}'+
+ '.pn.u1 rect.b{fill:var(--h1-bg);stroke:var(--h1)}.pn.u2 rect.b{fill:var(--h2-bg);stroke:var(--h2)}'+
+ '.pn.on rect.b{stroke:var(--pri);stroke-width:3;fill:var(--pri-bg)}.pn:focus-visible rect.b{stroke:var(--pri);stroke-width:3}'+
+ '.pn.down rect.b{fill:var(--no-bg);stroke:var(--no);stroke-dasharray:5 4}.pn.fix rect.b{fill:var(--ok-bg);stroke:var(--ok-line)}'+
+ '.pn.slow rect.b{fill:var(--h3-bg);stroke:var(--h3)}.pn.dim{opacity:.4;cursor:default}'+
+ '.pbd rect{stroke-width:1.4}.pbd text{font-size:11px;font-weight:700;text-anchor:middle}'+
+ '.lanes2{display:flex;gap:8px;flex-wrap:wrap;margin:6px 0}.lanes2 span{font-size:12.5px;font-weight:600;color:var(--muted);background:var(--soft);border-radius:99px;padding:4px 10px}'+
+ '.res{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.6;margin:8px 0}.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '</style>';
+
+function ticks(id,items){return '<ul class="ticks" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li)li.classList.add('done');}
+
+/* ---------- 1. The sync board ---------- */
+function Board(L,host,o){
+  o=Object.assign({id:'b',delta:true,comp:false,dedupe:false,inval:true,toggles:[],acts:[],edit:['I'],stats:['sent','fetched'],speed:1,resolve:false,on:()=>{}},o||{});
+  const ID=o.id,IDX=[0,1,2,3,4,5,6,7];
+  const S={delta:o.delta,comp:o.comp,dedupe:o.dedupe,inval:o.inval,speed:o.speed,busy:false};
+  const NAME={I:'Ines’s laptop',K:'Kofi’s phone'},WHO={I:'Ines',K:'Kofi'};
+  let hist,D,C,stored;
+  const dev=k=>'<div class="lkdev" id="'+ID+'-'+k+'"><div class="lkhd"><span>'+NAME[k]+'</span><span class="st" id="'+ID+'-'+k+'st"></span></div><div class="lkg" id="'+ID+'-'+k+'g"></div><div id="'+ID+'-'+k+'cf"></div></div>';
+  host.insertAdjacentHTML('beforeend','<div class="lk">'+dev('I')+'<div class="lkpipe" id="'+ID+'-pI" aria-live="polite"></div>'+
+    '<div class="lkdev cloud" id="'+ID+'-C"><div class="lkhd"><span>Cloud storage · star-block.pdf</span><span class="st" id="'+ID+'-Cst"></span></div><div class="lkg" id="'+ID+'-Cg"></div><div class="lknote" id="'+ID+'-Cm" style="margin:5px 2px 0"></div></div>'+
+    '<div class="lkpipe" id="'+ID+'-pK" aria-live="polite"></div>'+dev('K')+
+    (o.stats.length?'<div class="lkstats" id="'+ID+'-s" aria-live="polite"></div>':'')+
+    (o.toggles.length?'<div class="lkrow" id="'+ID+'-t"></div>'+(o.toggles.includes('comp')?'<div class="lknote">Compression ratio is illustrative: here a block shrinks to 60%. The book gives no number.</div>':''):'')+
+    (o.acts.length?'<div class="lkrow" id="'+ID+'-a"></div>':'')+
+    '<div class="lklog" id="'+ID+'-log" aria-live="polite"></div></div>');
+  const $=s=>host.querySelector(s);
+  const alive=()=>{const e=$('#'+ID+'-C');return !!e&&e.isConnected;};
+  const wait=ms=>L.sleep(ms*S.speed);
+  const other=k=>k==='I'?'K':'I';
+  const dirtyIdx=d=>IDX.filter(i=>d.cells[i].h!==hist[d.base][i].h);
+  const dirty=d=>dirtyIdx(d).length>0;
+  function reset(){
+    hist=[null,BASEH.map(h=>({h,w:''}))];
+    C={ver:1,cache:1,status:'uploaded',files:1,hot:new Set()};
+    D={};['I','K'].forEach(k=>{D[k]={cells:cp(hist[1]),base:1,off:false,cf:false,hot:new Set(),pipe:''};});
+    stored=new Set(BASEH);Object.assign(S,{sent:0,stored:0,fetched:0,queue:0,mismatch:false,busy:false});
+    draw();log('','');
+  }
+  function cell(c,i,f,k){
+    const cls='lkc'+(c.w?' w'+c.w:'')+(f.dirty?' dirty':'')+(f.hot?' hot':'')+(f.tap?' tap':'');
+    const lab='Block '+(i+1)+', hash '+c.h+(f.dirty?', edited, not synced yet':'');
+    return f.tap?'<button class="'+cls+'" id="'+ID+'-'+k+'-'+i+'" data-bd="'+ID+'" data-k="'+k+'" data-i="'+i+'" aria-label="'+lab+'. Tap to edit"><b>B'+(i+1)+'</b><span>'+c.h+'</span></button>'
+               :'<div class="'+cls+'" role="img" aria-label="'+lab+'"><b>B'+(i+1)+'</b><span>'+c.h+'</span></div>';
+  }
+  function stages(active,label){
+    return ['Split','Compress','Encrypt','Upload'].map((s,j)=>'<span class="lkst'+(j===active?' on':j<active?' dn':'')+(s==='Compress'&&!S.comp?' off':'')+'">'+s+'</span>').join('<span class="lkar">›</span>')+'<span class="lkx" style="flex-basis:100%">'+label+'</span>';
+  }
+  function draw(){
+    if(!alive())return;
+    ['I','K'].forEach(k=>{const d=D[k],b=hist[d.base],dx=dirtyIdx(d);
+      $('#'+ID+'-'+k+'g').innerHTML=d.cells.map((c,i)=>cell(c,i,{dirty:c.h!==b[i].h,hot:d.hot.has(i),tap:o.edit.includes(k)&&!S.busy&&!d.cf},k)).join('');
+      const st=$('#'+ID+'-'+k+'st');
+      if(d.cf){st.textContent='sync conflict';st.className='st no';}
+      else if(S.mismatch&&d.base<C.ver&&!dx.length){st.textContent='shows v'+d.base+' · server has v'+C.ver;st.className='st no';}
+      else if(d.off){st.textContent='offline'+(dx.length?' · '+dx.length+' unsynced':'');st.className='st am';}
+      else if(dx.length){st.textContent=dx.length+' unsynced edit'+(dx.length>1?'s':'');st.className='st am';}
+      else{st.textContent='up to date · v'+d.base;st.className='st';}
+      const box=$('#'+ID+'-'+k);box.classList.toggle('off',d.off);box.classList.toggle('bad',!!(S.mismatch&&d.base<C.ver));
+      const cf=$('#'+ID+'-'+k+'cf');
+      if(d.cf){const cur=hist[C.ver];
+        cf.innerHTML='<div class="lkcf"><div class="lbl">Above: '+WHO[k]+'’s local copy · Below: the server’s latest, v'+C.ver+'</div><div class="lkg">'+cur.map((c,i)=>cell(c,i,{},'s')).join('')+'</div>'+
+          (o.resolve?'<div class="lkrow" style="margin-top:8px"><button class="btn pri" id="'+ID+'-rs-merge">'+L.ic('layers')+'Merge both</button><button class="btn" id="'+ID+'-rs-mine">Keep mine</button><button class="btn" id="'+ID+'-rs-server">Keep server’s</button></div>':'')+'</div>';
+        if(o.resolve)['merge','mine','server'].forEach(h=>{$('#'+ID+'-rs-'+h).onclick=()=>resolve(k,h);});}
+      else cf.innerHTML='';
+      $('#'+ID+'-p'+k).innerHTML=d.pipe||(k==='I'?'<span>↕ uploads go through the block servers</span>':d.off?'<span>Kofi’s phone is offline'+(S.queue?' · <b class="lkx">'+S.queue+' change'+(S.queue>1?'s':'')+' waiting in the offline backup queue</b>':'')+'</span>':'<span>↕ long poll open to the notification service</span>');
+    });
+    $('#'+ID+'-Cg').innerHTML=hist[C.ver].map((c,i)=>cell(c,i,{hot:C.hot.has(i)},'c')).join('');
+    const cs=$('#'+ID+'-Cst');cs.textContent='v'+C.ver+' · '+C.status;cs.className='st'+(C.status==='pending'?' am':'');
+    $('#'+ID+'-Cm').innerHTML='Metadata DB: <b>v'+C.ver+'</b> · metadata cache: <b'+(C.cache<C.ver?' class="no-t"':'')+'>v'+C.cache+'</b>'+(C.files>1?' · plus a copy in another folder':'');
+    if(o.stats.length){const T={sent:['Sent to cloud storage',mb(S.sent)],stored:['New storage used',mb(S.stored)],fetched:['Kofi’s phone fetched',S.fetched+' block'+(S.fetched===1?'':'s')]};
+      $('#'+ID+'-s').innerHTML=o.stats.map(k=>'<div>'+T[k][0]+'<b>'+T[k][1]+'</b></div>').join('');}
+    if(o.toggles.length){const N={delta:'Delta sync',comp:'Compression',dedupe:'Dedupe blocks',inval:'Invalidate cache on write'};
+      $('#'+ID+'-t').innerHTML=o.toggles.map(k=>'<button class="chip'+(S[k]?' sel':'')+'" id="'+ID+'-tg-'+k+'" aria-pressed="'+S[k]+'"'+(S.busy?' disabled':'')+'>'+N[k]+': '+(S[k]?'on':'off')+'</button>').join('');
+      o.toggles.forEach(k=>{$('#'+ID+'-tg-'+k).onclick=()=>{if(S.busy)return;S[k]=!S[k];draw();o.on({type:'toggle',key:k,val:S[k]});};});}
+    if(o.acts.length){const A={saveI:['btn pri','arrow','Sync Ines’s laptop'],reset:['btn','cycle','Reset'],off:['btn','clock',D.K.off?'Bring Kofi’s phone online':'Take Kofi’s phone offline']};
+      $('#'+ID+'-a').innerHTML=o.acts.map(a=>'<button class="'+A[a][0]+'" id="'+ID+'-a-'+a+'"'+(S.busy?' disabled':'')+'>'+L.ic(A[a][1])+A[a][2]+'</button>').join('');
+      o.acts.forEach(a=>{$('#'+ID+'-a-'+a).onclick=()=>{if(S.busy)return;if(a==='saveI')save('I');else if(a==='reset'){reset();o.on({type:'reset'});}else setOff('K',!D.K.off);};});}
+  }
+  host.addEventListener('click',e=>{const c=e.target.closest('button[data-bd="'+ID+'"]');if(!c||S.busy)return;edit(c.dataset.k,+c.dataset.i);});
+  function log(h,kind){if(alive())$('#'+ID+'-log').innerHTML=h?'<div class="fb '+(kind||'info')+'">'+h+'</div>':'';}
+  function edit(k,i,h){const d=D[k];if(d.cf)return;d.cells[i]={h:h||hx(),w:k};if(h===hist[d.base][i].h)d.cells[i].w=hist[d.base][i].w;draw();o.on({type:'edit',k,i});}
+  function insertPage(k){const d=D[k];d.cells=d.cells.map(()=>({h:hx(),w:k}));draw();}
+  async function upload(k){
+    const d=D[k],base=hist[C.ver],ch=IDX.filter(i=>d.cells[i].h!==base[i].h);
+    const send=S.delta?ch:IDX.slice(),size=S.comp?4*RATIO:4,m=send.length*size;
+    const lbl=send.map(i=>'B'+(i+1)).join(' ')+' · '+mb(m)+(S.delta?'':' (whole file)');
+    C.status='pending';d.hot=new Set(send);
+    for(let j=0;j<4;j++){d.pipe=stages(j,lbl);draw();await wait(j===1&&!S.comp?80:230);if(!alive())return null;}
+    let added=0;send.forEach(i=>{const h=d.cells[i].h;if(S.dedupe&&stored.has(h))return;added+=size;stored.add(h);});
+    S.sent+=m;S.stored+=added;
+    hist.push(cp(d.cells));C.ver=hist.length-1;d.base=C.ver;d.hot=new Set();C.hot=new Set(send);
+    d.pipe=stages(4,lbl);draw();await wait(260);if(!alive())return null;
+    C.status='uploaded';if(S.inval)C.cache=C.ver;C.hot=new Set();d.pipe='';draw();
+    return {sent:m,added,n:send.length,changed:ch.length};
+  }
+  async function pull(k){
+    const d=D[k];
+    if(dirty(d)){d.pipe='<span class="lkx">Told about v'+C.ver+', but '+WHO[k]+' has unsaved edits</span>';draw();return {held:true};}
+    const mv=C.cache;
+    if(mv<=d.base){if(C.ver>d.base){S.mismatch=true;d.pipe='<span class="lkx no-t">Metadata from the cache says v'+mv+': nothing new to fetch</span>';}else d.pipe='';draw();return {stale:C.ver>d.base};}
+    const t=hist[mv],need=S.delta?IDX.filter(i=>d.cells[i].h!==t[i].h):IDX.slice();
+    d.hot=new Set(need);d.pipe='<span class="lkx">↓ metadata says v'+mv+' · downloading '+need.map(i=>'B'+(i+1)).join(' ')+'</span>';draw();await wait(380);if(!alive())return null;
+    d.cells=cp(t);d.base=mv;d.hot=new Set();d.pipe='';S.fetched+=need.length;draw();
+    return {n:need.length};
+  }
+  async function notify(k){
+    const d=D[k];
+    if(d.off){S.queue++;draw();return {queued:true};}
+    d.pipe='<span class="lkx">Long poll answered: “star-block.pdf changed”</span>';draw();await wait(300);if(!alive())return null;
+    return pull(k);
+  }
+  async function _save(k,quiet){
+    const d=D[k];
+    if(!dirty(d)){log('Nothing to sync yet. Tap a block on '+NAME[k]+' to edit it first.','info');return null;}
+    if(d.base!==C.ver){d.cf=true;d.pipe='<span class="lkx no-t">Based on v'+d.base+', but the server is on v'+C.ver+': sync conflict</span>';draw();
+      if(!quiet)log(WHO[other(k)]+'’s save was processed first and became v'+C.ver+'. '+WHO[k]+'’s save started from v'+d.base+', so it gets a <b>sync conflict</b>: '+NAME[k]+' now shows both copies.','no');return {conflict:true};}
+    const r=await upload(k);if(!r)return null;
+    const p=await notify(other(k));if(!alive())return null;r.peer=p||{};
+    if(!quiet){let h='<b>'+WHO[k]+'’s sync:</b> '+r.changed+' block'+(r.changed===1?'':'s')+' changed, '+r.n+' sent'+(S.comp?' compressed':'')+': <b>'+mb(r.sent)+'</b> to cloud storage (the whole file is 32 MB).';
+      if(r.peer.n!=null)h+=' Kofi’s phone fetched '+r.peer.n+' block'+(r.peer.n===1?'':'s')+'.';
+      if(r.peer.queued)h+=' Kofi’s phone is offline, so the change waits in the offline backup queue.';
+      if(r.peer.stale)h+=' <span class="no-t">The cache still said v'+C.cache+', so Kofi’s phone didn’t update: two devices now show different files.</span>';
+      log(h,r.peer.stale?'no':'ok');}
+    return r;
+  }
+  async function save(k,quiet){if(S.busy||!alive())return null;S.busy=true;draw();const r=await _save(k,quiet);if(!alive())return null;S.busy=false;draw();o.on(Object.assign({type:'save',k},r||{none:true}));return r;}
+  async function saveBoth(first){
+    if(S.busy||!alive())return null;S.busy=true;draw();
+    log('Both reconnect at the same time. '+WHO[first]+'’s save reaches the server and is processed first…','info');
+    const a=await _save(first,true);if(!alive())return null;await wait(250);if(!alive())return null;
+    const b=await _save(other(first));if(!alive())return null;S.busy=false;draw();const r={type:'both',first,a,b};o.on(r);return r;
+  }
+  async function resolve(k,how){
+    const d=D[k];if(!d.cf||S.busy)return null;S.busy=true;d.cf=false;
+    const old=hist[d.base],cur=hist[C.ver];let r=null;
+    if(how==='server'){d.cells=cp(cur);d.base=C.ver;d.pipe='';draw();log(WHO[k]+' kept the server’s version: the local change is dropped and the laptop now matches v'+C.ver+'.','info');}
+    else{
+      if(how==='merge')d.cells=cur.map((c,i)=>d.cells[i].h!==old[i].h?{h:d.cells[i].h,w:d.cells[i].w}:{h:c.h,w:c.w});
+      d.base=C.ver;d.pipe='';
+      const lost=how==='mine'?IDX.filter(i=>cur[i].h!==old[i].h&&d.cells[i].h===old[i].h):[];
+      r=await _save(k,true);if(!alive())return null;
+      log(how==='merge'?WHO[k]+' merged both copies into <b>v'+C.ver+'</b>: both edits are in it. Only the merged-in block was sent, and Kofi’s phone fetched just that.'
+        :WHO[k]+'’s copy overrode the server as <b>v'+C.ver+'</b> (this lesson’s model: the whole local copy replaces the server’s). '+(lost.length?'Block '+lost.map(i=>'B'+(i+1)).join(', ')+' went back to its old content, so '+WHO[other(k)]+'’s change is gone from the latest version.':''),how==='merge'?'ok':'no');}
+    S.busy=false;draw();o.on({type:'resolve',how,r});return r;
+  }
+  async function setOff(k,v){
+    if(S.busy)return null;const d=D[k];d.off=v;draw();let r=null;
+    if(!v&&S.queue){S.busy=true;d.pipe='<span class="lkx">Back online: the long poll reconnects and finds '+S.queue+' queued change'+(S.queue>1?'s':'')+'</span>';draw();await wait(420);if(!alive())return null;
+      S.queue=0;r=await pull(k);if(!alive())return null;S.busy=false;draw();if(r&&r.n!=null)log('Kofi’s phone came back online and pulled the latest: '+r.n+' block'+(r.n===1?'':'s')+'.','ok');}
+    o.on({type:v?'offline':'online',r});return r;
+  }
+  async function copyFile(){
+    if(S.busy||!alive())return null;S.busy=true;const d=D.I,cur=hist[C.ver],size=S.comp?4*RATIO:4,m=8*size,lbl='new file: a copy · B1–B8 · '+mb(m);
+    d.hot=new Set(IDX);
+    for(let j=0;j<4;j++){d.pipe=stages(j,lbl);draw();await wait(j===1&&!S.comp?80:230);if(!alive())return null;}
+    let added=0;cur.forEach(c=>{if(S.dedupe&&stored.has(c.h))return;added+=size;stored.add(c.h);});
+    S.sent+=m;S.stored+=added;C.files=2;d.hot=new Set();d.pipe='';S.busy=false;draw();
+    const r={sent:m,added};o.on(Object.assign({type:'copy'},r));return r;
+  }
+  const idle=async()=>{for(let i=0;i<300&&S.busy;i++)await L.sleep(30);};
+  reset();
+  return {S,get D(){return D;},get C(){return C;},reset,draw,edit,insertPage,save,saveBoth,resolve,setOff,copyFile,log,idle,alive,id:ID};
+}
+
+/* ---------- 2. The plan: the high-level design as a diagram ---------- */
+const PN={ines:[6,6,'Ines’s','laptop','u1'],kofi:[218,6,'Kofi’s','phone','u2'],block:[6,68,'Block','servers'],lb:[112,68,'Load','balancer'],notif:[218,68,'Notification','service'],
+  cloud:[6,130,'Cloud','storage'],api:[112,130,'API','servers'],queue:[218,130,'Offline backup','queue'],cold:[6,192,'Cold','storage'],cache:[112,192,'Metadata','cache'],db:[112,254,'Metadata','DB']};
+const PE=[['ines','block'],['ines','lb'],['block','cloud'],['cloud','cold'],['lb','api'],['api','cache'],['cache','db'],['cloud','api'],['api','notif'],['notif','kofi'],['notif','queue']];
+const pc=k=>[PN[k][0]+48,PN[k][1]+20];
+function Plan(L,host,o){
+  o=Object.assign({id:'p',onTap:null,dim:[]},o||{});
+  const ID=o.id;
+  let s='<svg viewBox="0 -8 320 306" role="img" aria-label="The high-level design: Ines’s laptop sends files to block servers and cloud storage, and metadata through a load balancer and API servers to the metadata cache and DB. The notification service tells Kofi’s phone about changes; the offline backup queue holds them for offline devices.">';
+  s+=PE.map(([a,b])=>{const[x1,y1]=pc(a),[x2,y2]=pc(b);return '<line class="pe" id="'+ID+'-e-'+a+'-'+b+'" x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'"/>';}).join('');
+  s+='<g id="'+ID+'-fx"></g>';
+  s+=Object.keys(PN).map(k=>{const[x,y,t1,t2,u]=PN[k];return '<g class="pn'+(u?' '+u:'')+(o.dim.includes(k)?' dim':'')+'" id="'+ID+'-n-'+k+'" data-n="'+k+'"'+(o.onTap&&!o.dim.includes(k)?' role="button" tabindex="0" aria-label="'+t1+' '+t2+'"':'')+'><rect class="b" x="'+x+'" y="'+y+'" width="96" height="40" rx="10"/>'+
+    '<text x="'+(x+48)+'" y="'+(y+17)+'">'+t1+'</text><text x="'+(x+48)+'" y="'+(y+32)+'">'+t2+'</text><g class="pbd" id="'+ID+'-bd-'+k+'"></g></g>';}).join('');
+  s+='</svg>';
+  host.insertAdjacentHTML('beforeend','<div class="plan">'+s+'</div>');
+  const $=q=>host.querySelector(q),fx=$('#'+ID+'-fx');
+  const alive=()=>fx.isConnected;
+  if(o.onTap){const h=e=>{const g=e.target.closest('.pn');if(!g||o.dim.includes(g.dataset.n))return;if(e.type==='keydown'&&e.key!=='Enter'&&e.key!==' ')return;if(e.type==='keydown')e.preventDefault();o.onTap(g.dataset.n);};
+    $('svg').addEventListener('click',h);$('svg').addEventListener('keydown',h);}
+  function edge(a,b){return $('#'+ID+'-e-'+a+'-'+b)||$('#'+ID+'-e-'+b+'-'+a);}
+  function clear(){host.querySelectorAll('.pe.on,.pn.on').forEach(e=>e.classList.remove('on'));}
+  function light(edges,nodes){clear();edges.forEach(([a,b])=>{const e=edge(a,b);if(e)e.classList.add('on');});(nodes||[]).forEach(k=>$('#'+ID+'-n-'+k).classList.add('on'));}
+  function cls(k,c){const g=$('#'+ID+'-n-'+k);g.classList.remove('down','fix','slow');if(c)g.classList.add(c);}
+  function badge(k,txt,kind){const g=$('#'+ID+'-bd-'+k);if(!txt){g.innerHTML='';return;}const[x,y]=PN[k],w=txt.length*6.6+12,col=kind==='ok'?'ok':kind==='no'?'no':'h3';
+    g.innerHTML='<rect x="'+(x+92-w)+'" y="'+(y-12)+'" width="'+w+'" height="17" rx="8.5" style="fill:var(--'+(col==='h3'?'h3-bg':col+'-bg')+');stroke:var(--'+(col==='h3'?'h3':col==='ok'?'ok-line':'no')+')"/><text x="'+(x+92-w/2)+'" y="'+(y+0.5)+'" style="fill:var(--'+(col==='h3'?'h3':col)+')">'+txt+'</text>';}
+  function pulse(a,b,ms){return new Promise(res=>{if(!alive()){res();return;}const[x1,y1]=pc(a),[x2,y2]=pc(b);
+    const c=document.createElementNS(SVGNS,'circle');c.setAttribute('r',6);c.setAttribute('style','fill:var(--h3);stroke:var(--card);stroke-width:2');fx.appendChild(c);const t0=performance.now();ms=ms||420;
+    (function st(){if(!c.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+      c.setAttribute('cx',x1+(x2-x1)*e);c.setAttribute('cy',y1+(y2-y1)*e);if(p<1){setTimeout(st,16);return;}c.remove();res();})();});}
+  async function route(path,ms){for(let j=0;j+1<path.length;j++){await pulse(path[j],path[j+1],ms);if(!alive())return;}}
+  return {light,clear,cls,badge,pulse,route,alive};
+}
+
 Course.lesson({
-  id:'0009', title:'Design Google Drive', minutes:20, icon:'lock',
-  goals:['Scope a file sync service and grow it from one server','Explain block servers, delta sync and how sync conflicts resolve','Walk the upload, download and notification flows, and handle failures'],
-  parts:['Scope and first steps','Blocks and conflicts','Flows and notifications','Space, failures, wrap-up'],
-  read:'Read chapter 15 of the book for the sequence diagrams of the upload and download flows and the metadata schema.',
+  id:'0009', title:'Design Google Drive', minutes:22, icon:'lock',
+  goals:['Scope a file sync service and grow it from one server','Use blocks, delta sync and compression to send less, and resolve a sync conflict','Walk the upload flow, keep devices consistent, save space and handle failures'],
+  parts:['Scope and first steps','Blocks and sync','Conflicts and flows','Limits, space and failures'],
+  read:'Read chapter 15 of the book for the high-level design diagram, the sequence diagrams of the upload and download flows and the metadata schema.',
   glossary:{
     namespace:'Namespace: a user’s root folder. Each file is identified by its namespace plus its path inside it.',
     resumable:'Resumable upload: an upload that can continue from where it stopped after a network break, instead of starting again.',
     block:'Block: a piece of a file (at most 4 MB here). Each block has a hash, a short fingerprint of its content, and is stored as its own object.',
+    hash:'Hash: a short fingerprint computed from a block’s content. Same content, same hash; change one byte and the hash changes.',
     delta:'Delta sync: when a file changes, send only the blocks that changed, not the whole file.',
     acid:'ACID: guarantees a relational database gives every change: it happens fully or not at all, keeps data valid, doesn’t clash with other changes, and survives crashes.',
     longpoll:'Long polling: the client asks the server “anything new?” and the server holds the request open until something happens or time runs out; then the client asks again.',
@@ -29,21 +275,33 @@ Course.lesson({
   },
   cheatsheet:[
     '<b>Scope:</b> upload, download, sync, revisions, sharing, notifications; any file up to 10 GB; encrypted at rest; 10M DAU. No real-time co-editing.',
-    '<b>Numbers:</b> 50M users × 10 GB = 500 PB allocated; 10M × 2 uploads a day ≈ 240 upload QPS, peak 480.',
+    '<b>Numbers:</b> 50M sign-ups × 10 GB = 500 PB allocated; 10M × 2 uploads a day ≈ 240 upload QPS, peak 480.',
     '<b>Grow from one server:</b> shard, move files to S3 with cross-region replication, add a load balancer and web servers, move the metadata DB out.',
-    '<b>Block servers:</b> split → compress → encrypt → upload, 4 MB blocks. <b>Delta sync</b> sends only changed blocks.',
-    '<b>Conflicts:</b> the first version processed wins; the other user gets both copies to merge or override.',
+    '<b>Block servers:</b> split → compress → encrypt → upload, 4 MB blocks. <b>Delta sync</b> sends only changed blocks (blocks 2 and 5, not all of them).',
+    '<b>Conflicts:</b> the first version processed wins; the later one gets a sync conflict and sees both copies to merge or override.',
     '<b>Strong consistency:</b> relational DB (ACID), cache invalidated on every DB write. Tables: user, device, namespace, file, file_version, block.',
-    '<b>Flows:</b> upload sends metadata (status “pending”) and blocks in parallel, then “uploaded”. Notification service uses <b>long polling</b>: one-way, infrequent.',
-    '<b>Save space:</b> dedupe blocks by hash, limit versions, move cold data to cold storage. Every component has a failure plan.'
+    '<b>Flows:</b> upload sends metadata (“pending”) and content in parallel; a cloud callback makes it “uploaded”. Notifications use <b>long polling</b>: one-way, infrequent. Offline devices catch up from the offline backup queue.',
+    '<b>Save space:</b> dedupe blocks by hash, limit versions, move cold data to cold storage. Every component has a failure plan; a dead notification server is the slow one.'
   ],
   steps:[
 /* ---------- PART 1: SCOPE AND FIRST STEPS ---------- */
-{part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Ines fixes one page of a 200-page quilt pattern PDF on a laptop. What should Kitebird Locker send to Ines’s phone?</h1>');
-  L.mc(L.card,['The whole 200-page file, again','Just the part that changed'],1,
-   'Sending only what changed saves time and mobile data. That idea, delta sync, is at the heart of this design.',
-   'Resending all 200 pages wastes bandwidth, which hurts most on a phone plan. Only the changed part needs to travel.');}},
+{part:0,src:'Warm-up',pts:1,
+ solve:async L=>{L.$('#w0-2').click();L.$('#w0go').click();},
+ run(L){
+  const pick=new Set();let done=false;
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Ines fixes one page of a quilt pattern on a laptop. The file is kept in eight pieces, and the fix landed in piece 3 (dashed). Which pieces should travel to Kofi’s phone?</h1>'+CSS+
+   '<div class="lkdev"><div class="lkhd"><span>Ines’s laptop · star-block.pdf</span><span class="st">tap to pick</span></div><div class="lkg" id="w0"></div></div>'+
+   '<button class="btn pri" id="w0go" style="margin-top:12px">'+L.ic('arrow')+'Send to Kofi’s phone</button><div id="w0o"></div>');
+  BASEH.forEach((h,i)=>{const b=document.createElement('button');b.className='lkc tap'+(i===2?' wI dirty':'');b.id='w0-'+i;b.setAttribute('aria-pressed','false');
+    b.setAttribute('aria-label','Piece '+(i+1)+(i===2?', changed':''));b.innerHTML='<b>'+(i+1)+'</b><span>'+(i===2?'c3a9':h)+'</span>';
+    b.onclick=()=>{if(done)return;pick.has(i)?pick.delete(i):pick.add(i);b.classList.toggle('hot',pick.has(i));b.setAttribute('aria-pressed',pick.has(i));L.err('');};L.$('#w0').appendChild(b);});
+  L.$('#w0go').onclick=()=>{if(done)return;if(!pick.size){L.err('Tap at least one piece');return;}done=true;
+    const ok=pick.size===1&&pick.has(2);
+    [...L.$('#w0').children].forEach((b,i)=>{b.classList.remove('hot','tap');if(i===2)b.classList.add(pick.has(2)?'good':'miss');else if(pick.has(i))b.classList.add('miss');});
+    L.$('#w0go').remove();const n=pick.size+(pick.has(2)?0:1);
+    L.$('#w0o').innerHTML='<div class="meterrow"><div class="lb">Whole file</div><div class="meter"><div style="width:100%;background:var(--no-strong)"></div></div><b style="width:70px;text-align:right">8 pieces</b></div>'+
+     '<div class="meterrow"><div class="lb">Only the change</div><div class="meter"><div style="width:12.5%;background:var(--ok-strong)"></div></div><b style="width:70px;text-align:right">1 piece</b></div>';
+    L.award(ok);L.sheet(ok?'ok':'no',ok?'Only the change travels':'Just piece 3 changed','The other seven pieces on Kofi’s phone are already identical. Sending only the changed piece saves time and mobile data. That idea, <b>delta sync</b>, is at the heart of this design'+(ok?'.':': you would have sent '+n+'.'));L.done();};}},
 {part:0,src:'Chapter 15 · Step 1 - Understand the problem and establish design scope',run(L){
   L.h(L.kick('learn','Narrow it down')+'<h1 class="q">Kitebird Locker is the team’s version of Google Drive. First, the book’s scope questions.</h1>');
   L.flips(L.card,[
@@ -60,7 +318,8 @@ Course.lesson({
      ['clock','Fast sync','If syncing drags, people give up on the product.'],
      ['down','Low bandwidth','Wasted network traffic annoys users, most of all on mobile data plans.'],
      ['trend','Scalability','Handles high volumes of traffic.'],
-     ['cycle','High availability','Still usable when some servers are offline, slow or hit by network errors.']],1));
+     ['cycle','High availability','Still usable when some servers are offline, slow or hit by network errors.']],1)+
+   '<p class="small">Keep these five in mind: almost every choice later in this lesson serves one of them.</p>');
   L.done();}},
 {part:0,src:'Chapter 15 · Back of the envelope estimation',run(L){
   L.h(L.kick('ex','Worked example')+'<h1 class="q">The book’s '+L.g('estimate','estimate')+' in four lines</h1>');
@@ -71,10 +330,10 @@ Course.lesson({
    ['Peak','Twice the average: <b>480</b> QPS.']],
    'Huge storage, modest request rate. The hard parts here are keeping files safe and in sync, not raw traffic.');}},
 {part:0,src:'Chapter 15 · Back of the envelope estimation',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why is total space 500 PB when only 10 million people use the product each day?</h1>');
-  L.mc(L.card,['Every sign-up gets 10 GB, whether active or not','Each daily user stores 50 GB on average','Each file is stored ten times across regions'],0,
-   'Space is allocated per account: 50 million sign-ups × 10 GB each.',
-   'The sum is allocated space: 50 million sign-ups × 10 GB free each = 500 PB. Daily users drive the QPS, not the allocation.');}},
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tap the pieces to rebuild the storage sum.</h1>');
+  L.sentence(L.card,[['10 million daily users ×','50 million sign-ups ×'],['2 files of 500 KB','10 GB of free space'],['= 500 PB allocated.','= 100 PB allocated.']],[1,1,0],
+   [['Daily users drive the request rate. Space is allocated to every account, active or not.'],['That’s what people upload each day, which drives QPS, not the space promised to them.'],['10 million × 10 GB would be 100 PB, but the sum counts all 50 million sign-ups.']],
+   'Every sign-up is promised 10 GB, whether active or not: 50 million × 10 GB = 500 PB. Daily users and their 2 uploads drive the 240 QPS instead.');}},
 {part:0,src:'Chapter 15 · Step 2 - Propose high-level design and get buy-in',run(L){
   L.h(L.kick('learn','Start with one server')+'<h1 class="q">The book begins small, then scales up</h1>'+
    L.prose('One web server for uploads and downloads, one database for metadata (users, logins, file info), and a <code>drive/</code> folder with 1 TB of space. Inside it, each user gets a '+L.g('namespace','namespace')+'. A file is identified by namespace + path.')+
@@ -101,91 +360,100 @@ Course.lesson({
    ['Kofi’s phone fetches /patterns/quilt/star-block.pdf.',2,'Download takes the file’s path.'],
    ['A 2 GB upload stops halfway when the laptop goes to sleep.',1,'A resumable upload picks up where it stopped.']]);}},
 
-/* ---------- PART 2: BLOCKS AND CONFLICTS ---------- */
-{part:1,src:'Chapter 15 · High-level design',run(L){
-  L.h(L.kick('learn','The full picture')+'<h1 class="q">The high-level design, part by part</h1>'+
-   L.list([['Block servers','Split files into '+L.g('block','blocks')+' and upload them to cloud storage. Each block has a unique hash kept in the metadata DB. Blocks join in order to rebuild the file. Max block size: <b>4 MB</b>, as Dropbox does.'],
-     ['Cloud storage · cold storage','Blocks live in cloud storage (S3). '+L.g('cold','Cold storage')+' holds files nobody has touched in a long time.'],
-     ['Load balancer · API servers','API servers do almost everything except uploading: login, profiles, updating file metadata.'],
-     ['Metadata DB · metadata cache','Data about users, files, blocks and versions. The files themselves stay in the cloud.'],
-     ['Notification service','Publish-subscribe: tells clients when a file is added, edited or removed elsewhere, so they pull the changes.'],
-     ['Offline backup queue','Keeps the change info for an offline client, so it syncs once it’s back online.']],3));
-  L.done();}},
+/* ---------- PART 2: BLOCKS AND SYNC ---------- */
+{part:1,src:'Chapter 15 · High-level design',
+ solve:async L=>{for(const k of ['content','meta','alert']){L.$('#m8-'+k).click();await L.sleep(40);}},
+ run(L){
+  const seen=new Set();
+  const F={content:['File content','The file itself goes from Ines’s laptop to the <b>block servers</b>. They split it into '+L.g('block','blocks')+' of at most <b>4 MB</b> (Dropbox’s size), each with a unique '+L.g('hash','hash')+', and store each block as its own object in <b>cloud storage</b> (S3). Joined in order, the blocks rebuild the file. Files nobody touches for a long time go to '+L.g('cold','cold storage')+'.',
+      [['ines','block'],['block','cloud'],['cloud','cold']],['ines','block','cloud','cold'],['ines','block','cloud','cold']],
+    meta:['Metadata','Everything except the file itself: login, profiles, and data about files, blocks and versions. The <b>load balancer</b> spreads requests over the <b>API servers</b>; a <b>metadata cache</b> sits in front of the <b>metadata DB</b>.',
+      [['ines','lb'],['lb','api'],['api','cache'],['cache','db']],['ines','lb','api','cache','db'],['ines','lb','api','cache','db']],
+    alert:['Change alerts','When a file is added, edited or removed, the <b>notification service</b> (publish-subscribe) tells Kofi’s phone, which then pulls the latest. If the phone is offline, the <b>offline backup queue</b> keeps the change until it’s back.',
+      [['api','notif'],['notif','kofi'],['notif','queue']],['api','notif','kofi','queue'],['api','notif','kofi']]};
+  const J={ines:'A user, on a browser or the mobile app.',kofi:'Another of the people the file is shared with, on a phone.',block:'Split files into blocks and upload them to cloud storage. Each block’s hash is kept in the metadata DB.',
+    cloud:'Holds the blocks, each as an independent object (Amazon S3).',cold:'Cheap storage for inactive files, not accessed for a long time.',lb:'Spreads requests evenly among the API servers.',
+    api:'Almost everything except uploading: login, user profiles, updating file metadata.',cache:'Keeps some metadata in memory for fast reads.',db:'Metadata about users, files, blocks and versions. The files themselves stay in cloud storage.',
+    notif:'Publish-subscribe: tells relevant clients when a file is added, edited or removed elsewhere.',queue:'Stores change info for an offline client, so it syncs once it’s back online.'};
+  L.h(L.kick('learn','The full picture')+'<h1 class="q">The high-level design has three paths. Light each one up.</h1>'+CSS+
+   '<div class="lkrow" id="m8b"></div><div id="m8"></div><div class="cap" id="m8c" aria-live="polite"><span class="stp">Tip</span>Tap a path above, or any box to see its job.</div>');
+  const P=Plan(L,L.$('#m8'),{id:'m8p',onTap:k=>{L.$('#m8c').innerHTML='<span class="stp">'+PN[k][2]+' '+PN[k][3]+'</span>'+J[k];P.light([],[k]);}});
+  Object.keys(F).forEach(k=>{const b=document.createElement('button');b.className='chip';b.id='m8-'+k;b.textContent=F[k][0];
+    b.onclick=()=>{[...L.$('#m8b').children].forEach(x=>x.classList.toggle('sel',x===b));P.light(F[k][2],F[k][3]);P.route(F[k][4],300);
+      L.$('#m8c').innerHTML='<span class="stp">'+F[k][0]+'</span>'+F[k][1];seen.add(k);
+      if(seen.size===3&&!L.$('#m8ok')){L.$('#m8b').insertAdjacentHTML('beforeend','<span id="m8ok"></span>');
+        L.sheet('info','Two flows, one alert channel','The book sums the design up as two flows, <b>file sync</b> and <b>managing file metadata</b>, plus a <b>notification service</b> that keeps clients up to date. Notice that file content never passes through the API servers: they handle almost everything except uploading.');L.done();}};
+    L.$('#m8b').appendChild(b);});}},
 {part:1,src:'Chapter 15 · Block servers',run(L){
-  L.h(L.kick('learn','Block servers do the heavy lifting')+'<h1 class="q">Send less: delta sync and compression</h1>'+
-   L.prose('Sending a big file on every edit wastes bandwidth. Two fixes:')+
-   L.lanes([['layers','Delta sync','When a file changes, sync <b>only the changed blocks</b>. If blocks 2 and 5 change, only those two are uploaded.',2],
-            ['box','Compression','Compress each block with a method that suits the file type: gzip or bzip2 for text, other methods for images and video.',3]])+
+  L.h(L.kick('learn','Block servers do the heavy lifting')+'<h1 class="q">Every new file takes the same four steps</h1>'+
    L.flow([['layers','Split','into blocks',''],['box','Compress','each block',''],['lock','Encrypt','each block',''],['arrow','Upload','to cloud storage','']])+
-   L.note('<b>Beyond the book:</b> with fixed-size blocks, inserting bytes near the start shifts every block after it, so real sync tools cut blocks by content instead.','info'));
+   L.prose('Sending a whole big file on every edit wastes bandwidth. Two fixes cut the traffic:')+
+   L.lanes([['layers','Delta sync','When a file changes, sync <b>only the blocks that changed</b>. The book’s example: blocks 2 and 5 change, so only those two are uploaded.',2],
+            ['box','Compression','Compress each block with a method that suits the file type: gzip or bzip2 for text, other methods for images and video.',3]])+
+   '<p class="small">Encryption happens on the block servers, before anything leaves for cloud storage.</p>');
   L.done();}},
+{part:1,src:'Chapter 15 · Block servers',
+ solve:async L=>{const b=L.bd;L.$('#b10-I-3').click();L.$('#b10-a-saveI').click();await b.idle();L.$('#b10-tg-delta').click();L.$('#b10-I-6').click();L.$('#b10-a-saveI').click();await b.idle();},
+ run(L){
+  const got={on:false,off:false};
+  L.h(L.kick('ex','Explore')+'<h1 class="q">star-block.pdf is 32 MB: eight 4 MB '+L.g('block','blocks')+'. Tap a block on Ines’s laptop to edit it, then sync. Do it once with delta sync on and once with it off.</h1>'+CSS+
+   ticks('t10',['Sync an edit with delta sync <b>on</b>','Sync an edit with delta sync <b>off</b>'])+'<div id="c10" style="margin-top:8px"></div>'+
+   '<p class="small">Dashed = edited, not synced yet. Each block shows its '+L.g('hash','hash')+': change the content and the hash changes. Amber outline = moving now.</p>');
+  const b=L.bd=Board(L,L.$('#c10'),{id:'b10',toggles:['delta','comp'],acts:['saveI','reset'],stats:['sent','fetched'],on:e=>{
+    if(e.type!=='save'||e.none||e.conflict)return;
+    if(b.S.delta){got.on=true;tick(L,'t10',0);}else{got.off=true;tick(L,'t10',1);}
+    if(got.on&&got.off&&!L.$('#t10ok')){L.$('#t10').insertAdjacentHTML('afterend','<span id="t10ok"></span>');
+      L.sheet('info','Same edit, very different traffic','With delta sync, only blocks whose hash changed travel, and Kofi’s phone downloads only those. Without it, every save sends all 32 MB, even for a one-block change (and in this model the phone downloads all 8 blocks). Compression shrinks whatever does travel. Both serve the book’s “low bandwidth” and “fast sync” goals.');L.done();}}});
+  b.log('Start by tapping any block on Ines’s laptop.','info');}},
+{part:1,src:'Chapter 15 · Block servers',pts:1,
+ solve:async L=>{L.$('#p11').children[1].click();for(let i=0;i<150&&!L.$('#p11d');i++)await L.sleep(30);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The book’s example: Ines’s edit changes <b>blocks 2 and 5</b>. Delta sync is on, compression off. How much goes to cloud storage?</h1>'+CSS+
+   '<div class="lkrow" id="p11"></div><div id="c11"></div><div id="p11x"></div>');
+  const b=Board(L,L.$('#c11'),{id:'b11',edit:[],stats:['sent','fetched'],speed:.9});
+  b.edit('I',1);b.edit('I',4);b.log('Pick your prediction to run the sync.','info');
+  ['32 MB','8 MB','4 MB'].forEach((t,j)=>{const c=document.createElement('button');c.className='chip';c.textContent=t;
+    c.onclick=async()=>{if(pick!==null)return;pick=j;c.classList.add('sel');[...L.$('#p11').children].forEach(x=>x.disabled=true);
+      const r=await b.save('I');if(!r||!b.alive())return;const ok=j===1;L.award(ok);
+      L.$('#p11x').innerHTML='<span id="p11d"></span>';
+      L.sheet(ok?'ok':'no',ok?'Right: 8 MB':'It sent 8 MB','Blocks 2 and 5 have new hashes; the other six match what cloud storage already holds. Two blocks × 4 MB = 8 MB instead of 32 MB, and Kofi’s phone downloads just those two. With compression on, the 8 MB would shrink further: to 4.8 MB with this lesson’s illustrative 60% ratio.');L.done();};
+    L.$('#p11').appendChild(c);});}},
 {part:1,src:'Chapter 15 · Block servers',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">A new file reaches a block server. Tap the steps in order.</h1>');
   L.order(L.card,['Split the file into blocks','Compress each block','Encrypt each block','Upload blocks to cloud storage'],
-   'Split, compress, encrypt, upload. Encryption comes before anything leaves for cloud storage.');}},
-{part:1,src:'Chapter 15 · Block servers',pts:1,
- solve:async L=>{['3','6'].forEach(k=>L.$('[data-b="'+k+'"]').click());L.$('#sync').click();},
- run(L){
-  const OLD=['a91f','03bc','7c1e','e2d4','5f08','b6a3','19ce','d470'],NEW=['a91f','03bc','c3a9','e2d4','5f08','40f2','19ce','d470'];const pick=new Set();let done=false;
-  L.h(L.kick('pr','See delta sync')+'<h1 class="q">Ines edits star-block.pdf (32 MB, eight 4 MB blocks). Each block shows its hash before → after the edit. Tap the blocks delta sync must upload.</h1>'+
-   '<div id="bl" style="margin:6px 0"></div><button class="btn pri" id="sync">'+L.ic('arrow')+'Sync</button><div id="bo"></div>');
-  OLD.forEach((h,j)=>{const b=document.createElement('button');b.className='chip';b.dataset.b=String(j+1);b.style.cssText='font-family:ui-monospace,Menlo,monospace;font-size:13px';
-    b.innerHTML='B'+(j+1)+' · '+h+' → '+NEW[j];b.onclick=()=>{if(done)return;const k=j+1;pick.has(k)?pick.delete(k):pick.add(k);b.classList.toggle('sel',pick.has(k));};L.$('#bl').appendChild(b);});
-  L.$('#sync').onclick=()=>{if(done)return;if(!pick.size){L.err('Tap at least one block');return;}done=true;
-    const R=[3,6],ok=pick.size===2&&R.every(k=>pick.has(k));
-    [...L.$('#bl').children].forEach(b=>{const k=+b.dataset.b;b.classList.remove('sel');if(R.includes(k))b.classList.add('ok');else if(pick.has(k))b.classList.add('no');});
-    L.$('#sync').remove();
-    L.$('#bo').innerHTML='<div class="meterrow"><div class="lb">Whole file</div><div class="meter"><div style="width:100%;background:var(--no-strong)"></div></div><b style="width:52px;text-align:right">32 MB</b></div>'+
-     '<div class="meterrow"><div class="lb">Delta sync</div><div class="meter"><div style="width:25%;background:var(--ok-strong)"></div></div><b style="width:52px;text-align:right">8 MB</b></div>';
-    L.award(ok);L.sheet(ok?'ok':'no',ok?'Only two blocks travel':'Look at the hashes','Blocks 3 and 6 have new hashes, so their content changed. The other six are identical and stay put: 8 MB sent instead of 32 MB, before compression shrinks it further.');L.done();};}},
-{part:1,src:'Chapter 15 · Sync conflicts',run(L){
+   'Split, compress, encrypt, upload. Each block is encrypted before it is sent to cloud storage.');}},
+
+/* ---------- PART 3: CONFLICTS AND FLOWS ---------- */
+{part:2,src:'Chapter 15 · Sync conflicts',run(L){
   L.h(L.kick('learn','Sync conflicts')+'<h1 class="q">Two people change the same file at the same time. Who wins?</h1>'+
    L.prose('The book’s rule is simple: <b>the first version the system processes wins</b>. The version processed later gets a <b>sync conflict</b>.')+
-   L.flow([['person','User 1','Update processed first: it goes through','',2],['person','User 2','Update processed second: conflict','',4]],false)+
-   L.prose('User 2 isn’t left stuck. The system shows <b>both copies</b>: their local copy and the latest version from the server. They can merge the two, or override one with the other.')+
+   L.flow([['person','User 1','Processed first: the update goes through','',2],['person','User 2','Processed second: sync conflict','',4]],false)+
+   L.prose('User 2 isn’t stuck. The system shows <b>both copies</b>: their local copy and the latest version from the server. They can merge the two, or override one with the other.')+
    L.note('Keeping one document in sync while many people edit it live is a hard problem of its own, and out of this design’s scope.','info'));
   L.done();}},
-{part:1,src:'Chapter 15 · Sync conflicts',pts:1,run(L){
-  L.h(L.kick('pr','Kitebird case')+'<h1 class="q">Ines and Kofi both edit star-block.pdf offline, then reconnect. Kofi’s change reaches the server and is processed first. What happens?</h1>');
-  L.mc(L.card,['Ines wins, since Ines started editing first','The server quietly merges both edits','Kofi wins; Ines sees both copies to resolve'],2,
-   'First processed wins. Ines gets their local copy and the server’s latest side by side, to merge or override.',
-   'Neither start time nor automatic merging decides it. The first version <i>processed</i> wins, and Ines gets both copies to merge or override.');}},
-
-/* ---------- PART 3: FLOWS AND NOTIFICATIONS ---------- */
+{part:2,src:'Chapter 15 · Sync conflicts',pts:1,
+ solve:async L=>{L.$('#p14').children[0].click();await L.bd.idle();for(let i=0;i<100&&!L.$('#b14-rs-merge');i++)await L.sleep(30);L.$('#b14-rs-merge').click();await L.bd.idle();},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Offline on a train, Ines edits block 3 and Kofi edits block 6 of star-block.pdf. They reconnect together, and <b>Kofi’s save is processed first</b>. Whose device gets the sync conflict?</h1>'+CSS+
+   '<div class="lkrow" id="p14"></div><div id="p14f"></div><div id="c14"></div><div id="p14x"></div>');
+  const b=L.bd=Board(L,L.$('#c14'),{id:'b14',edit:[],stats:[],resolve:true,speed:.9,on:e=>{
+    if(e.type==='both'&&!L.$('#p14f').innerHTML){const ok=pick===0;L.award(ok);
+      L.fb(L.$('#p14f'),(ok?'<b>Right.</b> ':'<b>It’s Ines.</b> ')+'Kofi’s save was processed first, so it went through as v2. Ines’s save was based on v1, so Ines gets the conflict and sees both copies. Now resolve it as Ines: tap a choice under the laptop.',ok?'ok':'no');}
+    if(e.type==='resolve'&&!L.$('#p14d')){L.$('#p14x').innerHTML='<span id="p14d"></span><button class="btn" id="p14rp" style="margin-top:10px">'+L.ic('cycle')+'Replay with Ines’s save processed first</button>';
+      L.$('#p14rp').onclick=()=>{if(b.S.busy)return;b.reset();b.edit('I',2);b.edit('K',5);b.saveBoth('I');};
+      L.sheet('info','First processed wins','The server takes whichever save it processes first; nothing is merged automatically. The person whose save came second keeps their work and sees both copies, then merges them or overrides one with the other. Overriding with “Keep mine” (this lesson’s model: the whole local copy replaces the server’s) drops the other person’s edit from the latest version. Try the replay to see the roles swap.');L.done();}}});
+  b.edit('I',2);b.edit('K',5);b.D.I.off=true;b.D.K.off=true;b.draw();b.log('Both devices are offline with one unsynced edit each. Pick your prediction to reconnect them.','info');
+  ['Ines’s laptop','Kofi’s phone','Neither: the server merges them'].forEach((t,j)=>{const c=document.createElement('button');c.className='chip';c.textContent=t;
+    c.onclick=()=>{if(pick!==null)return;pick=j;c.classList.add('sel');[...L.$('#p14').children].forEach(x=>x.disabled=true);b.D.I.off=false;b.D.K.off=false;b.saveBoth('K');};L.$('#p14').appendChild(c);});}},
 {part:2,src:'Chapter 15 · High consistency requirement',run(L){
   L.h(L.kick('learn','Strong consistency, by default')+'<h1 class="q">A file must never look different on two devices at once</h1>'+
-   L.prose('Caches are '+L.g('eventual','eventually consistent')+' by default: replicas may briefly disagree. So the design keeps cache replicas in line with the primary, and <b>invalidates the cache on every database write</b>.')+
+   L.prose('Memory caches are '+L.g('eventual','eventually consistent')+' by default: replicas may briefly disagree. So the design keeps cache replicas in line with the primary, and <b>invalidates the cache on every database write</b>.')+
    L.prose('The metadata DB is <b>relational</b>, because it gives '+L.g('acid','ACID')+' guarantees built in. NoSQL databases don’t by default, so you’d have to write that logic yourself.')+
    '<h2 class="sub">The six main tables</h2>'+
    L.list([['User','Name, email, profile photo.'],['Device','One row per device; push_id for mobile push. A user can have many.'],['Namespace','A user’s root folder.'],
      ['File','Everything about the latest version.'],['File_version','Version history. Rows are read-only, to protect it.'],['Block','Each block, so any version can be rebuilt in order.']],2));
-  L.done();}},
-{part:2,src:'Chapter 15 · Upload flow',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Ines uploads a new pattern. Two requests leave Ines’s laptop in parallel.</h1>');
-  L.beats(L.card,[
-   ['Request 1 · metadata','The laptop sends the new file’s metadata. It’s saved in the metadata DB with status <b>“pending”</b>.'],
-   ['Heads-up','The notification service tells relevant clients, like Kofi’s laptop, that a file is being uploaded.'],
-   ['Request 2 · content','Meanwhile, the file goes to the block servers. They chunk, compress and encrypt it, and upload the blocks to cloud storage.'],
-   ['Callback','When the upload completes, cloud storage calls back to the API servers. The status changes to <b>“uploaded”</b>.'],
-   ['Done','The notification service tells Kofi’s laptop the file is fully uploaded. Editing a file follows the same flow.']],
-   'Metadata and content travel separately. The status moves from “pending” to “uploaded”, and other devices hear about both.');}},
-{part:2,src:'Chapter 15 · Upload flow',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kofi’s laptop lists Ines’s new file as “pending”. What does that mean?</h1>');
-  L.mc(L.card,['The file is fully uploaded and ready','Its metadata is saved; blocks are still uploading','The upload failed and will be retried'],1,
-   'The metadata request finished first; the content is still on its way. “Uploaded” comes after the cloud storage callback.',
-   '“Pending” is set when the metadata is saved, before the blocks finish. It flips to “uploaded” after cloud storage confirms.');}},
-{part:2,src:'Chapter 15 · Download flow',run(L){
-  L.h(L.kick('learn','The download flow')+'<h1 class="q">How a device learns about a change, then fetches it</h1>'+
-   L.lanes([['eye','Online','The notification service tells the client a file changed elsewhere, so it pulls the latest data.',2],
-            ['clock','Offline','The change is saved (the offline backup queue keeps it). When the client comes back online, it pulls the latest changes.',3]])+
-   L.flow([['chat','Told','Notification service: “something changed”',''],['list','Metadata','Client asks API servers; they read the metadata DB',''],['layers','Blocks','Client asks block servers; they fetch from cloud storage',''],['check','Rebuild','Client joins the new blocks into the file','']]));
-  L.done();}},
-{part:2,src:'Chapter 15 · Notification service',run(L){
-  L.h(L.kick('learn','The notification service')+'<h1 class="q">Long polling, not WebSocket</h1>'+
-   L.prose('Every local change must reach other clients quickly, to reduce conflicts. Two options both work: '+L.g('longpoll','long polling')+' (Dropbox uses it) and WebSocket (a lasting two-way connection). The book picks long polling, for two reasons:')+
-   L.list([['arrow','One-way traffic','The server tells clients about changes. Clients don’t talk back on this channel.'],
-     ['clock','Rare, no bursts','Notifications come now and then. WebSocket suits real-time two-way traffic, like chat.']],1)+
-   L.note('<b>How it runs:</b> each client holds a long-poll connection open. When a change is detected, the client closes it and fetches the latest changes from the metadata server. After a response or a timeout, it opens a new request right away.','cycle'));
   L.done();}},
 {part:2,src:'Chapter 15 · Metadata database',pts:5,run(L){
   L.h(L.kick('pr','Where does it live?')+'<h1 class="q">Five pieces of Kitebird Locker data. Which table holds each?</h1><div id="bk"></div>');
@@ -196,54 +464,123 @@ Course.lesson({
    ['The hash and position of each 4 MB piece.',4,'The block table lets any version be rebuilt by joining blocks in order.'],
    ['The name and latest details of star-block.pdf.',2,'The file table holds everything about the latest version.']],
    'Latest file in file, history in file_version, pieces in block, root folders in namespace, devices in device.');}},
+{part:2,src:'Chapter 15 · Upload flow',
+ solve:async L=>{for(let i=0;i<20&&L.$('#u17nx');i++){L.$('#u17nx').click();await L.sleep(20);}},
+ run(L){
+  const ST=[
+   ['M',1,'Ines’s laptop sends the new file’s <b>metadata</b>.',[['ines','lb'],['lb','api']],['ines','lb','api']],
+   ['C',1,'At the same time, it sends the file’s <b>content</b> to the block servers.',[['ines','block']],['ines','block']],
+   ['M',2,'The metadata is saved in the metadata DB with status <b>“pending”</b>.',[['api','cache'],['cache','db']],['api','cache','db'],'db','pending'],
+   ['C',2,'Block servers split, compress and encrypt the blocks, and upload them to cloud storage.',[['block','cloud']],['block','cloud']],
+   ['M',3,'The API servers tell the notification service a new file is being added.',[['api','notif']],['api','notif']],
+   ['M',4,'The notification service tells Kofi’s phone: a file is <b>being uploaded</b>.',[['notif','kofi']],['notif','kofi'],'kofi','pending'],
+   ['C',3,'Upload done: cloud storage <b>calls back</b> the API servers.',[['cloud','api']],['cloud','api']],
+   ['C',4,'The file’s status changes to <b>“uploaded”</b> in the metadata DB.',[['api','cache'],['cache','db']],['api','cache','db'],'db','uploaded'],
+   ['C',5,'The notification service is told the status changed.',[['api','notif']],['api','notif']],
+   ['C',6,'Kofi’s phone hears the file is <b>fully uploaded</b>.',[['notif','kofi']],['notif','kofi'],'kofi','uploaded']];
+  let k=0;
+  L.h(L.kick('ex','Step through it')+'<h1 class="q">Ines uploads a new pattern. Two requests leave the laptop in parallel. Step through what happens.</h1>'+CSS+
+   '<div class="lanes2" id="u17l"></div><div id="u17"></div><div class="cap" id="u17c" aria-live="polite"></div><div id="u17b"></div>');
+  const P=Plan(L,L.$('#u17'),{id:'u17p'});
+  const lanes=()=>{const m=ST.slice(0,k).filter(s=>s[0]==='M').length,c=ST.slice(0,k).filter(s=>s[0]==='C').length;
+    L.$('#u17l').innerHTML='<span>Metadata request: '+m+' of 4</span><span>Content request: '+c+' of 6</span>';};
+  const nx=()=>{L.$('#u17b').innerHTML='<button class="btn pri" id="u17nx">'+L.ic('play')+(k?'Next step':'Start')+'</button>';
+    L.$('#u17nx').onclick=()=>{const s=ST[k];P.light(s[3],s[4]);P.route(s[4],260);if(s[5])P.badge(s[5],s[6],s[6]==='uploaded'?'ok':'');
+      L.$('#u17c').innerHTML='<span class="stp">'+(s[0]==='M'?'Metadata request · step ':'Content request · step 2.')+s[1]+'</span>'+s[2];k++;lanes();
+      if(k<ST.length)nx();else{L.$('#u17b').innerHTML='';
+        L.sheet('info','Pending, then uploaded','Metadata and content travel separately. The file is listed as “pending” as soon as its metadata is saved, so Kofi’s phone knows it’s coming; it becomes “uploaded” only after cloud storage confirms. Editing a file follows the same flow.');L.done();}};};
+  L.$('#u17c').innerHTML='<span class="stp">10 steps</span>The metadata request (steps 1–4) and the content request (steps 2.1–2.6) run side by side.';lanes();nx();}},
+{part:2,src:'Chapter 15 · Download flow',run(L){
+  L.h(L.kick('learn','Download flow and notifications')+'<h1 class="q">How Kofi’s phone hears about a change, then fetches it</h1>'+
+   L.lanes([['eye','Online','The notification service tells the phone a file changed elsewhere, so it pulls the latest.',2],
+            ['clock','Offline','The change is kept (the offline backup queue). Back online, the phone pulls the latest changes.',3]])+
+   L.flow([['chat','Told','“something changed”',''],['list','Metadata','via API servers',''],['layers','Blocks','via block servers',''],['check','Rebuild','join new blocks','']])+
+   L.prose('The notification service uses '+L.g('longpoll','long polling')+' (Dropbox does too), not WebSocket. Two reasons: the traffic is <b>one-way</b>, server to client; and notifications are <b>infrequent, with no bursts</b>. WebSocket suits real-time two-way traffic, like chat.')+
+   '<p class="small">Each client keeps a long poll open. When a change is detected, it closes the poll and fetches the latest from the metadata server; after a response or a timeout it opens a new one right away.</p>');
+  L.done();}},
 {part:2,src:'Chapter 15 · Notification service',pts:1,run(L){
   L.h(L.kick('pr','Spot the mistake')+'<h1 class="q">Lior says: “We used WebSocket for maker chat, so let’s use it for Locker sync alerts too.” Tamsin disagrees. Why?</h1>');
   L.mc(L.card,['Changes flow one way, and only now and then','Long polling keeps a two-way channel open','WebSocket can’t work on mobile networks'],0,
    'Chat is two-way and real-time, which suits WebSocket. Locker alerts are one-way and infrequent, which suits long polling.',
    'Long polling isn’t two-way, and WebSocket works on phones. The reason is the traffic: one-way, infrequent alerts don’t need a lasting two-way connection.');}},
 
-/* ---------- PART 4: SPACE, FAILURES, WRAP-UP ---------- */
-{part:3,src:'Chapter 15 · Save storage space',run(L){
-  L.h(L.kick('learn','Save storage space')+'<h1 class="q">Keeping every version everywhere fills storage fast</h1>'+
-   L.prose('Versions are kept for history and copied across data centers for reliability. Three ways to cut the cost:')+
-   L.list([['layers','De-duplicate blocks','Two blocks with the same hash are identical, so store them once per account.'],
-     ['clock','Smarter backups','Set a version <b>limit</b>: the oldest is replaced when it’s reached. Or keep only <b>valuable</b> versions: a heavily edited file could be saved over 1,000 times in a short time, so weight recent versions more. Experiment to find the right number.'],
-     ['box','Cold storage','Move data untouched for months or years to cold storage such as Amazon S3 Glacier, much cheaper than S3.']],4));
-  L.done();}},
+/* ---------- PART 4: LIMITS, SPACE AND FAILURES ---------- */
+{part:3,src:'Chapter 15 · Step 3 - Design deep dive',
+ solve:async L=>{for(let j=0;j<6;j++){L.$('#e20-'+j).click();await L.sleep(20);await L.e20;}},
+ run(L){
+  const seen=new Set();L.e20busy=false;
+  const b=()=>L.bd;
+  const P=[
+   ['One block',async s=>{s.edit('I',3);await s.save('I',true);},'Ines edits one block. Delta sync’s best case: <b>4 MB</b> goes up instead of 32 MB, and Kofi’s phone fetches a single block.'],
+   ['Insert at start',async s=>{s.insertPage('I');await s.save('I',true);},'Ines inserts a page at the start of the file. <b>Beyond the book:</b> with fixed-size blocks, adding bytes near the start shifts everything after it, so all eight hashes change and delta sync sends the whole <b>32 MB</b>. Real sync tools cut blocks by content to avoid this.'],
+   ['Copy the file',async s=>{s.S.dedupe=true;await s.copyFile();},'Ines saves a copy of the file in another folder, with dedupe on. Every block of the copy has a hash already stored in Ines’s account, so <b>no new storage</b> is used (without dedupe: +32 MB). <b>Beyond the book:</b> in this lesson’s model the blocks still travel; the book only says dedupe saves storage.'],
+   ['Both save',async s=>{s.edit('I',2);s.edit('K',5);await s.saveBoth('K');},'Ines and Kofi edit and save at once. First processed wins: Kofi’s save became v2. Ines’s save started from v1, so it got a <b>sync conflict</b>. Nothing merges by itself: Ines must merge or override.'],
+   ['Phone offline',async s=>{await s.setOff('K',true);s.edit('I',6);await s.save('I',true);await L.sleep(350);await s.setOff('K',false);},'Kofi’s phone is offline while Ines edits. Meanwhile the change waited in the <b>offline backup queue</b>. Back online, it reconnected its long poll and pulled only the new block.'],
+   ['Stale cache',async s=>{s.S.inval=false;s.edit('I',0);await s.save('I',true);},'The cache is not invalidated when the DB is written. The DB has v2, but the cache still says v1, so Kofi’s phone sees nothing new: <b>two devices show different files</b>. That’s why the book invalidates the cache on every DB write.']];
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Where do blocks and sync stop protecting you? Run each case.</h1>'+CSS+
+   '<div class="lkrow" id="e20"></div><div class="cap" id="e20c" aria-live="polite"><span class="stp">Pick a case</span>Each one starts from a fresh star-block.pdf, v1 on every device.</div><div id="c20"></div>');
+  L.bd=Board(L,L.$('#c20'),{id:'b20',edit:[],stats:['sent','stored','fetched'],speed:.6});
+  P.forEach((p,j)=>{const c=document.createElement('button');c.className='chip';c.id='e20-'+j;c.textContent=p[0];
+    c.onclick=()=>{const s=b();if(s.S.busy||L.e20busy)return;L.e20busy=true;[...L.$('#e20').children].forEach(x=>x.classList.toggle('sel',x===c));
+      s.reset();s.S.dedupe=false;s.S.inval=true;L.$('#e20c').innerHTML='<span class="stp">'+p[0]+' · running</span>Watch the board.';
+      L.e20=(async()=>{await p[1](s);if(!s.alive())return;L.e20busy=false;L.$('#e20c').innerHTML='<span class="stp">'+p[0]+'</span>'+p[2];c.classList.add('ok');seen.add(j);
+        if(seen.size===P.length&&!L.$('#e20ok')){L.$('#e20').insertAdjacentHTML('beforeend','<span id="e20ok"></span>');
+          L.sheet('info','Blocks help, within limits','Delta sync shines when edits touch few blocks. Dedupe saves space when the same content is stored twice. Conflicts are settled by processing order, not merged for you. And the strong-consistency rules (invalidate the cache on every write) are what keep two devices from showing different files.');L.done();}})();};
+    L.$('#e20').appendChild(c);});}},
 {part:3,src:'Chapter 15 · Save storage space',pts:4,run(L){
-  L.h(L.kick('pr','Hana’s storage bill')+'<h1 class="q">Which saving fits each Kitebird Locker case?</h1><div id="bk"></div>');
+  L.h(L.kick('pr','Hana’s storage bill')+'<h1 class="q">Versions are kept for history and copied across data centers, so storage fills fast. Three ways to cut it:</h1>'+
+   L.list([['layers','De-duplicate blocks','Same hash means identical blocks: store them once per account.'],
+     ['clock','Smarter version history','Set a <b>limit</b> (the oldest version is replaced), or keep only <b>valuable</b> versions, weighting recent ones. A heavily edited file could be saved over 1,000 times in a short period. Experiment to find the right number.'],
+     ['box','Cold storage','Move data untouched for months or years to cold storage such as Amazon S3 Glacier, much cheaper than S3.']],4)+
+   '<h2 class="sub">Which saving fits each Kitebird Locker case?</h2><div id="bk"></div>');
   L.buckets(L.$('#bk'),['De-duplicate blocks','Limit versions','Cold storage'],[
    ['Ines drops the same 40 MB photo set into two project folders.',0,'Same content means same block hashes, so each block is stored once.'],
    ['A pattern file autosaves 1,200 versions in one afternoon.',1,'Cap the versions or keep only the valuable ones, weighting recent ones.'],
    ['CAD files from a 2021 project nobody has opened since.',2,'Data untouched for years belongs in cheaper cold storage.'],
    ['Kofi re-uploads a file identical to one already in Kofi’s account.',0,'Identical blocks, same hashes: nothing new needs storing.']],
    'Same hash → store once. Too many versions → limit them. Untouched for ages → cold storage.');}},
-{part:3,src:'Chapter 15 · Failure Handling',run(L){
-  L.h(L.kick('learn','Failure handling')+'<h1 class="q">Every part has a plan for when it dies</h1>'+
-   L.list([['Load balancer','A secondary takes over. They watch each other with a heartbeat, a regular “I’m alive” signal; no heartbeat for a while means failed.'],
-     ['Block server','Other block servers pick up its unfinished and pending jobs.'],
-     ['Cloud storage','S3 buckets are replicated across regions; fetch from another region.'],
-     ['API server','Stateless, so the load balancer sends traffic to the others.'],
-     ['Metadata cache · DB','Cache: read another replica, start a new server. DB primary down: promote a replica (the book: “master” and “slave”).'],
-     ['Notification service','Each server holds many long-poll connections; Dropbox reported over 1 million per machine. If one dies, clients reconnect elsewhere, which is slow.'],
-     ['Offline backup queue','Queues are replicated; consumers re-subscribe to the backup queue.']],1));
-  L.done();}},
-{part:3,src:'Chapter 15 · Failure Handling',pts:1,
- solve:async L=>{[...L.$('#pg').children].forEach(b=>b.click());},
+{part:3,src:'Chapter 15 · Save storage space',pts:1,
+ solve:async L=>{['delta','comp','dedupe'].forEach(k=>{if(!L.bd.S[k])L.$('#b22-tg-'+k).click();});L.$('#c22go').click();for(let i=0;i<200&&!L.$('#c22ok');i++)await L.sleep(30);},
  run(L){
-  const F=[['Load balancer','The secondary notices the missing heartbeats and takes over.'],['Block server','Other block servers pick up its pending jobs.'],['Cloud storage (one region)','Files are fetched from a copy in another region.'],['API server','Stateless: traffic moves to the other API servers.'],
-    ['Metadata cache node','Reads go to another replica; a new cache server replaces it.'],['Metadata DB primary','A replica is promoted to primary; a new replica is added.'],['Notification server','Its long-poll connections all drop. Clients reconnect to other servers, slowly: one machine held over a million.'],['Offline backup queue','A replica takes over; consumers re-subscribe to it.']];
+  let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kofi’s phone is on a small data plan and Hana watches the storage bill. Ines will make three edits. Set the switches so all three fit both targets, then run them.</h1>'+CSS+
+   '<div class="res" style="margin-top:0"><b>Targets</b> (illustrative): sent to cloud storage <b>≤ 10 MB</b> · new storage <b>≤ 8 MB</b><br><span class="small">Edit 1 changes B4 · edit 2 changes B1 and B8 · edit 3 puts B4 back as it was.</span></div>'+
+   '<div id="c22"></div><button class="btn pri" id="c22go" style="margin-top:6px">'+L.ic('play')+'Run the three edits</button><div id="c22r"></div>');
+  const b=L.bd=Board(L,L.$('#c22'),{id:'b22',edit:[],delta:false,comp:false,dedupe:false,toggles:['delta','comp','dedupe'],stats:['sent','stored'],speed:.45});
+  b.log('All three switches start off. Pick your settings, then run.','info');
+  L.$('#c22go').onclick=async()=>{
+    if(b.S.busy)return;const go=L.$('#c22go');go.disabled=true;L.$('#c22r').innerHTML='';b.reset();
+    b.edit('I',3);if(!await b.save('I',true))return;
+    b.edit('I',0);b.edit('I',7);if(!await b.save('I',true))return;
+    b.edit('I',3,BASEH[3]);if(!await b.save('I',true))return;
+    const rows=[['Sent to cloud storage: '+mb(b.S.sent)+' (target ≤ 10 MB)',b.S.sent<=10],['New storage: '+mb(b.S.stored)+' (target ≤ 8 MB)',b.S.stored<=8]],pass=rows.every(r=>r[1]);
+    L.$('#c22r').innerHTML='<div class="res">'+rows.map(r=>(r[1]?'<span class="ok-t">✓</span> ':'<span class="no-t">✗</span> ')+r[0]).join('<br>')+'</div>';
+    if(first){L.award(pass);first=false;}go.disabled=false;
+    if(pass){go.disabled=true;L.$('#c22r').insertAdjacentHTML('beforeend','<span id="c22ok"></span>');
+      L.sheet('ok','Both targets met','You needed all three. <b>Delta sync</b> sends 4 blocks instead of 24. <b>Compression</b> shrinks them (4 × 2.4 MB = 9.6 MB). <b>Dedupe</b> spots that edit 3’s block already exists in storage, so only 3 new blocks are stored: 7.2 MB. Bandwidth and storage are different savings.');L.done();}
+    else L.sheet('no','Not yet','Check the red line. Sent traffic falls with delta sync and compression. New storage also falls with dedupe: edit 3 restores a block that is already stored. Change the switches and run again.');};}},
+{part:3,src:'Chapter 15 · Failure Handling',pts:1,
+ solve:async L=>{for(const k of ['lb','block','cloud','api','cache','db','notif','queue'])L.$('#f23p-n-'+k).dispatchEvent(new MouseEvent('click',{bubbles:true}));},
+ run(L){
+  const F={lb:['Load balancer','A secondary takes over. They watch each other with a heartbeat, a regular “I’m alive” signal; no heartbeat for a while means failed.','fix','standby'],
+    block:['Block servers','Other block servers pick up its unfinished and pending jobs.','fix','others'],
+    cloud:['Cloud storage','S3 buckets are replicated across regions: files are fetched from another region.','fix','replica'],
+    api:['API servers','Stateless, so the load balancer sends traffic to the other API servers.','fix','others'],
+    cache:['Metadata cache','Cache servers are replicated: read another node, and bring up a new server.','fix','replica'],
+    db:['Metadata DB','Primary down: promote a replica and add a new one. A replica down: read from another (the book says “master” and “slave”).','fix','promote'],
+    notif:['Notification service','Every long poll on that server drops. Clients reconnect to other servers, but one machine can hold over a million connections and can’t reconnect them all at once: slow.','slow','slow'],
+    queue:['Offline backup queue','Queues are replicated; consumers re-subscribe to the backup queue.','fix','replica']};
   const seen=new Set();
-  L.h(L.kick('pr','Pull the plug')+'<h1 class="q">Obi runs a failure drill on Kitebird Locker. Pull the plug on every part and watch the system cope.</h1>'+
-   '<div id="pg"></div><div id="pl" style="margin-top:6px"></div><div id="pq"></div>');
-  F.forEach((f,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('x')+f[0];
-    b.onclick=()=>{if(seen.has(j))return;seen.add(j);b.classList.add('no');
-      L.$('#pl').insertAdjacentHTML('beforeend','<div class="small" style="margin:0 0 6px"><b>'+f[0]+':</b> '+f[1]+'</div>');
-      if(seen.size===F.length){const q=L.$('#pq');q.innerHTML='<h2 class="sub">Obi asks which failure takes longest to recover from. What does the book say?</h2>';
-        L.mc(q,['A metadata DB primary going down','A block server crashing mid-job','A notification server going down'],2,
-         'One machine can hold over a million long-poll connections, and they can’t all reconnect at once. The book calls it a relatively slow process.',
-         'Those have quick fixes: promote a replica, or let other servers take the jobs. Re-connecting a million long-poll clients after a notification server dies is the slow one.');}};
-    L.$('#pg').appendChild(b);});}},
+  L.h(L.kick('pr','Pull the plug')+'<h1 class="q">Obi runs a failure drill on Kitebird Locker. Tap each server box to pull its plug and watch the system cope.</h1>'+CSS+
+   '<div id="f23"></div><div class="cap" id="f23c" aria-live="polite"><span class="stp">0 of 8 pulled</span>Users and cold storage aren’t part of the drill.</div><div id="f23q"></div>');
+  const P=Plan(L,L.$('#f23'),{id:'f23p',dim:['ines','kofi','cold'],onTap:k=>{
+    if(seen.has(k)||!F[k])return;seen.add(k);const f=F[k];P.cls(k,'down');P.badge(k,'down','no');
+    setTimeout(()=>{if(!P.alive())return;P.cls(k,f[2]);P.badge(k,f[3],f[2]==='fix'?'ok':'');},450);
+    L.$('#f23c').innerHTML='<span class="stp">'+seen.size+' of 8 pulled · '+f[0]+'</span>'+f[1];
+    if(seen.size===8){const q=L.$('#f23q');q.innerHTML='<h2 class="sub">Obi asks which failure takes longest to recover from. What does the book say?</h2>';
+      L.mc(q,['A metadata DB primary going down','A block server crashing mid-job','A notification server going down'],2,
+       'One machine can hold over a million long-poll connections, and they can’t all reconnect at once. The book calls it a relatively slow process.',
+       'Those have quick fixes: promote a replica, or let other servers take the jobs. Reconnecting a million long-poll clients after a notification server dies is the slow one.');}}});}},
 {part:3,src:'Chapter 15 · Step 4 - Wrap up',pts:1,run(L){
   L.h(L.kick('learn','Wrap-up talking points')+'<h1 class="q">No perfect design, only trade-offs</h1>'+
    L.prose('The book closes by stressing trade-offs. With a few minutes left, discuss alternatives:')+

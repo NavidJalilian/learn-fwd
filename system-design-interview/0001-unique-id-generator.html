@@ -13,15 +13,172 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-/* 64-bit snowflake bar: sizes [sign, timestamp, datacenter, machine, sequence] */
-const SEGC=['h4','h1','h2','h3','h4'];
-function bar(sz){sz=sz||[1,41,5,5,12];return '<div style="display:flex;gap:2px;margin:14px 0 6px;font-size:12px;font-weight:700">'+sz.map((b,j)=>'<div style="flex:'+b+' 1 0;min-width:'+(j===0?18:30)+'px;background:var(--'+SEGC[j]+'-bg);color:var(--'+SEGC[j]+');border-radius:8px;padding:9px 0;text-align:center">'+b+'</div>').join('')+'</div><p class="small" style="margin:0 0 8px;text-align:right">bits, left to right · total '+sz.reduce((a,b)=>a+b,0)+'</p>';}
-function legend(rows){return rows.map((r,j)=>'<div style="display:flex;gap:10px;align-items:flex-start;padding:9px 0;border-bottom:1px solid var(--line);font-size:15px;line-height:1.45"><span style="flex:none;width:14px;height:14px;border-radius:4px;margin-top:4px;background:var(--'+SEGC[j]+')"></span><div><b>'+r[0]+'</b> · '+r[1]+'</div></div>').join('');}
-const yrs=b=>Math.pow(2,b)/1000/3600/24/365;
+/* =====================================================================
+   Lesson 0001 only. Two hands-on models used across the lesson:
+   1. StepK – database servers handing out IDs by stepping k (multi-master),
+              with the IDs listed in the order rows were saved.
+   2. Bar   – the 64-bit snowflake layout with draggable dividers and live
+              readouts, plus a minting view (binary sections of a Kite ID).
+   ===================================================================== */
+const EPOCH=Date.UTC(2026,0,1);                 /* Kite ID epoch (canon) */
+const T0=Date.UTC(2026,10,9,10,0,0)-EPOCH;      /* illustrative "now": 9 Nov 2026, 10:00:00.000 UTC */
+const SEC=['Sign','Timestamp','Datacenter','Machine','Sequence'];
+const COL=['var(--muted)','var(--h1)','var(--h2)','var(--h3)','var(--h4)'];
+const BG=['var(--soft2)','var(--h1-bg)','var(--h2-bg)','var(--h3-bg)','var(--h4-bg)'];
+const BOOK=[1,41,5,5,12];
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fmt=n=>n.toLocaleString('en-US');
+const p2=n=>String(n).padStart(2,'0'),p3=n=>String(n).padStart(3,'0');
+const big=n=>n<1e7?fmt(n):n<1e9?(Math.round(n/1e5)/10)+' million':n<1e12?(Math.round(n/1e8)/10)+' billion':n<1e15?(Math.round(n/1e11)/10)+' trillion':'over a quadrillion';
+function day(t){const d=new Date(EPOCH+t);return d.getUTCDate()+' '+MON[d.getUTCMonth()]+' '+d.getUTCFullYear();}
+function clock(t){const d=new Date(EPOCH+t);return p2(d.getUTCHours())+':'+p2(d.getUTCMinutes())+':'+p2(d.getUTCSeconds())+'.'+p3(d.getUTCMilliseconds());}
+function dur(ms){const d=ms/864e5,y=d/365,pl=(n,w)=>'about '+fmt(n)+' '+w+(n===1?'':'s');
+  if(y>=1)return pl(Math.floor(y),'year');if(d>=1)return pl(Math.floor(d),'day');if(ms>=36e5)return pl(Math.floor(ms/36e5),'hour');
+  if(ms>=6e4)return pl(Math.floor(ms/6e4),'minute');if(ms>=1e3)return pl(Math.floor(ms/1e3),'second');return fmt(ms)+' ms';}
+const bits=(v,n)=>n?BigInt(v).toString(2).padStart(n,'0'):'';
+function idOf(sz,v){let x=0n;for(let j=0;j<5;j++)x=(x<<BigInt(sz[j]))|BigInt(v[j]);return x;}
+const idStr=x=>x.toString().replace(/\B(?=(\d{3})+(?!\d))/g,',');
+
+const CSS='<style>'+
+ '.ksv{display:flex;gap:6px}.kcard{flex:1;min-width:0;border:2px solid var(--line);border-top-width:5px;border-radius:14px;padding:8px;font-size:13.5px;line-height:1.35}'+
+ '.kcard .btn{width:100%;justify-content:center;margin-top:6px;padding:8px 2px;font-size:13.5px;min-height:40px}'+
+ '.klbl{font-size:13px;font-weight:600;color:var(--muted);margin:12px 0 6px}'+
+ '.kids{display:flex;flex-wrap:wrap;gap:6px;min-height:46px;background:var(--soft);border-radius:12px;padding:6px}'+
+ '.kid{display:inline-flex;flex-direction:column;align-items:center;min-width:44px;border:2px solid;border-radius:10px;padding:2px 6px;font-size:16px;line-height:1.15;animation:in .3s}'+
+ '.kid small{font-size:11px;color:var(--muted)}.kid i{font-style:normal;font-size:11px;font-weight:700}'+
+ '.kid.cl{outline:3px solid var(--no);outline-offset:1px}.kid.cl i{color:var(--no)}.kid.bk i{color:var(--h4)}'+
+ '.kcount{font-size:14px;margin-top:8px;background:var(--soft);border-radius:12px;padding:8px 11px;line-height:1.5}'+
+ '.krow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;align-items:center}.krow .btn{min-height:40px;padding:8px 12px}.krow .chip{margin:0;min-height:38px}'+
+ '.krng{display:grid;grid-template-columns:64px 1fr 30px;gap:10px;align-items:center;font-size:15px;margin:8px 0}.krng input{width:100%;accent-color:var(--pri);height:30px}.krng b{text-align:right}'+
+ '.kbar svg{width:100%;display:block}.kbar svg text{font-family:var(--sans)}'+
+ '.kro{font-size:14px;line-height:1.4;margin-top:4px}.kro .r{display:flex;gap:8px;align-items:baseline;padding:5px 0;border-bottom:1px solid var(--line)}'+
+ '.kro .sw{flex:none;width:11px;height:11px;border-radius:3px;align-self:center}.kro .nm{flex:none;width:118px;font-weight:600}'+
+ '.kro .tot{background:var(--soft);border-radius:12px;padding:8px 11px;margin-top:8px}'+
+ '.krows{display:flex;flex-direction:column;gap:5px;margin:8px 0}.kr{border-left:5px solid;border-radius:10px;padding:6px 9px}.krh{font-size:13px;line-height:1.35}'+
+ '.kbits{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11px;word-break:break-all;display:block;color:var(--ink);border-radius:4px}'+
+ '.kfl{animation:kfl .7s}@keyframes kfl{from{background:var(--pri-bg)}to{background:transparent}}'+
+ '.kbig{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:16px;font-weight:700;word-break:break-all}'+
+ '.kcap{background:var(--soft);border-radius:14px;padding:11px 13px;font-size:15px;line-height:1.5;margin:10px 0;min-height:48px}'+
+ '.ktasks{margin:10px 0 0;padding:0;list-style:none}.ktasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.ktasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.ktasks li.done{color:var(--ok)}.ktasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.ktasks li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.kmini{font-size:13.5px;line-height:1.45;background:var(--soft);border-radius:12px;padding:8px 11px;margin-top:8px}'+
+ '.kcmp{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.7}.kcmp .ln{display:flex;gap:8px}.kcmp .ln b{width:14px;flex:none;font-family:var(--sans)}'+
+ '.kcmp span.e{opacity:.4}.kcmp span.d{outline:2px solid var(--ink);border-radius:2px;font-weight:700}'+
+ '.kuu{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;word-break:break-all;padding:5px 0;border-bottom:1px solid var(--line)}.kuu .lt{color:var(--h4);font-weight:700}'+
+ '.kprog{height:14px;background:var(--soft2);border-radius:99px;overflow:hidden;margin:6px 0}.kprog i{display:block;height:100%;background:var(--h4);width:0}'+
+ '.kev{display:flex;gap:8px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px;line-height:1.4;animation:in .3s}'+
+ '.kok{color:var(--ok);font-weight:700}.kno{color:var(--no);font-weight:700}'+
+ '</style>';
+
+/* ---------- small helpers ---------- */
+const tasks=(id,list)=>'<ul class="ktasks" id="'+id+'">'+list.map((g,j)=>'<li id="'+id+j+'"><span class="bx"></span><span>'+g+'</span></li>').join('')+'</ul>';
+function tick(L,id,j){const li=L.$('#'+id+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const allTicked=(L,id)=>[...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));
+const rng=(id,label,min,max,val)=>'<label class="krng" for="'+id+'"><span>'+label+'</span><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="1" value="'+val+'"><b id="'+id+'-v">'+val+'</b></label>';
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+async function waitFor(L,sel,n){for(let i=0;i<(n||150)&&!L.$(sel);i++)await L.sleep(30);}
+function chipsInto(L,host,labels,fn){labels.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>fn(j,b);host.appendChild(b);});}
+
+/* the sections of one ID, each as a coloured row of bits */
+function idRows(sz,v,hl,note){
+  return '<div class="krows">'+[0,1,2,3,4].filter(j=>sz[j]>0).map(j=>'<div class="kr" style="background:'+BG[j]+';border-left-color:'+COL[j]+'">'+
+    '<div class="krh"><b style="color:'+COL[j]+'">'+SEC[j]+'</b> · '+sz[j]+' bit'+(sz[j]===1?'':'s')+' = <b>'+fmt(v[j])+'</b>'+(note&&note[j]?' <span class="small">'+note[j]+'</span>':'')+'</div>'+
+    '<code class="kbits'+(hl===j?' kfl':'')+'">'+bits(v[j],sz[j])+'</code></div>').join('')+'</div>';
+}
+
+/* ---------- 1. StepK: multi-master servers stepping by k ---------- */
+function StepK(L,host,o){
+  o=Object.assign({id:'k',n:2,k:2,starts:null,kCtl:false,add:false,saves:true,on:()=>{}},o||{});
+  const ID=o.id,NM=['Shard A','Shard B','Shard C'],SC=['h1','h2','h3'];
+  let k=o.k,sv=[],log=[],t=0,addedMid=false;
+  host.insertAdjacentHTML('beforeend','<div class="ksk"><div class="ksv" id="'+ID+'-sv"></div>'+
+    (o.kCtl?rng(ID+'-k','Step k',1,4,k):'')+
+    (o.kCtl?'<div class="krow">'+(o.add?'<button class="btn" id="'+ID+'-add"></button>':'')+'<button class="btn" id="'+ID+'-rs">'+L.ic('cycle')+'Restart</button></div>':'')+
+    '<div class="klbl">IDs in the order rows were saved</div><div class="kids" id="'+ID+'-ids" aria-live="polite"></div><div class="kcount" id="'+ID+'-ct"></div></div>');
+  const nextId=s=>s.last===null?s.start:s.last+k;
+  const time=x=>'9:'+p2(x);
+  function reset(n){sv=[];for(let i=0;i<n;i++)sv.push({start:o.starts?o.starts[i]:i+1,last:null,count:0});log=[];t=0;addedMid=false;draw();}
+  function draw(){
+    const box=L.$('#'+ID+'-sv');if(!box)return;
+    box.innerHTML=sv.map((s,i)=>'<div class="kcard" style="border-top-color:var(--'+SC[i]+')"><b style="color:var(--'+SC[i]+')">'+NM[i]+'</b><div>Next ID <b>'+nextId(s)+'</b></div><div class="small" style="margin:0">step +'+k+'</div>'+
+      (o.saves?'<button class="btn" id="'+ID+'-s'+i+'" aria-label="Save a row on '+NM[i]+'">Save a row</button>':'')+'</div>').join('');
+    if(o.saves)sv.forEach((_,i)=>{L.$('#'+ID+'-s'+i).onclick=()=>save(i);});
+    L.$('#'+ID+'-ids').innerHTML=log.length?log.map(e=>'<span class="kid'+(e.clash?' cl':e.back?' bk':'')+'" style="border-color:var(--'+SC[e.s]+');background:var(--'+SC[e.s]+'-bg)"><b>'+e.id+'</b><small>'+time(e.t)+'</small>'+(e.clash?'<i>clash</i>':e.back?'<i>smaller</i>':'')+'</span>').join(''):'<span class="small" style="margin:6px">No rows yet.</span>';
+    const c=log.filter(e=>e.clash).length,b=log.filter(e=>e.back).length;
+    L.$('#'+ID+'-ct').innerHTML='Rows: <b>'+log.length+'</b> · Clashes: <b'+(c?' class="kno"':'')+'>'+c+'</b> · Newer row, smaller ID: <b'+(b?' style="color:var(--h4)"':'')+'>'+b+'</b>';
+    const a=L.$('#'+ID+'-add');if(a)a.innerHTML=sv.length<3?L.ic('layers')+'Add Shard C':L.ic('x')+'Remove Shard C';
+  }
+  function save(i){
+    const s=sv[i],id=nextId(s);s.last=id;s.count++;
+    const max=log.reduce((m,e)=>Math.max(m,e.id),0),clash=log.some(e=>e.id===id);
+    const e={t:t++,s:i,id,clash,back:!clash&&log.length>0&&id<max};log.push(e);draw();o.on(Object.assign({type:'save'},e));return e;
+  }
+  if(o.kCtl){
+    L.$('#'+ID+'-k').oninput=ev=>{k=+ev.target.value;L.$('#'+ID+'-k-v').textContent=k;reset(sv.length);o.on({type:'k'});};
+    L.$('#'+ID+'-rs').onclick=()=>{reset(sv.length);o.on({type:'reset'});};
+    if(o.add)L.$('#'+ID+'-add').onclick=()=>{if(sv.length<3){addedMid=log.length>0;sv.push({start:3,last:null,count:0});draw();o.on({type:'add'});}else{reset(2);o.on({type:'reset'});}};
+  }
+  reset(o.n);
+  return {save,get k(){return k;},get n(){return sv.length;},get log(){return log;},get sv(){return sv;},get addedMid(){return addedMid;}};
+}
+
+/* ---------- 2. Bar: the 64-bit layout ---------- */
+function Bar(L,host,o){
+  o=Object.assign({id:'b',sz:BOOK,drag:false,read:true,tap:null,hl:-1,on:()=>{}},o||{});
+  const ID=o.id;let sz=o.sz.slice(),sel=1,pick=null,hl=o.hl;
+  const ctl=o.drag;
+  host.insertAdjacentHTML('beforeend','<div class="kbar"><svg id="'+ID+'-g" viewBox="0 0 330 '+(ctl?102:84)+'" role="img" aria-label="The 64 bits of an ID, split into sections, most important bits on the left" style="'+(ctl?'touch-action:none;cursor:ew-resize':o.tap?'cursor:pointer':'')+'"></svg>'+
+    (ctl?'<div class="krow" style="margin:4px 0 2px"><span class="small" style="margin:0">Divider:</span>'+['Time | DC','DC | Machine','Machine | Seq'].map((t,j)=>'<button class="chip" id="'+ID+'-c'+(j+1)+'">'+t+'</button>').join('')+'<button class="btn" id="'+ID+'-l" aria-label="Move the divider one bit left">◀ 1 bit</button><button class="btn" id="'+ID+'-r" aria-label="Move the divider one bit right">1 bit ▶</button></div>':'')+
+    (o.read?'<div class="kro" id="'+ID+'-ro" aria-live="polite"></div>':'')+'</div>');
+  const cuts=()=>{let a=0;return sz.map(v=>a+=v);};
+  function draw(){
+    const g=L.$('#'+ID+'-g');if(!g)return;const c=cuts();let s='';
+    for(let j=0;j<5;j++){const a=j?c[j-1]:0,b=c[j];if(b<=a)continue;const w=(b-a)*5;
+      s+='<rect x="'+(5+a*5)+'" y="26" width="'+w+'" height="30" rx="3" style="fill:'+BG[j]+';stroke:'+COL[j]+';stroke-width:'+(hl===j?3.2:1.6)+'"/>';
+      for(let i=a+1;i<b;i++)s+='<line x1="'+(5+i*5)+'" y1="31" x2="'+(5+i*5)+'" y2="51" style="stroke:'+COL[j]+';stroke-width:.6;opacity:.5"/>';
+      if(w>=14)s+='<text x="'+(5+(a+b)*2.5)+'" y="19" style="font-size:12.5px;font-weight:700;fill:'+COL[j]+';text-anchor:middle">'+(b-a)+'</text>';}
+    if(ctl)for(let j=1;j<=3;j++){const x=5+c[j]*5,on=j===sel;
+      s+='<line x1="'+x+'" y1="21" x2="'+x+'" y2="62" style="stroke:var(--ink);stroke-width:2"/>'+
+         '<circle cx="'+x+'" cy="72" r="9" style="fill:'+(on?'var(--pri)':'var(--card)')+';stroke:var(--ink);stroke-width:2"/>';}
+    const ty=ctl?98:78;
+    s+='<text x="5" y="'+ty+'" style="font-size:11.5px;fill:var(--muted)">← most important bits</text><text x="325" y="'+ty+'" style="font-size:11.5px;fill:var(--muted);text-anchor:end">least important →</text>';
+    g.innerHTML=s;
+    if(ctl)for(let j=1;j<=3;j++)L.$('#'+ID+'-c'+j).classList.toggle('sel',j===sel);
+    if(o.read)L.$('#'+ID+'-ro').innerHTML=readout(sz);
+  }
+  function setCut(j,pos){const c=cuts(),lo=c[j-1]+(j===1?1:0),hi=c[j+1];pos=Math.max(lo,Math.min(hi,pos));if(pos===c[j])return;
+    sz[j]=pos-c[j-1];sz[j+1]=c[j+1]-pos;draw();o.on(sz.slice());}
+  const g=L.$('#'+ID+'-g');
+  const toX=ev=>{const r=g.getBoundingClientRect();return (ev.clientX-r.left)/r.width*330;};
+  if(ctl){
+    g.addEventListener('pointerdown',ev=>{const x=toX(ev),c=cuts();let best=1e9,cand=[];
+      for(let j=1;j<=3;j++){const d=Math.abs(5+c[j]*5-x);if(d<best-.01){best=d;cand=[j];}else if(Math.abs(d-best)<.01)cand.push(j);}
+      if(best>28)return;pick={cand,x0:x};sel=cand[0];try{g.setPointerCapture(ev.pointerId);}catch(e){}ev.preventDefault();draw();});
+    g.addEventListener('pointermove',ev=>{if(!pick)return;const x=toX(ev);let j=pick.cand[0];
+      if(pick.cand.length>1){if(Math.abs(x-pick.x0)<2)return;j=x>pick.x0?Math.max(...pick.cand):Math.min(...pick.cand);pick.cand=[j];}
+      sel=j;setCut(j,Math.round((x-5)/5));});
+    const up=()=>{pick=null;};g.addEventListener('pointerup',up);g.addEventListener('pointercancel',up);
+    for(let j=1;j<=3;j++)L.$('#'+ID+'-c'+j).onclick=()=>{sel=j;draw();};
+    L.$('#'+ID+'-l').onclick=()=>setCut(sel,cuts()[sel]-1);
+    L.$('#'+ID+'-r').onclick=()=>setCut(sel,cuts()[sel]+1);
+  }
+  if(o.tap)g.addEventListener('click',ev=>{const x=toX(ev),bit=Math.floor((x-5)/5),c=cuts();let j=bit<0?0:c.findIndex(v=>bit<v);if(j<0)j=4;o.tap(j);});
+  draw();
+  return {get sz(){return sz.slice();},set(s){sz=s.slice();draw();},highlight(j){hl=j;draw();}};
+}
+function readout(sz){
+  const ms=Math.pow(2,sz[1]),end=EPOCH+ms,per=Math.pow(2,sz[4]),dcs=Math.pow(2,sz[2]),mcs=Math.pow(2,sz[3]);
+  const until=end<8.6e15?(ms<2*365*864e5?' (to '+day(ms)+')':' (to '+new Date(end).getUTCFullYear()+')'):'';
+  const R=[['always 0'],['lasts '+dur(ms)+until],[big(dcs)+' datacenter'+(dcs===1?'':'s')],[big(mcs)+' per datacenter'],[big(per)+' ID'+(per===1?'':'s')+' per ms per machine']];
+  return [0,1,2,3,4].map(j=>'<div class="r"><span class="sw" style="background:'+COL[j]+'"></span><span class="nm">'+SEC[j]+' · '+sz[j]+'</span><span>'+R[j][0]+'</span></div>').join('')+
+    '<div class="tot">One machine: up to <b>'+big(per*1000)+'</b> IDs a second<br>Generators in all: <b>'+big(dcs*mcs)+'</b> · Total: <b>'+sz.reduce((a,b)=>a+b,0)+' bits</b></div>';
+}
+async function nudge(L,ID,j,dir,n){L.$('#'+ID+'-c'+j).click();for(let i=0;i<n;i++)L.$('#'+ID+(dir<0?'-l':'-r')).click();}
 
 Course.lesson({
-  id:'0001', title:'Design a unique ID generator', minutes:20, icon:'layers',
-  goals:['Explain why one database counter breaks once data is split','Weigh multi-master, UUID, ticket server and snowflake against the requirements','Lay out a 64-bit snowflake ID and do its numbers out loud'],
+  id:'0001', title:'Design a unique ID generator', minutes:22, icon:'layers',
+  goals:['Explain why one database counter breaks once data is split','Weigh multi-master, UUID, ticket server and snowflake against the requirements','Lay out a 64-bit snowflake ID, do its numbers out loud and tune it'],
   parts:['Scope it','Four options','Snowflake','Wrap up'],
   read:'Read chapter 7 of the book for its figures: the multi-master and UUID diagrams, the 64-bit layout and the timestamp decoding example.',
   glossary:{
@@ -34,39 +191,35 @@ Course.lesson({
   cheatsheet:[
     'One database’s <b>auto_increment</b> can’t serve a distributed system: one server is too small, and separate counters collide.',
     'Requirements: <b>unique, numbers only, fits 64 bits, ordered by date, 10,000+ per second</b>.',
-    '<b>Multi-master</b> (each database steps by k): hard across data centers, not time-ordered, awkward when servers are added or removed.',
+    '<b>Multi-master</b> (each database steps by k = number of servers): hard across data centers, not time-ordered, painful when servers are added or removed.',
     '<b>UUID</b>: no coordination, but 128 bits, not time-ordered, may hold letters. <b>Ticket server</b>: simple and numeric, but a single point of failure.',
-    '<b>Snowflake</b>: 1 sign + 41 timestamp + 5 datacenter + 5 machine + 12 sequence = 64 bits.',
-    '41 bits ≈ <b>69 years</b> (an epoch near today delays the overflow). 12 bits = <b>4,096 IDs per millisecond</b> per machine.',
-    'Wrap-up: clock synchronization (NTP), section length tuning, high availability.'
+    '<b>Snowflake</b>: 1 sign + 41 timestamp + 5 datacenter + 5 machine + 12 sequence = 64 bits. Timestamp first, so IDs sort by time.',
+    '41 bits ≈ <b>69 years</b> (an epoch near today delays the overflow). 12 bits = <b>4,096 IDs per millisecond</b> per machine. Each bit doubles a section and halves its neighbour.',
+    'Wrap-up: clock synchronization (NTP), section length tuning (more timestamp, fewer sequence bits for long-lived, low-volume IDs), high availability.'
   ],
   steps:[
 /* ---------- PART 1: SCOPE IT ---------- */
 {part:0,src:'Warm-up',pts:1,
- solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();},
+ solve:async L=>{L.$('#w1p').children[1].click();await L.sleep(20);L.$('#w1k-s0').click();L.$('#w1k-s1').click();},
  run(L){
-  let p=null;const O=['About 1,000','Just 2','Never'];
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird splits its projects table across two databases, Shard A and Shard B. Each still numbers new rows with its own counter, starting at 1. How many new projects until two share an ID?</h1><div id="po"></div>'+
-   '<div id="sim" hidden>'+L.lanes([['box','Shard A','<div id="sa">Counter: 0</div>',1],['box','Shard B','<div id="sb">Counter: 0</div>',2]])+
-   '<button class="btn pri" id="run" style="margin-top:14px">'+L.ic('play')+'Save one project on each</button><div id="mg"></div></div>');
-  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
-  L.$('#run').onclick=function(){this.remove();
-    L.$('#sa').innerHTML='Counter: 1<div class="res"><b>ID 1</b> · Mae’s sock pattern</div>';
-    L.$('#sb').innerHTML='Counter: 1<div class="res"><b>ID 1</b> · Rafi’s walnut bowl</div>';
-    L.fb(L.$('#mg'),'<b>Clash.</b> Two different projects now share ID 1. A comment or a link that says “project 1” could point at either one.','no');
-    L.award(p===1);
-    L.sheet(p===1?'ok':'no',p===1?'You called it':'It takes just 2','Each counter only knows its own database, so both hand out 1 first. This lesson is about making IDs that stay unique across many servers.');L.done();};}},
+  let p=null,done=false;
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird splits its projects table across two databases, Shard A and Shard B. Each keeps numbering new rows with its own counter, starting at 1. How many new projects until two share an ID?</h1><div id="w1p"></div>'+
+   '<div id="w1s" hidden><p class="small" style="margin:6px 0 8px">Now save projects yourself. Tap either shard.</p></div>'+CSS);
+  chipsInto(L,L.$('#w1p'),['About 1,000','Just 2','Never'],(j,b)=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#w1s').hidden=false;
+    StepK(L,L.$('#w1s'),{id:'w1k',k:1,starts:[1,1],on:e=>{
+      if(e.clash&&!done){done=true;L.award(p===1);
+        L.sheet(p===1?'ok':'no',p===1?'You called it':'It takes just 2','Each counter only knows its own database, so both hand out the same numbers. That’s Kitebird’s real incident: after the split, project 48,211 existed on <b>both</b> shards. This lesson is about IDs that stay unique across many servers.');L.done();}}});});}},
 {part:0,src:'Chapter 7 · Design a unique ID generator in distributed systems',run(L){
   L.h(L.kick('learn','The problem')+'<h1 class="q">Why one counter stops working</h1>'+
    L.prose('Most databases can number new rows for you with '+L.g('auto-increment','auto_increment')+': 1, 2, 3 and so on. With one database, that’s all you need.')+
-   L.prose('The book’s point: in a <b>distributed system</b>, where many servers share the work, this breaks down. One database server isn’t big enough, and handing out unique IDs across several databases without slowing everything down is hard.')+
+   L.prose('The book’s point: in a <b>distributed system</b>, where many servers share the work, it breaks. One database server isn’t big enough, and handing out unique IDs across several databases without slowing everything down is hard.')+
    '<h2 class="sub">How every chapter in this course runs</h2>'+
    L.flow([['chat','Step 1','Scope it','ask, then estimate'],['map','Step 2','High-level design','get buy-in'],['eye','Step 3','Deep dive','a few key parts'],['check','Step 4','Wrap up','extra talking points']])+
-   '<p class="small">This is the book’s '+L.g('four-step','four-step framework')+'. At Kitebird, staff engineer Tamsin Rhee runs every design review the same way and plays the interviewer. You lead the design.</p>');
+   '<p class="small">This is the book’s '+L.g('four-step','four-step framework')+'. At Kitebird, staff engineer Tamsin Rhee runs every design review this way and plays the interviewer. You lead the design.</p>');
   L.done();}},
 {part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',run(L){
   L.h(L.kick('learn','The book’s interview')+'<h1 class="q">Five questions, five requirements</h1>'+
-   L.prose('The book’s candidate doesn’t start drawing. They ask the interviewer short questions first, and each answer becomes a requirement:')+
+   L.prose('The book’s candidate doesn’t start drawing. They ask short questions first, and each answer becomes a requirement:')+
    L.list([['Unique','What must IDs be like? Unique, and sortable.'],
      ['Ordered by date','Does each new ID go up by 1? Not necessarily, but IDs grow with time: one made in the evening is bigger than one made that morning.'],
      ['Numbers only','Only digits? Yes.'],
@@ -77,12 +230,12 @@ Course.lesson({
 {part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',run(L){
   L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Kite IDs: you ask before you draw</h1>');
   L.beats(L.card,[
-   ['The opening','Tamsin starts the review: “What are we building, and how big is it?” Obi, the on-call lead, reads the incident report: after the shard split, project 48,211 existed on <b>both</b> shards, and comments landed on the wrong one.'],
+   ['The opening','Tamsin starts the review: “What are we building, and how big is it?” Obi, the on-call lead, reads the incident report: project 48,211 existed on both shards, and comments landed on the wrong one.'],
    ['Guarantees','You ask what the IDs must promise. Tamsin: never repeat, and newer rows get bigger IDs so “newest first” lists still work.'],
-   ['Format','You ask about format. Hana points out every table stores IDs in a 64-bit integer column, digits only. Anything longer means changing every table and app.'],
-   ['Scale','You ask about volume. Dario says about 4,000 new projects, comments and likes a second at peak, and growing fast. Tamsin: plan for over 10,000.'],
+   ['Format','You ask about format. Hana points out every table stores IDs in a 64-bit integer column, digits only.'],
+   ['Scale','You ask about volume. Dario says about 4,000 new projects, comments and likes a second at peak, and growing fast (an illustrative figure). Tamsin: plan for over 10,000.'],
    ['Agreed','You read the list back: unique, numbers only, fits 64 bits, ordered by time, 10,000+ a second. Tamsin nods. Now you can design.']],
-   'Kitebird lands on the same five requirements as the book. Settle them first: every option in the next part gets judged against them.');}},
+   'Kitebird lands on the book’s five requirements. Every option in the next part gets judged against them.');}},
 {part:0,src:'Chapter 7 · Step 1 - Understand the problem and establish design scope',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Lior suggests IDs like “kb-7f3a-proj”. Which requirement do they break?</h1>');
   L.mc(L.card,['Numbers only','Ordered by date','Over 10,000 a second'],0,
@@ -94,59 +247,92 @@ Course.lesson({
    ['Obi: “Two rows must never share an ID, on any shard, ever.”',0,'Never repeating is the uniqueness requirement.'],
    ['Dario: “A comment posted at 9 p.m. should sort after one posted at 8 a.m.”',3,'Later rows get bigger IDs: ordered by date.'],
    ['Hana: “The ID column is a BIGINT: eight bytes, no more.”',2,'Eight bytes are 64 bits, so the ID must fit in 64 bits.'],
-   ['Tamsin: “During a challenge week we could see 10,000 new rows a second.”',4,'That’s the scale requirement.'],
+   ['Tamsin: “During a challenge week we could see 10,000 new rows a second.” (illustrative)',4,'That’s the scale requirement.'],
    ['Hana: “Our Android app reads IDs as integers. No letters.”',1,'Integers only means numbers only.']]);}},
 
 /* ---------- PART 2: FOUR OPTIONS ---------- */
 {part:1,src:'Chapter 7 · Multi-master replication',run(L){
-  const row=(n,a)=>'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0"><b style="width:76px;font-size:14px">'+n+'</b>'+a.map(x=>'<span class="chip static" style="margin:0">'+x+'</span>').join('')+'</div>';
+  const row=(n,a,c)=>'<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;margin:4px 0"><b style="width:76px;font-size:14px;color:var(--'+c+')">'+n+'</b>'+a.map(x=>'<span class="chip static" style="margin:0;background:var(--'+c+'-bg)">'+x+'</span>').join('')+'</div>';
   L.h(L.kick('learn','Option 1')+'<h1 class="q">Multi-master: each database counts by k</h1>'+
    L.prose('Keep every database’s auto_increment, but instead of adding 1, each adds <b>k</b>, the number of database servers in use. With two servers:')+
-   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:0 0 14px">'+row('Server 1',[1,3,5,7])+row('Server 2',[2,4,6,8])+'</div>'+
-   L.prose('Servers never hand out the same number, and IDs scale with the number of servers. But the book lists three drawbacks:')+
-   L.list([['Many data centers','Hard to scale across several data centers.'],['Time order','IDs don’t go up with time across servers.'],['Changing servers','It doesn’t scale well when a server is added or removed.']],3));
+   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:0 0 14px">'+row('Server 1',[1,3,5,7],'h1')+row('Server 2',[2,4,6,8],'h2')+'</div>'+
+   L.prose('Servers never hand out the same number, and IDs scale with the number of servers. The book lists three drawbacks:')+
+   L.list([['Many data centers','Hard to scale across several data centers.'],['Time order','IDs don’t go up with time across servers.'],['Changing servers','It doesn’t scale well when a server is added or removed.']],3)+
+   '<p class="small">You’ll break the last two yourself on the next screens.</p>');
   L.done();}},
 {part:1,src:'Chapter 7 · Multi-master replication',pts:1,
- solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();},
+ solve:async L=>{L.$('#p8p').children[1].click();await waitFor(L,'#p8d');},
  run(L){
-  let p=null;const O=['Yes, newest is biggest','No, it can be smaller'];
-  const E=[['9:00','A',1],['9:01','A',3],['9:02','A',5],['9:03','A',7],['9:04','B',2]];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Kitebird’s two shards step by 2. Shard A is busy; Shard B is quiet. Will the newest row have the biggest ID?</h1><div id="po"></div>'+
-   '<div id="sim" hidden><button class="btn pri" id="run" style="margin:6px 0 8px">'+L.ic('play')+'Run five minutes</button><div id="tl"></div></div>');
-  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
-  L.$('#run').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}const e=E[k],last=k===E.length-1;
-      tl.insertAdjacentHTML('beforeend','<div class="row" style="padding:8px 0"><span class="small" style="width:44px">'+e[0]+'</span><span class="chip static'+(last?'':' ok')+'" style="margin:0">Shard '+e[1]+'</span><b style="'+(last?'color:var(--no)':'')+'">ID '+e[2]+(last?' · newest row':'')+'</b></div>');
-      k++;if(k>=E.length){clearInterval(t);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'Right, it can be smaller':'The newest ID was the smallest','The row made at 9:04 got ID 2, smaller than four older rows. Sorting by ID no longer sorts by time, so “ordered by date” fails: IDs don’t go up with time across servers.');L.done();}},320);};}},
-{part:1,src:'Chapter 7 · UUID and Ticket Server',run(L){
-  L.h(L.kick('learn','Options 2 and 3')+'<h1 class="q">No coordination at all, or one central counter</h1>'+
-   L.lanes([['layers','UUID','<p style="margin:0 0 8px">A 128-bit '+L.g('uuid','UUID')+' that each web server makes by itself, for example <span style="word-break:break-all;font-size:13px">3f6c1a2e-8b4d-4e71-9c0a-5d2e7b14f9a3</span>.</p><b>Pros:</b> simple; no coordination, so no sync problems; scales with the web servers.<br><b>Cons:</b> 128 bits, not 64; not ordered by time; can contain letters.',2],
-            ['box','Ticket server','<p style="margin:0 0 8px">One central database whose auto_increment hands out every ID. Flickr built ticket servers this way.</p><b>Pros:</b> numeric IDs; easy to build; fine for small and medium apps.<br><b>Cons:</b> a '+L.g('spof','single point of failure')+'. More ticket servers bring data-sync problems.',3]])+
-   '<p class="small" style="margin-top:12px">How rare are UUID repeats? The book cites Wikipedia: at a billion UUIDs a second, it would take about 100 years to reach even odds of a single duplicate.</p>');
-  L.done();}},
-{part:1,src:'Chapter 7 · Step 2 - Propose high-level design and get buy-in',run(L){
-  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Lior pitches three options. The team tests each one.</h1>');
-  L.beats(L.card,[
-   ['Multi-master','Lior: “Keep auto_increment, but step by 2 on our two shards.” Tamsin: “Next year we have six shards and a second region. Then what?” Every server’s step would change, and IDs already don’t follow time across shards.'],
-   ['UUID','Lior: “Fine, UUIDs. No coordination at all.” Hana points at the 64-bit column: a UUID is 128 bits, can hold letters and doesn’t grow with time. Three requirements fail.'],
-   ['Ticket server','Lior: “One ticket database hands out every ID.” Obi: “And when it goes down at 3 a.m., nobody on Kitebird can post anything.” A second ticket server would have to be kept in sync.'],
-   ['The verdict','None meets all five requirements. Tamsin: “So what would?” That’s your cue for a fourth option.']],
-   'Judge each option against the agreed requirements, out loud. Each simple option fails at least one.');}},
-{part:1,src:'Chapter 7 · UUID',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which option makes IDs too long for Kitebird’s 64-bit column?</h1>');
-  L.mc(L.card,['A ticket server','Multi-master, step by k','UUID'],2,
-   'A UUID is 128 bits, twice the budget.',
-   'Ticket servers and multi-master both hand out ordinary auto_increment numbers, which fit. A UUID is 128 bits, twice the budget.');}},
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Kitebird’s two shards step by k = 2. Shard A is busy; Shard B is quiet. Will the newest row have the biggest ID?</h1><div id="p8p"></div><div id="p8s"></div>'+CSS);
+  const s=StepK(L,L.$('#p8s'),{id:'p8k',k:2,saves:false});
+  chipsInto(L,L.$('#p8p'),['Yes, newest is biggest','No, it can be smaller'],async(j,b)=>{if(p!==null)return;p=j;b.classList.add('sel');
+    for(const i of [0,0,0,0,1]){await L.sleep(330);if(!L.$('#p8s'))return;s.save(i);}
+    L.award(p===1);L.$('#p8s').insertAdjacentHTML('beforeend','<span id="p8d"></span>');
+    L.sheet(p===1?'ok':'no',p===1?'Right, it can be smaller':'The newest ID was the smallest','The row saved at 9:04 on quiet Shard B got ID 2, smaller than four older rows on Shard A. Sorting by ID no longer sorts by time, so “ordered by date” fails: across servers, IDs don’t go up with time.');L.done();});}},
+{part:1,src:'Chapter 7 · Multi-master replication',
+ solve:async L=>{setRange(L,'x9k-k',2);for(let r=0;r<3;r++){L.$('#x9k-s0').click();L.$('#x9k-s1').click();}
+   L.$('#x9k-add').click();L.$('#x9k-s2').click();L.$('#x9k-s2').click();
+   setRange(L,'x9k-k',3);for(let r=0;r<2;r++){L.$('#x9k-s0').click();L.$('#x9k-s1').click();L.$('#x9k-s2').click();}},
+ run(L){
+  L.h(L.kick('pr','Free play')+'<h1 class="q">Set the step k and save rows. Find a safe k, then grow the cluster.</h1>'+
+   tasks('g9',['With two shards, save 3+ rows on each with no clash','Add Shard C mid-run, save on it, and catch a clash','Restart with three shards and find a k that never clashes'])+
+   '<p class="small" style="margin:8px 0 0">Changing k or pressing Restart starts every shard from scratch.</p><div id="x9" style="margin-top:8px"></div>'+CSS);
+  const s=StepK(L,L.$('#x9'),{id:'x9k',k:1,kCtl:true,add:true,on:e=>{
+    const noClash=!s.log.some(x=>x.clash);
+    if(s.n===2&&s.sv.every(x=>x.count>=3)&&noClash)tick(L,'g9',0);
+    if(s.n===3&&s.addedMid&&s.sv[2].count>0&&!noClash)tick(L,'g9',1);
+    if(s.n===3&&!s.addedMid&&s.sv.every(x=>x.count>=2)&&noClash)tick(L,'g9',2);
+    if(allTicked(L,'g9')&&!L.$('#x9d')){L.$('#g9').insertAdjacentHTML('afterend','<span id="x9d"></span>');
+      L.sheet('info','k has to match the cluster','Each server starts at its own number and steps by k, the number of servers. Shard C arrived in a k = 2 world, so it stepped through numbers Shard A had already used. To add (or remove) a server you have to re-plan every server’s step and start while the database is live. That’s the book’s “doesn’t scale well when a server is added or removed”, and coordinating it across several data centers is harder still.');L.done();}}});}},
+{part:1,src:'Chapter 7 · UUID and Ticket Server',
+ solve:async L=>{L.$('#u10t').children[0].click();L.$('#u10m').click();L.$('#u10m').click();L.$('#u10t').children[1].click();L.$('#u10g').click();L.$('#u10x').click();},
+ run(L){
+  let made=[],down=false,ctr=1000,shown=false;
+  L.h(L.kick('learn','Options 2 and 3')+'<h1 class="q">No coordination at all, or one central counter. Try both.</h1><div class="krow" id="u10t"></div><div id="u10b"></div>'+CSS);
+  const hex='0123456789abcdef',rh=()=>hex[Math.floor(Math.random()*16)];
+  const uuid=()=>'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>c==='x'?rh():'89ab'[Math.floor(Math.random()*4)]);
+  const mark=u=>u.replace(/[a-f]/g,m=>'<span class="lt">'+m+'</span>');
+  function check(){if(made.length>=2&&down&&!shown){shown=true;L.sheet('info','Two opposite trade-offs','A <b>UUID</b> needs no coordination, so it scales with the web servers, but it’s 128 bits, not time-ordered and may hold letters. A <b>ticket server</b> gives plain numbers and is easy to build, fine for small and medium apps, but it’s a single point of failure. Neither meets all five requirements.');L.done();}}
+  function uuidTab(){
+    const cells=u=>{const b=u?[...u.replace(/-/g,'')].map(h=>parseInt(h,16).toString(2).padStart(4,'0')).join(''):'';let c='';
+      for(let i=0;i<128;i++){const r=i<64?0:1,x=5+(i%64)*5,y=r?62:24,one=b[i]==='1';c+='<rect x="'+x+'" y="'+y+'" width="5" height="22" style="fill:'+(r?(one?'var(--no)':'var(--no-bg)'):(one?'var(--h1)':'var(--h1-bg)'))+';stroke:var(--card);stroke-width:.6"/>';}return c;};
+    L.$('#u10b').innerHTML='<p class="small" style="margin:4px 0 6px">A '+L.g('uuid','UUID')+' is a 128-bit number. Each web server makes its own, asking nobody.</p>'+
+     '<svg viewBox="0 0 330 104" style="width:100%;display:block" role="img" aria-label="A UUID needs 128 bits; Kitebird’s column holds 64"><g id="u10c">'+cells('')+'</g>'+
+     '<rect x="4" y="23" width="322" height="24" rx="3" style="fill:none;stroke:var(--h1);stroke-width:2"/><text x="5" y="16" style="font-size:12px;font-weight:700;fill:var(--h1)">Kitebird’s 64-bit column</text>'+
+     '<text x="5" y="100" style="font-size:12px;font-weight:700;fill:var(--no)">64 more bits that don’t fit</text></svg><p class="small" style="margin:2px 0 8px">Each cell is one bit of the latest UUID (dark = 1).</p>'+
+     '<button class="btn pri" id="u10m">'+L.ic('play')+'Make a UUID</button><div id="u10l" style="margin-top:8px"></div><div class="kmini" id="u10r"></div>'+
+     '<p class="small" style="margin-top:8px">How rare are repeats? The book cites Wikipedia: at a billion UUIDs a second, it would take about 100 years to reach even odds of one duplicate.</p>';
+    const draw=()=>{L.$('#u10c').innerHTML=cells(made[made.length-1]||'');L.$('#u10l').innerHTML=made.map((u,j)=>'<div class="kuu"><b style="font-family:var(--sans)">#'+(j+1)+'</b> '+mark(u)+'</div>').join('');
+      const ord=made.length>=2?(made[made.length-1]>made[made.length-2]?'This time the newer one happens to sort after the older one. Make another: the order is luck, not time.':'The newer one sorts <b>before</b> the older one. The order is luck, not time.'):'Make a second one to compare their order.';
+      L.$('#u10r').innerHTML=made.length?'<div><span class="kno">✗</span> Numbers only: letters a–f (pink) appear</div><div><span class="kno">✗</span> Fits 64 bits: needs 128</div><div><span class="kno">✗</span> Ordered by time: '+ord+'</div><div><span class="kok">✓</span> No coordination: no sync problems, scales with web servers</div>':'Make a UUID to score it against the requirements.';};
+    L.$('#u10m').onclick=()=>{made.push(uuid());draw();check();};draw();}
+  function ticketTab(){
+    L.$('#u10b').innerHTML='<p class="small" style="margin:4px 0 6px">One central database, the ticket server, uses its auto_increment to hand out every ID. Flickr built ticket servers this way.</p>'+
+     '<svg viewBox="0 0 330 150" id="u10s" style="width:100%;display:block" role="img" aria-label="Three web servers all ask one ticket server for IDs"></svg>'+
+     '<div class="krow"><button class="btn pri" id="u10g">'+L.ic('play')+'Each web server asks</button><button class="btn" id="u10x"></button></div><div class="kmini" id="u10r"></div>';
+    let got=['','',''];
+    const draw=()=>{const st=down?'var(--no)':'var(--line2)';let s='';
+      [0,1,2].forEach(i=>{const x=10+i*110;s+='<line x1="'+(x+45)+'" y1="44" x2="165" y2="100" style="stroke:'+st+';stroke-width:2;'+(down?'stroke-dasharray:5 4':'')+'"/>'+
+        '<rect x="'+x+'" y="6" width="90" height="38" rx="9" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/><text x="'+(x+45)+'" y="22" style="font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle">Web '+(i+1)+'</text>'+
+        '<text x="'+(x+45)+'" y="37" style="font-size:12px;fill:'+(got[i]==='no ID'?'var(--no)':'var(--muted)')+';text-anchor:middle;font-weight:'+(got[i]==='no ID'?700:400)+'">'+(got[i]||'waiting')+'</text>';});
+      s+='<rect x="85" y="100" width="160" height="44" rx="10" style="fill:'+(down?'var(--no-bg)':'var(--h3-bg)')+';stroke:'+(down?'var(--no)':'var(--h3)')+';stroke-width:2"/>'+
+        '<text x="165" y="118" style="font-size:12.5px;font-weight:700;fill:'+(down?'var(--no)':'var(--h3)')+';text-anchor:middle">Ticket server'+(down?' · DOWN':'')+'</text><text x="165" y="135" style="font-size:12px;fill:var(--ink);text-anchor:middle">auto_increment · last '+ctr+'</text>';
+      L.$('#u10s').innerHTML=s;L.$('#u10x').innerHTML=down?L.ic('cycle')+'Bring it back':L.ic('x')+'Ticket server goes down';
+      L.$('#u10r').innerHTML=down?'<span class="kno">Nobody can get a new ID.</span> One ticket server is a '+L.g('spof','single point of failure')+'. Run several and you must keep their counters in sync: a new problem.':'<div><span class="kok">✓</span> Numbers only, and easy to build</div><div><span class="kok">✓</span> Fine for small and medium apps</div><div><span class="kno">✗</span> Everything depends on one box</div>';};
+    L.$('#u10g').onclick=()=>{got=got.map(()=>down?'no ID':'ID '+(++ctr));draw();};
+    L.$('#u10x').onclick=()=>{down=!down;if(down)got=['no ID','no ID','no ID'];draw();check();};draw();}
+  chipsInto(L,L.$('#u10t'),['UUID','Ticket server'],(j,b)=>{[...L.$('#u10t').children].forEach(x=>x.classList.toggle('sel',x===b));(j?ticketTab:uuidTab)();});
+  L.$('#u10t').children[0].click();}},
 {part:1,src:'Chapter 7 · Step 2 - Propose high-level design and get buy-in',pts:6,run(L){
-  L.h(L.kick('pr','Whose weakness?')+'<h1 class="q">Match each line to the option it describes.</h1><div id="bk"></div>');
+  L.h(L.kick('pr','Whose weakness?')+'<h1 class="q">Lior pitches three options in the review. Match each objection to the option it hits.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Multi-master','UUID','Ticket server'],[
-   ['Each database adds the number of servers to its last ID',0,'That’s step-by-k: multi-master.'],
-   ['IDs take 128 bits, double the budget',1,'UUIDs are 128 bits.'],
-   ['One central database hands out every ID',2,'That’s the ticket server idea.'],
-   ['If one box goes down, nobody gets a new ID',2,'A single ticket server is a single point of failure.'],
-   ['Adding a fifth server means changing every server’s step',0,'k is the number of servers, so it changes when servers come or go.'],
-   ['An ID can contain letters',1,'UUIDs can be non-numeric.']],
+   ['Tamsin: “Next year we have six shards. Every server’s step changes.”',0,'k is the number of servers, so it changes when servers come or go.'],
+   ['Hana: “Our column is 64 bits. This needs 128.”',1,'UUIDs are 128 bits.'],
+   ['Obi: “When that one box dies at 3 a.m., nobody can post.”',2,'A single ticket server is a single point of failure.'],
+   ['Dario: “A quiet shard’s new row sorts before older rows.”',0,'Across step-by-k servers, IDs don’t go up with time.'],
+   ['Hana: “The Android app reads IDs as integers. This has letters.”',1,'UUIDs can be non-numeric.'],
+   ['Obi: “A second copy means keeping two counters in sync.”',2,'More ticket servers bring data-sync problems.']],
    'Multi-master struggles with change and time order, UUIDs with size and format, and the ticket server with failure.');}},
 {part:1,src:'Chapter 7 · UUID',pts:1,run(L){
   L.h(L.kick('pr','Make the call')+'<h1 class="q">Hana: “Let’s just use UUIDs. Nothing to run, done by lunch.” What do you say in the review?</h1>');
@@ -155,55 +341,142 @@ Course.lesson({
    'UUIDs need no coordination, but they’re 128 bits (the column holds 64), can contain letters and aren’t ordered by time. Adding a ticket server wouldn’t fix any of that.');}},
 
 /* ---------- PART 3: SNOWFLAKE ---------- */
-{part:2,src:'Chapter 7 · Twitter snowflake approach',run(L){
-  L.h(L.kick('learn','Option 4')+'<h1 class="q">Snowflake: build the ID from sections</h1>'+
-   L.prose('The book borrows Twitter’s <b>snowflake</b> idea: divide and conquer. Instead of one counter, split the 64 bits into sections, each with its own job.')+
-   bar()+
-   legend([['Sign · 1 bit','Always 0. Kept for future use.'],
-     ['Timestamp · 41 bits','Milliseconds since a chosen start moment, the '+L.g('epoch','epoch')+'. Twitter’s default epoch is 4 Nov 2010.'],
-     ['Datacenter ID · 5 bits','2⁵ = 32 datacenters.'],
-     ['Machine ID · 5 bits','32 machines in each datacenter.'],
-     ['Sequence number · 12 bits','Counts IDs made on that machine in the same millisecond. Resets to 0 every millisecond.']]));
-  L.done();}},
-{part:2,src:'Chapter 7 · Step 3 - Design deep dive',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Minting Kite IDs on one server</h1>');
-  L.beats(L.card,[
-   ['At startup','This server’s generator is given <b>datacenter 2</b> and <b>machine 9</b>. Those stay fixed while it runs. The book warns that changing them by accident can cause ID conflicts.'],
-   ['First ID','A new comment arrives. Timestamp = milliseconds since Kitebird’s epoch, right now. Sequence = 0.'],
-   ['Same millisecond','A like arrives in that same millisecond. Same timestamp, same datacenter and machine; the sequence becomes 1. Still unique.'],
-   ['Next millisecond','The clock ticks. The timestamp goes up by 1 and the sequence resets to 0.'],
-   ['Another server','At the same instant, machine 10 makes an ID. Same timestamp, maybe the same sequence, but a different machine number, so no clash.']],
-   'Timestamp and sequence are filled in as each ID is made; datacenter and machine are fixed at startup. No server has to ask any other server.');}},
-{part:2,src:'Chapter 7 · Twitter snowflake approach',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two Kite IDs come from the same machine in the same millisecond. Which section tells them apart?</h1>');
-  L.mc(L.card,['The sequence number','The timestamp','The machine ID'],0,
-   'Same machine and same millisecond means everything else matches. The sequence counts up within the millisecond.',
-   'The timestamp and machine ID are identical here: same millisecond, same machine. Only the sequence number differs.');}},
-{part:2,src:'Chapter 7 · Twitter snowflake approach',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each section to change its size until the layout matches the book’s. It must add up to 64 bits.</h1>');
-  L.sentence(L.card,[['Sign 1','Sign 5','Sign 12'],['Timestamp 32','Timestamp 41','Timestamp 64'],['Datacenter 5','Datacenter 10','Datacenter 12'],['Machine 12','Machine 5','Machine 1'],['Sequence 5','Sequence 41','Sequence 12']],[0,1,0,1,2],
-   [['The sign is a single bit, always 0. More would steal bits from the other sections.','The sign is a single reserved bit, always 0.'],
-    ['32 bits of milliseconds last under 50 days. The book uses 41 bits, about 69 years.','64 bits would leave nothing for the other sections.'],
-    ['10 bits is the datacenter and machine sections together. Datacenter alone is 5.','12 bits is the sequence’s size, not the datacenter’s.'],
-    ['12 bits belongs to the sequence. Machine ID is 5 bits: 32 machines per datacenter.','1 bit would allow only 2 machines per datacenter. The book uses 5.'],
-    ['5 bits would allow only 32 IDs per millisecond. The book uses 12.','41 bits is the timestamp’s size.']],
-   '1 + 41 + 5 + 5 + 12 = 64. Timestamp first, so IDs sort by time.');}},
-{part:2,src:'Chapter 7 · Timestamp and Sequence number',run(L){
-  L.h(L.kick('learn','The deep dive')+'<h1 class="q">What 41 bits and 12 bits buy you</h1>'+
-   L.lanes([['clock','Timestamp · 41 bits','The <b>most important</b> bits come first, so bigger IDs are newer: sorting by ID sorts by time.<br><br>The largest value is 2⁴¹ − 1 milliseconds, about <b>69 years</b>. After that you need a new epoch or a way to migrate IDs. An epoch close to today pushes that day further away.',1],
-            ['layers','Sequence · 12 bits','2¹² = <b>4,096</b> values. It stays 0 unless one machine makes more than one ID in the same millisecond.<br><br>So, in theory, one machine can make up to <b>4,096 IDs per millisecond</b>.',4]])+
-   '<p class="small" style="margin-top:12px">Datacenter and machine IDs are set when a server starts. Timestamp and sequence are filled in while the generator runs.</p>');
-  L.done();}},
+{part:2,src:'Chapter 7 · Twitter snowflake approach',
+ solve:async L=>{for(let j=0;j<5;j++)L.$('#s13c').children[j].click();},
+ run(L){
+  const seen=new Set();
+  const T=[['Sign · 1 bit','Always 0. Reserved for future use, for example to tell signed from unsigned numbers.'],
+   ['Timestamp · 41 bits','Milliseconds since a chosen start moment, the '+L.g('epoch','epoch')+'. Twitter’s default epoch is 4 Nov 2010; Kite IDs count from 1 Jan 2026. It sits in the most important bits.'],
+   ['Datacenter ID · 5 bits','2⁵ = 32 datacenters. Set when the server starts.'],
+   ['Machine ID · 5 bits','32 machines in each datacenter. Also set at startup.'],
+   ['Sequence number · 12 bits','Counts IDs made on that machine in the same millisecond. Resets to 0 every millisecond.']];
+  L.h(L.kick('learn','Option 4')+'<h1 class="q">Snowflake: split the 64 bits into jobs</h1>'+
+   L.prose('None of the first three options meets every requirement. The book borrows Twitter’s <b>snowflake</b> idea: divide and conquer. Don’t make the ID in one go; build it from sections. Tap each one.')+
+   '<div id="s13b"></div><div class="krow" id="s13c"></div><div class="kcap" id="s13x">Tap a section of the bar, or a name below.</div>'+CSS);
+  const show=j=>{seen.add(j);bar.highlight(j);[...L.$('#s13c').children].forEach((b,k)=>b.classList.toggle('sel',k===j));
+    L.$('#s13x').innerHTML='<b style="color:'+COL[j]+'">'+T[j][0]+'</b><br>'+T[j][1];
+    if(seen.size===5&&!L.$('#s13d')){L.$('#s13x').insertAdjacentHTML('afterend','<span id="s13d"></span>');
+      L.sheet('info','Time + place + counter','1 + 41 + 5 + 5 + 12 = 64. The timestamp says when, datacenter and machine say where, and the sequence tells apart IDs from the same machine in the same millisecond. No server ever has to ask another.');L.done();}};
+  const bar=Bar(L,L.$('#s13b'),{id:'s13',read:false,tap:show});
+  chipsInto(L,L.$('#s13c'),SEC,j=>show(j));}},
+{part:2,src:'Chapter 7 · Twitter snowflake approach',
+ solve:async L=>{await nudge(L,'x14',1,-1,7);await nudge(L,'x14',3,1,9);},
+ run(L){
+  L.h(L.kick('pr','Free play')+'<h1 class="q">The budget is fixed at 64 bits. Drag a divider (or pick one and use the arrows) and watch what each section can count.</h1>'+
+   tasks('g14',['Make the timestamp run out within a year of the epoch','Make one machine too slow for 10,000 IDs a second'])+
+   '<div id="x14" style="margin-top:10px"></div>'+CSS);
+  Bar(L,L.$('#x14'),{id:'x14',drag:true,on:sz=>{
+    if(Math.pow(2,sz[1])<365*864e5)tick(L,'g14',0);
+    if(Math.pow(2,sz[4])*1000<10000)tick(L,'g14',1);
+    if(allTicked(L,'g14')&&!L.$('#x14d')){L.$('#g14').insertAdjacentHTML('afterend','<span id="x14d"></span>');
+      L.sheet('info','Every bit is a trade','One more bit <b>doubles</b> what a section can count; one fewer <b>halves</b> it. Since the total stays 64, every gain is a neighbour’s loss. The book’s 1/41/5/5/12 is one balance: about 69 years, 32 × 32 = 1,024 generators, and 4,096 IDs per millisecond per machine.');L.done();}}});}},
+{part:2,src:'Chapter 7 · Step 3 - Design deep dive',
+ solve:async L=>{for(let i=0;i<3;i++)L.$('#m15n').click();L.$('#m15t').click();L.$('#m15n').click();L.$('#m15o').click();},
+ run(L){
+  let t=T0,seq=-1,made=[],m10=null;
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Mint Kite IDs on one server: datacenter 2, machine 9</h1>'+
+   '<p class="small" style="margin:0 0 6px">Datacenter and machine are fixed at startup. Timestamp and sequence fill in as each ID is made. The clock time is illustrative.</p>'+
+   tasks('g15',['Make 3 IDs in the same millisecond','Move to the next millisecond and make one more','Have machine 10 make an ID at the same moment'])+
+   '<div class="kmini" id="m15c" style="margin-top:10px"></div><div class="krow"><button class="btn pri" id="m15n">'+L.ic('play')+'New request</button><button class="btn" id="m15t">'+L.ic('clock')+'Next ms</button><button class="btn" id="m15o" aria-label="Machine 10 makes an ID at the same moment">'+L.ic('layers')+'Machine 10</button></div>'+
+   '<div id="m15r"></div><div id="m15x"></div><div class="klbl">Latest IDs from machine 9</div><div id="m15l" class="kmini">None yet.</div>'+CSS);
+  function draw(hl){
+    L.$('#m15c').innerHTML='Machine 9’s clock: <b>'+day(t)+' · '+clock(t)+' UTC</b><br>= <b>'+fmt(t)+'</b> ms since the Kite epoch';
+    L.$('#m15r').innerHTML=seq<0?'<div class="kcap">Press <b>New request</b> to mint an ID in this millisecond.</div>':idRows(BOOK,[0,t,2,9,seq],hl);
+    L.$('#m15l').innerHTML=made.length?made.slice(-4).reverse().map(m=>'<div class="kev" style="padding:4px 0"><span class="small" style="margin:0;width:88px;flex:none">.'+clock(m.t).slice(-3)+' · seq '+m.seq+'</span><b style="word-break:break-all">'+idStr(m.id)+'</b></div>').join(''):'None yet.';
+    L.$('#m15x').innerHTML=m10?'<div class="kmini"><b>Machine 10</b>, same millisecond, sequence '+m10.seq+': machine bits <code class="kbits" style="display:inline">'+bits(10,5)+'</code> instead of <code class="kbits" style="display:inline">'+bits(9,5)+'</code><br>ID <b style="word-break:break-all">'+idStr(m10.id)+'</b>: different, and nobody had to coordinate.</div>':'';
+    if(made.filter(m=>m.t===t).length>=3)tick(L,'g15',0);
+    if(made.some(m=>m.t!==t)&&made.some(m=>m.t===t))tick(L,'g15',1);
+    if(m10)tick(L,'g15',2);
+    if(allTicked(L,'g15')&&!L.$('#m15d')){L.$('#g15').insertAdjacentHTML('afterend','<span id="m15d"></span>');
+      L.sheet('info','What you just saw','Within one millisecond only the sequence changed: 0, 1, 2. When the clock ticked, the timestamp went up by 1 and the sequence reset to 0. Machine 10 could use the same timestamp and sequence because its machine bits differ. The book warns that changing datacenter or machine IDs by accident can cause clashes, so changes need careful review.');L.done();}}
+  L.$('#m15n').onclick=()=>{if(seq>=4095)return;seq++;made.push({t,seq,id:idOf(BOOK,[0,t,2,9,seq])});draw(4);};
+  L.$('#m15t').onclick=()=>{t++;seq=-1;m10=null;draw(1);};
+  L.$('#m15o').onclick=()=>{if(seq<0){L.err('Make an ID on machine 9 first');return;}m10={seq,id:idOf(BOOK,[0,t,2,10,seq])};draw(3);};
+  draw();}},
+{part:2,src:'Chapter 7 · Timestamp',pts:1,
+ solve:async L=>{L.$('#p16p').children[1].click();await waitFor(L,'#p16d');},
+ run(L){
+  let p=null;
+  const A=[0,T0,2,31,4000],B=[0,T0+1,2,0,0];
+  const sa=[0,1,2,3,4].map(j=>bits(A[j],BOOK[j])).join(''),sb=[0,1,2,3,4].map(j=>bits(B[j],BOOK[j])).join('');
+  const secOf=i=>{let a=0;for(let j=0;j<5;j++){a+=BOOK[j];if(i<a)return j;}return 4;};
+  let diff=0;while(sa[diff]===sb[diff])diff++;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Two Kite IDs from datacenter 2. <b>A</b>: machine 31, sequence 4,000. <b>B</b>: machine 0, sequence 0, made 1 ms later. Which number is bigger?</h1>'+
+   '<div id="p16p"></div><div id="p16v" class="kmini kcmp"></div><div id="p16x"></div>'+CSS);
+  function draw(k,done){
+    const line=(s,lab,from)=>'<div class="ln"><b>'+lab+'</b><span>'+[...s.slice(from,from+32)].map((c,q)=>{const i=from+q;
+      const cls=done&&i<diff?'e':(done&&i===diff)?'d':'';return '<span class="'+cls+'" style="color:'+COL[secOf(i)]+(k===i?';background:var(--pri-bg)':'')+'">'+c+'</span>';}).join('')+'</span></div>';
+    L.$('#p16v').innerHTML='<div class="small" style="margin:0 0 4px">Bits 63–32</div>'+line(sa,'A',0)+line(sb,'B',0)+'<div class="small" style="margin:6px 0 4px">Bits 31–0</div>'+line(sa,'A',32)+line(sb,'B',32)+
+      '<div style="font-family:var(--sans);font-size:12.5px;margin-top:6px">Colours: <span style="color:var(--h1)">timestamp</span> · <span style="color:var(--h2)">datacenter</span> · <span style="color:var(--h3)">machine</span> · <span style="color:var(--h4)">sequence</span></div>';}
+  draw(-1,false);
+  chipsInto(L,L.$('#p16p'),['A: its machine and sequence are big','B: it was made later','Neither: they’re equal'],async(j,b)=>{if(p!==null)return;p=j;b.classList.add('sel');
+    for(let k=0;k<=diff;k+=2){if(!L.$('#p16v'))return;draw(k,false);await L.sleep(30);}
+    draw(-1,true);
+    L.$('#p16x').innerHTML='<div class="kmini">A = <b style="word-break:break-all">'+idStr(idOf(BOOK,A))+'</b><br>B = <b style="word-break:break-all">'+idStr(idOf(BOOK,B))+'</b> <span class="kok">bigger</span></div><span id="p16d"></span>';
+    L.award(p===1);
+    L.sheet(p===1?'ok':'no',p===1?'Right: B is bigger':'B is bigger','Reading from the left, the two IDs match until the boxed bit, the last bit of the timestamp. B has a 1 there, A a 0, and a left bit outweighs everything to its right. The timestamp sits in the most important bits, so a later ID wins whatever its machine or sequence. That’s why sorting snowflake IDs sorts them by time.');L.done();});}},
 {part:2,src:'Chapter 7 · Step 3 - Design deep dive',run(L){
   L.h(L.kick('ex','Worked example')+'<h1 class="q">Do the numbers out loud, the way Tamsin expects</h1>');
   L.beats(L.card,[
-   ['How many milliseconds?','2⁴¹ − 1 = 2,199,023,255,551 milliseconds.'],
+   ['How many milliseconds?','The biggest 41-bit number is 2⁴¹ − 1 = 2,199,023,255,551 milliseconds.'],
    ['Into years','÷ 1,000 for seconds, ÷ 3,600 for hours, ÷ 24 for days, ÷ 365 for years: about <b>69 years</b>.'],
-   ['When does it run out?','From Twitter’s 2010 epoch, that’s around 2080. Kitebird picks its own epoch, 1 January 2026, so Kite IDs last until about 2095.'],
-   ['Per machine','4,096 IDs per millisecond × 1,000 milliseconds ≈ <b>4 million IDs a second</b> from one machine, in theory.'],
-   ['Against the requirement','Kitebird needs over 10,000 a second. On paper one machine covers that many times over; more machines add room and keep IDs flowing if one fails.'],
-   ['How many generators?','5 + 5 bits: 32 datacenters × 32 machines = 1,024 generators in all.']],
+   ['When does it run out?','From Twitter’s 2010 epoch, around 2080. Kite IDs count from 1 Jan 2026, so they last until about 2095. An epoch close to today delays the overflow; after it, you need a new epoch or a way to migrate IDs.'],
+   ['Per machine','12 bits = 2¹² = 4,096 values. The sequence stays 0 unless one machine makes more than one ID in a millisecond, so in theory one machine makes up to <b>4,096 IDs per millisecond</b>.'],
+   ['Against the requirement','4,096 × 1,000 ≈ 4 million a second from one machine, on paper. Kitebird needs over 10,000. More machines add room and keep IDs flowing if one fails.'],
+   ['How many generators?','5 + 5 bits: 32 datacenters × 32 machines = 1,024 generators.']],
    'Two numbers to say in any interview: 41 bits ≈ 69 years, and 12 bits = 4,096 IDs per millisecond per machine.');}},
+{part:2,src:'Chapter 7 · Timestamp',pts:1,
+ solve:async L=>{for(let j=1;j<=4;j++)L.$('#d18c').children[j].click();await L.sleep(20);},
+ run(L){
+  const t=Date.UTC(2026,1,14,9,30,0,250)-EPOCH,V=[0,t,2,9,3],seen=new Set();
+  const days=Math.floor(t/864e5),rem=t-days*864e5;
+  const D=[['Timestamp',1,'<b>'+fmt(t)+'</b> ms after the Kite epoch = <b>'+days+' days</b> and '+clock(rem)+' after the start of 1 Jan 2026 (UTC). Which date is that?'],
+           ['Datacenter',2,'Bits 00010 = <b>2</b>.'],['Machine',3,'Bits 01001 = <b>9</b>.'],['Sequence',4,'Bits …0011 = <b>3</b>. The sequence counts from 0.']];
+  L.h(L.kick('pr','Decode it')+'<h1 class="q">Obi finds this Kite ID in a log. Decode each section to find when and where it was made.</h1>'+
+   '<div class="kbig">'+idStr(idOf(BOOK,V))+'</div><p class="small" style="margin:4px 0 0">A made-up ID. The book’s Figure 7-7 does the same conversion from binary to a UTC date.</p>'+
+   idRows(BOOK,V,-1).replace(/ = <b>[\d,]+<\/b>/g,'')+'<div class="krow" id="d18c"></div><div id="d18x"></div><div id="d18q"></div>'+CSS);
+  L.$('#d18c').innerHTML='<span class="small" style="margin:0">Decode:</span>';chipsInto(L,L.$('#d18c'),D.map(d=>d[0]),(j,b)=>{if(seen.has(j))return;seen.add(j);b.classList.add('ok');
+    L.$('#d18x').insertAdjacentHTML('beforeend','<div class="kev"><span style="color:'+COL[D[j][1]]+';font-weight:700;width:86px;flex:none">'+D[j][0]+'</span><span>'+D[j][2]+'</span></div>');
+    if(seen.size===4){L.$('#d18q').innerHTML='<h2 class="sub" style="margin-top:14px">So what does the ID tell Obi?</h2>';
+      L.mc(L.$('#d18q'),['Made 1 Jan 2026 in datacenter 2, machine 9, the 4th ID that ms','Made 14 Feb 2026 in datacenter 2, machine 9, the 4th ID that ms','Made 14 Feb 2026 in datacenter 9, machine 2, the 4th ID that ms'],1,
+       '1 Jan 2026 + 44 days = 14 Feb 2026, at 09:30:00.250 UTC. Then datacenter 2, machine 9, and sequence 3: counting from 0, that’s the 4th ID that millisecond.',
+       'The epoch is only the starting point: 1 Jan 2026 + 44 days = 14 Feb 2026. And the datacenter section comes before the machine section: datacenter 2, machine 9.');}});}},
+{part:2,src:'Chapter 7 · Sequence number',
+ solve:async L=>{const c=L.$('#e19p').children;c[0].click();c[1].click();await waitFor(L,'#e19bd');c[2].click();c[3].click();},
+ run(L){
+  const seen=new Set();let busy=false;
+  L.h(L.kick('pr','Edge-case lab')+'<h1 class="q">Where does the layout stop protecting you? Try each extreme.</h1><div class="krow" id="e19p"></div><div class="kcap" id="e19x">Pick a case.</div><div id="e19s"></div><div id="e19b" style="margin-top:8px"></div>'+CSS);
+  const bar=Bar(L,L.$('#e19b'),{id:'e19',read:true});
+  const fin=()=>{if(seen.size===4&&!L.$('#e19d')){L.$('#e19x').insertAdjacentHTML('afterend','<span id="e19d"></span>');
+    L.sheet('info','The limits','The timestamp sets how long IDs last, the sequence how many one machine makes per millisecond, and datacenter + machine how many generators can work without talking to each other. Starve any one of them, or misconfigure it, and uniqueness or time order breaks.');L.done();}};
+  const P=[
+   ['Timestamp only 30 bits',async()=>{bar.set([1,30,5,5,23]);L.$('#e19s').innerHTML='';
+     L.$('#e19x').innerHTML='2³⁰ ms is only about 12 days. Kite IDs would run out on <b>'+day(Math.pow(2,30))+'</b>, after which the timestamp overflows. The book: once it runs out you need a new epoch or a way to migrate IDs. The 23 sequence bits it gained are far more than anyone needs.';}],
+   ['4,097 requests in 1 ms',async()=>{bar.set(BOOK);busy=true;
+     L.$('#e19x').innerHTML='Machine 9 gets 4,097 requests in the same millisecond…';
+     L.$('#e19s').innerHTML='<div class="kmini">Sequence used: <b id="e19n">0</b> of 4,096<div class="kprog"><i id="e19g"></i></div><div id="e19e"></div></div>';
+     for(let n=0;n<=4095;n+=128){await L.sleep(22);if(!L.$('#e19n'))return;L.$('#e19n').textContent=fmt(Math.min(n+128,4096));L.$('#e19g').style.width=Math.min(100,(n+128)/40.96)+'%';}
+     L.$('#e19e').innerHTML='<div class="kno" style="margin-top:6px">Request 4,097: no sequence value left in '+clock(T0)+'.</div>';await L.sleep(450);if(!L.$('#e19e'))return;
+     L.$('#e19e').insertAdjacentHTML('beforeend','<div class="kok">Clock ticks to '+clock(T0+1)+' → sequence 0 → ID made.</div><span id="e19bd"></span>');
+     L.$('#e19x').innerHTML='12 bits hold 4,096 values (0 to 4,095), so the book’s ceiling is 4,096 IDs per millisecond per machine. <b>Beyond the book:</b> real generators usually make the extra request wait for the next millisecond, as shown here.';busy=false;}],
+   ['Two servers both machine 9',async()=>{bar.set(BOOK);const x=idStr(idOf(BOOK,[0,T0,2,9,0]));
+     L.$('#e19s').innerHTML='<div class="kmini">Server “gen-7”, machine 9, seq 0: <b style="word-break:break-all">'+x+'</b><br>Server “gen-8”, <span class="kno">also machine 9</span>, seq 0: <b style="word-break:break-all">'+x+'</b><br><span class="kno">Same number twice.</span></div>';
+     L.$('#e19x').innerHTML='Same millisecond, same datacenter, same machine, same sequence: the very same ID. That’s why the book says datacenter and machine IDs, fixed at startup, need careful review before any change.';}],
+   ['All bits to the timestamp',async()=>{bar.set([1,63,0,0,0]);L.$('#e19s').innerHTML='';
+     L.$('#e19x').innerHTML='IDs would last hundreds of millions of years, but there are no place or sequence bits. Every machine minting in the same millisecond makes the same number, and even one machine makes only 1,000 IDs a second, far below 10,000.';}]];
+  chipsInto(L,L.$('#e19p'),P.map(x=>x[0]),async(j,b)=>{if(busy)return;[...L.$('#e19p').children].forEach(x=>x.classList.toggle('sel',x===b));await P[j][1]();seen.add(j);fin();});}},
+{part:2,src:'Chapter 7 · Twitter snowflake approach',pts:1,
+ solve:async L=>{await nudge(L,'c20',3,1,8);await nudge(L,'c20',2,1,6);await nudge(L,'c20',1,1,11);L.$('#c20k').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Lior scrambled the layout on the whiteboard. Put it back to the book’s snowflake layout, then check.</h1><div id="c20"></div>'+
+   '<button class="btn pri" id="c20k" style="margin-top:10px">'+L.ic('check')+'Check layout</button><div id="c20f"></div>'+CSS);
+  const bar=Bar(L,L.$('#c20'),{id:'c20',drag:true,sz:[1,30,10,3,20],on:()=>{L.$('#c20f').innerHTML='';}});
+  L.$('#c20k').onclick=()=>{const sz=bar.sz,ok=sz.every((v,j)=>v===BOOK[j]);L.$('#c20f').innerHTML='';
+    if(first){L.award(ok);first=false;}
+    if(ok){L.$('#c20k').remove();L.sheet('ok','That’s the book’s layout','1 + 41 + 5 + 5 + 12 = 64: about 69 years of timestamps, 32 × 32 = 1,024 generators, and 4,096 IDs per millisecond per machine.');L.done();}
+    else{const off=[1,2,3,4].filter(j=>sz[j]!==BOOK[j]).map(j=>SEC[j].toLowerCase()+' is '+sz[j]);
+      L.fb(L.$('#c20f'),'<b>Not yet.</b> Off: '+off.join(', ')+'. Hint: about 69 years, 32 datacenters, 32 machines each, 4,096 per millisecond.','no');}};}},
 {part:2,src:'Chapter 7 · Twitter snowflake approach',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which section?',['Sign bit','Timestamp','Datacenter + machine','Sequence number'],[
@@ -217,31 +490,49 @@ Course.lesson({
 /* ---------- PART 4: WRAP UP ---------- */
 {part:3,src:'Chapter 7 · Step 4 - Wrap up',run(L){
   L.h(L.kick('learn','If time remains')+'<h1 class="q">Three talking points to finish strong</h1>'+
+   L.prose('The book settles on snowflake: it meets every requirement and scales in a distributed system. With time left, raise these:')+
    L.list([['clock','Clock synchronization','The design assumes every ID server has the same clock. That may not hold even across cores in one machine, let alone across machines. '+L.g('ntp','NTP')+' is the most popular fix.'],
-     ['scale','Section length tuning','Move bits between sections to fit the job. For example, fewer sequence bits and more timestamp bits suit systems that make few IDs at once but must last a long time.'],
+     ['scale','Section length tuning','Move bits between sections to fit the job. Fewer sequence bits and more timestamp bits suit systems that make few IDs at once but must last a long time.'],
      ['shield','High availability','The ID generator is mission-critical: if it stops, nothing new can be saved. It must stay up.']],2)+
    L.note('<b>Beyond the book:</b> because clocks differ slightly, IDs from different machines are only <i>roughly</i> in time order. Saying “roughly time-ordered” in an interview shows you’ve noticed.','info'));
   L.done();}},
-{part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Obi finds two Kite ID servers whose clocks disagree by a few milliseconds. Which talking point is this?</h1>');
-  L.mc(L.card,['High availability','Section length tuning','Clock synchronization'],2,
-   'The design assumes every server shares the same clock. NTP is the usual fix.',
-   'Nothing is down and no bits need moving. The servers’ clocks disagree, which is clock synchronization. NTP is the usual fix.');}},
 {part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,
- solve:async L=>{L.$('#mt').click();L.$('#mt').click();L.$('#lk').click();},
+ solve:async L=>{L.$('#k23p').children[1].click();await waitFor(L,'#k23r');L.$('#k23r').click();await waitFor(L,'#k23d');},
  run(L){
-  let ts=41,sq=12,first=true;
-  L.h(L.kick('pr','Tune the bits')+'<h1 class="q">Hana wants IDs for Kitebird’s class-certificate archive: only a few a minute, but they must last at least 200 years from the epoch. Move bits, then lock it in.</h1>'+
-   '<div id="bb"></div><div id="ro" style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:4px 0 12px"></div>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="mt">+1 timestamp bit</button><button class="btn" id="ms">+1 sequence bit</button><button class="btn pri" id="lk">'+L.ic('lock')+'Lock it in</button></div><div id="lf"></div>');
-  const draw=()=>{L.$('#bb').innerHTML=bar([1,ts,5,5,sq]);
-    L.$('#ro').innerHTML='<div class="meterrow"><div class="lb">Lasts about</div><b>'+Math.round(yrs(ts)).toLocaleString('en-US')+' years</b></div><div class="meterrow"><div class="lb">IDs per ms per machine</div><b>'+Math.pow(2,sq).toLocaleString('en-US')+'</b></div>';};draw();
-  L.$('#mt').onclick=()=>{if(sq>1){ts++;sq--;L.$('#lf').innerHTML='';draw();}};
-  L.$('#ms').onclick=()=>{if(ts>32){ts--;sq++;L.$('#lf').innerHTML='';draw();}};
-  L.$('#lk').onclick=()=>{L.$('#lf').innerHTML='';const y=Math.round(yrs(ts));
-    if(y>=200){if(first)L.award(true);first=false;
-      L.sheet('ok','Locked in: '+ts+' timestamp bits','That lasts about '+y.toLocaleString('en-US')+' years. Fewer sequence bits and more timestamp bits is the book’s own tuning example: it suits systems that make few IDs at once but must last a long time. Even '+Math.pow(2,sq).toLocaleString('en-US')+' IDs per millisecond is plenty for a few a minute.');L.done();}
-    else{if(first)L.award(false);first=false;L.fb(L.$('#lf'),'<b>Not yet.</b> '+ts+' timestamp bits last only about '+y+' years. Each extra timestamp bit doubles the lifetime.','no');}};}},
+  let p=null;const OFF=-4;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Machine 10’s clock runs 4 ms behind machine 9’s. Mae posts a comment, handled by machine 9. 2 ms later Rafi replies, handled by machine 10. In a newest-first list, where does Rafi’s reply show?</h1>'+
+   '<p class="small" style="margin:0 0 8px">The 4 ms drift and the times are illustrative.</p><div id="k23p"></div><div id="k23s"></div><div id="k23x"></div>'+CSS);
+  async function play(off,n){
+    const host=L.$('#k23s');if(!host)return null;
+    const c={t:T0+10},r={t:T0+12+off};c.id=idOf(BOOK,[0,c.t,2,9,0]);r.id=idOf(BOOK,[0,r.t,2,10,0]);
+    const E='k23e'+n;
+    host.insertAdjacentHTML('beforeend','<div class="klbl">'+(off?'Run 1 · clocks 4 ms apart':'Run 2 · clocks in sync (NTP)')+'</div><div class="kmini" id="'+E+'"></div>');
+    const ev=h=>L.$('#'+E)&&L.$('#'+E).insertAdjacentHTML('beforeend',h);
+    ev('<div class="kev"><span style="width:58px;flex:none"><b>.010</b><br><span class="small" style="margin:0">real time</span></span><span><b>Mae’s comment</b> → machine 9, clock reads <b>.'+clock(c.t).slice(-3)+'</b></span></div>');await L.sleep(450);if(!L.$('#'+E))return null;
+    ev('<div class="kev"><span style="width:58px;flex:none"><b>.012</b><br><span class="small" style="margin:0">real time</span></span><span><b>Rafi’s reply</b> → machine 10, clock reads <b'+(off?' class="kno"':'')+'>.'+clock(r.t).slice(-3)+'</b>'+(off?' (4 ms behind)':' (in sync)')+'</span></div>');await L.sleep(450);if(!L.$('#'+E))return null;
+    const list=[c,r].sort((a,b)=>(b.id>a.id?1:-1));
+    ev('<div class="small" style="margin:8px 0 2px;font-weight:600">Sorted by ID, newest first:</div>'+list.map((x,j)=>'<div class="kev"><b style="width:18px;flex:none">'+(j+1)+'</b><span>'+(x===c?'Mae’s comment':'<b'+(j===1?' class="kno"':' class="kok"')+'>Rafi’s reply</b>')+'<br><span class="small" style="margin:0;word-break:break-all">ID '+idStr(x.id)+'</span></span></div>').join(''));
+    return list[0]===c;}
+  chipsInto(L,L.$('#k23p'),['Above Mae’s comment','Below Mae’s comment'],async(j,b)=>{if(p!==null)return;p=j;b.classList.add('sel');
+    const r1=await play(OFF,1);if(r1===null||!L.$('#k23x'))return;
+    L.award(p===1);
+    L.sheet(p===1?'ok':'no',p===1?'Right: below, as if it came first':'It shows below the comment','Machine 10 stamped the reply .008, earlier than the comment’s .010, so the reply got the smaller ID and sorts as older than the comment it answers. The book’s design assumes every ID server has the same clock. Now sync the clocks and replay.');
+    L.$('#k23x').innerHTML='<button class="btn pri" id="k23r" style="margin-top:10px">'+L.ic('cycle')+'Sync clocks with NTP and replay</button>';
+    L.$('#k23r').onclick=async function(){this.remove();L.clearSheet();const w=await play(0,2);if(w===false&&L.$('#k23x')){
+      L.$('#k23x').innerHTML='<span id="k23d"></span>';
+      L.sheet('info','Clocks in sync','Now the reply is stamped .012 and sorts above the comment. That’s why the book raises clock synchronization as a talking point: the design assumes every ID server has the same clock, which may not hold across machines or even cores. NTP is the most popular fix.');L.done();}};});}},
+{part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,
+ solve:async L=>{await nudge(L,'c24',3,1,2);await nudge(L,'c24',2,1,2);await nudge(L,'c24',1,1,2);L.$('#c24k').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('pr','Challenge · tune the bits')+'<h1 class="q">Hana wants IDs for Kitebird’s class-certificate archive: only a few a minute, but they must last at least 200 years from the 2026 epoch. Keep 32 datacenters × 32 machines. Move bits, then check.</h1>'+
+   '<p class="small" style="margin:0 0 6px">The 200-year target and the volume are illustrative. Tip: move the rightmost divider first.</p><div id="c24"></div>'+
+   '<button class="btn pri" id="c24k" style="margin-top:10px">'+L.ic('lock')+'Lock it in</button><div id="c24f"></div>'+CSS);
+  const bar=Bar(L,L.$('#c24'),{id:'c24',drag:true,on:()=>{L.$('#c24f').innerHTML='';}});
+  L.$('#c24k').onclick=()=>{const sz=bar.sz,yrs=Math.pow(2,sz[1])/864e5/365,place=sz[2]===5&&sz[3]===5,ok=yrs>=200&&place;L.$('#c24f').innerHTML='';
+    if(first){L.award(ok);first=false;}
+    if(ok){L.$('#c24k').remove();L.sheet('ok','Locked in: '+sz[1]+' timestamp bits','That lasts '+dur(Math.pow(2,sz[1]))+'. Fewer sequence bits and more timestamp bits is the book’s own tuning example for low-concurrency, long-term systems. '+fmt(Math.pow(2,sz[4]))+' IDs per millisecond per machine is still plenty for a few a minute.');L.done();}
+    else L.fb(L.$('#c24f'),'<b>Not yet.</b> '+(place?'':'Keep datacenter and machine at 5 bits each. ')+(yrs<200?sz[1]+' timestamp bits last only '+dur(Math.pow(2,sz[1]))+'. Each extra bit doubles that; take bits from the sequence, which this archive barely uses.':''),'no');};}},
 {part:3,src:'Chapter 7 · Step 4 - Wrap up',pts:1,run(L){
   L.h(L.kick('pr','Run the review')+'<h1 class="q">Put the Kite IDs review in the book’s order. Tap the steps from first to last.</h1>');
   L.order(L.card,['Ask what IDs must do and how many a second','Weigh multi-master, UUID and ticket server','Propose the 64-bit snowflake layout','Dig into the timestamp and sequence bits','Raise clock sync, tuning and availability'],

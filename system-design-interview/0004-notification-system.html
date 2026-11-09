@@ -13,9 +13,304 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0004 only. One hands-on model used across the lesson:
+   the Kitebird pings pipeline with fault injection. Services hand pings to
+   notification servers, which put them in one queue per type (or, in the
+   old design, one shared line inside one box); workers hand them to APNs,
+   FCM, the SMS service and the email service. Kill switches, safeguards
+   (log + retry, dedupe, rate limit) and traffic (repeats, bursts) change
+   the counters: delivered, lost, doubled, waiting.
+   Every speed, outage length and limit in it is illustrative.
+   ===================================================================== */
+const NCSS='<style>'+
+ '.nf>svg{width:100%;display:block}.nf>svg text{font-family:var(--sans)}'+
+ '.nf .nttl{font-size:13px;font-weight:700;color:var(--muted);margin:10px 0 4px}'+
+ '.nlbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 4px}.nlbl span{font-weight:400}'+
+ '.nrow{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}.nrow .chip{margin:0;min-height:38px;font-size:14px;padding:6px 11px}'+
+ '.nrow .chip.kil{border-color:var(--no-line);background:var(--no-bg);color:var(--no)}'+
+ '.nbx{width:18px;height:18px;border-radius:5px;border:2px solid var(--line2);display:inline-flex;align-items:center;justify-content:center;flex:none}'+
+ '.chip.sel .nbx{background:var(--pri);border-color:var(--pri);color:var(--card)}.nbx svg.i{width:12px;height:12px;stroke-width:3}'+
+ '.nrun{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:10px 0 4px}.nrun .btn{min-height:42px}'+
+ '.nclock{font-size:14px;font-weight:600;color:var(--muted);font-variant-numeric:tabular-nums}'+
+ '.nstats{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:8px 0 2px}'+
+ '.nst{background:var(--soft);border-radius:12px;padding:7px 4px;text-align:center;min-width:0}.nst b{display:block;font-size:21px;font-variant-numeric:tabular-nums;line-height:1.2}.nst span{font-size:12px;color:var(--muted)}'+
+ '.nst.bad{background:var(--no-bg)}.nst.bad b,.nst.bad span{color:var(--no)}.nst.good{background:var(--ok-bg)}.nst.good b,.nst.good span{color:var(--ok)}'+
+ '.nextra{font-size:13.5px;color:var(--muted);line-height:1.5;margin:4px 0}'+
+ '.nlog{margin-top:6px}.nlog .fb{margin-top:6px;font-size:14px;padding:9px 12px}'+
+ '.ntb{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0;font-variant-numeric:tabular-nums}.ntb th{font-weight:600;color:var(--muted);text-align:right;padding:3px 4px;font-size:12.5px}.ntb th:first-child,.ntb td:first-child{text-align:left}'+
+ '.ntb td{text-align:right;padding:4px;border-top:1px solid var(--line)}.ntb td.bad{color:var(--no);font-weight:700}'+
+ '.nleg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:2px 0 6px}.nleg i{display:inline-block;width:12px;height:4px;border-radius:2px;margin-right:5px;vertical-align:middle}'+
+ '.ntask{margin:10px 0 0;padding:0;list-style:none}.ntask li{display:flex;gap:8px;align-items:flex-start;font-size:14.5px;margin:6px 0;color:var(--muted);line-height:1.4}'+
+ '.ntask li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center;margin-top:1px}'+
+ '.ntask li.done{color:var(--ok)}.ntask li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.ntask li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.nrng{display:grid;grid-template-columns:auto 1fr 26px;gap:10px;align-items:center;font-size:14.5px;margin:8px 0}.nrng input{width:100%;accent-color:var(--pri);height:30px}.nrng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.npre{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.npre .btn{min-height:42px;padding:8px 12px;font-size:14px}.npre .btn.ok{border-color:var(--ok-line);background:var(--ok-bg);color:var(--ok)}'+
+ '.nqa{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.nqa .chip{margin:0;min-height:38px}'+
+ '.nans{margin:8px 0 0;padding:0;list-style:none}.nans li{background:var(--soft);border-radius:12px;padding:8px 12px;margin:6px 0;font-size:14.5px;line-height:1.45;animation:nin .3s}.nans li>b:first-child{display:block;font-size:13px;color:var(--muted)}'+
+ '.ncmp{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}.ncmp th{font-size:12.5px;color:var(--muted);font-weight:600;text-align:right;padding:4px}.ncmp th:first-child,.ncmp td:first-child{text-align:left}.ncmp td{text-align:right;padding:5px 4px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}.ncmp td.bad{color:var(--no);font-weight:700}'+
+ '.nbuild g.new{animation:nin .45s}'+
+ '@keyframes nin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}'+
+ '@keyframes npop{from{opacity:0}to{opacity:1}}'+
+ '.npop{animation:npop .5s ease-out}'+
+ '@media (prefers-reduced-motion:reduce){.npop,.nans li,.nbuild g.new{animation:none}}'+
+ '</style>';
+
+/*SIM-START*/
+const NT=[
+  {k:'ios',name:'iOS push',short:'iOS',prov:'APNs',c:'h1',rate:2},
+  {k:'and',name:'Android push',short:'Android',prov:'FCM',c:'h2',rate:1},
+  {k:'sms',name:'SMS',short:'SMS',prov:'SMS service',c:'h3',rate:1},
+  {k:'email',name:'Email',short:'Email',prov:'Email service',c:'h4',rate:2}];
+/* every number here is illustrative: the book gives no speeds or failure rates */
+const NMIX=['email','ios','sms','email','and','ios'];
+const NOPT={Hana:'sms',Ben:'email'};
+const NC={ticks:10,arrive:8,cap:3,box:7,boxWait:3,late:2,tries:4,rcap:3,alarm:12};
+function nsim(S){
+  const ev=[];let n=700;
+  for(let t=0;t<NC.arrive;t++)NMIX.forEach(k=>ev.push({t,type:k,id:'evt-'+(n++)}));
+  if(S.burst)for(let t=2;t<=5;t++)for(let j=0;j<6;j++)ev.push({t,type:'email',id:'evt-'+(n++),digest:1});
+  if(S.promo){ev.push({t:1,type:'sms',id:'evt-901',user:'Hana'});ev.push({t:1,type:'email',id:'evt-902',user:'Ben'});}
+  if(S.flood)for(let t=1;t<=2;t++)for(let j=0;j<3;j++)ev.push({t,type:'ios',id:'evt-'+(n++),user:'Ben'});
+  if(S.twice){ev.push({t:3,type:'ios',id:'evt-501',user:'Mira'});ev.push({t:3,type:'ios',id:'evt-501',user:'Mira',copy:1});}
+  ev.sort((a,b)=>a.t-b.t);
+  const D=S.down||{},W=S.workers||{};
+  const down=(k,t)=>!!D[k]&&t>=D[k][0]&&t<=D[k][1];
+  const R={skipped:0,against:0,ok:0,late:0,lost:0,doubled:0,wait:0,repeats:0,capped:0,over:0,parked:0,ben:0,by:{},peak:{},msgs:[],frames:[]};
+  NT.forEach(T=>{R.by[T.k]={ok:0,late:0,lost:0,wait:0};R.peak[T.k]=0;});
+  const Q={ios:[],and:[],sms:[],email:[]},line=[],parked=[],seen=new Set(),sent=new Set(),per={};
+  const say=(key,t,h)=>{if(!R.msgs.some(m=>m.key===key))R.msgs.push({key,t,h});};
+  const lose=(it,t)=>{R.lost++;R.by[it.type].lost++;};
+  const deliver=(it,t)=>{if(sent.has(it.id)){R.doubled++;say('dup',t,'min '+t+': <b>'+it.id+'</b> reached the phone a second time. A doubled ping.');}
+    if(it.against){R.against++;say('against',t,'min '+t+': <b>'+it.id+'</b> reached '+it.user+', against '+it.user+'’s settings ('+it.user+' opted out).');}
+    sent.add(it.id);R.ok++;R.by[it.type].ok++;if(it.user==='Ben')R.ben++;R.by[it.type].maxw=Math.max(R.by[it.type].maxw||0,t-it.born);if(t-it.born>=NC.late){R.late++;R.by[it.type].late++;}};
+  const fail=(it,t,home)=>{
+    if(!S.log){lose(it,t);say('flost',t,'min '+t+': '+NT.find(x=>x.k===it.type).prov+' is down and there is no log or retry, so <b>'+it.id+'</b> is gone.');return;}
+    it.tries++;
+    if(it.tries>=NC.tries){parked.push(it);R.parked++;say('alert',t,'min '+t+': <b>'+it.id+'</b> failed '+NC.tries+' times. It stays in the log and the developers get an alert.');return;}
+    it.next=t+1;home.push(it);say('retry',t,'min '+t+': a send failed, so the ping went back into the queue to retry.');};
+  for(let t=0;t<NC.ticks;t++){
+    const fr={t,send:{},fail:{}};NT.forEach(T=>{fr.send[T.k]=0;fr.fail[T.k]=0;});
+    for(const e of ev){if(e.t!==t)continue;
+      if(S.mode==='box'&&down('box',t)){lose({type:e.type},t);say('refused',t,'min '+t+': the one server is down. New pings can’t get in, so they are lost.');continue;}
+      if(S.dedupe&&seen.has(e.id)){R.repeats++;say('rep',t,'min '+t+': <b>'+e.id+'</b> arrived again. Seen before, so it was dropped.');continue;}
+      seen.add(e.id);
+      if(e.user&&NOPT[e.user]===e.type){if(S.optcheck){R.skipped++;say('opt',t,'min '+t+': '+e.user+' opted out of '+(e.type==='sms'?'SMS':e.type)+', so the servers dropped <b>'+e.id+'</b> before any queue.');continue;}e.against=1;}
+      if(e.user){per[e.user]=(per[e.user]||0)+1;if(per[e.user]>NC.rcap){if(S.rate){R.capped++;say('cap',t,'min '+t+': '+e.user+' already got '+NC.rcap+' pings, so the rate limit held this one back.');continue;}R.over++;}}
+      const it={against:e.against,id:e.id,type:e.type,user:e.user,born:t,tries:0,next:t};
+      (S.mode==='box'?line:Q[e.type]).push(it);}
+    if(S.mode==='box'){
+      if(down('box',t)){fr.boxDown=1;
+        if(t===D.box[0]&&line.length){if(!S.log){const k=line.length;line.splice(0).forEach(it=>lose(it,t));say('boxlost',t,'min '+t+': the one server crashed. The '+k+' pings in its memory are gone.');}
+          else say('boxkept',t,'min '+t+': the one server crashed, but its pings were saved in the log.');}}
+      else{let b=NC.box;
+        while(b>0){const j=line.findIndex(it=>it.next<=t);if(j<0)break;const it=line.splice(j,1)[0];
+          if(down('p_'+it.type,t)){b-=NC.boxWait;fr.fail[it.type]++;fail(it,t,line);say('wait',t,'min '+t+': the one server waits on the dead '+NT.find(x=>x.k===it.type).prov+' while every other ping waits behind it.');}
+          else{b-=1;fr.send[it.type]++;deliver(it,t);}}}
+    }else NT.forEach(T=>{const k=T.k,q=Q[k],wk='w_'+k;
+      if(down(wk,t)){fr['wd_'+k]=1;
+        if(t===D[wk][0]){const j=q.findIndex(it=>it.next<=t);
+          if(j>=0){const it=q[j];
+            if(S.afterSend){deliver(it,t);fr.send[k]++;q.splice(j,1);
+              if(S.log){it.next=D[wk][1]+1;q.push(it);say('after',t,'min '+t+': the '+T.short+' worker sent <b>'+it.id+'</b>, then crashed before marking it sent. The log still says “not sent”.');}
+              else say('after',t,'min '+t+': the '+T.short+' worker sent <b>'+it.id+'</b>, then crashed. No log, so nothing is retried.');}
+            else if(!S.log){q.splice(j,1);lose(it,t);say('wlost',t,'min '+t+': the '+T.short+' worker crashed holding <b>'+it.id+'</b>. No log, so that ping is gone.');}
+            else say('wkept',t,'min '+t+': the '+T.short+' worker crashed holding <b>'+it.id+'</b>. It’s saved in the log, so it will be retried.');}}
+        return;}
+      let c=NC.cap*(W[k]||1);
+      while(c>0){const j=q.findIndex(it=>it.next<=t);if(j<0)break;const it=q.splice(j,1)[0];c--;
+        if(down('p_'+k,t)){fr.fail[k]++;fail(it,t,q);}else{fr.send[k]++;deliver(it,t);}}});
+    fr.q={};NT.forEach(T=>{fr.q[T.k]=Q[T.k].map(it=>[it.type,it.tries>0?1:0]);R.peak[T.k]=Math.max(R.peak[T.k],Q[T.k].length);});
+    fr.line=line.map(it=>[it.type,it.tries>0?1:0]);R.peak.box=Math.max(R.peak.box||0,line.length);
+    fr.ok={};NT.forEach(T=>fr.ok[T.k]=R.by[T.k].ok);fr.lost=R.lost;fr.doubled=R.doubled;
+    R.frames.push(fr);}
+  NT.forEach(T=>{R.by[T.k].wait=Q[T.k].length+line.filter(it=>it.type===T.k).length+parked.filter(it=>it.type===T.k).length;});
+  R.wait=NT.reduce((a,T)=>a+R.by[T.k].wait,0);
+  R.peakMax=Math.max(...NT.map(T=>R.peak[T.k]));
+  return R;}
+/*SIM-END*/
+
+/* ---------- labels ---------- */
+const NK={p_ios:'APNs',p_and:'FCM',p_sms:'SMS service',p_email:'Email service',w_ios:'iOS worker',w_and:'Android worker',w_sms:'SMS worker',w_email:'Email worker',box:'The one server'};
+const NPV={ios:'APNs',and:'FCM',sms:'SMS',email:'Email'};
+const NWIN=k=>k==='box'?[3,5]:k[0]==='p'?[2,4]:[3,5];
+const NGL={log:'Notification log + retry',dedupe:'Dedupe by event ID',rate:'Rate limit: 3 per person',optcheck:'Check settings before sending'};
+const NTL={twice:'Send evt-501 twice',burst:'Sunday digest burst',flood:'6 pings for Ben'};
+const nT=k=>NT.find(x=>x.k===k);
+const nTasks=(id,list)=>'<ul class="ntask" id="'+id+'">'+list.map((g,j)=>'<li id="'+id+j+'"><span class="bx"></span><span>'+g+'</span></li>').join('')+'</ul>';
+function nTick(L,id,j){const li=L.$('#'+id+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const nAll=(L,id)=>L.$$('#'+id+' li').every(li=>li.classList.contains('done'));
+
+/* ---------- the pipeline: diagram, controls, counters ---------- */
+function Pipe(L,host,o){
+  o=Object.assign({id:'p',mode:'queues',title:'',kills:[],guards:[],traffic:[],workers:false,lock:false,stats:true,table:false,chart:false,runBtn:true,log:true,S:{},on:()=>{}},o);
+  const ID=o.id,H=214,top=22,rowH=48;
+  const S={};
+  function setS(p){Object.assign(S,{optcheck:0,promo:0,mode:o.mode,log:0,dedupe:0,rate:0,twice:0,burst:0,flood:0,afterSend:0},p);S.down=Object.assign({},p.down||{});S.workers=Object.assign({ios:1,and:1,sms:1,email:1},p.workers||{});}
+  setS(o.S);
+  let busy=false,last=null,fast=false;
+  host.insertAdjacentHTML('beforeend','<div class="nf" id="'+ID+'">'+(o.title?'<div class="nttl">'+o.title+'</div>':'')+
+    '<svg id="'+ID+'-svg" viewBox="0 0 340 '+H+'" role="img" aria-label="'+(o.mode==='box'?'Diagram: one notification server holds a single shared line of pings and sends them to APNs, FCM, the SMS service and the email service.':'Diagram: notification servers put each ping into one of four queues, iOS, Android, SMS and email; a worker per queue sends it to APNs, FCM, the SMS service or the email service.')+'"></svg><div class="nextra" id="'+ID+'-arm"></div>'+
+    (o.kills.length?'<div class="nlbl">Break something <span>(a part goes down for 3 minutes, then comes back)</span></div><div class="nrow" id="'+ID+'-k"></div>':'')+
+    (o.guards.length?'<div class="nlbl">Safeguards</div><div class="nrow" id="'+ID+'-g"></div>':'')+
+    (o.traffic.length?'<div class="nlbl">Traffic</div><div class="nrow" id="'+ID+'-t"></div>':'')+
+    (o.workers?'<label class="nrng" for="'+ID+'-w"><span>Email workers</span><input type="range" id="'+ID+'-w" min="1" max="5" step="1" value="'+S.workers.email+'"><b id="'+ID+'-wv">'+S.workers.email+'</b></label>':'')+
+    '<div class="nrun">'+(o.runBtn?'<button class="btn pri" id="'+ID+'-run">'+L.ic('play')+'Run 10 minutes</button>':'')+'<span class="nclock" id="'+ID+'-clk">'+(o.runBtn?'Ready':'')+'</span></div>'+
+    (o.stats?'<div class="nstats" id="'+ID+'-st"></div><div class="nextra" id="'+ID+'-x"></div>':'')+
+    (o.table?'<div id="'+ID+'-tb"></div>':'')+
+    (o.chart?'<div class="nlbl">Obi’s dashboard: pings waiting in each queue</div><svg id="'+ID+'-ch" viewBox="0 0 340 134" role="img" aria-label="Line chart of how many pings wait in each queue, minute by minute"></svg><div class="nleg">'+NT.map(T=>'<span><i style="background:var(--'+T.c+')"></i>'+T.short+'</span>').join('')+'<span><i style="background:var(--no)"></i>alarm line</span></div>':'')+
+    (o.log?'<div class="nlog" id="'+ID+'-log" aria-live="polite"></div>':'')+'</div>');
+  const root=host.querySelector('#'+ID),$=s=>root.querySelector(s),svg=$('#'+ID+'-svg');
+  const alive=()=>svg.isConnected;
+  const st=(k,t)=>{const w=S.down[k];if(!w)return 'up';if(t<0)return 'armed';return t>=w[0]&&t<=w[1]?'down':'up';};
+  const txt=(x,y,s,sty)=>'<text x="'+x+'" y="'+y+'" style="'+sty+'">'+s+'</text>';
+  const X=(x,y,c)=>'<path d="M'+(x-5)+' '+(y-5)+'l10 10m0 -10l-10 10" style="stroke:'+(c||'var(--no)')+';stroke-width:2.6;stroke-linecap:round;fill:none"/>';
+  const partStyle=s=>s==='down'?'fill:var(--no-bg);stroke:var(--no);stroke-width:2':s==='armed'?'fill:var(--card);stroke:var(--no-line);stroke-width:2;stroke-dasharray:4 3':'fill:var(--card);stroke:var(--line2);stroke-width:1.4';
+  const cy=j=>top+j*rowH+28;
+  function tok(list,x0,y,max,right){let s='';const n=list.length,show=n>max?max-2:n;
+    for(let i=0;i<show;i++){const it=list[i],x=right?x0-(i+1)*11:x0+i*11;
+      s+='<rect x="'+x+'" y="'+(y-4)+'" width="8" height="8" rx="2" style="fill:var(--'+nT(it[0]).c+')'+(it[1]?';stroke:var(--no);stroke-width:1.6':'')+'"/>';}
+    if(n>show)s+=txt(right?x0-show*11-26:x0+show*11+2,y+4,'+'+(n-show),'font-size:11.5px;font-weight:700;fill:var(--ink)');
+    return s;}
+  function provAndSent(fr,t){let s='';
+    NT.forEach((T,j)=>{const y=cy(j),ps=st('p_'+T.k,t);
+      s+='<g data-k="p_'+T.k+'" style="cursor:'+(o.kills.includes('p_'+T.k)?'pointer':'default')+'"><rect x="214" y="'+(y-12)+'" width="74" height="24" rx="7" style="'+partStyle(ps)+'"/>'+
+        txt(ps==='down'?232:251,y+4,NPV[T.k],'font-size:12px;font-weight:600;text-anchor:middle;fill:'+(ps==='down'?'var(--no)':'var(--ink)'))+(ps==='down'?X(276,y):'')+'</g>';
+      s+=txt(296,y+4.5,'✓ '+(fr?fr.ok[T.k]:0),'font-size:12.5px;font-weight:700;fill:var(--ok)');
+      if(fr&&fr.send[T.k])s+='<text class="npop" x="326" y="'+(y-12)+'" style="font-size:11.5px;font-weight:700;fill:var(--'+T.c+');text-anchor:end">+'+fr.send[T.k]+'</text>';
+      if(fr&&fr.fail[T.k])s+='<text class="npop" x="251" y="'+(y-15)+'" style="font-size:11.5px;font-weight:700;fill:var(--no);text-anchor:middle">'+fr.fail[T.k]+' failed</text>';});
+    return s;}
+  function drawSvg(fr){
+    if(!alive())return;const t=fr?fr.t:-1;let s='';
+    const hd=(x,v)=>txt(x,13,v,'font-size:11.5px;font-weight:600;fill:var(--muted);text-anchor:middle');
+    if(S.mode==='box'){
+      const bs=st('box',t);
+      s+=hd(90,'One notification server')+hd(251,'Third party')+hd(316,'Sent');
+      s+='<g data-k="box" style="cursor:'+(o.kills.includes('box')?'pointer':'default')+'"><rect x="2" y="'+top+'" width="176" height="'+(H-top-4)+'" rx="12" style="'+(bs==='down'?'fill:var(--no-bg);stroke:var(--no);stroke-width:2':bs==='armed'?'fill:var(--soft);stroke:var(--no-line);stroke-width:2;stroke-dasharray:4 3':'fill:var(--soft);stroke:var(--line2);stroke-width:1.4')+'"/></g>';
+      s+=txt(12,top+20,'Everything in one box','font-size:12.5px;font-weight:700;fill:var(--ink)');
+      s+=txt(12,top+36,'one shared line, in order','font-size:11.5px;fill:var(--muted)');
+      const line=fr?fr.line:[];
+      for(let r=0;r<6;r++){const part=line.slice(r*14,r*14+14);if(!part.length)break;
+        if(r===5&&line.length>84)s+=tok(line.slice(70),12,top+52+r*13,14,false);else s+=tok(part,12,top+52+r*13,99,false);}
+      if(!line.length)s+=txt(12,top+56,fr?'line empty':'',  'font-size:11.5px;fill:var(--muted)');
+      if(bs==='down')s+=txt(12,top+138,'Down: rebooting','font-size:12.5px;font-weight:700;fill:var(--no)');
+      s+='<rect x="12" y="'+(H-40)+'" width="72" height="26" rx="6" style="fill:var(--card);stroke:var(--line2)"/>'+txt(48,H-23,'Database','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+      s+='<rect x="94" y="'+(H-40)+'" width="74" height="26" rx="6" style="fill:var(--card);stroke:var(--line2)"/>'+txt(131,H-23,'Cache','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+      NT.forEach((T,j)=>{s+='<line x1="178" y1="'+cy(j)+'" x2="214" y2="'+cy(j)+'" style="stroke:var(--line2);stroke-width:1.4"/>';});
+    }else{
+      s+=hd(29,'Servers')+hd(118,'Queues')+hd(195,'Workers')+hd(253,'Service')+hd(316,'Sent');
+      s+='<rect x="2" y="'+(top+12)+'" width="52" height="'+(4*rowH-14)+'" rx="10" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.4"/>';
+      const mid=top+12+(4*rowH-14)/2;
+      s+=txt(28,mid-14,'Notif.','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+txt(28,mid+1,'servers','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+txt(28,mid+18,'×3','font-size:12px;text-anchor:middle;fill:var(--pri-deep)');
+      NT.forEach((T,j)=>{const y=cy(j),q=fr?fr.q[T.k]:[],al=q.length>=NC.alarm,ws=st('w_'+T.k,t),n=S.workers[T.k];
+        s+=txt(62,y-16,T.name+(al?' · queue alarm':''),'font-size:11.5px;font-weight:700;fill:'+(al?'var(--no)':'var(--'+T.c+')'));
+        s+='<line x1="54" y1="'+y+'" x2="62" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.4"/>';
+        s+='<rect x="62" y="'+(y-11)+'" width="114" height="22" rx="6" style="fill:var(--soft);stroke:'+(al?'var(--no)':'var(--line2)')+';stroke-width:'+(al?2:1.2)+'"/>';
+        s+=tok(q,172,y,10,true);
+        s+='<line x1="176" y1="'+y+'" x2="180" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.4"/><line x1="210" y1="'+y+'" x2="214" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.4"/>';
+        s+='<g data-k="w_'+T.k+'" style="cursor:'+(o.kills.includes('w_'+T.k)?'pointer':'default')+'"><rect x="180" y="'+(y-11)+'" width="30" height="22" rx="11" style="'+(ws==='up'?'fill:var(--'+T.c+'-bg);stroke:var(--'+T.c+');stroke-width:1.4':partStyle(ws))+'"/>'+
+          (ws==='down'?X(195,y):txt(195,y+4,n>1?'W×'+n:'W','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--'+T.c+')'))+'</g>';});
+    }
+    s+=provAndSent(fr,t);
+    svg.innerHTML=s;
+    const arm=$('#'+ID+'-arm'),dk=Object.keys(S.down);
+    arm.innerHTML=!fr&&dk.length?'<span style="color:var(--no)">Dashed red outline</span>: '+dk.map(k=>NK[k]+' (down minutes '+S.down[k][0]+' to '+S.down[k][1]+')').join(', ')+'.':'';}
+  function drawCtl(){
+    const dis=busy||o.lock?' disabled':'';
+    if(o.kills.length)$('#'+ID+'-k').innerHTML=o.kills.map(k=>'<button class="chip'+(S.down[k]?' kil':'')+'" data-k="'+k+'" aria-pressed="'+!!S.down[k]+'"'+dis+'>'+(S.down[k]?L.ic('x'):L.ic('check'))+NK[k]+'</button>').join('');
+    if(o.guards.length)$('#'+ID+'-g').innerHTML=o.guards.map(g=>'<button class="chip'+(S[g]?' sel':'')+'" data-g="'+g+'" aria-pressed="'+!!S[g]+'"'+dis+'><span class="nbx">'+(S[g]?L.ic('check'):'')+'</span>'+NGL[g]+'</button>').join('');
+    if(o.traffic.length)$('#'+ID+'-t').innerHTML=o.traffic.map(g=>'<button class="chip'+(S[g]?' sel':'')+'" data-t="'+g+'" aria-pressed="'+!!S[g]+'"'+dis+'><span class="nbx">'+(S[g]?L.ic('check'):'')+'</span>'+NTL[g]+'</button>').join('');
+    if(o.workers){const w=$('#'+ID+'-w');w.disabled=busy||o.lock;w.value=S.workers.email;$('#'+ID+'-wv').textContent=S.workers.email;}
+    if(o.runBtn)$('#'+ID+'-run').disabled=busy;}
+  function drawStats(fr,R){
+    if(!o.stats)return;
+    const ok=R?R.ok:fr?NT.reduce((a,T)=>a+fr.ok[T.k],0):0,lost=R?R.lost:fr?fr.lost:0,dbl=R?R.doubled:fr?fr.doubled:0,
+      wait=R?R.wait:fr?NT.reduce((a,T)=>a+fr.q[T.k].length,0)+fr.line.length:0;
+    const tile=(v,l,cls)=>'<div class="nst'+(cls?' '+cls:'')+'"><b>'+v+'</b><span>'+l+'</span></div>';
+    $('#'+ID+'-st').innerHTML=tile(ok,'delivered',R?'good':'')+tile(lost,'lost',lost?'bad':'')+tile(dbl,'doubled',dbl?'bad':'')+tile(wait,'waiting','');
+    if(!R){$('#'+ID+'-x').innerHTML=fr?'':'Counters fill in when you run.';return;}
+    const x=[R.late+' late (waited 2+ min)'];
+    if(R.repeats)x.push(R.repeats+' repeat dropped');
+    if(S.flood)x.push('Ben got '+R.ben+' ping'+(R.ben===1?'':'s'));
+    if(R.skipped)x.push(R.skipped+' skipped by settings');
+    if(R.against)x.push('<b style="color:var(--no)">'+R.against+' sent against settings</b>');
+    if(R.capped)x.push(R.capped+' held back by the rate limit');
+    if(R.parked)x.push('<b style="color:var(--no)">developers alerted</b>');
+    if(o.chart)x.push('email queue peak '+R.peak.email);
+    $('#'+ID+'-x').innerHTML=x.join(' · ');}
+  function drawTable(R){
+    if(!o.table)return;
+    $('#'+ID+'-tb').innerHTML=R?'<table class="ntb"><tr><th>Type</th><th>Sent</th><th>Late</th><th>Lost</th><th>Waiting</th></tr>'+NT.map(T=>{const b=R.by[T.k];
+      return '<tr><td>'+T.name+'</td><td>'+b.ok+'</td><td'+(b.late?' class="bad"':'')+'>'+b.late+'</td><td'+(b.lost?' class="bad"':'')+'>'+b.lost+'</td><td>'+b.wait+'</td></tr>';}).join('')+'</table>':'';}
+  function drawChart(R,upto){
+    if(!o.chart)return;const c=$('#'+ID+'-ch');if(!c)return;
+    const x=t=>34+t*(300/(NC.ticks-1)),y=v=>108-Math.min(v,30)*(96/30);
+    let s='<line x1="34" y1="108" x2="334" y2="108" style="stroke:var(--line2)"/>';
+    [0,10,20,30].forEach(v=>{s+=txt(26,y(v)+4,v,'font-size:11.5px;fill:var(--muted);text-anchor:end');});
+    s+='<line x1="34" y1="'+y(NC.alarm)+'" x2="334" y2="'+y(NC.alarm)+'" style="stroke:var(--no);stroke-width:1.6;stroke-dasharray:5 4"/>'+txt(334,y(NC.alarm)-5,'alarm: 12 waiting','font-size:11.5px;font-weight:600;fill:var(--no);text-anchor:end');
+    s+=txt(40,130,'min 0','font-size:11.5px;fill:var(--muted)')+txt(334,130,'min '+(NC.ticks-1),'font-size:11.5px;fill:var(--muted);text-anchor:end');
+    if(R)NT.forEach(T=>{const pts=R.frames.filter(f=>f.t<=upto).map(f=>x(f.t)+','+y(f.q[T.k].length)).join(' ');
+      if(pts)s+='<polyline points="'+pts+'" style="fill:none;stroke:var(--'+T.c+');stroke-width:'+(T.k==='email'?3:2)+';stroke-linejoin:round;stroke-linecap:round"/>';});
+    c.innerHTML=s;}
+  function drawLog(R){
+    if(!o.log)return;const el=$('#'+ID+'-log');
+    if(!R){el.innerHTML='';return;}
+    const m=R.msgs.slice().sort((a,b)=>a.t-b.t).slice(0,4);
+    el.innerHTML=m.length?m.map(x=>'<div class="fb '+(/lost|gone|second time|alert|against/.test(x.h)?'no':'info')+'">'+x.h+'</div>').join(''):'<div class="fb ok">Nothing went wrong: every ping went straight through.</div>';}
+  function idleView(){drawSvg(null);drawStats(null,null);drawTable(null);drawChart(null,-1);drawLog(null);if(o.runBtn)$('#'+ID+'-clk').textContent='Ready';}
+  root.addEventListener('click',e=>{
+    if(busy||o.lock)return;
+    const b=e.target.closest('button,g[data-k]');if(!b||!root.contains(b))return;
+    if(b.id===ID+'-run'){run();return;}
+    const k=b.dataset.k,g=b.dataset.g,t=b.dataset.t;
+    if(k&&o.kills.includes(k)){if(S.down[k])delete S.down[k];else S.down[k]=NWIN(k);}
+    else if(g)S[g]=S[g]?0:1;else if(t)S[t]=S[t]?0:1;else return;
+    drawCtl();idleView();});
+  if(o.workers)$('#'+ID+'-w').addEventListener('input',e=>{S.workers.email=+e.target.value;$('#'+ID+'-wv').textContent=S.workers.email;idleView();});
+  async function run(){
+    if(busy||!alive())return null;busy=true;drawCtl();drawLog(null);drawTable(null);
+    const R=nsim(S);
+    for(const fr of R.frames){if(!alive())return null;drawSvg(fr);drawStats(fr,null);drawChart(R,fr.t);$('#'+ID+'-clk').textContent='Minute '+fr.t;await L.sleep(fast?12:170);}
+    if(!alive())return null;
+    last=R;busy=false;drawCtl();drawStats(null,R);drawTable(R);drawChart(R,99);drawLog(R);
+    $('#'+ID+'-clk').textContent='Done: minutes 0 to 9';
+    const snap=JSON.parse(JSON.stringify(S));o.on(R,snap);return R;}
+  drawCtl();idleView();
+  return {S,run,alive,draw:()=>{drawCtl();idleView();},
+    set(p){if(busy)return;setS(p);drawCtl();idleView();},
+    idle:async()=>{for(let i=0;i<300&&busy;i++)await L.sleep(20);},
+    get busy(){return busy;},get last(){return last;},set fast(v){fast=v;}};
+}
+
+/* ---------- the redesign, built by tapping ---------- */
+function nBuild(st){
+  const txt=(x,y,s,sty)=>'<text x="'+x+'" y="'+y+'" style="'+sty+'">'+s+'</text>';
+  const rows=[52,88,124,160],cyl=(x,w,lbl)=>'<rect x="'+x+'" y="200" width="'+w+'" height="28" rx="7" style="fill:var(--h3-bg);stroke:var(--h3)"/>'+txt(x+w/2,218,lbl,'font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--h3)');
+  let s='<rect x="0" y="86" width="58" height="52" rx="10" style="fill:var(--h1-bg);stroke:var(--h1)"/>'+txt(29,108,'Services','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h1)')+txt(29,124,'1 to N','font-size:11.5px;text-anchor:middle;fill:var(--h1)');
+  s+='<line x1="58" y1="112" x2="64" y2="112" style="stroke:var(--line2);stroke-width:1.6"/>';
+  const sw=st.q?72:136,sx=64,sy=36,sh=st.db?140:156;
+  if(st.srv)s+='<g class="'+(st.fresh==='srv'?'new':'')+'"><rect x="'+(sx+10)+'" y="'+(sy-10)+'" width="'+sw+'" height="'+sh+'" rx="12" style="fill:var(--card);stroke:var(--pri);stroke-width:1.2"/><rect x="'+(sx+5)+'" y="'+(sy-5)+'" width="'+sw+'" height="'+sh+'" rx="12" style="fill:var(--card);stroke:var(--pri);stroke-width:1.2"/></g>';
+  s+='<rect x="'+sx+'" y="'+sy+'" width="'+sw+'" height="'+sh+'" rx="12" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.6"/>';
+  s+=txt(sx+sw/2,sy+22,sw<100?'Notif.':'Notification','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+txt(sx+sw/2,sy+37,st.srv?'servers':'server','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+  if(st.srv)s+=txt(sx+sw/2,sy+58,'×3','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+txt(sx+sw/2,sy+73,'auto-scale','font-size:11.5px;text-anchor:middle;fill:var(--pri-deep)');
+  if(!st.q)s+=txt(sx+sw/2,sy+(st.srv?92:62),'builds + sends','font-size:11.5px;text-anchor:middle;fill:var(--pri-deep)');
+  if(!st.db){const iy=sy+sh-36;s+='<rect x="'+(sx+8)+'" y="'+iy+'" width="'+(sw/2-12)+'" height="26" rx="6" style="fill:var(--card);stroke:var(--h3)"/>'+txt(sx+8+(sw/2-12)/2,iy+17,'DB','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--h3)')+
+    '<rect x="'+(sx+sw/2+4)+'" y="'+iy+'" width="'+(sw/2-12)+'" height="26" rx="6" style="fill:var(--card);stroke:var(--h3)"/>'+txt(sx+sw/2+4+(sw/2-12)/2,iy+17,'Cache','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--h3)');}
+  else s+='<g class="'+(st.fresh==='db'?'new':'')+'"><line x1="'+(sx+30)+'" y1="'+(sy+sh)+'" x2="'+(sx+30)+'" y2="200" style="stroke:var(--h3);stroke-dasharray:3 3"/><line x1="'+(sx+sw-10)+'" y1="'+(sy+sh)+'" x2="'+(sx+sw-10>150?150:sx+sw-10)+'" y2="200" style="stroke:var(--h3);stroke-dasharray:3 3"/>'+cyl(64,64,'Database')+cyl(136,56,'Cache')+'</g>';
+  s+='<rect x="268" y="30" width="70" height="150" rx="10" style="fill:var(--card);stroke:var(--line2)"/>'+txt(303,24,'Third party','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--muted)');
+  ['APNs','FCM','SMS','Email'].forEach((p,j)=>{s+=txt(303,rows[j]+4,p,'font-size:12px;font-weight:600;text-anchor:middle;fill:var(--ink)');});
+  if(!st.q)rows.forEach(y=>{s+='<line x1="'+(sx+sw)+'" y1="112" x2="268" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.4"/>';});
+  else{s+='<g class="'+(st.fresh==='q'?'new':'')+'">';const C=['h1','h2','h3','h4'];
+    rows.forEach((y,j)=>{s+='<line x1="'+(sx+sw)+'" y1="'+y+'" x2="150" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.4"/><rect x="150" y="'+(y-10)+'" width="66" height="20" rx="5" style="fill:var(--soft);stroke:var(--'+C[j]+')"/>';
+      for(let i=0;i<3;i++)s+='<rect x="'+(200-i*11)+'" y="'+(y-4)+'" width="8" height="8" rx="2" style="fill:var(--'+C[j]+')"/>';
+      s+='<line x1="216" y1="'+y+'" x2="226" y2="'+y+'" style="stroke:var(--line2)"/><circle cx="236" cy="'+y+'" r="10" style="fill:var(--'+C[j]+'-bg);stroke:var(--'+C[j]+')"/>'+txt(236,y+4,'W','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--'+C[j]+')')+
+        '<line x1="246" y1="'+y+'" x2="268" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.4"/>';});
+    s+=txt(183,24,'Queues','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--muted)')+txt(236,24,'Workers','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--muted)')+'</g>';}
+  return s;}
+
 Course.lesson({
-  id:'0004', title:'Design a notification system', minutes:20, icon:'alert',
-  goals:['Explain how a push, an SMS and an email each reach a person','Turn a one-server design into one with queues and workers','Keep notifications from being lost, doubled or annoying'],
+  id:'0004', title:'Design a notification system', minutes:22, icon:'alert',
+  goals:['Explain how a push, an SMS and an email each reach a person','Turn a one-server design into one with queues and workers, and say why','Keep notifications from being lost, doubled or annoying, and know where each safeguard stops'],
   parts:['Scope','The design','Reliability','Extras'],
   read:'Read chapter 10 of the book for its figures: the full designs, the contact-info tables and the event-tracking example.',
   glossary:{
@@ -28,115 +323,138 @@ Course.lesson({
     'rate-limit':'Rate limiting: capping how many requests or messages are allowed in a period of time, here how many notifications one person can receive.'
   },
   cheatsheet:[
-    '<b>Three formats:</b> mobile push (APNs for iOS, FCM for Android), SMS and email, the last two through outside services.',
-    'To send an iOS push you need a <b>device token</b> and a <b>payload</b>. Collect tokens, emails and phone numbers at install or sign-up; one user can have many devices.',
+    '<b>Three formats:</b> mobile push (APNs for iOS, FCM for Android), SMS and email, the last two through outside services. Design so a service can be swapped (FCM isn’t available in China).',
+    'An iOS push needs a <b>device token</b> and a <b>payload</b>. Collect tokens, emails and phone numbers at install or sign-up; one user can have many devices.',
     'One notification server = <b>single point of failure</b>, hard to scale, and a performance bottleneck.',
-    'Fix: DB and cache moved out, <b>more notification servers</b> that scale automatically, and <b>one message queue per notification type</b> read by workers.',
-    'Notifications may be delayed or reordered, but <b>never lost</b>: save them in a notification log and retry.',
-    'Exactly-once is not guaranteed, so <b>dedupe by event ID</b>.',
-    'Extras: templates, opt-in check before sending, rate limit per user, retry then alert, appKey/appSecret, watch queue size, track opens and clicks.'
+    'Fix: DB and cache moved out, <b>more notification servers</b> that scale automatically, and <b>one message queue per notification type</b> read by workers, so one provider’s outage stays in its own queue.',
+    'Late or out of order is fine; <b>lost is not</b>: save each notification in a notification log and retry.',
+    'Exactly-once is not guaranteed, so <b>dedupe by event ID</b>. That makes repeats rare, not impossible.',
+    'Retry a set number of times, then <b>alert developers</b>. Watch queue size: a growing queue means add workers.',
+    'Also: templates, check opt-in settings before sending, rate limit per user, appKey/appSecret, track opens and clicks.'
   ],
   steps:[
 /* ---------- PART 1: SCOPE ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird’s email provider goes down for an hour. Should that stop the “new follower” pushes on people’s phones?</h1>');
+  L.h(NCSS+L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird’s email provider goes down for an hour. Should that stop the “new follower” pushes on people’s phones?</h1>');
   L.mc(L.card,['Yes, every kind of ping should wait together','No, push has nothing to do with email'],1,
-   'Push and email go out through different outside services. One failing shouldn’t block the other. This lesson shows how to build a system where it doesn’t.',
+   'Push and email go out through different outside services. One failing shouldn’t block the other. In this lesson you’ll build a system where it doesn’t, and break it to check.',
    'Push goes through Apple and Google; email goes through an email service. If one breaks, the other should keep working. Most of this lesson is about making that true.');}},
-{part:0,src:'Chapter 10 · Step 1 - Understand the problem and establish design scope',run(L){
-  L.h(L.kick('learn','The book’s interview')+'<h1 class="q">A notification is more than a phone buzz</h1>'+
-   L.prose('A notification tells a person something important: breaking news, a product update, an event. The book counts <b>three formats</b>: mobile push, SMS text messages and email.')+
-   L.prose('The interview question is left vague on purpose, so the candidate asks. Here is what the interviewer answers:')+
-   L.list([['Types','Push notification, SMS and email.'],
-     ['Speed','<b>'+L.g('soft-rt','Soft real-time')+'</b>: as soon as possible, but a slight delay under heavy load is fine.'],
-     ['Devices','iOS, Android, and laptop or desktop.'],
-     ['Triggers','Client apps can trigger them, and the server can schedule them.'],
-     ['Opt-out','Yes. People who opt out get no more notifications.'],
-     ['Volume','10 million pushes, 1 million SMS and 5 million emails a day.']],1));
-  L.done();}},
+{part:0,src:'Chapter 10 · Step 1 - Understand the problem and establish design scope',
+ solve:async L=>{for(const b of L.$$('#sq button'))b.click();},
+ run(L){
+  const QA=[['What types?','Push notifications, SMS messages and email.'],
+   ['Is it real-time?',L.g('soft-rt','Soft real-time')+': as soon as possible, but a slight delay under heavy load is fine.'],
+   ['Which devices?','iOS, Android, and laptop or desktop.'],
+   ['What triggers them?','Client apps can trigger them, and the server can schedule them.'],
+   ['Can users opt out?','Yes. People who opt out get no more notifications.'],
+   ['How many a day?','10 million pushes, 1 million SMS and 5 million emails.']];
+  let n=0;
+  L.h(NCSS+L.kick('learn','Step 1 · Scope')+'<h1 class="q">A notification is more than a phone buzz</h1>'+
+   L.prose('A notification tells a person something important: breaking news, a product update, an event. The book counts <b>three formats</b>: mobile push, SMS and email.')+
+   L.prose('The interview question is vague on purpose, so <b>you</b> ask. Tap each question to hear the interviewer’s answer.')+
+   '<div class="nqa" id="sq"></div><ul class="nans" id="sa"></ul>');
+  QA.forEach((q,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=q[0];
+    b.onclick=()=>{if(b.classList.contains('ok'))return;b.className='chip static ok';b.setAttribute('aria-disabled','true');
+      L.$('#sa').insertAdjacentHTML('beforeend','<li><b>'+q[0]+'</b>'+q[1]+'</li>');
+      if(++n===QA.length){L.sheet('info','Scope settled','Three formats, soft real-time, opt-out respected, and 16 million notifications a day. Keep “a slight delay is fine” in mind: it matters later.');L.done();}};
+    L.$('#sq').appendChild(b);});}},
 {part:0,src:'Chapter 10 · Different types of notifications',run(L){
-  L.h(L.kick('learn','How each one travels')+'<h1 class="q">You don’t deliver notifications yourself. Someone else does.</h1>'+
-   L.prose('For an iOS push, your system is the <b>provider</b>. It builds a request and sends it to Apple’s push service (APNs), which delivers it to the iPhone. The request needs two things:')+
-   L.flow([['box','Provider','Your system','sends token + payload',1],['layers','APNs','Apple’s service','finds the phone',2],['person','iPhone','The person','sees the push',3]])+
-   L.list([['Device token','A unique ID that tells Apple which phone and app to reach. See '+L.g('device-token','device token')+'.'],
-     ['Payload','A small JSON bundle with the message itself.']],2)+
-   L.prose('Android works the same way through <b>Firebase Cloud Messaging (FCM)</b>. SMS goes through '+L.g('third-party','third-party')+' services like Twilio or Nexmo. Email usually goes through a commercial service like Sendgrid or Mailchimp, which deliver more reliably and give analytics.')+
-   L.note('<b>Plan to swap services.</b> A service may be missing in a new market. FCM isn’t available in China, so apps there use others such as Jpush or PushY. The book calls this <b>extensibility</b>: plug a service in or out easily.','cycle'));
+  L.h(NCSS+L.kick('learn','How each one travels')+'<h1 class="q">You don’t deliver notifications yourself. Someone else does.</h1>'+
+   L.prose('For an iOS push, your system is the <b>provider</b>. It sends a request to Apple’s push service (APNs), which delivers it to the iPhone. The request carries two things:')+
+   L.flow([['box','Provider','Your system','device token + payload',1],['layers','APNs','Apple’s service','finds the phone',2],['person','iPhone','The person','sees the push',3]])+
+   L.list([['Device token','Which phone and app to reach. See '+L.g('device-token','device token')+'.'],['Payload','A small JSON bundle with the message itself.']],2)+
+   L.prose('Android works the same way through <b>Firebase Cloud Messaging (FCM)</b>. SMS goes through '+L.g('third-party','third-party')+' services such as Twilio or Nexmo. Email usually goes through a commercial service such as Sendgrid or Mailchimp, for better delivery and analytics.')+
+   L.note('<b>Plan to swap services.</b> FCM isn’t available in China, so apps there use others such as Jpush or PushY. The book calls this <b>extensibility</b>: plug a service in or out easily.','cycle'));
   L.done();}},
 {part:0,src:'Chapter 10 · Contact info gathering flow',run(L){
-  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of “Kitebird pings”</h1>');
+  L.h(NCSS+L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of “Kitebird pings”</h1>');
   L.beats(L.card,[
    ['Tamsin','“What are we building, and how big is it?”'],
-   ['You ask, Dario answers','Pushes for a new follower, a new comment, or a class about to start. A <b>weekly email digest</b>. <b>SMS login codes</b>. Users must be able to turn each kind off.'],
-   ['The numbers','Kitebird sends about <b>6 million pushes, 300,000 SMS and 2 million emails</b> a day. Small next to the book’s numbers, but growing fast.'],
+   ['Dario answers','Pushes for a new follower, a new comment, or a class about to start. A <b>weekly email digest</b> on Sunday nights. <b>SMS login codes</b>. Users can turn each kind off. About <b>6 million pushes, 300,000 SMS and 2 million emails</b> a day.'],
    ['Obi','“Remember the day the email provider went down? Our one notification box choked on retries and the pushes stopped too.”'],
-   ['First, addresses','You can’t ping anyone without an address. When Mira installs the app or signs up, API servers save Mira’s <b>email and phone number</b> in the user table and their phone’s <b>device token</b> in a device table.'],
-   ['One person, many devices','Mira also uses Kitebird on an iPad, so Mira has <b>two rows</b> in the device table. A push can go to both.']],
-   'Ask the book’s scope questions, then collect contact info first: email and phone per user, one device token per device.');}},
-{part:0,src:'Chapter 10 · iOS push notification',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kitebird wants to tell Ben, on their iPhone, that Mira followed them. What must Kitebird send to APNs?</h1>');
-  L.mc(L.card,['Ben’s email address and the message text','Ben’s phone number and the message text','Ben’s device token and the payload'],2,
-   'The device token says which phone and app to reach; the payload carries the message.',
-   'APNs doesn’t use emails or phone numbers. It needs the <b>device token</b> (which phone) and the <b>payload</b> (what to show).');}},
+   ['First, addresses','When Mira installs the app or signs up, API servers save Mira’s <b>email and phone number</b> in the user table and the phone’s <b>device token</b> in a device table.'],
+   ['Many devices','Mira also uses Kitebird on an iPad, so Mira has <b>two rows</b> in the device table. A push can go to both.']],
+   'Ask the scope questions, then collect contact info first: email and phone per user, one device token per device.');}},
 {part:0,src:'Chapter 10 · Different types of notifications',pts:5,run(L){
-  L.h(L.kick('pr','Route each ping')+'<h1 class="q">Which outside service delivers each Kitebird notification?</h1><div id="bk"></div>');
+  L.h(NCSS+L.kick('pr','Route each ping')+'<h1 class="q">Which outside service delivers each Kitebird notification?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['APNs','FCM','SMS service','Email service'],[
-   ['Ben’s iPhone: “Mira started following you”',0,'iPhones get pushes through Apple’s push service.'],
+   ['Ben’s iPhone: “Mira started following you”',0,'iPhones get pushes through Apple’s push service, using the phone’s device token.'],
    ['A login code texted to Hana’s phone number',2,'A text message goes through an SMS service such as Twilio.'],
    ['The weekly digest of projects you might like',3,'Emails usually go through a commercial email service.'],
    ['A Pixel phone: “Your sourdough class starts in 10 minutes”',1,'Android phones get pushes through Firebase Cloud Messaging.'],
    ['Mira’s iPad: “Ben commented on your quilt”',0,'The iPad is an Apple device, so it uses APNs, with its own device token.']],
    'Every format leans on an outside service. Your system builds the request; they deliver it.');}},
-{part:0,src:'Chapter 10 · Third-party services',pts:1,run(L){
-  L.h(L.kick('pr','Design decision')+'<h1 class="q">Dario wants to launch Kitebird in a country where FCM isn’t available. What should the design already allow?</h1>');
+{part:0,src:'Chapter 10 · Notification sending/receiving flow',pts:1,run(L){
+  L.h(NCSS+L.kick('pr','Design decision')+'<h1 class="q">Dario wants to launch Kitebird in a country where FCM isn’t available. What should the design already allow?</h1>');
   L.mc(L.card,['Plugging in a local push service for that market','Sending every Android ping by email instead','Building Kitebird’s own push network first'],0,
    'That’s extensibility. Like FCM in China, a service can be missing somewhere, so the design should let you swap in another, such as Jpush.',
    'The book’s answer is extensibility: design so a third-party service can be plugged in or out, and use a local one where FCM is missing.');}},
 
 /* ---------- PART 2: THE DESIGN ---------- */
 {part:1,src:'Chapter 10 · Notification sending/receiving flow',run(L){
-  L.h(L.kick('learn','The first design')+'<h1 class="q">Start simple: one notification server</h1>'+
-   L.flow([['list','Service 1 to N','Anything that needs to notify','billing, shipping, a timed job',1],['box','Notification server','One box','builds requests',2],['layers','Third parties','APNs, FCM, SMS, email','deliver',3]])+
-   L.prose('<b>Services 1 to N</b> are the parts of the business that want to send something: a billing service emails a payment reminder, a shop texts “your package arrives tomorrow”. The single <b>notification server</b> gives them APIs and builds each request for the outside services.')+
-   L.prose('It works, but the book names three problems:')+
-   L.list([['alert','Single point of failure','One server. If it dies, nothing goes out. See '+L.g('spof','single point of failure')+'.'],
-     ['layers','Hard to scale','Database, cache and sending all live in one box, so you can’t grow one part on its own.'],
-     ['clock','Performance bottleneck','Building HTML emails and waiting for outside services is slow. At peak hours the box overloads.']],3));
+  L.h(NCSS+L.kick('learn','The first design')+'<h1 class="q">Start simple: one notification server</h1>'+
+   L.flow([['list','Services 1 to N','Anything that needs to notify','billing, shipping, a timed job',1],['box','Notification server','One box','builds and sends',2],['layers','Outside services','APNs, FCM, SMS, email','deliver',3]])+
+   L.prose('<b>Services 1 to N</b> are the parts of the business that want to send something: a billing service emails a payment reminder, a shop texts “your package arrives tomorrow”. They call the one <b>notification server</b>, which builds each request for the outside services.')+
+   L.prose('It works on a quiet day. On the next screen you’ll give it three bad days and watch where it breaks.'));
   L.done();}},
-{part:1,src:'Chapter 10 · High-level design (improved)',run(L){
-  L.h(L.kick('learn','The improved design')+'<h1 class="q">Three changes fix the three problems</h1>'+
-   L.list([['Move the database and cache out','They become their own parts, so each can grow separately.'],
-     ['Add more notification servers','With automatic horizontal scaling: more copies of the server when traffic rises. No single box to lose.'],
-     ['Add message queues','A '+L.g('message-queue','message queue')+' decouples the parts. Each notification type gets <b>its own queue</b>, and '+L.g('worker','workers')+' take jobs from it and call the outside service.']],1)+
-   L.flow([['box','Notification servers','check, look up, enqueue','',1],['layers','Queues','iOS · Android · SMS · email','one per type',2],['cycle','Workers','pull and send','',3],['people','Third parties','deliver','',4]])+
-   '<p class="small">The notification servers also check emails and phone numbers, and only accept calls from internal or verified clients, to stop spam. The cache holds user info, device info and templates.</p>');
-  L.done();}},
-{part:1,src:'Chapter 10 · High-level design (improved)',pts:1,
- solve:async L=>{L.$('#po').children[0].click();L.$('#run').click();},
+{part:1,src:'Chapter 10 · Notification sending/receiving flow',
+ solve:async L=>{L.np.fast=true;for(const b of L.$$('#bx-pre button')){b.click();await L.sleep(5);await L.np.idle();await L.sleep(5);}},
  run(L){
-  let p=null;const T=['iOS push','Android push','SMS','Email'];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Obi’s outage again: the email provider goes down. With <b>one queue per type</b>, which pings pile up?</h1><div id="po"></div>'+
-   '<div id="sim" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px"><div><div class="small">Minutes into the outage</div><div class="week" id="wk">0 min</div></div><button class="btn pri" id="run">'+L.ic('play')+'Run the outage</button></div>'+
-   '<h2 class="sub">Old setup: one shared line</h2><div class="meterrow"><div class="lb">Everything</div><div class="meter"><div id="s0" style="background:var(--no-strong)"></div></div></div>'+
-   '<h2 class="sub">New setup: one queue per type</h2>'+T.map((t,j)=>'<div class="meterrow"><div class="lb">'+t+'</div><div class="meter"><div id="q'+j+'" style="background:var(--h'+(j+1)+')"></div></div></div>').join('')+'</div>');
-  ['Only the emails','Every kind of ping','None of them'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
-  L.$('#run').onclick=function(){this.remove();let t=0;
-    const tm=setInterval(()=>{t++;const wk=L.$('#wk');if(!wk){clearInterval(tm);return;}wk.textContent=(t*6)+' min';
-      const set=(id,v)=>{const el=L.$('#'+id);if(el)el.style.width=Math.round(v)+'%';};
-      set('s0',Math.min(100,t*10));set('q3',Math.min(100,t*10));[0,1,2].forEach(j=>set('q'+j,8+((t+j)%3)*4));
-      if(t>=10){clearInterval(tm);L.award(p===0);
-        L.sheet(p===0?'ok':'no',p===0?'Only the emails':'Only the email queue piles up','In the shared line, pushes and login codes get stuck behind emails that can’t go out. With one queue per type, only the email queue grows; workers keep sending pushes and SMS. The book gives exactly this reason: an outage in one outside service shouldn’t affect the other types.');L.done();}},200);};}},
+  const PRE=[
+   ['Server reboots',{down:{box:[3,5]}},R=>'<b>Single point of failure.</b> While the one server is down, nothing goes out and new pings bounce. The pings waiting in its memory vanish too: <b>'+R.lost+' lost</b>.'],
+   ['Email service goes down',{log:1,down:{p_email:[2,4]}},R=>'<b>Performance bottleneck.</b> The server keeps waiting on the dead email service and retrying, so pushes and texts queue behind the emails: <b>'+(R.by.ios.late+R.by.and.late+R.by.sms.late)+' pushes and texts late</b>, though only email broke.'],
+   ['Sunday digest burst',{burst:1},R=>'<b>Hard to scale.</b> The digest emails crowd out every other ping ('+R.late+' late). You can’t add sending power for email alone: the database, cache and every sender share this box, so you can only grow all of it.']];
+  const tried=new Set();
+  L.h(NCSS+L.kick('pr','Break the one box')+'<h1 class="q">Give the one-server design three bad days</h1>'+
+   '<p class="small">Tap a bad day and watch the shared line. Coloured squares are waiting pings: iOS, Android, SMS, email. Speeds and outage lengths are illustrative.</p>'+
+   '<div class="npre" id="bx-pre"></div><div id="bx"></div><div id="bx-cap"></div>');
+  const P=Pipe(L,L.$('#bx'),{id:'bx',mode:'box',runBtn:false,stats:false,table:true,log:false});L.np=P;
+  PRE.forEach((p,j)=>{const b=document.createElement('button');b.className='btn';b.innerHTML=L.ic('alert')+p[0];
+    b.onclick=async()=>{if(P.busy)return;P.set(p[1]);L.$('#bx-cap').innerHTML='';const R=await P.run();if(!R)return;
+      b.classList.add('ok');tried.add(j);L.$('#bx-cap').innerHTML='<div class="fb info">'+p[2](R)+'</div>';
+      if(tried.size===PRE.length){L.sheet('info','Three problems, one cause','Everything lives in one box. The book names the three problems you just saw: a <b>single point of failure</b>, <b>hard to scale</b> (the database, cache and senders can’t grow on their own) and a <b>performance bottleneck</b> (building messages and waiting on outside services overloads it at peak).');L.done();}};
+    L.$('#bx-pre').appendChild(b);});}},
+{part:1,src:'Chapter 10 · High-level design (improved)',
+ solve:async L=>{for(const b of L.$$('#bd-b button'))b.click();},
+ run(L){
+  const B=[['db','Move the database and cache out','They become separate parts, so each can grow on its own, apart from the senders.'],
+   ['srv','Add more notification servers','Several copies with automatic horizontal scaling: more start when traffic rises. No single box to lose.'],
+   ['q','Add one queue per type, read by workers',L.g('message-queue','Message queues')+' decouple the parts and soak up bursts. '+L.g('worker','Workers')+' pull from them and call the outside service, so slow sending leaves the servers. Each type has <b>its own queue</b>, so one provider’s outage doesn’t hold up the others.']];
+  const st={};let n=0;
+  L.h(NCSS+L.kick('learn','The improved design')+'<h1 class="q">Rebuild it: tap the three changes</h1>'+
+   '<svg class="nbuild" id="bd-s" viewBox="0 0 340 236" style="width:100%;display:block" role="img" aria-label="Diagram of the notification system, changing as you add each improvement"></svg>'+
+   '<div class="npre" id="bd-b"></div><ul class="nans" id="bd-l"></ul>');
+  const draw=()=>{L.$('#bd-s').innerHTML=nBuild(st);};draw();
+  B.forEach(x=>{const b=document.createElement('button');b.className='btn';b.innerHTML=L.ic('pencil')+x[1];
+    b.onclick=()=>{if(st[x[0]])return;st[x[0]]=1;st.fresh=x[0];draw();b.classList.add('ok');b.setAttribute('aria-disabled','true');
+      L.$('#bd-l').insertAdjacentHTML('beforeend','<li><b>'+x[1]+'</b>'+x[2]+'</li>');
+      if(++n===B.length){L.sheet('info','The notification servers’ jobs','Give services an API (only internal or verified callers, to stop spam), check emails and phone numbers, fetch user info, device tokens and settings from the cache or DB, and put the event in the right queue. The cache holds user info, device info and templates.');L.done();}};
+    L.$('#bd-b').appendChild(b);});}},
+{part:1,src:'Chapter 10 · High-level design (improved)',pts:1,
+ solve:async L=>{L.$('#pp').children[0].click();await L.sleep(5);L.pa.fast=true;L.pb.fast=true;L.$('#pp-run').click();await L.sleep(5);await L.pa.idle();await L.pb.idle();},
+ run(L){
+  let p=null;
+  L.h(NCSS+L.kick('pr','Predict, then watch')+'<h1 class="q">Obi’s outage again: the email service is down for 3 minutes. Both designs retry failed sends. Which pings end up late?</h1><div class="opts" id="pp"></div>'+
+   '<div id="pp-sim" hidden><div class="nrun"><button class="btn pri" id="pp-run">'+L.ic('play')+'Run both designs</button><span class="small">Illustrative speeds</span></div><div id="pp-a"></div><div id="pp-b"></div><div id="pp-c"></div></div>');
+  ['Emails in both; pushes and texts only in the one box','Only emails, in both designs','Every type, in both designs'].forEach((n,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+n+'</span>';
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');[...L.$('#pp').children].forEach(x=>{x.setAttribute('aria-disabled','true');if(x!==b)x.classList.add('dim');});L.$('#pp-sim').hidden=false;};L.$('#pp').appendChild(b);});
+  const S={log:1,down:{p_email:[2,4]}};
+  const A=Pipe(L,L.$('#pp-a'),{id:'pa',mode:'box',title:'Old: one server, one shared line',runBtn:false,stats:false,log:false,S});
+  const Bq=Pipe(L,L.$('#pp-b'),{id:'pb',mode:'queues',title:'New: one queue per type',runBtn:false,stats:false,log:false,S});
+  L.pa=A;L.pb=Bq;
+  L.$('#pp-run').onclick=async function(){this.disabled=true;const [ra,rb]=await Promise.all([A.run(),Bq.run()]);if(!ra||!rb)return;
+    const c=(v)=>'<td'+(v?' class="bad"':'')+'>'+v+'</td>';
+    L.$('#pp-c').innerHTML='<table class="ncmp"><tr><th>Late (waited 2+ min)</th><th>One box</th><th>Queues</th></tr>'+
+      [['Pushes',x=>x.by.ios.late+x.by.and.late],['Texts',x=>x.by.sms.late],['Emails',x=>x.by.email.late],['Lost',x=>x.lost]].map(r=>'<tr><td>'+r[0]+'</td>'+c(r[1](ra))+c(r[1](rb))+'</tr>').join('')+'</table>';
+    L.award(p===0);
+    L.sheet(p===0?'ok':'no',p===0?'Right: the outage stays in its own queue':'Look at the pushes row',
+     'In the one box, every ping shares one line, and the server spends its time waiting on the dead email service, so pushes and texts are late too. With one queue per type, only the email queue grows; the other workers keep sending. That’s the book’s reason for a distinct queue per type. Emails are late in both, but none are lost: late is allowed.');L.done();};}},
 {part:1,src:'Chapter 10 · High-level design (improved)',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why does each notification type get its own queue?</h1>');
-  L.mc(L.card,['So each type can use a different database','So one service’s outage doesn’t block the rest','So users can choose which type they prefer'],1,
-   'Right. Separate queues keep a failure in one outside service from holding up the other types.',
-   'The book’s reason is isolation: if the SMS or email service is down, its queue grows, and the other types keep flowing.');}},
-{part:1,src:'Chapter 10 · High-level design (improved)',pts:1,run(L){
-  L.h(L.kick('pr','Follow the ping')+'<h1 class="q">The comment service wants to tell Mira that Ben commented. Put the six steps in order.</h1>');
+  L.h(NCSS+L.kick('pr','Follow the ping')+'<h1 class="q">The comment service wants to tell Mira that Ben commented. Put the six steps in order.</h1>');
   L.order(L.card,['The comment service calls the notification servers’ API','Notification servers fetch Mira’s settings and device token from cache or DB','A push event goes into the iOS push queue','A worker pulls the event from the queue','The worker sends it to APNs','APNs delivers the push to Mira’s iPhone'],
-   'Service → notification servers (look up data) → queue → worker → third party → device. The queue sits in the middle so each side can work at its own speed.');}},
+   'Service → notification servers (look up data) → queue → worker → outside service → device. The queue sits in the middle so each side can work at its own speed.');}},
 {part:1,src:'Chapter 10 · Notification sending/receiving flow',pts:4,run(L){
-  L.h('<div id="qk"></div>');
+  L.h(NCSS+'<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which problem of the one-server design is this?',['Single point of failure','Hard to scale','Performance bottleneck'],[
    ['Kitebird’s only notification server reboots for an update. For ten minutes, no pings go out at all.',0,'One server, and nothing works without it. That’s a single point of failure.'],
    ['Sunday night: building two million digest emails and waiting on the email service slows the box, so login codes arrive late.',2,'Slow, heavy work overloads the one box at peak time. That’s the performance bottleneck.'],
@@ -144,47 +462,48 @@ Course.lesson({
    ['Obi wants to add capacity only for email sending, but the database shares the same machine.',1,'Again, the parts can’t grow separately. Moving DB and cache out fixes this.']]);}},
 
 /* ---------- PART 3: RELIABILITY ---------- */
-{part:2,src:'Chapter 10 · Reliability',run(L){
-  L.h(L.kick('learn','Never lose a notification')+'<h1 class="q">Late is fine. Lost is not.</h1>'+
+{part:2,src:'Chapter 10 · Step 3 - Design deep dive',run(L){
+  L.h(NCSS+L.kick('learn','Never lose a notification')+'<h1 class="q">Late is fine. Lost is not.</h1>'+
    L.quote('Notifications can usually be delayed or re-ordered, but never lost.','Alex Xu, chapter 10')+
-   L.prose('To keep that promise, the system saves each notification in a '+L.g('notif-log','notification log')+' database and has a <b>retry</b> mechanism. If sending fails, the saved copy is tried again.')+
-   L.prose('<b>Will each person get it exactly once?</b> Most of the time, yes, but the book is clear the answer is no: in a system spread over many machines, duplicates can happen.')+
-   L.flow([['pointer','Event arrives','with an event ID','',1],['eye','Seen this ID?','check before sending','',2],['check','New: send it','Seen: discard it','',3]])+
-   '<p class="small">That simple '+L.g('dedupe','dedupe')+' check makes duplicates rare.</p>');
+   L.flow([['box','Save it','in the notification log','before sending',1],['cycle','Retry','if a send fails','from the saved copy',2],['eye','Dedupe','check the event ID','seen? drop it',3]])+
+   L.prose('Each notification is saved in a '+L.g('notif-log','notification log')+' database, and a <b>retry</b> mechanism resends it if a step fails.')+
+   L.prose('<b>Will each person get it exactly once?</b> Usually, but the book’s answer is no: across many machines, duplicates can happen. So the system '+L.g('dedupe','dedupes')+': when an event arrives, it checks the <b>event ID</b>. Seen before: discard it. New: send it.'));
   L.done();}},
-{part:2,src:'Chapter 10 · Reliability',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Why Mira almost got the same ping twice</h1>');
-  L.beats(L.card,[
-   ['9:00:00','Ben comments on Mira’s quilt. The comment service sends event <b>evt-501</b>: “Ben commented on your quilt.”'],
-   ['9:00:02','The call is slow, so the comment service gives up waiting and sends <b>evt-501</b> again. Both copies reach the notification system.'],
-   ['First copy','The gate has never seen evt-501. It records the ID, saves the notification in the log and sends it.'],
-   ['Second copy','The gate has seen evt-501, so it <b>discards</b> it. Mira’s phone buzzes once.'],
-   ['Later that day','APNs times out on a class-starting ping. Because it’s saved in the notification log, a worker retries it. Cleo gets it a minute late, but Cleo gets it.']],
-   'Save first and retry, so nothing is lost. Check the event ID, so repeats are dropped.');}},
-{part:2,src:'Chapter 10 · Reliability',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">How does the book decide whether an incoming event is a duplicate?</h1>');
-  L.mc(L.card,['It compares the message text with recent ones','It checks whether that event ID was seen before','It asks the user’s phone if it already buzzed'],1,
-   'The event ID is the key. Seen before means discard; new means send.',
-   'Two different pings can have the same text. The book checks the <b>event ID</b>: seen before, discard; otherwise send.');}},
-{part:2,src:'Chapter 10 · Reliability',pts:1,
- solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#gate').querySelector('[data-r="1"]');if(b)b.click();await L.sleep(5);}},
+{part:2,src:'Chapter 10 · Step 3 - Design deep dive',
+ solve:async L=>{const P=L.np;P.fast=true;const c=s=>{L.$(s).click();};
+   c('#ex button[data-k="w_ios"]');c('#ex-run');await L.sleep(5);await P.idle();
+   c('#ex [data-g="log"]');c('#ex-run');await L.sleep(5);await P.idle();
+   c('#ex [data-t="twice"]');c('#ex [data-g="dedupe"]');c('#ex-run');await L.sleep(5);await P.idle();},
  run(L){
-  const E=[['evt-601','Comment ping for Mira'],['evt-602','New follower ping for Ben'],['evt-601','Comment ping for Mira'],['evt-603','Class starting ping for Cleo'],['evt-602','New follower ping for Ben'],['evt-604','Comment ping for Ben']];
-  const seen=[];let k=0,miss=0;
-  L.h(L.kick('pr','Be the dedupe gate')+'<h1 class="q">Events arrive one by one. Send each new one, drop each repeat.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0"><div class="small">Seen event IDs</div><div id="seen" style="min-height:40px;margin-top:6px"></div></div>'+
-   '<div id="gate"></div><div id="gf"></div>');
-  const draw=()=>{L.$('#seen').innerHTML=seen.length?seen.map(s=>'<span class="chip static">'+s+'</span>').join(''):'<span class="small">none yet</span>';
-    if(k>=E.length)return;const isNew=!seen.includes(E[k][0]);
-    L.$('#gate').innerHTML='<div class="rung cur"><small>Event '+(k+1)+' of '+E.length+'</small>'+E[k][0]+' · '+E[k][1]+'</div><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn pri" data-a="send" data-r="'+(isNew?1:0)+'">'+L.ic('check')+'Send</button><button class="btn" data-a="drop" data-r="'+(isNew?0:1)+'">'+L.ic('x')+'Drop</button></div>';
-    L.$('#gate').querySelectorAll('button').forEach(b=>b.onclick=()=>{const ok=b.dataset.r==='1';const id=E[k][0];L.$('#gf').innerHTML='';
-      if(!ok){miss++;L.fb(L.$('#gf'),isNew?'<b>'+id+'</b> was new, so it should go out. The gate sends it.':'<b>'+id+'</b> is already in the seen list, so this is a repeat. The gate drops it.','no');}
-      if(isNew)seen.push(id);k++;
-      if(k>=E.length){draw();L.$('#gate').innerHTML='';L.award(miss===0);L.sheet(miss===0?'ok':'info',miss===0?'Perfect gate':'Gate finished','Four pings went out and two repeats were dropped. Each person got each ping once, because the gate checked the event ID first.');L.done();}
-      else draw();});};
-  draw();}},
+  L.h(NCSS+L.kick('ex','Your turn to break it')+'<h1 class="q">Crash parts of the queued design and watch the counters</h1>'+
+   '<p class="small">Tap a part to break it (it’s down from minute 2 or 3 for 3 minutes), then run. Traffic and speeds are illustrative.</p>'+
+   nTasks('ext',['Lose a ping: break a worker or a service with the log off','Run a break with log + retry on and lose nothing','Send evt-501 twice so Mira’s phone buzzes only once'])+'<div id="exh"></div>');
+  const P=Pipe(L,L.$('#exh'),{id:'ex',kills:['p_ios','p_and','p_sms','p_email','w_ios','w_and','w_sms','w_email'],guards:['log','dedupe'],traffic:['twice'],
+    on:(R,s)=>{const broke=Object.keys(s.down).length>0;
+      if(R.lost>0&&!s.log)nTick(L,'ext',0);
+      if(broke&&s.log&&R.lost===0)nTick(L,'ext',1);
+      if(s.twice&&R.doubled===0&&R.repeats>0)nTick(L,'ext',2);
+      if(nAll(L,'ext')){L.sheet('info','What you saw','A crash or outage without the log loses the ping in flight. With the log + retry, the same crash only makes pings <b>late</b>. And a repeated event ID is dropped at the door, so Mira’s phone buzzes once.');L.done();}}});
+  L.np=P;}},
+{part:2,src:'Chapter 10 · Retry mechanism',
+ solve:async L=>{L.np.fast=true;for(const b of L.$$('#ec-pre button')){b.click();await L.sleep(5);await L.np.idle();await L.sleep(5);}},
+ run(L){
+  const PRE=[
+   ['Worker crashes mid-send',{log:1,down:{w_ios:[3,5]}},R=>'The iOS worker died holding a ping. It was saved in the log, so it was retried after the restart: <b>'+R.lost+' lost</b>, '+R.by.ios.late+' iOS pings late. Without the log, that ping would be gone.'],
+   ['Same event twice',{dedupe:1,twice:1},R=>'evt-501 came in twice. The servers had seen that event ID, so they dropped the copy: <b>'+R.doubled+' doubled</b>. With dedupe off, Mira’s phone would buzz twice.'],
+   ['Provider keeps failing',{log:1,down:{p_email:[1,9]}},R=>'The email service stayed down. Failed emails went back in the queue and were retried a set number of times ('+NC.tries+' here, illustrative). Then it stopped retrying and <b>alerted the developers</b>: '+R.by.email.wait+' emails still waiting. Retry buys time; a person must fix the cause.'],
+   ['Crash right after sending',{log:1,dedupe:1,afterSend:1,down:{w_ios:[3,4]}},R=>'<b>Beyond the book:</b> one way a repeat slips past. The worker handed the ping to APNs, then crashed before marking it sent. The log still said “not sent”, so it was retried: <b>'+R.doubled+' doubled</b>, even with dedupe on, because the retry never passes the door check again. Dedupe makes repeats rare, not impossible.']];
+  const tried=new Set();
+  L.h(NCSS+L.kick('pr','Edge cases')+'<h1 class="q">Where do the safeguards stop protecting you?</h1>'+
+   '<p class="small">Each button sets up one hard case (illustrative timings) and runs it.</p><div class="npre" id="ec-pre"></div><div id="ec-cap"></div><div id="ech"></div>');
+  const P=Pipe(L,L.$('#ech'),{id:'ec',guards:['log','dedupe'],traffic:['twice'],lock:true,runBtn:false,log:false});L.np=P;
+  PRE.forEach((p,j)=>{const b=document.createElement('button');b.className='btn';b.innerHTML=L.ic('flask')+p[0];
+    b.onclick=async()=>{if(P.busy)return;P.set(p[1]);L.$('#ec-cap').innerHTML='';const R=await P.run();if(!R)return;
+      b.classList.add('ok');tried.add(j);L.$('#ec-cap').innerHTML='<div class="fb '+(R.doubled||R.parked?'no':'ok')+'">'+p[2](R)+'</div>';
+      if(tried.size===PRE.length){L.sheet('info','The limits','The log + retry turns a crash into a <b>delay</b>, not a loss. But retrying forever hides a broken provider, so the book retries a set number of times, then alerts developers. And exactly-once delivery isn’t guaranteed: dedupe by event ID makes repeats rare, not impossible.');L.done();}};
+    L.$('#ec-pre').appendChild(b);});}},
 {part:2,src:'Chapter 10 · Reliability',pts:4,run(L){
-  L.h('<div id="qk"></div>');
+  L.h(NCSS+'<div id="qk"></div>');
   L.quick(L.$('#qk'),'Does this break the book’s rules?',['Acceptable','Not acceptable'],[
    ['At peak, a login code reaches Hana 20 seconds later than usual.',0,'It’s soft real-time: a slight delay under heavy load is fine.'],
    ['Two comment pings reach Ben in the opposite order to when they happened.',0,'Notifications may be re-ordered. They just must not be lost.'],
@@ -193,7 +512,7 @@ Course.lesson({
 
 /* ---------- PART 4: EXTRAS ---------- */
 {part:3,src:'Chapter 10 · Additional components and considerations',run(L){
-  L.h(L.kick('learn','More than sending')+'<h1 class="q">Seven extras a real notification system needs</h1><p class="small">Tap each card.</p>');
+  L.h(NCSS+L.kick('learn','More than sending')+'<h1 class="q">Seven extras a real notification system needs</h1><p class="small">Tap each card.</p>');
   L.flips(L.card,[
    ['Templates','A pre-written message with blanks to fill in. Keeps the format consistent, cuts errors and saves time.'],
    ['Notification settings','A table of user, channel (push, email or SMS) and opt-in yes/no. Check it <b>before</b> sending anything.'],
@@ -202,23 +521,43 @@ Course.lesson({
    ['Security','An <b>appKey and appSecret</b> pair, so only verified clients can send pushes through your APIs.'],
    ['Watch the queues','Track how many notifications are waiting. A big number means workers are too slow: add more workers.'],
    ['Event tracking','Measure opens, clicks and engagement, through an analytics service.']],
-   'In the final design, notification servers gain authentication and rate limiting, workers retry a set number of times, and monitoring and tracking are added.');}},
+   'In the final design, notification servers gain authentication and rate limiting, workers retry a set number of times, templates are added, and so are monitoring and tracking.');}},
 {part:3,src:'Chapter 10 · Notification template',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Dario says users complain about too many pings</h1>');
+  L.h(NCSS+L.kick('ex','Kitebird example')+'<h1 class="q">Dario says users complain about too many pings</h1>');
   L.beats(L.card,[
    ['The complaint','Some makers get eight pings an hour on a busy day. A few have turned off notifications entirely.'],
    ['Respect settings','Before any ping goes out, the system checks Ben’s settings. Ben switched email off, so Ben’s digest is skipped.'],
    ['Cap the rate','A per-user '+L.g('rate-limit','rate limit')+' caps how many pings Mira can get. Fewer pings, so fewer people mute them all.'],
-   ['One template','The “class starting” ping becomes a template: <i>“[CLASS] with [MAKER] starts in [MINUTES] minutes.”</i> Every class team fills in the blanks and every ping looks the same.'],
-   ['Obi’s dashboard','Obi charts the number of queued notifications per queue. When the email queue climbs on Sunday nights, Obi adds workers.']],
-   'Settings checked first, a cap per user, templates for consistency, and a watch on the queues.');}},
-{part:3,src:'Chapter 10 · Notification setting',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Hana turned off SMS in their settings. A promotion service asks to text Hana a discount code. What happens?</h1>');
-  L.mc(L.card,['It’s sent, then logged as an opt-out','It’s sent by email instead','It isn’t sent; the setting is checked first'],2,
-   'The system checks the notification settings before sending. Hana opted out of SMS, so no text.',
-   'The book checks the opt-in setting <b>before</b> sending. Switching Hana to email wasn’t asked for either.');}},
+   ['One template','The “class starting” ping becomes a template: <i>“[CLASS] with [MAKER] starts in [MINUTES] minutes.”</i> Every team fills in the blanks and every ping looks the same.']],
+   'Settings checked first, a cap per person, and templates for a consistent format. Next: Obi’s dashboard.');}},
+{part:3,src:'Chapter 10 · Monitor queued notifications',
+ solve:async L=>{const P=L.np;P.fast=true;const w=L.$('#db-w');w.value=2;w.dispatchEvent(new Event('input',{bubbles:true}));L.$('#db [data-g="rate"]').click();L.$('#db-run').click();await L.sleep(5);await P.idle();},
+ run(L){
+  L.h(NCSS+L.kick('pr','Obi’s dashboard')+'<h1 class="q">Sunday night: the digest burst hits, and Ben gets a flood of comment pings</h1>'+
+   '<p class="small">Run it, read the chart, then fix it with workers and a rate limit. The alarm line and the cap of 3 are illustrative.</p>'+
+   nTasks('dbt',['Keep the email queue under the alarm line','Make sure Ben gets no more than 3 pings'])+'<div id="dbh"></div>');
+  const P=Pipe(L,L.$('#dbh'),{id:'db',S:{burst:1,flood:1},guards:['rate'],workers:true,chart:true,log:false,
+    on:(R)=>{const a=R.peak.email<NC.alarm,b=R.ben<=NC.rcap;
+      if(a&&b){nTick(L,'dbt',0);nTick(L,'dbt',1);L.sheet('ok','Queue under control, Ben spared','A growing queue means workers can’t keep up, so you <b>add workers</b>: that’s why the book says to watch the number of queued notifications. The rate limit caps what one person gets; the pings it holds back are on purpose, not lost.');L.done();}
+      else L.sheet('info',a?'Queue fine, but Ben is flooded':b?'Ben is fine, but the queue alarm went off':'Both problems are still there',
+        (a?'':'The email queue peaked at '+R.peak.email+'. More workers drain it faster. ')+(b?'':'Ben got '+R.ben+' pings. A per-person rate limit caps that.'));}});
+  L.np=P;}},
+{part:3,src:'Chapter 10 · Notification setting',pts:1,
+ solve:async L=>{L.$('#os').children[0].click();await L.sleep(5);const P=L.np;P.fast=true;L.$('#op button[data-g="optcheck"]').click();L.$('#op-run').click();await L.sleep(5);await P.idle();},
+ run(L){
+  let p=null;
+  L.h(NCSS+L.kick('pr','Respect the settings')+'<h1 class="q">Hana turned off SMS. A promotion service asks to text Hana a discount code. Where should it stop?</h1>'+
+   '<div class="nlbl">Notification setting table</div><table class="ntb"><tr><th>user_id</th><th>channel</th><th>opt_in</th></tr><tr><td>Hana</td><td>SMS</td><td class="bad">no</td></tr><tr><td>Ben</td><td>email</td><td class="bad">no</td></tr><tr><td>Mira</td><td>push</td><td>yes</td></tr></table>'+
+   '<div class="opts" id="os"></div><div id="ofb"></div><div id="op" hidden><p class="small">Now run it: the same promo text, plus Ben’s digest email. Try it without the check, then switch the check on.</p></div>');
+  ['At the notification servers, before any queue','At the SMS worker, just before sending','On Hana’s phone, which hides it'].forEach((n,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+n+'</span>';
+    b.onclick=()=>{if(p!==null)return;p=j;L.award(j===0);b.classList.add(j===0?'ok':'no');[...L.$('#os').children].forEach((x,k)=>{x.setAttribute('aria-disabled','true');if(k===0&&j!==0)x.classList.add('ok');else if(x!==b)x.classList.add('dim');});
+      L.fb(L.$('#ofb'),j===0?'Right. The book checks the opt-in setting <b>before</b> any notification is sent, so the text never enters a queue.':'The book checks the opt-in setting <b>before</b> sending. The notification servers fetch settings anyway, so they drop it there; it never enters a queue.',j===0?'ok':'no');
+      L.$('#op').hidden=false;};L.$('#os').appendChild(b);});
+  const P=Pipe(L,L.$('#op'),{id:'op',S:{promo:1},guards:['optcheck'],
+    on:(R,s)=>{if(s.optcheck&&R.skipped>0){L.sheet(p===0?'ok':'info','Settings checked first','With the check on, the servers drop Hana’s text and Ben’s digest before any queue: '+R.skipped+' skipped, nothing sent against anyone’s wishes. Without it, both reached people who opted out.');L.done();}}});
+  L.np=P;}},
 {part:3,src:'Chapter 10 · Additional components and considerations',pts:5,run(L){
-  L.h(L.kick('pr','Pick the fix')+'<h1 class="q">Which extra fixes each Kitebird problem?</h1><div id="bk"></div>');
+  L.h(NCSS+L.kick('pr','Pick the fix')+'<h1 class="q">Which extra fixes each Kitebird problem?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Template','Rate limit','appKey/appSecret','More workers'],[
    ['A bug fires 40 “makers you may like” pings at Mira in an hour',1,'A per-user cap stops one person being flooded.'],
    ['A leaked endpoint lets an unknown script send pushes to everyone',2,'Only verified clients with the key pair should be able to send.'],
@@ -227,17 +566,41 @@ Course.lesson({
    ['Ben gets eight comment pings during a busy hour and mutes everything',1,'Capping notifications per user keeps people from switching them all off.']],
    'Each extra matches one risk: rate limits protect people, keys protect the API, templates protect the format, and queue size tells you when to add workers.');}},
 {part:3,src:'Chapter 10 · Retry mechanism',pts:1,run(L){
-  L.h(L.kick('pr','Say it like the book')+'<h1 class="q">Build the retry rule Obi will put in the on-call notes.</h1>');
+  L.h(NCSS+L.kick('pr','Say it like the book')+'<h1 class="q">Build the retry rule Obi will put in the on-call notes.</h1>');
   L.sentence(L.card,[['When a third-party service fails,','When a user opts out,'],['the notification is dropped','the notification goes back in the queue','the notification is sent by SMS'],['and workers retry a set number of times;','and workers retry until it works;'],['if it still fails, alert the developers.','if it still fails, delete the user’s token.']],[0,1,0,0],
    [['Opting out means don’t send at all. Retrying is for failures.'],['Dropping it loses the notification, which the book forbids.','Switching channel isn’t the book’s retry. It goes back into the same queue.'],['Retrying forever can hide a real problem. The book retries a set number of times.'],['The book’s last step is to alert developers so a person looks at it.']],
    'Back into the queue, retry a set number of times, then alert a person. That’s the book’s retry mechanism.');}},
-{part:3,src:'Chapter 10 · Step 4 - Wrap up',pts:4,run(L){
-  L.h('<div id="qk"></div>');
+{part:3,src:'Chapter 10 · Updated design',pts:2,
+ solve:async L=>{const P=L.np,b=L.nbest;P.fast=true;
+   for(const g of ['log','dedupe','rate']){if(!!P.S[g]!==!!b[g])L.$('#ch [data-g="'+g+'"]').click();}
+   const w=L.$('#ch-w');w.value=b.w;w.dispatchEvent(new Event('input',{bubbles:true}));L.$('#ch-run').click();await L.sleep(5);await P.idle();},
+ run(L){
+  const BASE={twice:1,burst:1,down:{p_email:[2,4],w_ios:[3,5]}};
+  let best=null;
+  for(const lg of [0,1])for(const dd of [0,1])for(const rt of [0,1])for(let w=1;w<=5;w++){
+    const R=nsim(Object.assign({},BASE,{mode:'queues',log:lg,dedupe:dd,rate:rt,workers:{email:w}}));
+    const c=lg+dd+rt+(w-1);if(R.lost===0&&R.doubled===0&&R.wait===0&&(!best||c<best.c))best={c,log:lg,dedupe:dd,rate:rt,w};}
+  L.nbest=best;let graded=false;
+  L.h(NCSS+L.kick('pr','Challenge')+'<h1 class="q">Survive Kitebird’s bad day with as few changes as possible</h1>'+
+   '<p class="small"><b>The bad day (illustrative):</b> the email service is down from minute 2 to 4, the iOS worker crashes at minute 3, the comment service sends evt-501 twice, and the Sunday digest burst arrives.</p>'+
+   '<p class="small"><b>Target:</b> 0 lost, 0 doubled, 0 still waiting at minute 9. Each safeguard or extra worker counts as one change. Your first run is graded.</p><div id="chh"></div>');
+  const P=Pipe(L,L.$('#chh'),{id:'ch',S:BASE,guards:['log','dedupe','rate'],workers:true,
+    on:(R,s)=>{const c=s.log+s.dedupe+s.rate+(s.workers.email-1),hit=R.lost===0&&R.doubled===0&&R.wait===0,ok=hit&&c===best.c;
+      const miss=[];if(R.lost)miss.push(R.lost+' lost (the log + retry saves pings caught in a crash or outage)');if(R.doubled)miss.push(R.doubled+' doubled (dedupe by event ID drops the repeat)');if(R.wait)miss.push(R.wait+' still waiting (more email workers drain the burst)');
+      const extra=hit&&c>best.c?(s.rate?'The rate limit wasn’t needed: no one was flooded today, so it changed nothing. ':'')+(s.workers.email>best.w?'Fewer email workers would have done. ':''):'';
+      const body=ok?'Log + retry for the crash and the outage, dedupe for the repeated event, and '+(best.w-1)+' extra email workers for the burst. Each safeguard answers one failure.':
+        hit?'You hit the target with '+c+' changes; '+best.c+' is enough. '+extra:'Still missing: '+miss.join('; ')+'.';
+      if(!graded){graded=true;L.award(ok,2);L.sheet(ok?'ok':'no',ok?'Bad day survived, nothing wasted':hit?'Target met, with extra changes':'Not yet',body+(ok?'':' Change the settings and run again to try it.'));L.done();}
+      else L.sheet(ok?'ok':'info',ok?'That’s the fewest changes':hit?'Target met, with extra changes':'Not yet',body);}});
+  L.np=P;}},
+{part:3,src:'Chapter 10 · Step 4 - Wrap up',pts:5,run(L){
+  L.h(NCSS+'<div id="qk"></div>');
   L.quick(L.$('#qk'),'Tamsin’s last questions',['Notification log + retry','Event ID dedupe','Device table','One queue per type'],[
+   ['“APNs needs a device token plus a payload for Ben’s push. Where does the token come from?”',2,'The device table holds one token per device, saved when Ben installed the app. The payload carries the message itself.'],
    ['“Mira logs in on a new tablet. How will pushes reach it too?”',2,'Each device gets its own token in the device table. One user, many devices.'],
    ['“SMS is down in one region. Does that delay pushes?”',3,'No. The SMS queue grows; the push queues keep flowing.'],
    ['“A worker dies holding a ping. Is it gone?”',0,'It was saved in the notification log before sending, so it’s retried.'],
-   ['“The billing service sent the same event twice. Does Ben get two emails?”',1,'The gate sees the event ID again and discards the second copy.']]);
+   ['“The billing service sent the same event twice. Does Ben get two emails?”',1,'The servers see the event ID again and discard the second copy.']]);
   L.$('#qk').insertAdjacentHTML('afterend',L.note('<b>Beyond the book:</b> the message queues themselves need copies on several machines. Otherwise the queue becomes the new single point of failure.','info'));}}
   ]
 });

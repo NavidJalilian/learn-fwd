@@ -13,11 +13,264 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0005 only. The signature model, used across the lesson:
+   Fan – Kitebird's follower graph. Mira (300 followers) and Yusuf
+         (3 million) post; Ben opens the app. Choose push, pull or the
+         hybrid (with a celebrity cutoff) and watch who does the work:
+         feed writes at publish, fetches when Ben opens, wasted writes.
+   Smaller hands-on pieces: the two-flow tracer, the fanout stepper and
+   the hydration phone.
+   ===================================================================== */
+const NFNS='http://www.w3.org/2000/svg';
+const nfn=n=>Math.round(n).toLocaleString('en-US');
+const NF={
+  thr:[100,1000,10000,100000,1000000,10000000],
+  fol:{mira:300,yusuf:3000000},
+  pid:{mira:'p981',yusuf:'p982'},uid:{mira:'u7',yusuf:'u3'},nm:{mira:'Mira',yusuf:'Yusuf'},
+  LIMIT:100000,
+  /* who Ben follows: [followers, how many makers] – illustrative */
+  f120:[[3000000,1],[240000,1],[30000,6],[3000,25],[300,60],[50,27]],
+  f5000:[[3000000,1],[240000,1],[30000,40],[3000,600],[300,2500],[50,1858]],
+  F:[{n:'Cleo',x:16,y:118,a:1},{n:'Dev',x:44,y:130,a:1},{n:'Eli',x:72,y:134,a:0},{n:'Fay',x:100,y:130,a:1},{n:'Gus',x:128,y:118,a:0}],
+  M:{x:76,y:46,r:20},Y:{x:252,y:46,r:23},B:{x:165,y:214}
+};
+const NFCSS='<style>'+
+ '.nf-sv{width:100%;display:block;touch-action:manipulation;margin:2px 0}.nf-sv text{font-family:var(--sans)}'+
+ '.nf-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.nf-row .chip,.nf-row .btn{margin:0;min-height:40px}.nf-row .btn{padding:8px 12px}'+
+ '.nf-lg{font-size:12.5px;color:var(--muted);margin:0 0 4px;line-height:1.45}.nf-lg i{display:inline-block;width:10px;height:10px;border-radius:50%;margin:0 4px 0 8px;vertical-align:-1px}'+
+ '.nf-rng{display:grid;grid-template-columns:1fr;gap:2px;font-size:14px;margin:6px 0 2px}.nf-rng input{width:100%;accent-color:var(--pri);height:30px}.nf-rng b{font-variant-numeric:tabular-nums}'+
+ '.nf-m{background:var(--soft);border-radius:14px;padding:8px 12px 10px;margin:8px 0}'+
+ '.nf-mr{margin:5px 0}.nf-mt{display:flex;justify-content:space-between;gap:8px;font-size:13.5px;line-height:1.3}.nf-mt b{font-variant-numeric:tabular-nums;white-space:nowrap}'+
+ '.nf-bar{position:relative;height:9px;border-radius:6px;background:var(--soft2);margin-top:4px}.nf-bar i{display:block;height:100%;border-radius:6px;transition:width .45s}'+
+ '.nf-bar .mk{position:absolute;top:-4px;bottom:-4px;width:2px;background:var(--no)}'+
+ '.nf-log .fb{margin-top:8px;font-size:14.5px}'+
+ '.nf-cache{font-size:13px;color:var(--muted);margin:8px 0 0}.nf-cks{display:flex;flex-wrap:wrap;gap:5px;margin-top:4px}'+
+ '.nf-ck{display:inline-flex;font-size:12.5px;font-weight:600;border-radius:8px;padding:3px 7px;background:var(--card);border:1.5px solid var(--line2);color:var(--ink);font-variant-numeric:tabular-nums}'+
+ '.nf-ck.new{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok)}.nf-ck.drop{text-decoration:line-through;color:var(--no);border-color:var(--no-line);background:var(--no-bg)}'+
+ '.nf-goals{margin:10px 0 0;padding:0;list-style:none}.nf-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.nf-goals li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.nf-goals li.done{color:var(--ok)}.nf-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.nf-goals li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.nf-tgt{border:2px solid var(--line);border-radius:14px;padding:9px 12px;margin:8px 0;font-size:14px;line-height:1.5}.nf-tgt div{display:flex;justify-content:space-between;gap:8px}.nf-tgt .y{color:var(--ok);font-weight:700}.nf-tgt .n{color:var(--no);font-weight:700}'+
+ '@keyframes nfpulse{0%,100%{opacity:1}50%{opacity:.35}}.nf-hot{animation:nfpulse .9s infinite}'+
+ '@keyframes nfflash{0%{box-shadow:0 0 0 0 var(--pri)}100%{box-shadow:0 0 0 6px transparent}}.nf-flash{animation:nfflash .6s}'+
+ /* two-flow tracer */
+ '.nf-arch{display:flex;flex-direction:column;align-items:stretch;gap:0}.nf-dn{display:flex;justify-content:center;color:var(--faint);height:18px}.nf-dn svg.i{width:16px;height:16px}'+
+ '.nf-bx{border:2px solid var(--line);border-radius:12px;padding:7px 10px;background:var(--card);transition:border-color .25s,background .25s;min-width:0}.nf-bx b{display:block;font-size:14px}.nf-bx small{display:block;font-size:12.5px;color:var(--muted);line-height:1.35}'+
+ '.nf-bx.pub{border-color:var(--h1);background:var(--h1-bg)}.nf-bx.get{border-color:var(--h2);background:var(--h2-bg)}'+
+ '.nf-g2{display:grid;grid-template-columns:1fr 1fr;gap:6px}'+
+ '.nf-cap{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin:10px 0 4px;min-height:46px}'+
+ /* fanout stepper */
+ '.nf-st{display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);color:var(--faint);font-size:14px}.nf-st .n{flex:none;width:24px;height:24px;border-radius:50%;background:var(--soft);display:inline-flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700}'+
+ '.nf-st.on{color:var(--ink)}.nf-st.on .n{background:var(--h1);color:var(--card)}.nf-st.past{color:var(--muted)}.nf-st.past .n{background:var(--ok-bg);color:var(--ok)}.nf-st small{display:block;font-size:13px;color:var(--muted);line-height:1.45;margin-top:2px}'+
+ '.nf-fl{display:flex;flex-wrap:wrap;gap:5px;margin:8px 0}.nf-fl span{font-size:12.5px;font-weight:600;border-radius:8px;padding:4px 7px;background:var(--card);border:1.5px solid var(--line2)}'+
+ '.nf-fl span.x{text-decoration:line-through;color:var(--no);border-color:var(--no-line);background:var(--no-bg)}.nf-fl span.ok{color:var(--ok);border-color:var(--ok-line);background:var(--ok-bg)}'+
+ '.nf-job{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13.5px;margin:6px 0}.nf-job .q1{border:2px dashed var(--line2);border-radius:10px;padding:5px 8px;min-width:120px}.nf-job .w{border-radius:10px;padding:5px 8px;background:var(--h3-bg);color:var(--h3);font-weight:600}'+
+ /* hydration phone */
+ '.nf-ph{border:3px solid var(--ink);border-radius:26px;padding:12px 10px 14px;max-width:300px;margin:4px auto 0;background:var(--bg)}'+
+ '.nf-ph .bar{height:5px;width:60px;border-radius:3px;background:var(--line2);margin:0 auto 10px}'+
+ '.nf-pc{background:var(--card);border:1.5px solid var(--line);border-radius:14px;padding:8px 10px;margin-bottom:8px}'+
+ '.nf-pc .id{font-size:11.5px;color:var(--faint);font-variant-numeric:tabular-nums}.nf-pc .who{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:600;min-height:30px}'+
+ '.nf-av{width:28px;height:28px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;flex:none}'+
+ '.nf-gh{display:inline-block;height:10px;border-radius:5px;background:var(--soft2);vertical-align:middle}'+
+ '.nf-tx{font-size:14px;margin:4px 0;min-height:20px}.nf-im{height:46px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:600}'+
+ '</style>';
+
+/* a dot moving along a path function p(t)->[x,y] */
+function nfFly(g,p,col,ms,r){
+  return new Promise(res=>{
+    if(!g||!g.isConnected){res();return;}
+    const c=document.createElementNS(NFNS,'circle');c.setAttribute('r',r||5);c.setAttribute('style','fill:'+col);g.appendChild(c);
+    const t0=performance.now();
+    (function step(){
+      if(!c.isConnected){res();return;}
+      const q=Math.min(1,(performance.now()-t0)/ms),e=q<.5?2*q*q:1-Math.pow(-2*q+2,2)/2,xy=p(e);
+      c.setAttribute('cx',xy[0]);c.setAttribute('cy',xy[1]);
+      if(q<1){setTimeout(step,16);return;}
+      c.remove();res();})();
+  });
+}
+const nfLine=(a,b)=>t=>[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];
+const nfQuad=(a,c,b)=>t=>[(1-t)*(1-t)*a[0]+2*(1-t)*t*c[0]+t*t*b[0],(1-t)*(1-t)*a[1]+2*(1-t)*t*c[1]+t*t*b[1]];
+const nfRev=f=>t=>f(1-t);
+/* the curved "follows" edges into Ben */
+const NFE={mira:[[88,62],[178,84],[162,192]],yusuf:[[236,64],[182,100],[170,192]],others:[[179,214],[226,214]]};
+const nfGoals=(id,list)=>'<ul class="nf-goals" id="'+id+'">'+list.map((g,j)=>'<li id="'+id+j+'"><span class="bx"></span><span>'+g+'</span></li>').join('')+'</ul>';
+function nfTick(L,id,j){const li=L.$('#'+id+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const nfAll=(L,id)=>[...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));
+function nfSetRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+
+/* ---------- The follower graph ---------- */
+function Fan(L,host,o){
+  o=Object.assign({id:'fn',models:['push','pull'],mode:'push',thr:false,thrIdx:4,acts:['mira','yusuf','open'],cache:true,meters:true,on:()=>{}},o||{});
+  const ID=o.id;
+  const S={mode:o.mode,thrIdx:o.thrIdx,inact:'third',follows:120,muted:false,hidden:false,busy:false,
+    cache:[['p975','u41'],['p971','u7'],['p968','u88']],dropped:null,fresh:null,
+    fill:{},cloud:[],saved:{},hot:null,lit:new Set(),open:false,last:{w:null,waste:null,f:null}};
+  const lbl={push:'Push',pull:'Pull',hybrid:'Hybrid'};
+  host.insertAdjacentHTML('beforeend',
+    (o.models.length>1?'<div class="nf-row" id="'+ID+'-md" role="group" aria-label="Fanout model"></div>':'')+
+    (o.thr?'<label class="nf-rng" id="'+ID+'-tw" for="'+ID+'-t"><span>Hybrid cutoff: pull makers with more than <b id="'+ID+'-tv"></b> followers <span class="small">(illustrative)</span></span><input type="range" id="'+ID+'-t" min="0" max="5" step="1" value="'+S.thrIdx+'"></label>':'')+
+    '<svg class="nf-sv" id="'+ID+'-svg" viewBox="0 0 330 256" role="img" aria-label="Follower graph: Mira and Yusuf at the top, their followers below, Ben’s phone and feed cache at the bottom"><g id="'+ID+'-b"></g><g id="'+ID+'-fx"></g></svg>'+
+    '<div class="nf-lg">Each dot is a follower’s feed.<i style="background:var(--ok-strong)"></i>got it<i style="background:var(--h3)"></i>wasted (inactive)<i style="background:var(--soft2);border:1.5px dashed var(--line2)"></i>inactive</div>'+
+    (o.acts.length?'<div class="nf-row" id="'+ID+'-a"></div>':'')+
+    (o.meters?'<div class="nf-m" id="'+ID+'-m" aria-live="polite"></div>':'')+
+    '<div class="nf-log" id="'+ID+'-log" aria-live="polite"></div>'+
+    (o.cache?'<div class="nf-cache" id="'+ID+'-c"></div>':''));
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg'),base=$('#'+ID+'-b'),fx=$('#'+ID+'-fx');
+  const alive=()=>svg.isConnected;
+  const thr=()=>NF.thr[S.thrIdx];
+  const pushed=w=>S.mode==='push'||(S.mode==='hybrid'&&NF.fol[w]<=thr());
+  const list=()=>S.follows===120?NF.f120:NF.f5000;
+  const pulledN=()=>S.mode==='push'?0:S.mode==='pull'?S.follows:list().reduce((a,b)=>a+(b[0]>thr()?b[1]:0),0);
+  const fetches=()=>S.mode==='push'?1:S.mode==='pull'?S.follows:1+pulledN();
+  const maxWrite=()=>S.mode==='pull'?0:Math.max(...list().filter(b=>S.mode==='push'||b[0]<=thr()).map(b=>b[0]),0);
+  const inactive=f=>S.inact==='most'?f.n!=='Cleo':!f.a;
+  const cloudInactive=k=>S.inact==='most'?k%10!==0:(k+Math.floor(k/6))%3===2;
+  const share=()=>S.inact==='most'?.9:1/3;
+  const t=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+  const quadD=e=>'M'+e[0]+' '+e[1]+'Q'+e[1+0][0]+' '+e[1][1]+' '+e[2][0]+' '+e[2][1];
+  function draw(){
+    if(!alive())return;
+    const M=NF.M,Y=NF.Y;let s='';
+    const lit=k=>S.lit.has(k);
+    const eSt=(k,col)=>'fill:none;stroke:'+(lit(k)?col:'var(--line2)')+';stroke-width:'+(lit(k)?2.4:1.2);
+    /* edges: Mira -> drawn followers */
+    NF.F.forEach(f=>{const skip=S.fill[f.n]==='skip';
+      s+='<line x1="'+M.x+'" y1="'+(M.y+M.r)+'" x2="'+f.x+'" y2="'+(f.y-12)+'" style="'+(skip?'stroke:var(--no-line);stroke-width:1.4;stroke-dasharray:4 3':eSt('m'+f.n,'var(--pri)'))+'"/>';
+      if(skip){const mx=(M.x+f.x)/2,my=(M.y+M.r+f.y-12)/2;s+='<path d="M'+(mx-5)+' '+(my-5)+'l10 10m0 -10l-10 10" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>';}});
+    /* Yusuf -> cloud */
+    for(let c=0;c<6;c++)s+='<line x1="'+Y.x+'" y1="'+(Y.y+Y.r)+'" x2="'+(206+c*22)+'" y2="99" style="'+eSt('ycloud','var(--pri)')+'"/>';
+    /* follows edges into Ben */
+    const pullCol='var(--h2)';
+    s+='<path d="'+quadD(NFE.mira)+'" style="'+eSt('mben',S.open?pullCol:'var(--pri)')+'"/>';
+    s+='<path d="'+quadD(NFE.yusuf)+'" style="'+eSt('yben',S.open?pullCol:'var(--pri)')+'"/>';
+    s+='<line x1="179" y1="214" x2="226" y2="214" style="'+(lit('oben')?'stroke:'+pullCol+';stroke-width:2.4':'stroke:var(--line2);stroke-width:1.2;stroke-dasharray:4 3')+'"/>';
+    s+='<line x1="140" y1="214" x2="151" y2="214" style="stroke:'+(lit('cache')?'var(--pri)':'var(--line2)')+';stroke-width:'+(lit('cache')?2.4:1.2)+'"/>';
+    /* authors */
+    [['mira',M,'h1'],['yusuf',Y,'h4']].forEach(a=>{const w=a[0],P=a[1],pu=pushed(w);
+      s+=t(P.x,15,(w==='mira'?'300':'3M')+' followers · <tspan style="fill:var(--'+(pu?'pri':'h2')+');font-weight:700">'+(pu?'push':'pull')+'</tspan>','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+      if(S.hot===w)s+='<circle class="nf-hot" cx="'+P.x+'" cy="'+P.y+'" r="'+(P.r+6)+'" style="fill:none;stroke:var(--no);stroke-width:3;stroke-dasharray:5 3"/>';
+      s+='<circle cx="'+P.x+'" cy="'+P.y+'" r="'+P.r+'" style="fill:var(--'+a[2]+'-bg);stroke:var(--'+a[2]+');stroke-width:2"/>'+t(P.x,P.y+4.5,NF.nm[w],'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--'+a[2]+')');
+      if(S.saved[w]){const bx=w==='mira'?P.x+26:P.x-74;
+        s+='<rect x="'+bx+'" y="'+(P.y-11)+'" width="48" height="22" rx="7" style="fill:var(--h2-bg);stroke:var(--h2)"/>'+t(bx+24,P.y+4,S.saved[w],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h2)');}});
+    /* Mira's drawn followers */
+    NF.F.forEach(f=>{const st=S.fill[f.n],ina=inactive(f);let fill='var(--card)',stroke='var(--line2)',dash='';
+      if(st==='got'){fill='var(--ok-bg)';stroke='var(--ok-strong)';}else if(st==='waste'){fill='var(--h3-bg)';stroke='var(--h3)';}
+      else if(st==='skip'){fill='var(--no-bg)';stroke='var(--no)';dash='3 2';}else if(ina){fill='var(--soft2)';dash='3 2';}
+      s+='<circle cx="'+f.x+'" cy="'+f.y+'" r="12" style="fill:'+fill+';stroke:'+stroke+';stroke-width:1.8'+(dash?';stroke-dasharray:'+dash:'')+'"/>';
+      if(st==='got'||st==='waste')s+='<path d="M'+(f.x-5)+' '+f.y+'l3.5 3.5 6.5-7" style="fill:none;stroke:var(--'+(st==='got'?'ok':'h3')+');stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"/>';
+      s+=t(f.x,f.y+25,f.n,'font-size:11px;text-anchor:middle;fill:'+(ina?'var(--faint)':'var(--ink)')+(st==='skip'?';text-decoration:line-through':''));});
+    s+=t(72,174,'5 of Mira’s 300','font-size:11px;text-anchor:middle;fill:var(--muted)');
+    /* Yusuf's cloud */
+    for(let k=0;k<30;k++){const c=k%6,r=Math.floor(k/6),x=206+c*22,y=104+r*13,st=S.cloud[k],ina=cloudInactive(k);
+      const f=st==='got'?'var(--ok-strong)':st==='waste'?'var(--h3)':ina?'var(--soft2)':'var(--line2)';
+      s+='<circle cx="'+x+'" cy="'+y+'" r="4.6" style="fill:'+f+(ina&&!st?';stroke:var(--line2);stroke-dasharray:2 1.5':'')+'"/>';}
+    s+=t(261,174,'1 dot ≈ 100,000 of Yusuf’s','font-size:11px;text-anchor:middle;fill:var(--muted)');
+    /* Ben's cache, phone and the makers Ben also follows */
+    const cf=lit('cache');
+    s+='<rect x="30" y="196" width="110" height="36" rx="9" style="fill:'+(S.fresh?'var(--ok-bg)':'var(--card)')+';stroke:'+(cf?'var(--pri)':S.fresh?'var(--ok-strong)':'var(--line2)')+';stroke-width:'+(cf?2.4:1.6)+'"/>'+
+      t(85,211,'Ben’s feed cache','font-size:11px;font-weight:700;text-anchor:middle;fill:'+(S.mode==='pull'?'var(--faint)':'var(--ink)'))+t(85,225,S.mode==='pull'?'not used by pull':'newest: '+(S.cache[0]?S.cache[0][0]:'none'),'font-size:11px;text-anchor:middle;fill:var(--muted)');
+    s+='<rect x="151" y="192" width="28" height="44" rx="6" style="fill:'+(S.open?'var(--pri-bg)':'var(--card)')+';stroke:'+(S.open?'var(--pri)':'var(--ink)')+';stroke-width:2"/><rect x="161" y="196" width="8" height="2" rx="1" style="fill:var(--line2)"/>'+
+      t(165,251,'Ben','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+    s+='<rect x="226" y="196" width="98" height="36" rx="9" style="fill:var(--card);stroke:'+(lit('oben')?'var(--h2)':'var(--line2)')+';stroke-width:1.6"/>'+
+      t(275,211,'+'+nfn(S.follows-2)+' makers','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+t(275,225,'Ben also follows','font-size:11px;text-anchor:middle;fill:var(--muted)');
+    base.innerHTML=s;
+    /* controls */
+    if(o.models.length>1){const md=$('#'+ID+'-md');if(!md.children.length){o.models.forEach(m=>{const b=document.createElement('button');b.className='chip';b.id=ID+'-m-'+m;b.textContent=lbl[m];b.onclick=()=>setMode(m);md.appendChild(b);});}
+      o.models.forEach(m=>{const b=$('#'+ID+'-m-'+m);b.classList.toggle('sel',S.mode===m);b.setAttribute('aria-pressed',S.mode===m);b.disabled=S.busy;});}
+    if(o.thr){$('#'+ID+'-tw').style.opacity=S.mode==='hybrid'?1:.4;$('#'+ID+'-t').disabled=S.mode!=='hybrid'||S.busy;$('#'+ID+'-tv').textContent=nfn(thr());}
+    if(o.acts.length){const A={mira:['btn','pencil','Mira posts'],yusuf:['btn','pencil','Yusuf posts'],open:['btn pri','eye','Ben opens the app']};
+      const box=$('#'+ID+'-a');if(!box.children.length){box.innerHTML=o.acts.map(a=>'<button class="'+A[a][0]+'" id="'+ID+'-'+a+'">'+L.ic(A[a][1])+A[a][2]+'</button>').join('');
+        o.acts.forEach(a=>{$('#'+ID+'-'+a).onclick=()=>{a==='open'?openFeed():post(a);};});}
+      o.acts.forEach(a=>{$('#'+ID+'-'+a).disabled=S.busy;});}
+    meters();cache();
+  }
+  function bar(v,max,col,mark){const w=v?Math.max(3,Math.min(100,Math.log10(v+1)/Math.log10(max)*100)):0;
+    return '<div class="nf-bar"><i style="width:'+w+'%;background:'+col+'"></i>'+(mark?'<span class="mk" style="left:'+(Math.log10(mark)/Math.log10(max)*100)+'%" title="overload line"></span>':'')+'</div>';}
+  function meters(v){if(!o.meters||!alive())return;const l=v||S.last;
+    const row=(lab,val,max,col,mark)=>'<div class="nf-mr"><div class="nf-mt"><span>'+lab+'</span><b>'+(val==null?'–':nfn(val))+'</b></div>'+bar(val||0,max,col,mark)+'</div>';
+    $('#'+ID+'-m').innerHTML=row('Feed writes for the last post',l.w,1e7,l.w>NF.LIMIT?'var(--no-strong)':'var(--pri)',NF.LIMIT)+row('Wasted writes (inactive followers)',l.waste,1e7,'var(--h3)')+row('Fetches when Ben opens the feed',l.f,1e4,l.f>5?'var(--no-strong)':'var(--h2)')+
+      '<div class="nf-lg" style="margin-top:6px">Bars grow 10× per step. Red line: an illustrative overload line of 100,000 writes per post. Inactive share: '+(S.inact==='most'?'9 in 10':'1 in 3')+' (illustrative).</div>';}
+  function cache(){if(!o.cache||!alive())return;
+    if(S.mode==='pull'){$('#'+ID+'-c').innerHTML='Ben’s feed cache: <b>not used under pull</b>. Nothing is prepared in advance.';return;}
+    $('#'+ID+'-c').innerHTML='Ben’s feed cache, newest first. Holds &lt;post_id, user_id&gt; pairs, at most 5 (illustrative limit):<div class="nf-cks">'+
+      S.cache.map(c=>'<span class="nf-ck'+(S.fresh===c[0]?' new':'')+'">&lt;'+c[0]+', '+c[1]+'&gt;</span>').join('')+(S.dropped?'<span class="nf-ck drop">&lt;'+S.dropped[0]+', '+S.dropped[1]+'&gt; dropped</span>':'')+'</div>';}
+  function log(h,kind){if(alive())$('#'+ID+'-log').innerHTML='<div class="fb '+(kind||'info')+'">'+h+'</div>';}
+  function clearRun(){S.fill={};S.cloud=[];S.saved={};S.hot=null;S.lit.clear();S.open=false;S.fresh=null;S.dropped=null;}
+  function setMode(m){if(S.busy)return;S.mode=m;clearRun();S.last={w:null,waste:null,f:null};draw();log(m==='push'?'Push: a post is copied into every follower’s feed cache the moment it’s published.':m==='pull'?'Pull: nothing is copied at post time. Ben’s feed is built when Ben opens the app.':'Hybrid: makers at or under the cutoff are pushed; bigger ones are pulled at read time.','info');o.on({type:'mode',mode:m});}
+  if(o.thr)$('#'+ID+'-t').addEventListener('input',e=>{S.thrIdx=+e.target.value;clearRun();S.last={w:null,waste:null,f:null};draw();o.on({type:'thr',thr:thr()});});
+  async function roll(to,ms,key){const t0=performance.now();while(alive()){const q=Math.min(1,(performance.now()-t0)/ms);const l=Object.assign({},S.last);l[key]=to*q;meters(l);if(q>=1)break;await L.sleep(30);}}
+  async function post(w){
+    if(S.busy||!alive())return null;S.busy=true;clearRun();draw();
+    const P=w==='mira'?NF.M:NF.Y,pid=NF.pid[w],uid=NF.uid[w];let res;
+    if(pushed(w)){
+      let skipped=[];if(w==='mira'){if(S.muted)skipped.push('Dev');if(S.hidden)skipped.push('Cleo');}
+      const writes=NF.fol[w]-skipped.length,waste=Math.round(writes*share());
+      skipped.forEach(n=>S.fill[n]='skip');
+      if(w==='mira'){NF.F.forEach(f=>{if(!skipped.includes(f.n))S.lit.add('m'+f.n);});S.lit.add('mben');}else{S.lit.add('ycloud');S.lit.add('yben');}
+      draw();
+      log(NF.nm[w]+' posts '+pid+'. The fanout service copies &lt;'+pid+', '+uid+'&gt; into '+(w==='mira'?'each':'all '+nfn(writes))+' follower’s feed cache…','info');
+      const fl=[];const ms=w==='mira'?650:900;
+      if(w==='mira')NF.F.forEach(f=>{if(!skipped.includes(f.n))fl.push(nfFly(fx,nfLine([P.x,P.y+P.r],[f.x,f.y-12]),'var(--pri)',ms));});
+      else for(let c=0;c<6;c++)fl.push(nfFly(fx,nfLine([P.x,P.y+P.r],[206+c*22,99]),'var(--pri)',ms));
+      fl.push(nfFly(fx,nfQuad(...NFE[w]),'var(--pri)',ms));
+      fl.push(roll(writes,ms,'w'));
+      if(w==='yusuf'){fl.push((async()=>{for(let k=0;k<30;k++){await L.sleep(ms/32);if(!alive())return;S.cloud[k]=cloudInactive(k)?'waste':'got';draw();}})());}
+      await Promise.all(fl);if(!alive())return null;
+      if(w==='mira')NF.F.forEach(f=>{if(!skipped.includes(f.n))S.fill[f.n]=inactive(f)?'waste':'got';});
+      else for(let k=0;k<30;k++)S.cloud[k]=cloudInactive(k)?'waste':'got';
+      const old=S.cache.findIndex(c=>c[0]===pid);if(old>=0)S.cache.splice(old,1);
+      S.cache.unshift([pid,uid]);if(S.cache.length>5)S.dropped=S.cache.pop();S.fresh=pid;
+      S.last={w:writes,waste,f:null};
+      const hot=writes>NF.LIMIT;if(hot)S.hot=w;
+      S.busy=false;draw();
+      log(hot?'<b>Hotkey problem.</b> One post from Yusuf means '+nfn(writes)+' feed writes, and fetching that huge follower list first. About '+nfn(waste)+' of them go to people who rarely open Kitebird. Way past the overload line.':
+        'Done: '+nfn(writes)+' feed writes'+(skipped.length?' ('+skipped.join(' and ')+' skipped by the filter)':'')+'. Each follower’s feed is ready before they ask. '+nfn(waste)+' writes went to inactive followers: wasted work.'+(S.dropped?' Ben’s cache was full, so the oldest pair fell off the end.':''),hot?'no':'ok');
+      res={type:'post',who:w,pushed:true,writes,waste,hot,skipped,dropped:!!S.dropped};
+    }else{
+      log(NF.nm[w]+' posts '+pid+'. It’s saved once, in '+NF.nm[w]+'’s own posts…','info');
+      await nfFly(fx,nfLine([P.x,P.y],[w==='mira'?P.x+50:P.x-50,P.y]),'var(--h2)',500);if(!alive())return null;
+      S.saved[w]=pid;S.last={w:0,waste:0,f:null};S.busy=false;draw();
+      log('No feed writes at all, and nothing wasted on inactive followers. The post just waits until followers open the app and pull it.','ok');
+      res={type:'post',who:w,pushed:false,writes:0,waste:0};
+    }
+    o.on(res);return res;
+  }
+  async function openFeed(){
+    if(S.busy||!alive())return null;S.busy=true;S.lit.clear();S.open=true;S.fresh=null;S.dropped=null;draw();
+    const f=fetches(),pn=pulledN();
+    const pm=S.mode==='pull'||(S.mode==='hybrid'&&!pushed('mira')),py=S.mode==='pull'||(S.mode==='hybrid'&&!pushed('yusuf'));
+    const po=S.mode==='pull'?S.follows-2:Math.max(0,pn-(pm?1:0)-(py?1:0));
+    const fl=[];
+    if(S.mode!=='pull'){S.lit.add('cache');fl.push(nfFly(fx,nfLine([140,214],[151,214]),'var(--pri)',400));}
+    if(pm){S.lit.add('mben');fl.push(nfFly(fx,nfRev(nfQuad(...NFE.mira)),'var(--h2)',700));}
+    if(py){S.lit.add('yben');fl.push(nfFly(fx,nfRev(nfQuad(...NFE.yusuf)),'var(--h2)',700));}
+    if(po){S.lit.add('oben');fl.push(nfFly(fx,nfLine([179,214],[226,214]),'var(--h2)',600));}
+    draw();
+    log('Ben opens the app: GET /v1/me/feed…','info');
+    fl.push(roll(f,700,'f'));
+    await Promise.all(fl);if(!alive())return null;
+    S.last=Object.assign({},S.last,{f});S.busy=false;draw();
+    const cEl=$('#'+ID+'-c');if(cEl){cEl.classList.remove('nf-flash');void cEl.offsetWidth;if(S.mode!=='pull')cEl.classList.add('nf-flash');}
+    let h;
+    if(S.mode==='push')h='<b>1 fetch.</b> Ben’s feed was already built at post time, so opening it is one quick read of Ben’s feed cache. Fast.';
+    else if(S.mode==='pull')h='<b>'+nfn(f)+' fetches.</b> Nothing was ready, so the service pulls recent posts from all '+nfn(S.follows)+' makers Ben follows, then merges them newest first, while Ben waits. Slow.';
+    else h='<b>'+nfn(f)+' fetch'+(f===1?'':'es')+'.</b> One read of Ben’s feed cache'+(pn?', plus pulling recent posts from '+nfn(pn)+' maker'+(pn===1?'':'s')+' over the cutoff'+(py?(pn===1?' (Yusuf)':' (Yusuf among them)'):'')+', merged in newest first.':'. Nobody Ben follows is over the cutoff.');
+    log(h,f>5?'no':'ok');
+    const res={type:'open',f,pulled:pn};o.on(res);return res;
+  }
+  function set(p){Object.assign(S,p);clearRun();S.last={w:null,waste:null,f:null};if(o.thr)$('#'+ID+'-t').value=S.thrIdx;draw();}
+  const idle=async()=>{for(let i=0;i<200&&S.busy;i++)await L.sleep(30);};
+  draw();
+  return {S,draw,post,openFeed,setMode,set,log,idle,alive,fetches,maxWrite,pulledN,thr};
+}
+
 Course.lesson({
-  id:'0005', title:'Design a news feed', minutes:20, icon:'list',
-  goals:['Lay out the two flows of a news feed: publishing and building','Choose between fanout on write, fanout on read and a hybrid','Explain how a feed of IDs becomes a full screen of posts'],
-  parts:['Scope and flows','Fanout','Publishing','Reading'],
-  read:'Read chapter 11 of the book for its figures of the publishing and retrieval designs and the five cache layers.',
+  id:'0005', title:'Design a news feed', minutes:22, icon:'list',
+  goals:['Lay out the two flows of a news feed: publishing and building','Choose between fanout on write, fanout on read and a hybrid, and know where each breaks','Explain how a feed of IDs becomes a full screen of posts'],
+  parts:['Scope and flows','Push or pull','Inside fanout','Reading the feed'],
+  read:'Read chapter 11 of the book for its figures of the publishing and retrieval designs, the fanout service and the five cache layers.',
   glossary:{
     fanout:'Fanout: delivering one new post to all the friends or followers who should see it.',
     'fanout-write':'Fanout on write (push model): copy a new post into each friend’s feed the moment it is published, so feeds are ready before anyone asks.',
@@ -25,16 +278,18 @@ Course.lesson({
     hotkey:'Hotkey problem: one key (here, one user with a huge number of friends or followers) gets so much work at once that it overloads the system.',
     'graph-db':'Graph database: a database built to store connections between things, such as who is friends with whom.',
     hydrate:'Hydrate: fill a bare list of IDs with the full data behind them (names, photos, post text) so it can be shown.',
-    'auth-token':'Auth token: a string the app sends with each request to prove which signed-in user is making it.'
+    'auth-token':'Auth token: a string the app sends with each request to prove which signed-in user is making it.',
+    'rate-limit':'Rate limiting: capping how many requests (here, posts) one user can make in a period of time.'
   },
   cheatsheet:[
-    'Two flows: <b>feed publishing</b> (write a post, spread it) and <b>news feed building</b> (read your feed). Two APIs: <b>POST</b> and <b>GET /v1/me/feed</b>.',
-    '<b>Fanout on write (push):</b> fast reads and real-time, but slow for users with many friends (the <b>hotkey problem</b>) and wasted on inactive users.',
-    '<b>Fanout on read (pull):</b> no waste and no hotkey problem, but slow to load the feed.',
-    '<b>Hybrid:</b> push for most users; followers <b>pull</b> celebrities’ posts on demand. Consistent hashing helps spread hot keys.',
-    'Fanout steps: friend IDs from a graph DB → filter by settings → message queue → fanout workers → store <b>&lt;post_id, user_id&gt;</b> in the news feed cache, with a size limit.',
-    'Reading: get post IDs from the news feed cache, then <b>hydrate</b> from the user and post caches. Media comes from a CDN.',
-    'Five cache layers: <b>news feed, content, social graph, action, counters</b>.'
+    'Two flows: <b>feed publishing</b> (write a post, spread it) and <b>news feed building</b> (read your feed). Two APIs: <b>POST</b> and <b>GET /v1/me/feed</b>, each with an auth token.',
+    '<b>Fanout on write (push):</b> feeds are ready in real time and load fast, but a user with many friends is slow to fan out (the <b>hotkey problem</b>) and work is wasted on inactive users.',
+    '<b>Fanout on read (pull):</b> no waste and no hotkey problem, but loading the feed is slow because nothing is ready.',
+    '<b>Hybrid:</b> push for most users; followers <b>pull</b> celebrities’ posts on demand. Consistent hashing helps spread hot keys. The cutoff is yours to choose.',
+    'Web servers check the <b>auth token</b> and <b>rate-limit</b> posts. Fanout: friend IDs from a graph DB → filter by settings (mute, selective sharing) → message queue → fanout workers → <b>&lt;post_id, user_id&gt;</b> in the news feed cache, with a size limit.',
+    'Reading: get post IDs from the news feed cache, then <b>hydrate</b> them from the user and post caches; media comes from a CDN; return JSON.',
+    'Five cache layers: <b>news feed, content, social graph, action, counters</b>.',
+    'Wrap-up talking points: database scaling (replicas, sharding…), stateless web tier, cache a lot, several data centers, queues, monitoring.'
   ],
   steps:[
 /* ---------- PART 1: SCOPE AND FLOWS ---------- */
@@ -45,124 +300,213 @@ Course.lesson({
    'Building on open means gathering posts while you wait. Preparing in advance makes opening fast, at the cost of work done earlier. That trade-off is the heart of this lesson.');}},
 {part:0,src:'Chapter 11 · Step 1 - Understand the problem and establish design scope',run(L){
   L.h(L.kick('learn','The book’s interview')+'<h1 class="q">What is a news feed, and how big?</h1>'+
-   L.prose('A news feed is the constantly updating list of posts in the middle of your home page. Interviewers ask it as “design Facebook’s news feed”, “Instagram feed” or “Twitter timeline”. The candidate pins down the scope:')+
+   L.prose('A news feed is the constantly updating list of posts in the middle of your home page. Interviewers ask “design Facebook’s news feed”, “Instagram feed” or “Twitter timeline”. The candidate first pins down the scope:')+
    L.list([['Platforms','Both web and mobile.'],
      ['Features','A user can publish a post and see friends’ posts on the feed page.'],
-     ['Order','Newest first (reverse chronological), to keep it simple. No ranking.'],
+     ['Order','Newest first (reverse chronological), to keep it simple.'],
      ['Friends','Up to 5,000 per user.'],
      ['Traffic','10 million '+L.g('dau','daily active users')+'.'],
      ['Media','Posts can include images and videos.']],1));
   L.done();}},
-{part:0,src:'Chapter 11 · Step 2 - Propose high-level design and get buy-in',run(L){
-  L.h(L.kick('learn','Two flows, two APIs')+'<h1 class="q">Writing a post and reading a feed are separate jobs</h1>'+
-   L.lanes([['pencil','Feed publishing','<b>POST /v1/me/feed</b> with the post’s content and an '+L.g('auth-token','auth token')+'.<br><br>Web servers pass it to the <b>post service</b> (saves it in DB and cache), the <b>fanout service</b> (pushes it into friends’ feeds) and the <b>notification service</b> (tells friends).',1],
-            ['list','News feed building','<b>GET /v1/me/feed</b> with the auth token.<br><br>Web servers pass it to the <b>news feed service</b>, which reads the feed from the <b>news feed cache</b>. That cache holds the post IDs needed to show the feed.',2]])+
-   '<p class="small" style="margin-top:12px">Both flows enter through a '+L.g('load-balancer','load balancer')+' that spreads traffic across web servers.</p>');
-  L.done();}},
-{part:0,src:'Chapter 11 · Feed publishing',run(L){
-  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of Kitebird’s “Home feed”</h1>');
+{part:0,src:'Chapter 11 · Step 2 - Propose high-level design and get buy-in',
+ solve:async L=>{L.$('#ar-pub').click();for(let i=0;i<120&&L.arBusy();i++)await L.sleep(30);L.$('#ar-get').click();for(let i=0;i<120&&L.arBusy();i++)await L.sleep(30);},
+ run(L){
+  const dn='<div class="nf-dn">'+L.ic('down')+'</div>';
+  L.h(L.kick('learn','Two flows, two APIs')+'<h1 class="q">Writing a post and reading a feed are separate jobs. Trace each one.</h1>'+NFCSS+
+   '<div class="nf-row"><button class="btn" id="ar-pub">'+L.ic('pencil')+'Mira posts</button><button class="btn" id="ar-get">'+L.ic('eye')+'Ben opens</button></div>'+
+   '<div class="nf-cap" id="ar-cap" aria-live="polite">Tap a flow to trace it.</div>'+
+   '<div class="nf-arch">'+
+   '<div class="nf-bx" id="ar-ph"><b id="ar-pt">The app</b><small id="ar-ps">web or mobile</small></div>'+dn+
+   '<div class="nf-bx" id="ar-lb"><b>Load balancer</b><small>spreads requests over the web servers</small></div>'+dn+
+   '<div class="nf-bx" id="ar-ws"><b>Web servers</b><small>send each request to the right service</small></div>'+dn+
+   '<div class="nf-g2"><div class="nf-bx" id="ar-po"><b>Post service</b><small>saves the post</small></div><div class="nf-bx" id="ar-fo"><b>Fanout service</b><small>spreads it to feeds</small></div>'+
+   '<div class="nf-bx" id="ar-no"><b>Notification service</b><small>tells friends</small></div><div class="nf-bx" id="ar-nf"><b>News feed service</b><small>builds a feed</small></div></div>'+dn+
+   '<div class="nf-bx" id="ar-fc"><b>News feed cache</b><small>the post IDs for each person’s feed</small></div></div>');
+  let busy=false;const did=new Set();L.arBusy=()=>busy;
+  const all=['ph','lb','ws','po','fo','no','nf','fc'];
+  const PUB=[[['ph'],'Mira’s app sends <b>POST /v1/me/feed</b> with the post’s content and an '+L.g('auth-token','auth token')+'.'],
+    [['lb'],'A '+L.g('load-balancer','load balancer')+' hands the request to one of the web servers.'],
+    [['ws'],'Web servers pass it on to three services at once.'],
+    [['po','fo','no'],'<b>Post service</b> saves the post in the database and cache. <b>Fanout service</b> pushes it toward followers’ feeds. <b>Notification service</b> tells them something new is there.'],
+    [['fc'],'The fanout service writes the new post’s ID into each follower’s <b>news feed cache</b>. Publishing done.']];
+  const GET=[[['ph'],'Ben’s app sends <b>GET /v1/me/feed</b> with just the auth token.'],
+    [['lb'],'The load balancer hands it to a web server.'],
+    [['ws'],'Web servers route it to the news feed service.'],
+    [['nf'],'The <b>news feed service</b> is the only service this flow needs…'],
+    [['fc'],'…and it reads Ben’s list of post IDs from the <b>news feed cache</b>. Both flows meet here.']];
+  async function run(seq,cls,k,pt,ps){
+    if(busy)return;busy=true;L.$('#ar-pub').disabled=L.$('#ar-get').disabled=true;
+    all.forEach(x=>L.$('#ar-'+x).classList.remove('pub','get'));L.$('#ar-pt').textContent=pt;L.$('#ar-ps').textContent=ps;
+    for(const st of seq){if(!L.$('#ar-cap'))return;st[0].forEach(x=>L.$('#ar-'+x).classList.add(cls));L.$('#ar-cap').innerHTML=st[1];await L.sleep(480);}
+    if(!L.$('#ar-cap'))return;busy=false;L.$('#ar-pub').disabled=L.$('#ar-get').disabled=false;did.add(k);
+    if(did.size===2){L.sheet('info','Two flows, designed separately','<b>Feed publishing</b> writes the post and spreads it (three services). <b>News feed building</b> just reads (one service). They meet at the news feed cache, and how the post gets into that cache is the big decision of this chapter.');L.done();}
+    else L.$('#ar-cap').innerHTML+=' <b>Now trace the other flow.</b>';}
+  L.$('#ar-pub').onclick=()=>run(PUB,'pub','p','Mira’s app','POST /v1/me/feed · content + auth token');
+  L.$('#ar-get').onclick=()=>run(GET,'get','g','Ben’s app','GET /v1/me/feed · auth token');}},
+{part:0,src:'Chapter 11 · Step 1 - Understand the problem and establish design scope',run(L){
+  L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of Kitebird’s home feed</h1>');
   L.beats(L.card,[
    ['Tamsin','“What are we building, and how big is it?”'],
    ['Lior jumps in','“Easy: one SQL query that grabs everyone’s recent posts.” Tamsin: “For how many people? Sorted how? With video?”'],
    ['You ask, Dario answers','Web, iOS and Android. Posts from <b>makers you follow</b>, newest first. Photos and short videos. About <b>4 million daily users</b>.'],
-   ['The awkward fact','Kitebird uses follows, not friends, so there is no 5,000 cap. <b>Yusuf, the Lathe Guy, has 3 million followers.</b>'],
-   ['The two flows','When Mira posts a quilt: <b>POST /v1/me/feed</b>. When Ben opens the app: <b>GET /v1/me/feed</b>. Two flows, designed separately.']],
-   'Scope first: platforms, features, order, how many connections, traffic, media. Then split the design into publishing and building.');}},
-{part:0,src:'Chapter 11 · Newsfeed APIs',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben opens the Kitebird app to see their home feed. Which request does the app send?</h1>');
-  L.mc(L.card,['POST /v1/me/feed with content','GET /v1/me/feed with the auth token','GET /v1/feed with the password'],1,
-   'Reading the feed is a GET to /v1/me/feed. The auth token says it’s Ben asking.',
-   'Reading is a <b>GET</b>, and requests carry an <b>auth token</b>, never the password. POST is for publishing a post.');}},
+   ['The awkward fact','Kitebird uses follows, not friends, so there is no 5,000 cap. <b>Yusuf, the Lathe Guy, has 3 million followers.</b> Mira, a quilter, has about 300.'],
+   ['The two flows','When Mira posts a quilt: POST /v1/me/feed. When Ben opens the app: GET /v1/me/feed. Two flows, designed separately.']],
+   'Scope first: platforms, features, order, how many connections, traffic, media. Yusuf’s 3 million followers will shape the whole design.');}},
 {part:0,src:'Chapter 11 · Step 2 - Propose high-level design and get buy-in',pts:4,run(L){
   L.h(L.kick('pr','Who does what?')+'<h1 class="q">Which service handles each job?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Post service','Fanout service','Notification service','News feed service'],[
-   ['Saves Mira’s new quilt post in the database and cache',0,'The post service persists the post itself.'],
-   ['Puts Mira’s new post into Mira’s followers’ feeds',1,'Fanout means delivering a post to everyone who should see it.'],
+   ['Saves Mira’s new quilt post in the database and cache',0,'The post service stores the post itself.'],
+   ['Gets Mira’s new post into Mira’s followers’ feeds',1,'Fanout means delivering a post to everyone who should see it.'],
    ['Tells Ben’s phone that new content is available',2,'The notification service informs friends and sends push notifications.'],
    ['Reads Ben’s list of post IDs when Ben opens the app',3,'The news feed service serves the building flow, from the news feed cache.']],
    'Three services on the publishing side, one on the reading side.');}},
 
-/* ---------- PART 2: FANOUT ---------- */
+/* ---------- PART 2: PUSH OR PULL ---------- */
 {part:1,src:'Chapter 11 · Fanout service',run(L){
-  L.h(L.kick('learn','Push or pull?')+'<h1 class="q">Two ways to deliver a post to everyone</h1>'+
-   L.prose(L.g('fanout','Fanout')+' is delivering a post to all friends. There are two models:')+
-   L.lanes([['arrow','Fanout on write (push)','The feed is built <b>when the post is written</b>: it goes straight into every friend’s feed cache.<br><br><span style="color:var(--ok)">+ Real-time; feeds load fast.</span><br><span style="color:var(--no)">− Slow for users with many friends: the '+L.g('hotkey','hotkey problem')+'. Wasted on people who rarely log in.</span>',1],
-            ['down','Fanout on read (pull)','The feed is built <b>when someone opens it</b>, by pulling recent posts on demand.<br><br><span style="color:var(--ok)">+ No work wasted on inactive users. No hotkey problem.</span><br><span style="color:var(--no)">− Loading the feed is slow, since nothing is ready.</span>',2]]));
+  L.h(L.kick('learn','Push or pull?')+'<h1 class="q">Fanout: who does the work, and when?</h1>'+
+   L.prose(L.g('fanout','Fanout')+' is delivering a post to all the friends who should see it. The book compares two models. They differ in <b>when</b> the work happens:')+
+   L.lanes([['arrow','Fanout on write (push)','At <b>post time</b>. The new post is copied into every friend’s feed cache right away, so feeds are built before anyone asks.',1],
+            ['down','Fanout on read (pull)','At <b>read time</b>. Nothing is copied. When someone opens the app, recent posts are pulled from everyone they follow.',2]])+
+   L.note('Next you’ll run both on Kitebird’s real follower graph and watch three numbers: writes when a post is published, fetches when Ben opens the app, and writes wasted on people who never look.','eye'));
+  L.done();}},
+{part:1,src:'Chapter 11 · Fanout service',
+ solve:async L=>{const f=L.fan;for(const m of ['push','pull']){L.$('#e1-m-'+m).click();L.$('#e1-mira').click();await f.idle();L.$('#e1-open').click();await f.idle();}},
+ run(L){
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Mira posts, then Ben opens the app. Run it under push, then under pull.</h1>'+NFCSS+
+   nfGoals('e1g',['Under <b>push</b>: Mira posts, then Ben opens the app','Under <b>pull</b>: Mira posts, then Ben opens the app'])+'<div id="e1"></div>');
+  const did={push:new Set(),pull:new Set()};
+  const f=L.fan=Fan(L,L.$('#e1'),{id:'e1',acts:['mira','open'],on:e=>{
+    if(e.type==='mode'){did[e.mode]=new Set();return;}
+    const d=did[f.S.mode];if(!d)return;
+    if(e.type==='post')d.add('post');if(e.type==='open'&&d.has('post'))d.add('open');
+    if(d.size===2)nfTick(L,'e1g',f.S.mode==='push'?0:1);
+    if(nfAll(L,'e1g')&&!L.e1done){L.e1done=true;
+      L.sheet('info','Same post, opposite costs','<b>Push</b> did 300 writes when Mira posted (100 of them for people who rarely open the app) and then Ben’s open was a single quick read. <b>Pull</b> did no feed writes and wasted nothing, but Ben’s open had to fetch from all 120 makers Ben follows (an illustrative number). Pay at post time, or pay at read time.');L.done();}}});
+  L.e1done=false;
+  f.log('Start with <b>Mira posts</b>, then <b>Ben opens the app</b>. Then switch the model and do it again. Ben follows 120 makers (illustrative).','info');}},
+{part:1,src:'Chapter 11 · Fanout service',run(L){
+  L.h(L.kick('learn','What you just saw')+'<h1 class="q">The book’s pros and cons</h1>'+
+   L.lanes([['arrow','Push','<span style="color:var(--ok)">+ Feeds are made in real time and pushed to friends at once.<br>+ Fetching the feed is fast: it was built at write time.</span><br><span style="color:var(--no)">− A user with many friends makes fetching the friend list and filling all those feeds slow: the '+L.g('hotkey','hotkey problem')+'.<br>− Work done for inactive users is wasted.</span>',1],
+            ['down','Pull','<span style="color:var(--ok)">+ No work is wasted on people who rarely log in.<br>+ Nothing is pushed to friends, so there’s no hotkey problem.</span><br><span style="color:var(--no)">− Fetching the feed is slow: nothing was built in advance.</span>',2]]));
   L.done();}},
 {part:1,src:'Chapter 11 · Fanout service',pts:1,
- solve:async L=>{const g=L.$('#md').children;g[0].click();g[1].click();},
+ solve:async L=>{L.$('#p9').children[0].click();for(let i=0;i<150&&!L.$('#p9d');i++)await L.sleep(30);},
  run(L){
-  const F=[['Ben',1],['Cleo',1],['Dev',1],['Eli',0],['Fay',1],['Gus',0]];const seen=new Set();
-  const R=[{w:'6 feed writes, 2 of them for people who haven’t logged in for months',r:'1 quick read of Ben’s ready-made list',c:'ok'},
-           {w:'1 write, to Mira’s own list of posts',r:'fetch recent posts from all 120 makers Ben follows, then merge and sort',c:'no'}];
-  L.h(L.kick('pr','Try both models')+'<h1 class="q">Mira posts a quilt. Then Ben opens the app. Run it both ways.</h1><div id="md"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0 6px"><div class="small" style="margin-bottom:8px">Mira’s 6 followers (grey = inactive for months)</div><div id="fl"></div><div id="out" class="small" style="margin-top:8px">Pick a model above.</div></div><div id="mq"></div>');
-  const drawF=(m)=>{L.$('#fl').innerHTML=F.map(f=>'<span class="chip static'+(m===0?' ok':'')+'" style="'+(f[1]?'':'opacity:.45')+'">'+(m===0?L.ic('check'):L.ic('person'))+f[0]+(m===0&&!f[1]?' · wasted':'')+'</span>').join('');};drawF(-1);
-  ['Fanout on write (push)','Fanout on read (pull)'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'down':'arrow')+n;b.onclick=()=>{[...L.$('#md').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);drawF(j);
-    L.$('#out').innerHTML='<b>When Mira posts:</b> '+R[j].w+'.<br><b>When Ben opens the app:</b> <span style="color:var(--'+R[j].c+')">'+R[j].r+'</span>.';
-    if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Now scale it up: Yusuf has 3 million followers. Which model makes <i>Yusuf’s</i> posts expensive?</h2>';
-      L.mc(q,['Fanout on write: 3 million feed writes per post','Fanout on read: 3 million reads per post'],0,
-       'Pushing one post into 3 million feeds is slow and heavy. That’s the hotkey problem.',
-       'With pull, Yusuf’s post is written once; followers fetch it when they open the app. It’s push that copies it 3 million times: the hotkey problem.');}};L.$('#md').appendChild(b);});}},
-{part:1,src:'Chapter 11 · Fanout service',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">The hybrid: push for most, pull for celebrities</h1>');
-  L.beats(L.card,[
-   ['The book’s pick','Fast feeds matter most, so use <b>push for the majority</b> of users. For celebrities and users with huge followings, followers <b>pull</b> their posts on demand.'],
-   ['Mira posts','Mira has 300 followers. Mira’s post is pushed into 300 feed caches. Cheap and instant.'],
-   ['Yusuf posts','Yusuf has 3 million followers. Yusuf’s post is <b>not</b> pushed. It waits in Yusuf’s own post list.'],
-   ['Ben opens the app','Ben’s ready-made feed loads from cache. Because Ben follows Yusuf, the service also pulls Yusuf’s latest posts and merges them in.'],
-   ['Hana’s extra','The book adds that '+L.g('consistent-hashing','consistent hashing')+' helps with hot keys by spreading requests and data more evenly across servers.']],
-   'Most posts are pushed so feeds load fast; a few celebrity posts are pulled at read time to avoid overload.');}},
-{part:1,src:'Chapter 11 · Fanout service',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What is the hotkey problem?</h1>');
-  L.mc(L.card,['A user with many friends makes push fanout slow','A popular post gets too many likes to count','The feed cache runs out of space for old posts'],0,
-   'Fetching a huge friend list and writing into every feed takes a long time. That one “hot” user overloads the system.',
-   'The book’s hotkey problem is about fanout: a user with very many friends or followers makes pushing each post slow and heavy.');}},
-{part:1,src:'Chapter 11 · Fanout service',pts:6,run(L){
-  L.h(L.kick('pr','Sort the trade-offs')+'<h1 class="q">Is each statement true of fanout on write or fanout on read?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['On write (push)','On read (pull)'],[
-   ['The feed is already built when you open the app',0,'Push builds feeds at write time, so reading is a lookup.'],
-   ['No work is wasted on people who rarely log in',1,'Pull only builds a feed when someone asks for it.'],
-   ['Posting is slow for someone with millions of followers',0,'That’s the hotkey problem, and it comes from pushing.'],
-   ['Opening the feed is slow because nothing is ready',1,'Pull does the work while you wait.'],
-   ['Friends get the post in real time',0,'Push delivers the post into feeds immediately.'],
-   ['There is no hotkey problem',1,'Nothing is pushed to friends, so a big friend list costs nothing at write time.']],
-   'Push: fast reads and real-time, but hotkeys and waste. Pull: no waste and no hotkeys, but slow reads. The hybrid takes the best of each.');}},
-{part:1,src:'Chapter 11 · Fanout service',pts:4,run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Still under push, <b>Yusuf</b> (3 million followers) posts a new bowl. Which number explodes?</h1>'+NFCSS+'<div class="opts" id="p9"></div><div id="c9"></div>');
+  const f=Fan(L,L.$('#c9'),{id:'p9f',models:['push'],acts:[],cache:false});
+  f.log('Pick your prediction to run it.','info');
+  ['Feed writes for that one post','Ben’s fetches when opening the app','Neither: push handles it like Mira’s post'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      const r=await f.post('yusuf');if(!r)return;await L.sleep(300);const o=await f.openFeed();if(!o)return;
+      f.log('<b>Yusuf’s post: '+nfn(r.writes)+' feed writes</b>, '+nfn(r.waste)+' of them wasted, far past the overload line. <b>Ben’s open: '+o.f+' fetch.</b> Push moved all the cost to post time.','no');
+      const ok=j===0;L.award(ok);L.$('#c9').insertAdjacentHTML('beforeend','<span id="p9d"></span>');
+      L.sheet(ok?'ok':'no',ok?'Right: 3 million writes':'It was the feed writes',
+        'One post became <b>3,000,000 feed writes</b>, after fetching a 3-million-entry follower list, and about a million of those went to inactive followers. Ben’s open stayed at <b>1 fetch</b>. This is the book’s '+L.g('hotkey','hotkey problem')+': one very connected user overloads push.');L.done();};
+    L.$('#p9').appendChild(b);});}},
+{part:1,src:'Chapter 11 · Fanout service',
+ solve:async L=>{const f=L.fan;for(const a of ['mira','yusuf','open']){L.$('#h1-'+a).click();await f.idle();}},
+ run(L){
+  L.h(L.kick('ex','The book’s pick')+'<h1 class="q">The hybrid: push for most makers, pull for celebrities</h1>'+NFCSS+
+   L.prose('Fast feeds matter most, so push for most users. For celebrities, followers pull posts on demand. For this first run the cutoff is 1 million followers, a trial value (illustrative: the book gives no cutoff). You’ll pick Kitebird’s real cutoff in the challenge.')+'<div id="h1"></div>');
+  const seen=new Set();
+  const f=L.fan=Fan(L,L.$('#h1'),{id:'h1',models:['hybrid'],mode:'hybrid',thrIdx:4,on:e=>{
+    seen.add(e.type==='open'?'open':e.who);
+    if(seen.size===3&&!L.h1done){L.h1done=true;
+      L.sheet('info','Best of both','Mira’s post was <b>pushed</b>: 300 writes, and Mira’s followers’ feeds are ready. Yusuf’s post was <b>pulled</b>: no fanout storm. Ben’s open costs 1 read of the cache plus 1 pull from Yusuf, merged newest first. The book adds that '+L.g('consistent-hashing','consistent hashing')+' also helps with hot keys by spreading requests and data more evenly across servers.');L.done();}}});
+  L.h1done=false;f.log('Mira is under the cutoff (push). Yusuf is over it (pull). Try <b>Mira posts</b>, <b>Yusuf posts</b> and <b>Ben opens the app</b>.','info');}},
+{part:1,src:'Chapter 11 · Fanout service',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#lm'+j).click();await L.sleep(40);await L.fan.idle();}},
+ run(L){
+  L.h(L.kick('pr','Find the limits')+'<h1 class="q">Where does each model break? Run all four cases.</h1>'+NFCSS+'<div class="nf-row" id="lm"></div><div class="small" style="margin-top:4px">Or set the model and buttons yourself:</div><div id="c11"></div>');
+  const f=L.fan=Fan(L,L.$('#c11'),{id:'lf',models:['push','pull','hybrid'],acts:['mira','yusuf','open']});
+  const C=[
+   ['Yusuf posts under push',{mode:'push',inact:'third',follows:120,thrIdx:4},'yusuf','<b>Push breaks on celebrities.</b> 3 million writes for one post: the hotkey problem. The more followers, the longer the fanout takes.'],
+   ['Most followers inactive',{mode:'push',inact:'most',follows:120,thrIdx:4},'mira','<b>Push wastes work on people who never look.</b> If 9 in 10 of Mira’s followers rarely log in, 270 of 300 writes are wasted. Pull would waste nothing.'],
+   ['Ben follows 5,000 makers under pull',{mode:'pull',inact:'third',follows:5000,thrIdx:4},'open','<b>Pull breaks on big follow lists.</b> Ben’s open has to fetch from 5,000 makers and merge the results while Ben waits. Slow reads are pull’s one big con.'],
+   ['Hybrid cutoff set very low',{mode:'hybrid',inact:'third',follows:120,thrIdx:0},'open','<b>A hybrid is only as good as its cutoff.</b> Pull everyone over 100 followers (illustrative) and most makers Ben follows are pulled: 93 of 120, so 93 pulls plus the cache read, 94 fetches on every open. The hybrid has slid back into pull.']];
+  const done=new Set();
+  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.id='lm'+j;b.textContent=c[0];
+    b.onclick=async()=>{if(f.S.busy)return;[...L.$('#lm').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');f.set(c[1]);
+      const r=c[2]==='open'?await f.openFeed():await f.post(c[2]);if(!r)return;f.log(c[3],'no');done.add(j);b.classList.add('ok');
+      if(done.size===4&&!L.lmdone){L.lmdone=true;L.sheet('info','Every model has a breaking point','Push breaks on <b>huge followings</b> (hotkeys) and wastes work on <b>inactive users</b>. Pull breaks on <b>big follow lists</b> (slow reads). The hybrid avoids both only if the cutoff sits in the right place. No model is free.');L.done();}};
+    L.$('#lm').appendChild(b);});
+  L.lmdone=false;f.log('Tap a case. You can also change the model, the cutoff and the buttons yourself.','info');}},
+{part:1,src:'Chapter 11 · Fanout service',pts:1,
+ solve:async L=>{L.$('#ch-m-hybrid').click();nfSetRange(L,'ch-t',3);L.$('#chk').click();},
+ run(L){
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Hana sets two targets for Ben’s feed. Pick a model and cutoff that meets both.</h1>'+NFCSS+
+   '<div id="c13"></div><div class="nf-tgt" id="tg"></div><button class="btn pri" id="chk" style="margin-top:6px">'+L.ic('check')+'Check my design</button>');
+  let tries=0;
+  const f=Fan(L,L.$('#c13'),{id:'ch',models:['push','pull','hybrid'],thr:true,acts:[],cache:false,meters:false,on:()=>upd()});
+  function st(){const mw=f.maxWrite(),fe=f.fetches();return {mw,fe,a:mw<=NF.LIMIT,b:fe<=5};}
+  function upd(){const s=st(),row=(lab,v,ok,tg)=>'<div><b>'+lab+'</b><span class="'+(ok?'y':'n')+'">'+v+'</span></div><div class="small" style="display:block;margin:-2px 0 6px">'+tg+'</div>';
+    L.$('#tg').innerHTML=row('Biggest post to push',nfn(s.mw)+' writes',s.a,'target: at most 100,000 writes per post')+row('Ben opens the feed',nfn(s.fe)+' fetch'+(s.fe===1?'':'es'),s.b,'target: at most 5 fetches')+
+      '<div class="small" style="display:block">Ben follows 120 makers: Yusuf (3M), a yarn shop (240,000) and smaller makers. Mix and targets are illustrative.</div>';}
+  upd();f.log('Pick a model (and a cutoff for the hybrid). The panel below scores the worst case live.','info');
+  L.$('#chk').onclick=()=>{const s=st();tries++;if(tries===1)L.award(s.a&&s.b);
+    if(s.a&&s.b){L.sheet('ok',tries===1?'Both targets met':'Got it','<b>Hybrid with a 100,000 cutoff</b>: the yarn shop and Yusuf are pulled (2 pulls + 1 cache read = 3 fetches), and nobody pushed has more than 100,000 followers. Raise the cutoff and the yarn shop’s posts blow the write budget; lower it and Ben’s open needs too many pulls. That balance is the whole hybrid.');L.done();}
+    else L.sheet('no','Not yet',s.a?'Writes are fine, but Ben’s open needs '+nfn(s.fe)+' fetches. Fewer makers should be pulled: try the hybrid with a higher cutoff.':'Some maker’s post would cost '+nfn(s.mw)+' writes. Big makers need to be pulled: try the hybrid and move the cutoff down.');};}},
+{part:1,src:'Chapter 11 · Fanout service',pts:5,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Kitebird uses the hybrid. How is this author’s post delivered?',['Pushed into feeds','Pulled by followers'],[
-   ['Mira, a quilter with 300 followers, posts a finished quilt.',0,'An ordinary following: push keeps Mira’s followers’ feeds fast.'],
-   ['Yusuf, with 3 million followers, posts a new bowl.',1,'A celebrity: followers pull Yusuf’s posts on demand to avoid overload.'],
+  L.quick(L.$('#qk'),'Kitebird’s hybrid pulls makers with more than 100,000 followers (your illustrative cutoff). Is this post pushed or pulled?',['Pushed into feeds','Pulled by followers'],[
+   ['Mira, a quilter with 300 followers, posts a finished quilt.',0,'An ordinary following: pushing keeps Mira’s followers’ feeds ready.'],
+   ['Yusuf, with 3 million followers, posts a new bowl.',1,'A celebrity: followers pull Yusuf’s posts at read time to avoid overload.'],
    ['A brand-new maker with 12 followers posts a first sweater.',0,'Tiny fanout, so push it.'],
-   ['A craft-supply brand with 1.5 million followers posts a sale.',1,'Huge following: let followers pull it at read time.']]);}},
+   ['The yarn shop with 240,000 followers posts a sale.',1,'Over the cutoff, so its followers pull it on demand.'],
+   ['A spoon carver with 60,000 followers posts a new spoon.',0,'Under the cutoff: 60,000 writes is within the budget, so push.']]);}},
 
-/* ---------- PART 3: PUBLISHING ---------- */
-{part:2,src:'Chapter 11 · Feed publishing deep dive',run(L){
-  L.h(L.kick('learn','Inside the publishing flow')+'<h1 class="q">Guards at the door, then five fanout steps</h1>'+
-   L.prose('<b>Web servers</b> enforce authentication (only signed-in users with a valid auth token can post) and rate limiting (a cap on posts per period, to stop spam). Then the fanout service runs:')+
-   L.list([['Get friend IDs','From a '+L.g('graph-db','graph database')+', which suits friend relationships.'],
-     ['Get friend info and filter','From the user cache. Drop friends who muted the author, or who the post isn’t shared with.'],
-     ['Queue it','Send the friend list and the new post ID to a '+L.g('message-queue','message queue')+'.'],
-     ['Workers pick it up','Fanout workers take the job from the queue.'],
-     ['Store IDs in the feed cache','Each friend’s feed gets a <b>&lt;post_id, user_id&gt;</b> pair.']],2)+
-   L.note('<b>Only IDs, with a size limit.</b> Storing full posts and user objects would use huge memory. Most people only read the latest posts, so a capped list rarely misses.','layers'));
-  L.done();}},
-{part:2,src:'Chapter 11 · Fanout service',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Mira posts “Log cabin quilt, finally done!”</h1>');
-  L.beats(L.card,[
-   ['At the door','Mira’s app sends POST /v1/me/feed with the auth token. Valid, and Mira is far under the posting limit.'],
-   ['1 · Friend IDs','The graph database returns Mira’s 300 followers.'],
-   ['2 · Filter','The user cache shows Dev has <b>muted</b> Mira, so Dev is dropped. Mira also chose not to share this one with work colleagues, so they’re dropped too. 287 remain.'],
-   ['3 · Queue','The list of 287 and post ID p981 go into the message queue.'],
-   ['4–5 · Workers','Fanout workers write <b>&lt;p981, Mira&gt;</b> to the front of 287 feed caches. Each list is capped, so the oldest entry falls off the end.']],
-   'Check the request, find who should see it, filter by settings, queue it, and store just IDs.');}},
+/* ---------- PART 3: INSIDE FANOUT ---------- */
+{part:2,src:'Chapter 11 · Feed publishing deep dive',
+ solve:async L=>{for(let i=0;i<8&&L.$('#fsn');i++){L.$('#fsn').click();await L.sleep(30);}},
+ run(L){
+  L.h(L.kick('ex','Step through it')+'<h1 class="q">Follow Mira’s quilt post through the publishing flow</h1>'+NFCSS+
+   '<div id="fs"></div><div class="nf-cap" id="fsv" aria-live="polite"></div><button class="btn pri" id="fsn" style="margin-top:6px">'+L.ic('play')+'Start</button>');
+  const ST=[
+   ['Web servers: the door','Mira’s POST carries a valid auth token, so it’s allowed. A '+L.g('rate-limit','rate limit')+' caps how many posts a user can make in a period, to stop spam and abuse. Mira is far under it.'],
+   ['1 · Get friend IDs','From a '+L.g('graph-db','graph database')+', which suits friend relationships. It returns Mira’s 300 follower IDs.'],
+   ['2 · Get friend info, filter','From the user cache. Dev <b>muted</b> Mira, so Dev is dropped. Mira shared this post with quilting friends only, hiding it from 12 work colleagues. 287 remain.'],
+   ['3 · Queue it','The 287 follower IDs and post ID p981 go into a '+L.g('message-queue','message queue')+'.'],
+   ['4 · Fanout workers','Workers take the job from the queue and do the writing.'],
+   ['5 · Store IDs in the feed cache','Each of the 287 feed caches gets <b>&lt;p981, u7&gt;</b>: just a post ID and a user ID, nothing else.']];
+  let k=-1;
+  const chips=(state)=>{const n=[['Ben',0],['Cleo',0],['Dev','m'],['Eli',0],['Fay',0],['Gus',0]];
+    return '<div class="nf-fl">'+n.map(c=>{const x=state>=2&&c[1]==='m';return '<span class="'+(x?'x':state>=5?'ok':'')+'">'+c[0]+(x?' · muted':state>=5?' · p981':'')+'</span>';}).join('')+
+      (state>=2?'<span class="x">12 colleagues · hidden</span><span'+(state>=5?' class="ok"':'')+'>+282 more'+(state>=5?' · p981':'')+'</span>':'<span>+294 more</span>')+'</div>';};
+  function vis(){
+    if(k===0)return '<div class="nf-job"><span class="w">'+L.ic('lock')+'auth token ✓</span><span class="w">'+L.ic('clock')+'rate limit ✓</span></div>';
+    if(k===1)return '<b>300 follower IDs</b>'+chips(1);
+    if(k===2)return '<b>287 after filtering</b>'+chips(2);
+    if(k===3)return '<div class="nf-job"><span>Message queue:</span><span class="q1">job · p981 + 287 IDs</span></div>';
+    if(k===4)return '<div class="nf-job"><span class="q1" style="opacity:.5">queue empty</span>'+L.ic('arrow')+'<span class="w">worker</span><span class="w">worker</span><span class="w">worker</span></div>';
+    return '<b>287 feed caches updated</b>'+chips(5)+'<div class="small">Only IDs, never whole posts or profiles, and each cache keeps a limited number of entries.</div>';}
+  function draw(){
+    L.$('#fs').innerHTML=ST.map((s,j)=>'<div class="nf-st'+(j===k?' on':j<k?' past':'')+'"><span class="n">'+(j===0?L.ic('shield'):j)+'</span><div><b>'+s[0]+'</b>'+(j===k?'<small>'+s[1]+'</small>':'')+'</div></div>').join('');
+    L.$('#fsv').innerHTML=k<0?'Mira taps “post” on “Log cabin quilt, finally done!”. Tap <b>Start</b>.':vis();}
+  draw();
+  L.$('#fsn').onclick=function(){k++;draw();this.innerHTML=L.ic('play')+'Next step';
+    if(k===ST.length-1){this.remove();
+      L.sheet('info','Why only IDs, and why a limit','Storing whole user and post objects in every feed would make memory use huge, so the cache holds only <b>&lt;post_id, user_id&gt;</b> pairs. A configurable size limit keeps it small: few people scroll through thousands of posts, and most only want the latest, so the cache rarely misses.');L.done();}};}},
+{part:2,src:'Chapter 11 · Fanout service',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#ec'+j).click();await L.sleep(40);await L.fan.idle();}},
+ run(L){
+  L.h(L.kick('pr','Find the limits')+'<h1 class="q">Three cases where a push doesn’t reach every feed the normal way. Run each.</h1>'+NFCSS+'<div class="nf-row" id="ec"></div><div id="c15"></div>');
+  const f=L.fan=Fan(L,L.$('#c15'),{id:'ef',models:['hybrid'],mode:'hybrid',acts:['mira'],meters:false});
+  const full=[['p979','u41'],['p975','u41'],['p971','u7'],['p968','u88'],['p960','u7']];
+  const C=[
+   ['Dev muted Mira',{muted:true,hidden:false},'<b>Filtered before the queue.</b> Dev still follows Mira, but step 2 drops Dev, so 299 writes go out and Mira’s post never enters Dev’s feed.'],
+   ['Mira hides a post from Cleo',{muted:false,hidden:true},'<b>Selective sharing is filtered too.</b> Mira shared this post with some people only, so Cleo is dropped before the queue.'],
+   ['Ben’s feed cache is full',{muted:false,hidden:false},'<b>The size limit drops the oldest ID.</b> &lt;p960, u7&gt; fell off the end. If Ben ever scrolls that far, it’s a cache miss, which is rare: most people only read the latest posts.']];
+  const done=new Set();
+  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.id='ec'+j;b.textContent=c[0];
+    b.onclick=async()=>{if(f.S.busy)return;[...L.$('#ec').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');
+      f.set(Object.assign({cache:(j===2?full:[['p975','u41'],['p971','u7'],['p968','u88']]).map(x=>x.slice())},c[1]));
+      const r=await f.post('mira');if(!r)return;f.log(c[2],'ok');done.add(j);b.classList.add('ok');
+      if(done.size===3&&!L.ecdone){L.ecdone=true;L.sheet('info','The fanout service decides who gets what','Settings are checked <b>before</b> anything is queued, so muted and hidden followers cost no writes at all. And every feed cache has a limit, so old IDs quietly fall off the end.');L.done();}};
+    L.$('#ec').appendChild(b);});
+  L.ecdone=false;f.log('Tap a case. Watch the red crosses and Ben’s cache list below.','info');}},
 {part:2,src:'Chapter 11 · Fanout service',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Dev still follows Mira but muted Mira. What happens to Mira’s new post?</h1>');
-  L.mc(L.card,['It goes into Dev’s feed but is shown greyed out','It is filtered out, so it skips Dev’s feed','It is pulled into Dev’s feed on opening the app'],1,
-   'Step 2 filters friends by user settings. Muted means Mira’s posts don’t show up, even though they’re still connected.',
-   'The fanout service filters by settings before queueing. A mute means the post never goes into Dev’s feed.');}},
-{part:2,src:'Chapter 11 · Fanout service',pts:1,run(L){
-  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Order the fanout service’s five steps.</h1>');
+  L.h(L.kick('try','Put it in order')+'<h1 class="q">Order the fanout service’s five steps.</h1>');
   L.order(L.card,['Fetch friend IDs from the graph database','Get friend info from the user cache and filter by settings','Send the friend list and post ID to the message queue','Fanout workers fetch the job from the queue','Store <post_id, user_id> in the news feed cache'],
    'Find who, filter who, queue it, let workers write it, store only IDs.');}},
 {part:2,src:'Chapter 11 · Fanout service',pts:1,run(L){
@@ -171,36 +515,40 @@ Course.lesson({
    [['Full objects would make memory use huge. The book stores only IDs.'],['Friend links live in the graph database. Feed entries live in the news feed cache.'],['Without a limit, memory keeps growing. The book sets a configurable cap.'],['It’s the other way round: most people only read the newest content, so the miss rate stays low.']],
    'IDs only, a capped list, and a low miss rate because people read the newest posts.');}},
 
-/* ---------- PART 4: READING ---------- */
-{part:3,src:'Chapter 11 · Newsfeed retrieval deep dive',run(L){
-  L.h(L.kick('learn','Reading the feed')+'<h1 class="q">A list of IDs isn’t a feed yet</h1>'+
-   L.list([['Request','The app sends GET /v1/me/feed. The load balancer passes it to web servers, which call the news feed service.'],
-     ['Get IDs','The news feed service reads the list of post IDs from the news feed cache.'],
-     ['Hydrate','A feed needs names, profile pictures, post text and images. The service fetches full user and post objects from the <b>user cache</b> and <b>post cache</b>. The book calls the result a fully '+L.g('hydrate','hydrated')+' feed.'],
-     ['Return','The hydrated feed goes back as JSON for the app to show.']],3)+
-   L.note('Images and videos are stored on a '+L.g('cdn','CDN')+' for fast retrieval.','eye'));
-  L.done();}},
+/* ---------- PART 4: READING THE FEED ---------- */
 {part:3,src:'Chapter 11 · Newsfeed retrieval deep dive',
- solve:async L=>{L.$('#fu').click();L.$('#fp').click();},
+ solve:async L=>{L.$('#hy-get').click();for(let i=0;i<100&&L.$('#hy-u').disabled;i++)await L.sleep(30);L.$('#hy-u').click();L.$('#hy-p').click();L.$('#hy-c').click();},
  run(L){
-  const P=[['p981','u7'],['p977','u3'],['p960','u7']],U={u7:'Mira Okafor',u3:'Yusuf Kalla'},T={p981:'Log cabin quilt, finally done!',p977:'New walnut bowl, 6 hours on the lathe',p960:'Which binding for a baby quilt?'};let gu=false,gp=false;
-  L.h(L.kick('ex','Hydrate Ben’s feed')+'<h1 class="q">The news feed cache gives Ben’s feed as bare IDs. Fill it in.</h1><div id="cards"></div>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><button class="btn" id="fu">'+L.ic('person')+'Fetch from user cache</button><button class="btn" id="fp">'+L.ic('box')+'Fetch from post cache</button></div>');
-  const draw=()=>{L.$('#cards').innerHTML=P.map(p=>'<div class="rung" style="margin-bottom:8px"><small>'+p[0]+' · '+p[1]+'</small>'+(gu?'<b>'+U[p[1]]+'</b> '+L.ic('person'):'<span class="small">who? ···</span>')+'<div>'+(gp?T[p[0]]+' <span class="small">(photo from CDN)</span>':'<span class="small">what? ···</span>')+'</div></div>').join('');
-    if(gu&&gp){L.sheet('info','Fully hydrated','Three IDs became three readable posts: names from the user cache, text from the post cache, photos from the CDN. Storing only IDs keeps the feed cache small; hydrating at read time fills in the rest.');L.done();}};draw();
-  L.$('#fu').onclick=function(){gu=true;this.disabled=true;draw();};
-  L.$('#fp').onclick=function(){gp=true;this.disabled=true;draw();};}},
+  const P=[['p982','u3','Yusuf Kalla','YK','h4','New walnut bowl, 6 hours on the lathe','pulled at read time'],['p981','u7','Mira Okafor','MO','h1','Log cabin quilt, finally done!',''],['p975','u41','Fay','F','h2','First dovetail joint. Not bad!','']];
+  const got={g:false,u:false,p:false,c:false};
+  L.h(L.kick('ex','Hydrate Ben’s feed')+'<h1 class="q">A list of IDs isn’t a feed yet. Build Ben’s screen.</h1>'+NFCSS+
+   '<div class="nf-row"><button class="btn pri" id="hy-get">'+L.ic('eye')+'GET /v1/me/feed</button><button class="btn" id="hy-u" disabled>'+L.ic('person')+'User cache</button><button class="btn" id="hy-p" disabled>'+L.ic('box')+'Post cache</button><button class="btn" id="hy-c" disabled>'+L.ic('layers')+'CDN</button></div>'+
+   '<div class="nf-cap" id="hy-cap" aria-live="polite">Ben opens the app. Send the request.</div><div class="nf-ph"><div class="bar"></div><div id="hy-f"><div class="small" style="text-align:center;padding:30px 0">Loading…</div></div></div>');
+  function draw(){if(!got.g)return;
+    L.$('#hy-f').innerHTML=P.map(p=>'<div class="nf-pc"><div class="id">&lt;'+p[0]+', '+p[1]+'&gt;'+(p[6]?' · '+p[6]:'')+'</div>'+
+      '<div class="who">'+(got.u?'<span class="nf-av" style="background:var(--'+p[4]+'-bg);color:var(--'+p[4]+')">'+p[3]+'</span>'+p[2]:'<span class="nf-av" style="background:var(--soft2)"></span><span class="nf-gh" style="width:90px"></span>')+'</div>'+
+      '<div class="nf-tx">'+(got.p?p[5]:'<span class="nf-gh" style="width:80%"></span>')+'</div>'+
+      '<div class="nf-im" style="background:'+(got.c?'var(--'+p[4]+'-bg);color:var(--'+p[4]+')':'var(--soft)')+'">'+(got.c?L.ic('eye')+'&nbsp;photo from the CDN':'')+'</div></div>').join('');}
+  function check(){if(got.u&&got.p&&got.c&&!L.hydone){L.hydone=true;L.$('#hy-cap').innerHTML='Fully hydrated. The news feed service returns it to Ben’s app as <b>JSON</b>.';
+    L.sheet('info','Fully hydrated','The news feed cache gave only IDs. Names and profile pictures came from the <b>user cache</b>, post text from the <b>post cache</b>, and images and videos from a '+L.g('cdn','CDN')+' for fast retrieval. The book calls the result a fully '+L.g('hydrate','hydrated')+' feed.');L.done();}}
+  L.hydone=false;
+  L.$('#hy-get').onclick=async function(){this.disabled=true;
+    const seq=['Load balancer → web servers → <b>news feed service</b>…','The news feed service reads Ben’s post IDs from the <b>news feed cache</b>, and merges in Yusuf’s latest post, pulled because Yusuf is over the cutoff…'];
+    for(const s of seq){if(!L.$('#hy-cap'))return;L.$('#hy-cap').innerHTML=s;await L.sleep(550);}
+    if(!L.$('#hy-cap'))return;got.g=true;draw();L.$('#hy-cap').innerHTML='Just IDs: nothing a person could read. Fetch the rest, in any order.';['u','p','c'].forEach(x=>L.$('#hy-'+x).disabled=false);};
+  [['u','Names and profile pictures filled in from the <b>user cache</b>.'],['p','Post text filled in from the <b>post cache</b>.'],['c','Photos loaded from the <b>CDN</b>.']].forEach(a=>{
+    L.$('#hy-'+a[0]).onclick=function(){this.disabled=true;got[a[0]]=true;draw();L.$('#hy-cap').innerHTML=a[1];check();};});}},
 {part:3,src:'Chapter 11 · Cache architecture',run(L){
-  L.h(L.kick('learn','Five cache layers')+'<h1 class="q">The book splits the cache into five layers</h1>'+
-   L.tiers([['list','News feed','The IDs of each user’s feed.'],
-     ['box','Content','Every post’s data. Popular posts sit in a <b>hot cache</b>.'],
-     ['tree','Social graph','Who is connected to whom.'],
-     ['pointer','Action','Whether a user liked, replied to or otherwise acted on a post.'],
-     ['star','Counters','Counts of likes, replies, followers and following.']])+
-   '<p class="small">Caching is extremely important for a news feed, says the book.</p>');
-  L.done();}},
+  L.h(L.kick('learn','Five cache layers')+'<h1 class="q">Caching is extremely important here. The book splits it into five layers. Tap each one.</h1><div id="fl5"></div>');
+  L.flips(L.$('#fl5'),[
+   ['News feed','The IDs of each user’s feed. Ben’s list of &lt;post_id, user_id&gt; pairs lives here.'],
+   ['Content','Every post’s data. Popular posts sit in a hot cache.'],
+   ['Social graph','Who is connected to whom: the makers Ben follows.'],
+   ['Action','Whether a user liked, replied to or otherwise acted on a post.'],
+   ['Counters','Counts of likes, replies, followers and following.']],
+   'IDs, content, connections, actions and counts: each kept in its own layer.');}},
 {part:3,src:'Chapter 11 · Newsfeed retrieval deep dive',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben’s feed shows Yusuf’s new walnut bowl video. Where does the video itself come from?</h1>');
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben’s feed shows Yusuf’s walnut bowl video. Where does the video itself come from?</h1>');
   L.mc(L.card,['The news feed cache','The graph database','The CDN'],2,
    'Media is stored on a CDN for fast retrieval. The feed cache only holds IDs.',
    'The news feed cache holds only IDs, and the graph database holds connections. Images and videos come from the <b>CDN</b>.');}},
@@ -216,17 +564,17 @@ Course.lesson({
    'IDs, content, connections, actions and counts: five layers, each cached separately.');}},
 {part:3,src:'Chapter 11 · Step 4 - Wrap up',run(L){
   L.h(L.kick('learn','Wrap up')+'<h1 class="q">If time is left: talk about scaling</h1>'+
-   L.prose('The book stresses there is no perfect design, only trade-offs that fit a company’s limits. With minutes to spare, list scaling talking points:')+
+   L.prose('The book stresses there is no perfect design, only trade-offs that fit a company’s constraints. With minutes to spare, list scaling talking points:')+
    L.lanes([['layers','Scaling the database','Vertical vs horizontal scaling · SQL vs NoSQL · primary and replicas (the book says master-slave) · read replicas · consistency models · '+L.g('sharding','sharding'),3],
-            ['list','Everything else','Keep the web tier '+L.g('stateless','stateless')+' · cache as much as you can · several data centers · decouple parts with message queues · monitor peak QPS and feed refresh latency',4]])+
+            ['list','Everything else','Keep the web tier '+L.g('stateless','stateless')+' · cache as much as you can · support several data centers · loosely couple parts with message queues · monitor peak QPS and feed refresh latency',4]])+
    L.note('<b>Beyond the book:</b> real feeds are usually ranked, not purely newest-first, and feed APIs return results a page at a time.','info'));
   L.done();}},
 {part:3,src:'Chapter 11 · Step 4 - Wrap up',pts:4,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Tamsin’s curveballs',['Hybrid fanout','Filter by settings','Hydrate from caches','Rate limit at web servers'],[
+  L.quick(L.$('#qk'),'Tamsin’s curveballs. Which part of the design answers each one?',['Hybrid fanout','Filter by settings','Hydrate from caches','Rate limit at web servers'],[
    ['“Yusuf posts. Do 3 million feed writes happen?”',0,'No. Celebrities’ posts are pulled by followers at read time.'],
    ['“A bot posts 500 times a minute and every post fans out.”',3,'Web servers cap how many posts a user can make in a period.'],
-   ['“The feed cache only holds IDs. How does Ben see names and photos?”',2,'The news feed service fills in users and posts from their caches.'],
+   ['“The feed cache only holds IDs. How does Ben see names and photos?”',2,'The news feed service fills in users and posts from their caches; media comes from the CDN.'],
    ['“Dev muted Mira. Why doesn’t Mira’s quilt show up for Dev?”',1,'Fanout drops friends based on their settings before queueing.']]);}}
   ]
 });

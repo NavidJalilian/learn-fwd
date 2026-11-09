@@ -263,6 +263,11 @@ function lesson(cfg){
     const n=parseInt(e.key,10);if(n>=1&&n<=9){const opts=$$('.opts');const box=opts[opts.length-1];if(box){const b=box.children[n-1];if(b&&b.getAttribute('aria-disabled')!=='true')b.click();}}
   });
 
+  /* ---- debug hooks for tools/shots.mjs: open screen n, then solve it ---- */
+  Course.goto=n=>{i=Math.max(0,Math.min(steps.length-1,n));go();return steps.length;};
+  Course.solveHere=async()=>{const st=steps[i];if(ready)return true;if(st.solve)await st.solve(L);else{const fns=solvers.slice();solvers=[];for(const f of fns)await f();}
+    for(let w=0;w<80&&!ready;w++){await sleep(50);if(!ready&&solvers.length){const fns=solvers.slice();solvers=[];for(const f of fns)await f();}}return ready;};
+
   /* ---- autoplay: solves every screen, checks full score. Run Course.autoplay() ---- */
   Course.autoplay=async function(){
     const log=[];i=0;score=0;streak=0;answered=0;correctN=0;go();

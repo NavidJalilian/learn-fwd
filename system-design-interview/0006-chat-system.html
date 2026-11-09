@@ -13,11 +13,252 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0006 only. Two hands-on models reused across the lesson:
+   1. Seq  – a vertical sequence diagram: Ben’s phone, the chat server(s),
+             Mira’s phone; time runs down. Polling, long polling, WebSocket.
+   2. Beat – a heartbeat time strip: Ben’s phone on a train, draggable
+             tunnels, the timeout x, and the green dot Mira sees.
+   Smaller one-screen visuals: one big box, same-millisecond IDs, the
+   1-on-1 route, multi-device sync, group fanout.
+   ===================================================================== */
+const CX='<style>'+
+ '.cx svg{width:100%;display:block}.cx svg text{font-family:var(--sans)}'+
+ '.cx-row{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.cx-row .chip{margin:0;min-height:40px;padding:7px 10px;font-size:14px}.cx-row .btn{min-height:42px}'+
+ '.cx-lbl{font-size:13px;color:var(--muted);margin:10px 0 2px;font-weight:600}'+
+ '.cx-rng{display:grid;grid-template-columns:1fr auto;gap:0 10px;align-items:center;font-size:14.5px;margin:8px 0 2px}'+
+ '.cx-rng input{grid-column:1/3;width:100%;accent-color:var(--pri);height:32px;margin:0}.cx-rng b{font-variant-numeric:tabular-nums}'+
+ '.cx-rng input:disabled{opacity:.4}'+
+ '.cx-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0 4px}'+
+ '.cx-stat{background:var(--soft);border-radius:12px;padding:8px 4px;text-align:center;min-width:0}'+
+ '.cx-stat b{display:block;font-size:19px;font-variant-numeric:tabular-nums}.cx-stat span{font-size:12px;color:var(--muted);line-height:1.25;display:block}'+
+ '.cx-ill{font-size:12.5px;color:var(--muted);margin:4px 0 0;line-height:1.45}'+
+ '.cx-cap{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:44px}'+
+ '.cx-cap .stp{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.cx-tasks{list-style:none;margin:8px 0;padding:0}.cx-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.cx-tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none}'+
+ '.cx-tasks li.done{color:var(--ok)}.cx-tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.cx-tbl{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}.cx-tbl td,.cx-tbl th{padding:6px 4px;border-bottom:1px solid var(--line);text-align:left}.cx-tbl th{font-size:12.5px;color:var(--muted);font-weight:600}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '.cx-ph{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}'+
+ '.cx-pc{border:2px solid var(--line);border-radius:14px;padding:7px 6px;min-width:0;font-size:13px;line-height:1.35}.cx-pc>b{display:block;font-size:12.5px;color:var(--muted);margin-bottom:4px}'+
+ '.cx-bub{border-radius:10px;padding:5px 6px;margin:4px 0;background:var(--soft)}.cx-bub.B{background:var(--h1-bg)}.cx-bub.C{background:var(--h2-bg)}.cx-bub small{display:block;color:var(--muted);font-size:11.5px}'+
+ '.cx-pc.bad{border-color:var(--no-line)}.cx-pc.good{border-color:var(--ok-line)}'+
+ '.cx-msgs{display:flex;flex-direction:column;gap:5px;margin:6px 0}'+
+ '.cx-m{display:grid;grid-template-columns:44px 52px 1fr;gap:6px;align-items:center;text-align:left;border:2px solid var(--line);border-radius:12px;padding:7px 9px;background:var(--card);font-size:14px;min-height:40px;color:var(--ink)}'+
+ '.cx-m b{font-variant-numeric:tabular-nums}.cx-m span{color:var(--muted);font-size:12.5px}.cx-m.sel{border-color:var(--pri);background:var(--pri-bg)}'+
+ '.cx-m.ok{border-color:var(--ok-line);background:var(--ok-bg)}.cx-m.no{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.cx-dev{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0}.cx-dv{background:var(--soft);border-radius:14px;padding:9px 10px;font-size:13.5px;min-width:0}.cx-dv b{display:block;font-size:14.5px}.cx-dv .bm{font-variant-numeric:tabular-nums;font-weight:700;color:var(--pri-deep)}'+
+ '.cx-grid{display:grid;grid-template-columns:repeat(20,1fr);gap:2px;margin:6px 0}.cx-grid i{display:block;aspect-ratio:1;border-radius:3px;background:var(--line)}'+
+ '.cx-mt{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:14px;margin:8px 0}.cx-mt b{font-variant-numeric:tabular-nums}.cx-bar{grid-column:1/3;height:12px;border-radius:6px;background:var(--soft);overflow:hidden}.cx-bar i{display:block;height:100%;border-radius:6px;transition:width .25s}'+
+ '</style>';
+const NS='http://www.w3.org/2000/svg';
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+const fmt=n=>n.toLocaleString('en-US');
+function arrow(x1,y1,x2,y2,st,head){
+  let s='<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="'+st+'"/>';
+  if(head){const a=Math.atan2(y2-y1,x2-x1),h=7,p=(d)=>(x2-h*Math.cos(a+d)).toFixed(1)+','+(y2-h*Math.sin(a+d)).toFixed(1);
+    s+='<polygon points="'+x2+','+y2+' '+p(.42)+' '+p(-.42)+'" style="fill:'+head+'"/>';}
+  return s;
+}
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input'));}
+function rng(id,label,min,max,val,step){return '<div class="cx-rng"><label for="'+id+'" id="'+id+'-l">'+label+'</label><b id="'+id+'-v"></b><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'"></div>';}
+function tasks(id,list){return '<ul class="cx-tasks" id="'+id+'">'+list.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span>'+t+'</li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li)li.classList.add('done');}
+function chipRow(L,host,names,fn,sel){names.forEach((n,j)=>{const b=document.createElement('button');b.className='chip'+(j===sel?' sel':'');b.textContent=n;b.onclick=()=>{[...host.children].forEach(x=>x.classList.toggle('sel',x===b));fn(j,b);};host.appendChild(b);});}
+
+/* ---------- 1. Sequence diagram: how Mira’s phone hears about Ben’s messages ---------- */
+const HOP=.3,TW=40;
+const RATE={quiet:[23],chatty:[6,17,29],busy:[3,7,10,15,19,24,31,36]};
+const RATES=['quiet','chatty','busy'],RATE_N=['Quiet','Chatty','Busy'];
+const MODES=['poll','long','ws'],MODE_N=['Polling','Long polling','WebSocket'];
+function seqRun(o){
+  const iv=o.mode==='poll'?o.ivPoll:o.ivLong;
+  const msgs=(o.msgs||RATE[o.rate]).map((t,k)=>({k,t,at:t+HOP,got:null,lost:false}));
+  const req=[];
+  if(o.mode==='poll'){
+    for(let t=0;t<400;t+=iv){
+      if(o.dies!=null&&t>=o.dies)break;
+      const arr=t+HOP,it=msgs.filter(m=>m.got==null&&m.at<=arr);
+      it.forEach(m=>{m.got=arr+HOP;});
+      req.push({t0:t,t1:arr,t2:arr+HOP,it:it.map(m=>m.k),srv:0});
+      if(t>=TW&&msgs.every(m=>m.got!=null))break;
+    }
+  }else if(o.mode==='long'){
+    let t=0,n=0;
+    while(t<400){
+      if(o.dies!=null&&t>=o.dies)break;
+      const srv=o.servers===2?(n+1)%2:0,arr=t+HOP,can=srv===0;
+      const pend=can?msgs.filter(m=>m.got==null&&m.at<=arr+iv):[];
+      const resp=pend.length?Math.max(arr,Math.min(...pend.map(m=>m.at))):arr+iv;
+      const it=can?msgs.filter(m=>m.got==null&&m.at<=resp):[];
+      const dead=o.dies!=null&&resp+HOP>o.dies;
+      it.forEach(m=>{if(dead){m.lost=true;m.got=-1;}else m.got=resp+HOP;});
+      req.push({t0:t,t1:arr,t2:resp+HOP,it:it.map(m=>m.k),srv,dead,hold:true});
+      if(dead)break;
+      t=resp+HOP+.1;n++;
+      if(t>=TW&&msgs.every(m=>m.got!=null))break;
+    }
+  }else{
+    req.push({t0:0,t1:HOP,t2:2*HOP,it:[],hand:true,srv:0});
+    msgs.forEach(m=>{m.got=m.at+HOP;});
+  }
+  const inW=req.filter(r=>r.t0<TW),dl=msgs.filter(m=>m.got>0);
+  return {msgs,req,iv,nReq:inW.length,nEmpty:inW.filter(r=>!r.hand&&!r.it.length&&!r.dead).length,
+    avg:dl.length?dl.reduce((a,m)=>a+m.got-m.t,0)/dl.length:null,
+    never:msgs.filter(m=>!(m.got>0)).length,late:msgs.filter(m=>m.got>TW).length};
+}
+function Seq(L,host,o){
+  o=Object.assign({id:'q',mode:'poll',ivPoll:5,ivLong:20,rate:'chatty',servers:1,dies:null,msgs:null,ctl:true,rates:true,hide:false,on:()=>{}},o||{});
+  const ID=o.id;let now=TW,R=null,busy=false;
+  host.insertAdjacentHTML('beforeend','<div class="cx">'+
+    (o.ctl?'<div class="cx-lbl">How Mira’s phone gets new messages</div><div class="cx-row" id="'+ID+'-m"></div>'+rng(ID+'-iv','',1,30,5)+
+      (o.rates?'<div class="cx-lbl">How much Ben sends</div><div class="cx-row" id="'+ID+'-r"></div>':''):'')+
+    '<div id="'+ID+'-box"'+(o.hide?' hidden':'')+'><svg id="'+ID+'-svg" viewBox="0 0 320 342" role="img" aria-label="Sequence diagram. Ben’s phone on the left sends, the chat server is in the middle, Mira’s phone on the right receives. Time runs down the page, 0 to 40 seconds."></svg>'+
+    '<div class="cx-stats" id="'+ID+'-st" aria-live="polite"></div><p class="cx-ill" id="'+ID+'-ill"></p></div></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  const BX=40,MX=292,SX=()=>o.servers===2?[132,210]:[166];
+  const Y=t=>44+t*7.2,V=9;
+  function draw(){
+    if(!svg.isConnected)return;
+    const sx=SX(),ws=o.mode==='ws',lim=Math.min(now,TW);let s='';
+    s+=tx(4,15,'Ben’s phone','font-size:12.5px;font-weight:700;fill:var(--h1)')+tx(4,29,'sends','font-size:11px;fill:var(--muted)');
+    s+=tx(316,15,'Mira’s phone','font-size:12.5px;font-weight:700;fill:var(--h2);text-anchor:end')+tx(316,29,'receives','font-size:11px;fill:var(--muted);text-anchor:end');
+    sx.forEach((x,j)=>{s+=tx(x,15,o.servers===2?'Server '+(j+1):'Chat server','font-size:12.5px;font-weight:700;fill:var(--ink);text-anchor:middle');});
+    if(ws&&lim>HOP){s+='<rect x="'+sx[0]+'" y="'+Y(HOP)+'" width="'+(MX-sx[0])+'" height="'+(Y(lim)-Y(HOP))+'" style="fill:var(--h2-bg)"/>';
+      s+='<rect x="'+BX+'" y="'+Y(HOP)+'" width="'+(sx[0]-BX)+'" height="'+(Y(lim)-Y(HOP))+'" style="fill:var(--h1-bg)"/>';
+      if(lim>4)s+=tx((sx[0]+MX)/2,Y(3.2),'WebSocket open','font-size:11px;font-weight:700;fill:var(--h2);text-anchor:middle')+tx((sx[0]+BX)/2+8,Y(3.2),'WebSocket','font-size:11px;font-weight:700;fill:var(--h1);text-anchor:middle');}
+    [BX,...sx,MX].forEach((x,j)=>{const dead=x===MX&&o.dies!=null;
+      s+='<line x1="'+x+'" y1="36" x2="'+x+'" y2="'+(dead?Y(o.dies):Y(TW)+2)+'" style="stroke:var(--line2);stroke-width:2"/>';
+      if(dead)s+='<line x1="'+x+'" y1="'+Y(o.dies)+'" x2="'+x+'" y2="'+(Y(TW)+2)+'" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:3 4"/>';});
+    for(let t=0;t<=TW;t+=10)s+=tx(BX-8,Y(t)+4,t+' s','font-size:11px;fill:var(--muted);text-anchor:end');
+    if(o.dies!=null&&now>=o.dies){s+='<path d="M'+(MX-6)+' '+(Y(o.dies)-6)+'l12 12m0 -12l-12 12" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>'+tx(MX-10,Y(o.dies)+4,'phone dies','font-size:11px;font-weight:700;fill:var(--no);text-anchor:end');}
+    R.msgs.forEach(m=>{if(m.t>lim)return;const to=sx[0];
+      s+=arrow(BX,Y(m.t),to,Y(m.t)+V,'stroke:var(--h1);stroke-width:2.2','var(--h1)');
+      s+='<circle cx="'+BX+'" cy="'+Y(m.t)+'" r="7" style="fill:var(--h1)"/>'+tx(BX,Y(m.t)+4,m.k+1,'font-size:11px;font-weight:700;fill:var(--card);text-anchor:middle');});
+    R.req.forEach(r=>{if(r.t0>lim||r.t0>=TW)return;const x=sx[r.srv];
+      s+=arrow(MX,Y(r.t0),x,Y(r.t0)+V,'stroke:var(--muted);stroke-width:1.3',r.hand?'var(--muted)':null);
+      if(r.hand&&lim>=r.t1){s+=tx(MX-6,Y(r.t0)-3,'open (HTTP upgrade)','font-size:11px;fill:var(--muted);text-anchor:end');return;}
+      const re=r.t2-HOP;
+      if(r.hold&&lim>r.t1){const e=Math.min(lim,re,TW);s+='<rect x="'+(x-4)+'" y="'+(Y(r.t0)+V)+'" width="8" height="'+Math.max(1,Y(e)-Y(r.t0)-V)+'" rx="3" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.2"/>';}
+      if(lim>=re&&re<TW){
+        if(r.dead)s+=arrow(x,Y(re),MX-14,Y(re)+V,'stroke:var(--no);stroke-width:2;stroke-dasharray:4 3',null)+'<path d="M'+(MX-18)+' '+(Y(re)+V-5)+'l9 9m0 -9l-9 9" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>';
+        else if(r.it.length)s+=arrow(x,Y(re),MX-6,Y(re)+V,'stroke:var(--ok-strong);stroke-width:2.6','var(--ok-strong)');
+        else s+=arrow(x,Y(re),MX,Y(re)+V,'stroke:var(--muted);stroke-width:1.3;stroke-dasharray:3 3',null);}});
+    if(ws)R.msgs.forEach(m=>{if(m.at>lim)return;s+=arrow(sx[0],Y(m.at),MX-6,Y(m.at)+V,'stroke:var(--ok-strong);stroke-width:2.6','var(--ok-strong)');});
+    R.msgs.forEach(m=>{if(!(m.got>0)||m.got>lim||m.got>TW)return;const d=m.got-m.t;
+      const dy=Y(m.got-HOP)+V;s+='<circle cx="'+MX+'" cy="'+dy+'" r="7" style="fill:var(--ok-strong)"/>'+tx(MX,dy+4,m.k+1,'font-size:11px;font-weight:700;fill:var(--card);text-anchor:middle');
+      s+=tx(MX-6,dy+17,'+'+d.toFixed(1)+' s','font-size:11px;font-weight:700;fill:var(--ok);text-anchor:end');});
+    if(now<TW)s+='<line x1="0" y1="'+Y(now)+'" x2="320" y2="'+Y(now)+'" style="stroke:var(--pri);stroke-width:1.5;stroke-dasharray:5 4"/>';
+    svg.innerHTML=s;
+  }
+  function stats(){
+    const el=$('#'+ID+'-st');if(!el)return;
+    const w=R.avg==null?'—':R.avg.toFixed(1)+' s';
+    el.innerHTML='<div class="cx-stat"><b>'+R.nReq+'</b><span>'+(o.mode==='ws'?'connection opened':'requests by Mira’s phone')+'</span></div>'+
+      '<div class="cx-stat"><b>'+R.nEmpty+'</b><span>empty answers (“nothing new”)</span></div>'+
+      '<div class="cx-stat"><b>'+w+'</b><span>average wait until Mira sees a message</span></div>';
+    const ms=(o.msgs||RATE[o.rate]);
+    $('#'+ID+'-ill').innerHTML='Illustrative timings: a 40-second window, 0.3 s per network hop, Ben sends at '+ms.join(', ')+' s.'+
+      (R.never?' <span class="no-t">'+R.never+' message'+(R.never>1?'s':'')+' never reach'+(R.never>1?'':'es')+' Mira.</span>':R.late?' <span class="no-t">'+R.late+' still waiting at 40 s.</span>':'');
+  }
+  function ctl(){
+    if(!o.ctl)return;
+    const i=$('#'+ID+'-iv'),lb=$('#'+ID+'-iv-l'),v=$('#'+ID+'-iv-v');
+    if(o.mode==='poll'){i.disabled=false;i.min=1;i.max=20;i.value=o.ivPoll;lb.textContent='Mira’s phone asks every';v.textContent=o.ivPoll+' s';}
+    else if(o.mode==='long'){i.disabled=false;i.min=5;i.max=30;i.value=o.ivLong;lb.textContent='Time limit for each held request';v.textContent=o.ivLong+' s';}
+    else{i.disabled=true;lb.textContent='No timer: the server pushes';v.textContent='—';}
+    [...$('#'+ID+'-m').children].forEach((b,j)=>b.classList.toggle('sel',MODES[j]===o.mode));
+    if(o.rates)[...$('#'+ID+'-r').children].forEach((b,j)=>b.classList.toggle('sel',RATES[j]===o.rate));
+  }
+  function set(p,why){Object.assign(o,p||{});R=seqRun(o);now=TW;ctl();draw();stats();o.on(Object.assign({why},R,{mode:o.mode,iv:R.iv,rate:o.rate}));}
+  if(o.ctl){
+    MODES.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=MODE_N[j];b.onclick=()=>{if(!busy)set({mode:m,dies:null,servers:1},'mode');};$('#'+ID+'-m').appendChild(b);});
+    if(o.rates)RATES.forEach((r,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=RATE_N[j];b.onclick=()=>{if(!busy)set({rate:r,msgs:null,dies:null,servers:1},'rate');};$('#'+ID+'-r').appendChild(b);});
+    $('#'+ID+'-iv').oninput=e=>{if(busy)return;const v=+e.target.value;set(o.mode==='poll'?{ivPoll:v,dies:null,servers:1}:{ivLong:v,dies:null,servers:1},'iv');};
+  }
+  async function play(ms){
+    if(busy)return;busy=true;$('#'+ID+'-box').hidden=false;ms=ms||2200;const t0=performance.now();
+    await new Promise(res=>{(function st(){if(!svg.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/ms);now=p*TW;draw();if(p<1)setTimeout(st,30);else res();})();});
+    busy=false;now=TW;draw();
+  }
+  set();
+  return {o,set,play,get R(){return R;},show(){$('#'+ID+'-box').hidden=false;}};
+}
+
+/* ---------- 2. Heartbeat strip: Ben’s train ride and the green dot ---------- */
+const BW=120,BTX=t=>14+t*2.5;
+function Beat(L,host,o){
+  o=Object.assign({id:'h',x:30,tun:[{a:40,len:12}],dies:null,logout:null,drag:false,naive:true,on:()=>{}},o||{});
+  const ID=o.id;let now=BW,drag=null,C=null;
+  host.insertAdjacentHTML('beforeend','<div class="cx"><svg id="'+ID+'-svg" role="img" aria-label="Time strip, 0 to 120 seconds: Ben’s signal with tunnels, the heartbeats Ben’s phone sends every 5 seconds, and the online dot Mira sees."></svg><div class="cx-cap" id="'+ID+'-rd" aria-live="polite"></div></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  const sig=t=>!((o.dies!=null&&t>=o.dies)||(o.logout!=null&&t>=o.logout)||o.tun.some(u=>t>=u.a&&t<u.a+u.len));
+  function calc(){
+    const hb=[];for(let t=0;t<=BW;t+=5)hb.push({t,ok:sig(t)});
+    const rec=hb.filter(h=>h.ok).map(h=>h.t),S=.25,nv=[],hs=[];
+    for(let i=0;i<=BW/S;i++){const t=i*S;nv.push(sig(t));let on;
+      if(o.logout!=null&&t>=o.logout)on=false;else{let last=-1;for(const r of rec){if(r<=t)last=r;else break;}on=last>=0&&t-last<=o.x;}hs.push(on);}
+    const ch=a=>a.reduce((n,v,i)=>n+(i&&v!==a[i-1]?1:0),0);
+    let greyAt=null;if(o.dies!=null){for(let i=0;i<hs.length;i++){if(i*S>=o.dies&&!hs[i]){greyAt=i*S;break;}}}
+    let wrong=0;hs.forEach((v,i)=>{if(!v&&nv[i])wrong+=S;});
+    let tunGrey=false;o.tun.forEach(u=>{for(let i=0;i<hs.length;i++){const t=i*S;if(t>=u.a&&t<u.a+u.len+5&&!hs[i]&&!(o.dies!=null&&t>=o.dies))tunGrey=true;}});
+    C={hb,nv,hs,S,nChg:ch(nv),hChg:ch(hs),greyAt,noticed:greyAt==null?null:Math.round(greyAt-o.dies),wrong,tunGrey};
+  }
+  const rowY=o.naive?{hl:62,dot:73,nl:91,nb:96,hl2:127,hb:132,ax:163,H:168}:{hl:62,dot:73,hl2:91,hb:96,ax:127,H:132};
+  function bar(arr,y,h){let s='',st=0;const S=C.S;
+    for(let i=1;i<=arr.length;i++){if(i===arr.length||arr[i]!==arr[st]){const a=st*S,b=Math.min(i*S,BW);
+        const e=Math.min(b,now);if(e>a)s+='<rect x="'+BTX(a)+'" y="'+y+'" width="'+(BTX(e)-BTX(a))+'" height="'+h+'" style="fill:'+(arr[st]?'var(--ok-strong)':'var(--muted);opacity:.45')+'"/>';st=i;}}
+    if(now<BW)s+='<rect x="'+BTX(now)+'" y="'+y+'" width="'+(BTX(BW)-BTX(now))+'" height="'+h+'" style="fill:var(--soft)"/>';
+    return s;}
+  function draw(){
+    if(!svg.isConnected)return;
+    const Y=rowY;svg.setAttribute('viewBox','0 0 320 '+Y.H);let s='';
+    s+=tx(14,12,'Ben’s phone signal'+(o.drag?' · drag the tunnel':''),'font-size:12px;font-weight:700;fill:var(--ink)');
+    s+='<rect x="'+BTX(0)+'" y="18" width="'+(BTX(BW)-BTX(0))+'" height="28" rx="6" style="fill:var(--ok-bg)"/>';
+    if(o.dies!=null)s+='<rect x="'+BTX(o.dies)+'" y="18" width="'+(BTX(BW)-BTX(o.dies))+'" height="28" style="fill:var(--soft2)"/>'+(BW-o.dies>26?tx((BTX(o.dies)+BTX(BW))/2,36,'phone dead','font-size:11.5px;font-weight:700;fill:var(--no);text-anchor:middle'):'');
+    if(o.logout!=null)s+='<rect x="'+BTX(o.logout)+'" y="18" width="'+(BTX(BW)-BTX(o.logout))+'" height="28" style="fill:var(--soft2)"/>'+tx((BTX(o.logout)+BTX(BW))/2,36,'logged out','font-size:11.5px;font-weight:700;fill:var(--muted);text-anchor:middle');
+    o.tun.forEach((u,i)=>{const x=BTX(u.a),w=u.len*2.5;
+      s+='<g data-u="'+i+'"'+(o.drag?' tabindex="0" role="slider" aria-label="Tunnel start, seconds. Arrow keys move it." aria-valuemin="0" aria-valuemax="'+(BW-u.len)+'" aria-valuenow="'+u.a+'" style="cursor:grab;touch-action:none;outline:none"':'')+'>'+
+        '<rect x="'+x+'" y="'+(o.drag?14:18)+'" width="'+w+'" height="'+(o.drag?36:28)+'" rx="5" style="fill:var(--muted)'+(o.drag?';stroke:var(--pri);stroke-width:2':'')+'"/>'+
+        (w>=34?tx(x+w/2,36,'tunnel','font-size:11.5px;font-weight:700;fill:var(--card);text-anchor:middle'):'')+'</g>';});
+    s+=tx(14,Y.hl,'Heartbeats, every 5 s','font-size:12px;font-weight:700;fill:var(--ink)');
+    C.hb.forEach(h=>{if(h.t>now)return;s+=h.ok?'<circle cx="'+BTX(h.t)+'" cy="'+Y.dot+'" r="3.8" style="fill:var(--pri)"/>':'<circle cx="'+BTX(h.t)+'" cy="'+Y.dot+'" r="3.4" style="fill:none;stroke:var(--no);stroke-width:1.6"/>';});
+    if(o.naive){s+=tx(14,Y.nl,'Naive dot: offline on every drop','font-size:12px;font-weight:700;fill:var(--ink)')+bar(C.nv,Y.nb,14);}
+    s+=tx(14,Y.hl2,'Heartbeat dot: offline after x = '+o.x+' s of silence','font-size:12px;font-weight:700;fill:var(--ink)')+bar(C.hs,Y.hb,14);
+    [0,30,60,90,120].forEach(t=>{s+=tx(BTX(t),Y.ax,t+' s','font-size:11px;fill:var(--muted);text-anchor:'+(t===0?'start':t===BW?'end':'middle'));});
+    if(now<BW)s+='<line x1="'+BTX(now)+'" y1="16" x2="'+BTX(now)+'" y2="'+(Y.hb+16)+'" style="stroke:var(--pri);stroke-width:1.6"/>';
+    const f=document.activeElement&&document.activeElement.closest&&document.activeElement.closest('#'+ID+'-svg [data-u]');const fi=f?f.dataset.u:null;
+    svg.innerHTML=s;if(fi!=null){const g=svg.querySelector('[data-u="'+fi+'"]');if(g)g.focus();}
+  }
+  function read(){
+    const el=$('#'+ID+'-rd');if(!el)return;
+    if(now<BW){const i=Math.floor(now/C.S),on=C.hs[i];el.innerHTML='<span class="stp">Ben’s dot on Mira’s screen at '+Math.round(now)+' s</span>'+(on?'<span class="ok-t">● online</span>':'<span style="color:var(--muted);font-weight:700">● offline</span>');return;}
+    let h='<span class="stp">What Mira sees over 2 minutes</span>Ben’s dot changes: '+(o.naive?'naive <b>'+C.nChg+'</b> times · ':'')+'heartbeat <b>'+C.hChg+'</b> time'+(C.hChg===1?'':'s')+'.';
+    if(o.dies!=null)h+=' Phone dies at '+o.dies+' s: '+(C.greyAt==null?'<span class="no-t">the dot is still green at 120 s.</span>':'dot turns grey at '+Math.round(C.greyAt)+' s, <b>'+C.noticed+' s</b> later.');
+    if(o.logout!=null)h+=' Ben logs out at '+o.logout+' s: both dots go grey at once.';
+    el.innerHTML=h;
+  }
+  function upd(why){calc();draw();read();o.on(Object.assign({why},C));}
+  svg.addEventListener('pointerdown',e=>{const g=e.target.closest('[data-u]');if(!g||!o.drag)return;const i=+g.dataset.u,r=svg.getBoundingClientRect();
+    const tAt=cx=>((cx-r.left)/r.width*320-14)/2.5;drag={i,off:tAt(e.clientX)-o.tun[i].a,tAt};try{svg.setPointerCapture(e.pointerId);}catch(_){}e.preventDefault();});
+  svg.addEventListener('pointermove',e=>{if(!drag)return;const u=o.tun[drag.i];let a=Math.round(drag.tAt(e.clientX)-drag.off);a=Math.max(0,Math.min(BW-u.len,a));if(a!==u.a){u.a=a;upd('drag');}});
+  const end=()=>{drag=null;};svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
+  svg.addEventListener('keydown',e=>{const g=e.target.closest('[data-u]');if(!g||!o.drag)return;const d=e.key==='ArrowLeft'?-1:e.key==='ArrowRight'?1:0;if(!d)return;e.preventDefault();
+    const u=o.tun[+g.dataset.u];u.a=Math.max(0,Math.min(BW-u.len,u.a+d*(e.shiftKey?5:1)));upd('drag');});
+  async function play(ms){ms=ms||2400;const t0=performance.now();
+    await new Promise(res=>{(function st(){if(!svg.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/ms);now=p*BW;draw();read();if(p<1)setTimeout(st,30);else res();})();});
+    now=BW;draw();read();}
+  function set(p,why){Object.assign(o,p||{});upd(why);}
+  calc();
+  return {o,set,play,upd,get C(){return C;},hold(){now=0;draw();read();}};
+}
+
 Course.lesson({
-  id:'0006', title:'Design a chat system', minutes:22, icon:'chat',
-  goals:['Choose how a server pushes new messages to a phone, and say why','Pick storage and message IDs that keep chat history in order','Trace a message to one person, to a group and across devices, and show who’s online'],
-  parts:['Connections','The design','Storage','Flows and presence'],
-  read:'Read chapter 12 of the book for its sequence diagrams of polling, long polling, WebSocket and the message flows.',
+  id:'0006', title:'Design a chat system', minutes:25, icon:'chat',
+  goals:['Show why the server must push to the receiver, and why WebSocket beats polling and long polling','Lay out the services and storage, and pick message IDs that keep each chat in order','Trace a message to one person, across devices and to a group, and tune the heartbeat behind the green dot'],
+  parts:['Reaching the receiver','Servers and storage','Message flows','Who’s online'],
+  read:'Read chapter 12 of the book for its sequence diagrams of polling, long polling and WebSocket, and its figures of the message flows and the heartbeat.',
   glossary:{
     polling:'Polling: the app asks the server “anything new?” again and again on a timer, usually getting “no”.',
     'long-polling':'Long polling: the app asks “anything new?” and the server keeps the question open until there is a message or a time limit passes; then the app asks again.',
@@ -30,21 +271,21 @@ Course.lesson({
   },
   cheatsheet:[
     'Clients never talk directly; a chat service receives, relays, and <b>holds messages for offline users</b>.',
-    'Sending can use HTTP; receiving needs the server to push. <b>Polling</b> wastes requests, <b>long polling</b> has drawbacks, <b>WebSocket</b> is two-way and persistent: use it both ways.',
+    'Sending can use HTTP; receiving needs the server to reach the phone. <b>Polling</b> wastes requests and adds waiting, <b>long polling</b> still re-asks, can hit the wrong server and can’t tell when a phone is gone. <b>WebSocket</b> is two-way and persistent: use it both ways.',
     'Three kinds of service: <b>stateless</b> (login, profile, service discovery), <b>stateful</b> (chat servers), <b>third-party</b> (push). 1M connections × 10 KB ≈ 10 GB fits one box, but that box is a single point of failure.',
     'Profiles and friend lists in a relational DB; <b>chat history in a key-value store</b>. Group table key: (channel_id, message_id).',
     'Message IDs must be <b>unique and sortable by time</b>: a global snowflake ID or a simpler <b>local sequence per channel</b>. Not created_at.',
     '1-on-1 flow: chat server → ID generator → <b>message sync queue</b> → key-value store → online: forward to the recipient’s chat server; offline: push notification.',
     'Each device keeps <b>cur_max_message_id</b> and fetches anything newer. Small groups copy each message into every member’s inbox.',
-    'Presence: <b>heartbeat</b> (offline after x seconds of silence) and a <b>publish-subscribe</b> channel per friend pair; big groups fetch status on demand.'
+    'Presence: <b>heartbeat</b> (offline after x seconds of silence; too small flickers, too big hides real drops) and a <b>publish-subscribe</b> channel per friend pair; big groups fetch status on demand.'
   ],
   steps:[
-/* ---------- PART 1: CONNECTIONS ---------- */
+/* ---------- PART 1: REACHING THE RECEIVER ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mira sends Ben a message while Ben’s phone is switched off. What should happen to it?</h1>');
-  L.mc(L.card,['It’s dropped; Mira resends it later','The server holds it until Ben is back'],1,
-   'Exactly what the book asks of a chat service: receive messages, relay them to the right people, and hold them for anyone offline.',
-   'Nobody wants to resend. The book’s chat service holds the message on the server until the recipient comes online.');}},
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Ben sends Mira a message while Mira’s phone is switched off. What should happen to it?</h1>');
+  L.mc(L.card,['It’s dropped; Ben resends it later','The server holds it until Mira is back'],1,
+   'Exactly what the book asks of a chat service: receive messages, relay them to the right people, and hold them for anyone offline. Phones never talk to each other directly.',
+   'Nobody wants to resend. The book’s chat service holds the message on the server until the recipient comes online. Phones never talk to each other directly.');}},
 {part:0,src:'Chapter 12 · Step 1 - Understand the problem and establish design scope',run(L){
   L.h(L.kick('learn','The book’s interview')+'<h1 class="q">First, agree which chat app you’re designing</h1>'+
    L.prose('One-on-one apps, office group chat and gaming chat are very different problems. The candidate asks; the interviewer answers:')+
@@ -53,80 +294,130 @@ Course.lesson({
      ['Groups','At most 100 members.'],
      ['Features','1-on-1, group chat, an online indicator. Text only, under 100,000 characters. No end-to-end encryption for now.'],
      ['History','Kept forever.']],1)+
-   L.prose('The book adds two more: one account logged in on <b>several devices</b> at once, and <b>push notifications</b>. Clients never talk directly; each connects to a chat service that receives messages, relays them, and holds them for anyone offline.'));
-  L.done();}},
-{part:0,src:'Chapter 12 · Step 2 - Propose high-level design and get buy-in',run(L){
-  L.h(L.kick('learn','The receiver problem')+'<h1 class="q">Sending is easy. Receiving is the hard part.</h1>'+
-   L.prose('The sender can use plain HTTP: the app opens a connection and sends the message. A keep-alive header keeps that connection open, so it’s efficient.')+
-   L.prose('But HTTP is started by the client. How does the <i>server</i> start talking when a message arrives for Ben? Three techniques:')+
-   L.tiers([['cycle','Polling','The app asks “anything new?” on a timer. Mostly the answer is no, which wastes server resources.'],
-     ['clock','Long polling','The server holds the question open until a message arrives or a time limit passes. Drawbacks: the message may land on a different server than the one holding Ben’s request; the server can’t easily tell if Ben disconnected; quiet users still reconnect after every time limit.'],
-     ['arrow','WebSocket','Opened by the app, then kept open, and two-way. It starts as HTTP and is “upgraded”, and uses the usual web ports, so it generally works through firewalls.',true,'Chosen']])+
-   '<p class="small">WebSocket is two-way, so the book uses it for sending too. That makes the design simpler.</p>');
+   L.prose('The book adds two more: one account logged in on <b>several devices</b> at once, and <b>push notifications</b>.'));
   L.done();}},
 {part:0,src:'Chapter 12 · Step 2 - Propose high-level design and get buy-in',run(L){
   L.h(L.kick('ex','Kitebird design review')+'<h1 class="q">Tamsin opens the review of “Maker chat”</h1>');
   L.beats(L.card,[
    ['Tamsin','“What are we building, and how big is it?”'],
    ['You ask, Dario answers','1-on-1 messages between makers and <b>workshop groups</b> of up to 100. A green online dot. Phone and laptop in sync. Text only for now. History kept.'],
-   ['Lior’s idea','“Each app asks the server for new messages every second.” Tamsin: “For hundreds of thousands of open apps? Almost every answer is ‘no’.”'],
-   ['Your answer','Each app opens a <b>WebSocket</b> to a chat server and keeps it. The server pushes Ben’s messages the moment they arrive; Mira sends on the same connection.'],
-   ['Hana','“Does sign-up need a WebSocket too?” No: login, sign-up and profiles stay ordinary HTTP requests. Only chat needs the open line.']],
-   'WebSocket for the chat itself, both ways. Ordinary HTTP for everything else.');}},
-{part:0,src:'Chapter 12 · Long polling',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kitebird tries long polling. Mira’s message reaches chat server 1, but Ben’s waiting request sits on chat server 2. Which drawback is this?</h1>');
-  L.mc(L.card,['The server can’t tell when Ben disconnects','Sender and receiver may be on different servers','Quiet users keep reconnecting after time limits'],1,
-   'HTTP servers are usually stateless and traffic is spread round-robin, so the server with the message may not hold Ben’s connection.',
-   'The message and Ben’s waiting request are on two different servers. That’s the book’s first long-polling drawback.');}},
-{part:0,src:'Chapter 12 · WebSocket',pts:1,
- solve:async L=>{const g=L.$('#md').children;g[0].click();g[1].click();g[2].click();},
+   ['The hard part','Ben sends Mira “Got your walnut blank!”. Ben’s phone can start a request to the server. But Mira’s phone is just sitting there. How does the server reach it?'],
+   ['Lior’s idea','“Mira’s app asks the server for new messages every second.” Tamsin: “Show me what that costs, and what the other options cost, before we pick.”']],
+   'The real design question: how does the server reach the receiver? Next, you’ll try three answers on Ben and Mira’s chat.');}},
+{part:0,src:'Chapter 12 · Step 2 - Propose high-level design and get buy-in',run(L){
+  L.h(L.kick('learn','The receiver problem')+'<h1 class="q">Sending is easy. Receiving is the hard part.</h1>'+
+   L.prose('The sender can use plain HTTP: the app opens a connection and sends. A keep-alive header keeps that connection open, so it’s efficient. But HTTP is started by the client, so the server can’t easily start talking. Three ways around it:')+
+   L.tiers([['cycle','Polling','The app asks “anything new?” on a timer. Usually the answer is no.'],
+     ['clock','Long polling','The app asks, and the server holds the question open until a message arrives or a time limit passes. Then the app asks again.'],
+     ['arrow','WebSocket','Opened by the app, then kept open, and two-way. It starts as HTTP and is “upgraded”. It uses the usual web ports (80 and 443), so it generally works through firewalls.']]));
+  L.done();}},
+{part:0,src:'Chapter 12 · Polling',
+ solve:async L=>{const m=L.$('#e5-m').children;m[0].click();setRange(L,'e5-iv',2);m[1].click();m[2].click();},
  run(L){
-  /* 20 one-second cells; messages for Ben arrive at 7 s and 15 s */
-  const M=[
-   {n:'Polling every 2 s',c:i=>i%2===0?(i===8||i===16?'m':'r'):'',s:'<b>10 requests</b>, 8 answered “no”. Each message waited up to 2 seconds for the next ask.'},
-   {n:'Long polling',c:i=>(i===7||i===15)?'m':'h',s:'<b>3 requests</b>, each held open until a message came. No waiting, but a new request after every message or time limit, and it may hit the wrong server.'},
-   {n:'WebSocket',c:i=>(i===7||i===15)?'m':'o',s:'<b>1 connection</b>, opened once. Both messages pushed the moment they arrived, and Ben can send on it too.'}];
-  const seen=new Set();const col={r:'var(--line2)',m:'var(--ok-strong)',h:'var(--h3-bg)',o:'var(--h1-bg)','':'transparent'};
-  L.h(L.kick('pr','Compare all three')+'<h1 class="q">For 20 seconds, Ben waits for messages. Two arrive, at 7 s and 15 s. Tap each technique.</h1><div id="md"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0 6px"><div id="tl" style="display:flex;gap:2px;height:28px"></div><div class="small" style="display:flex;justify-content:space-between"><span>0 s</span><span>20 s</span></div><div id="out" class="small" style="margin-top:8px">Pick a technique above. Green = message delivered.</div></div><div id="mq"></div>');
-  const draw=j=>{L.$('#tl').innerHTML=Array.from({length:20},(_,i)=>{const k=j<0?'':M[j].c(i);return '<div style="flex:1;min-width:0;border-radius:4px;border:1px solid var(--line);background:'+col[k]+'"></div>';}).join('');};draw(-1);
-  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=m.n;b.onclick=()=>{[...L.$('#md').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);draw(j);L.$('#out').innerHTML=m.s;
-    if(seen.size===3&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Which should Maker chat use for sending and receiving?</h2>';
-      L.mc(q,['Polling every 2 seconds','Long polling','WebSocket'],2,
-       'One persistent, two-way connection: no wasted asks, no delay, and sending works on the same line.',
-       'Polling wastes requests and adds delay; long polling still reconnects and can land on the wrong server. The book picks <b>WebSocket</b>, for both directions.');}};L.$('#md').appendChild(b);});}},
+  const seen=new Set();let moved=false;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Ben sends Mira three messages. Try each technique and drag the timer. Watch the arrows, and the numbers under them.</h1>'+
+   tasks('e5t',['Try all three techniques','Change the timer, and watch the wait change'])+CX+'<div id="e5"></div>');
+  Seq(L,L.$('#e5'),{id:'e5',on:e=>{
+    if(e.why==='mode')seen.add(e.mode);if(e.why==='iv')moved=true;
+    if(seen.size===3)tick(L,'e5t',0);if(moved)tick(L,'e5t',1);
+    if(seen.size===3&&moved&&!L.$('#e5ok')){L.$('#e5t').insertAdjacentHTML('afterend','<span id="e5ok"></span>');
+      L.sheet('info','Three ways to reach Mira','<b>Polling</b> pays twice: most answers are “nothing new”, and each message waits for the next ask. <b>Long polling</b> cuts the wait, but Mira’s phone re-asks after every message and every time limit. <b>WebSocket</b> opens one connection and the server pushes the moment a message lands.');L.done();}}});}},
+{part:0,src:'Chapter 12 · Polling',pts:1,
+ solve:async L=>{L.$('#p6').children[1].click();for(let i=0;i<120&&!L.$('#p6ws');i++)await L.sleep(30);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Mira’s phone polls every <b>10 s</b>, starting at 0 s. Ben sends one message at <b>21 s</b>. Roughly how long until Mira sees it?</h1><div class="cx-row" id="p6"></div>'+CX+'<div id="p6s"></div><div id="p6x"></div>');
+  const q=Seq(L,L.$('#p6s'),{id:'q6',ctl:false,hide:true,mode:'poll',ivPoll:10,msgs:[21]});
+  ['Under 1 second','About 10 seconds','About 21 seconds'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');await q.play(2000);if(!L.$('#q6-svg'))return;
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: about 10 s':'It waited about 10 s','The message reached the server at 21.3 s, just after the poll at 20 s had come back empty. It sat there until the poll at 30 s: a 9.6-second wait. With polling, a message waits up to one full interval. Shorter intervals mean more empty asks.');
+      L.$('#p6x').innerHTML='<button class="btn pri" id="p6ws" style="margin-top:10px">'+L.ic('play')+'Replay with WebSocket</button>';
+      L.$('#p6ws').onclick=async function(){this.disabled=true;q.set({mode:'ws'});await q.play(1500);if(!L.$('#q6-svg'))return;this.remove();
+        L.$('#p6x').innerHTML='<div class="fb ok">Same message, same time. The server pushes it down the open connection the moment it lands: 0.6 s in all, one hop from Ben to the server and one push to Mira. No asks after the first.</div>';};
+      L.done();};L.$('#p6').appendChild(b);});}},
+{part:0,src:'Chapter 12 · Long polling',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#e7p'+j).click();await L.sleep(20);}},
+ run(L){
+  const seen=new Set();
+  const P=[['Poll every second',{mode:'poll',ivPoll:1,rate:'quiet',msgs:null,servers:1,dies:null},'Lior’s idea. <b>40 requests</b> in 40 seconds for one message, and 39 answers are “nothing new”. Faster polling cuts the wait, but every open app pays in requests, and the server answers them all.'],
+   ['Quiet user, long polling',{mode:'long',ivLong:10,rate:'quiet',msgs:null,servers:1,dies:null},'Ben sends just once, yet Mira’s phone still reconnects each time a held request hits its time limit: <b>4 of its 5 requests</b> bring back no message. The book: long polling is inefficient for users who don’t chat much.'],
+   ['Two chat servers',{mode:'long',ivLong:20,rate:'chatty',msgs:null,servers:2,dies:null},'HTTP servers are usually stateless, and a round-robin load balancer spreads requests. Ben’s messages land on server 1, but Mira’s held request sits on <b>server 2</b>, which has nothing to send. Here the messages wait until a later request happens to hit server 1.'],
+   ['Mira’s phone dies',{mode:'long',ivLong:20,rate:'chatty',msgs:null,servers:1,dies:12},'Mira’s phone dies at 12 s without a word. The server keeps holding the request and answers it at 17 s, into nothing. With long polling the server has <b>no good way to tell</b> the phone is gone.']];
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where do polling and long polling break? Run at least three cases.</h1><div class="cx-row" id="e7"></div>'+CX+'<div class="cx-cap" id="e7c"><span class="stp">Pick a case</span>Each one sets up the diagram below. You can still change the controls afterwards.</div><div id="e7s"></div>');
+  const q=Seq(L,L.$('#e7s'),{id:'q7',rates:false});
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e7p'+j;b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#e7').children].forEach(x=>x.classList.toggle('sel',x===b));q.set(p[1],'preset');L.$('#e7c').innerHTML='<span class="stp">'+p[0]+'</span>'+p[2];seen.add(j);b.classList.add('ok');
+      if(seen.size===3){L.sheet('info','The limits of faking a push','Polling buys speed with wasted requests. Long polling fixes the waste only while messages keep coming, and it brings two new problems: the message and the waiting request can sit on different servers, and a silent phone looks just like a quiet one. WebSocket removes the waste and the wrong-server problem, because one chat server holds one open, two-way connection to each phone. Spotting phones that vanish gets its own fix in part 4: the heartbeat.');L.done();}};
+    L.$('#e7').appendChild(b);});}},
+{part:0,src:'Chapter 12 · WebSocket',pts:1,
+ solve:async L=>{L.$('#c8-m').children[2].click();L.$('#c8go').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Tamsin’s targets for Maker chat: an <b>average wait under 1 s</b>, and <b>at most 3 requests</b> from Mira’s phone in 40 s. It must pass on a quiet, a chatty and a busy chat.</h1>'+
+   '<p class="cx-ill">Targets and timings are illustrative, set for this exercise.</p>'+CX+'<div id="c8"></div><button class="btn pri" id="c8go" style="margin-top:8px">'+L.ic('check')+'Test on all three chats</button><div id="c8r"></div>');
+  const q=Seq(L,L.$('#c8'),{id:'c8',mode:'poll',ivPoll:5,rates:false});
+  L.$('#c8go').onclick=()=>{
+    const rows=RATES.map((r,j)=>{const R=seqRun(Object.assign({},q.o,{rate:r,msgs:null,dies:null,servers:1}));const w=R.avg!=null&&R.avg<1&&!R.never,n=R.nReq<=3;return {n:RATE_N[j],R,ok:w&&n,w,nn:n};});
+    const pass=rows.every(x=>x.ok);
+    L.$('#c8r').innerHTML='<table class="cx-tbl"><tr><th>Chat</th><th>Requests</th><th>Average wait</th></tr>'+rows.map(x=>'<tr><td>'+x.n+'</td><td class="'+(x.nn?'ok-t':'no-t')+'">'+x.R.nReq+'</td><td class="'+(x.w?'ok-t':'no-t')+'">'+(x.R.avg==null?'—':x.R.avg.toFixed(1)+' s')+'</td></tr>').join('')+'</table>';
+    if(first){L.award(pass);first=false;}
+    if(pass)L.sheet('ok','Targets met','Only <b>WebSocket</b> passes everywhere: one connection, opened once, and each message pushed in a single hop. Because it’s two-way, the book uses it for <b>sending too</b>, which keeps the design simple. The cost: connections stay open, so the servers must manage them well.');
+    else L.sheet('no','Not on every chat','Polling fast enough for a 1-second wait makes about 40 requests. Long polling passes the quiet chat, but on busier chats it re-asks after every message. Which technique never re-asks?');
+    L.done();};}},
 
-/* ---------- PART 2: THE DESIGN ---------- */
+/* ---------- PART 2: SERVERS AND STORAGE ---------- */
 {part:1,src:'Chapter 12 · High-level design',run(L){
   L.h(L.kick('learn','Three kinds of service')+'<h1 class="q">Only one part of a chat app needs to remember who’s connected</h1>'+
-   L.list([['home','Stateless services','Login, sign-up, user profile: ordinary request and response behind a load balancer. Many can be bought rather than built. One matters a lot: '+L.g('service-discovery','service discovery')+', which tells the app which chat server to connect to.'],
+   L.list([['home','Stateless services','Login, sign-up, user profile: ordinary request and response behind a '+L.g('load-balancer','load balancer')+'. Many can be bought rather than built. One matters a lot: '+L.g('service-discovery','service discovery')+', which tells the app which chat server to connect to.'],
      ['lock','Stateful service','The <b>chat service</b>. Each app keeps a persistent connection to one chat server, and normally stays on it while that server is up.'],
      ['people','Third-party integration','<b>Push notifications</b>, the most important one: they tell people about new messages even when the app isn’t running.']],2)+
-   '<p class="small">Push notifications work as in the notification system lesson (Kitebird pings).</p>');
+   L.note('Hana asks: “Does sign-up need a WebSocket too?” No. Only chat needs the open line; everything else stays ordinary HTTP.','chat'));
   L.done();}},
-{part:1,src:'Chapter 12 · Scalability',run(L){
-  L.h(L.kick('learn','Could one server do it?')+'<h1 class="q">In theory yes. In an interview, never stop there.</h1>'+
-   L.prose('The book’s rough sum: 1 million users connected at once, about 10 KB of memory per connection, is about <b>10 GB</b>. One modern server could hold that.')+
-   L.prose('But a single-server design is a red flag, mostly because it’s a '+L.g('spof','single point of failure')+'. Starting with one server is fine, as long as you say it’s only a starting point. The adjusted design:')+
-   L.list([['chat','Chat servers','Send and receive messages over WebSockets.'],
-     ['eye','Presence servers','Manage online and offline status.'],
-     ['home','API servers','Login, sign-up, profile changes, everything else.'],
-     ['alert','Notification servers','Send push notifications.'],
-     ['layers','Key-value store','Keeps chat history, so someone coming online sees past messages.']],3));
-  L.done();}},
-{part:1,src:'Chapter 12 · Scalability',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Obi runs the numbers for Maker chat</h1>');
-  L.beats(L.card,[
-   ['The guess','Kitebird has 4 million daily users. Obi guesses at most <b>400,000</b> are connected to chat at the same moment.'],
-   ['The sum','400,000 × 10 KB ≈ <b>4 GB</b> of memory. One server could hold it.'],
-   ['Obi’s pager story','“Last year one box ran the whole forum. It died during a sale and took everything with it for an hour.”'],
-   ['The decision','Start the sketch with one chat server, say out loud it’s a starting point, then split into chat, presence, API and notification servers, plus a key-value store.']],
-   'The memory sum says one box is possible; the single point of failure says don’t.');}},
-{part:1,src:'Chapter 12 · Scalability',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The book’s numbers: 1 million connections at about 10 KB each. Roughly how much memory?</h1>');
-  L.mc(L.card,['About 1 GB','About 10 GB','About 100 GB'],1,
-   '1,000,000 × 10 KB = 10,000,000 KB, about 10 GB.',
-   '1,000,000 × 10 KB = 10,000,000 KB. A million KB is about a GB, so that’s about <b>10 GB</b>.');}},
+{part:1,src:'Chapter 12 · Scalability',
+ solve:async L=>{L.$('#b10a').click();await L.sleep(30);L.$('#b10b').click();await L.sleep(30);L.$('#b10c').click();for(let i=0;i<80&&!L.$('#b10ok');i++)await L.sleep(30);},
+ run(L){
+  let st='one',k=4,down=-1,moved=false;
+  L.h(L.kick('ex','Obi runs the numbers')+'<h1 class="q">Could one box hold every Maker chat connection? Slide, then try to break it.</h1>'+CX+
+   '<div class="cx">'+rng('b10n','Connected at the same moment',100000,2000000,400000,100000)+
+   '<svg id="b10s" viewBox="0 0 320 196" role="img" aria-label="Phones, one dot per 100,000 connections, linked to chat servers"></svg>'+
+   '<div class="cx-mt"><span>Memory for connections (≈ 10 KB each, a rough figure)</span><b id="b10m"></b><div class="cx-bar"><i id="b10b2"></i></div></div>'+
+   '<div class="cx-row" id="b10act"><button class="btn" id="b10a">'+L.ic('x')+'Pull the plug</button></div>'+
+   '<div class="cx-cap" id="b10c2" aria-live="polite"></div></div>');
+  const svg=L.$('#b10s');
+  function draw(){
+    const n=+L.$('#b10n').value;k=Math.round(n/100000);
+    L.$('#b10n-v').textContent=fmt(n);const gb=n*10/1e6;L.$('#b10m').textContent='≈ '+(gb%1?gb.toFixed(1):gb)+' GB';
+    const b=L.$('#b10b2');b.style.width=Math.min(100,gb/20*100)+'%';b.style.background='var(--h2)';
+    const four=st==='four'||st==='crash'||st==='moved';
+    const srv=four?[0,1,2,3].map(j=>({x:22+j*76,w:48,y:80,h:40,lab:'Chat '+(j+1)})):[{x:116,y:72,w:88,h:56,lab:'One server'}];
+    let s='';const dots=[];
+    if(!four){for(let i=0;i<k;i++){const a=Math.PI*(i+.5)/k*2-Math.PI/2;dots.push({x:160+Math.cos(a)*146,y:100+Math.sin(a)*86,to:0,dead:st==='dead'});}}
+    else{const g=[[],[],[],[]];for(let i=0;i<k;i++){let to=i%4;const dead=to===down&&!moved;if(to===down&&moved)to=[0,2,3][Math.floor(i/4)%3];g[to].push(dead);}
+      g.forEach((arr,j)=>{const cx=srv[j].x+srv[j].w/2;arr.forEach((dead,q)=>{const top=q%2===0,c=Math.floor(q/2),n=Math.ceil((arr.length-(top?0:1))/2),off=(c-(n-1)/2)*17;dots.push({x:cx+off,y:top?36:164,to:j,dead});});});}
+    dots.forEach(d=>{const v=srv[d.to];if(!d.dead)s+='<line x1="'+d.x+'" y1="'+d.y+'" x2="'+(v.x+v.w/2)+'" y2="'+(v.y+v.h/2)+'" style="stroke:var(--line2);stroke-width:1.2"/>';});
+    srv.forEach((v,j)=>{const isDown=(st==='dead')||(four&&j===down);
+      s+='<rect x="'+v.x+'" y="'+v.y+'" width="'+v.w+'" height="'+v.h+'" rx="9" style="fill:'+(isDown?'var(--no-bg)':'var(--h2-bg)')+';stroke:'+(isDown?'var(--no)':'var(--h2)')+';stroke-width:2"/>'+
+        tx(v.x+v.w/2,v.y+v.h/2+4,v.lab,'font-size:12px;font-weight:700;fill:'+(isDown?'var(--no)':'var(--h2)')+';text-anchor:middle');
+      if(isDown)s+='<path d="M'+(v.x+v.w/2-6)+' '+(v.y-18)+'l12 12m0 -12l-12 12" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>';});
+    dots.forEach(d=>{s+='<circle cx="'+d.x+'" cy="'+d.y+'" r="7" style="fill:'+(d.dead?'var(--line2)':'var(--h1)')+'"/>';});
+    s+=tx(160,194,'each dot = 100,000 open connections','font-size:11px;fill:var(--muted);text-anchor:middle');
+    svg.innerHTML=s;
+    const off=dots.filter(d=>d.dead).length*100000;
+    L.$('#b10c2').innerHTML=st==='one'?'<span class="stp">Book: 1 million × 10 KB ≈ 10 GB · Kitebird guess: ~400,000 ≈ 4 GB</span>One modern server could hold that in memory. Now press <b>Pull the plug</b>.':
+      st==='dead'?'<span class="stp">Single point of failure</span><span class="no-t">0 of '+fmt(n)+' connected.</span> Obi: “Last year one box ran the whole forum. It died during a sale and took everything with it for an hour.” Starting with one box is fine in an interview, as long as you say it’s only a starting point.':
+      st==='four'?'<span class="stp">The adjusted design</span><b>Chat servers</b> hold the WebSockets. Beside them: <b>presence servers</b> (online dot), <b>API servers</b> (login, sign-up, profile), <b>notification servers</b> (push) and a <b>key-value store</b> (chat history). Now crash one chat server.':
+      st==='crash'?'<span class="stp">Chat 2 is down</span><span class="no-t">'+fmt(off)+' connections dropped</span>, the rest keep chatting…':
+      '<span class="stp">Service discovery to the rescue</span>Those phones asked service discovery for a new chat server and reconnected. Everyone is back.';
+  }
+  L.$('#b10n').oninput=draw;
+  L.$('#b10a').onclick=function(){if(st!=='one')return;st='dead';this.remove();
+    L.$('#b10act').innerHTML='<button class="btn pri" id="b10b">'+L.ic('layers')+'Split into 4 chat servers</button>';
+    L.$('#b10b').onclick=function(){st='four';L.$('#b10act').innerHTML='<button class="btn" id="b10c">'+L.ic('x')+'Crash chat server 2</button>';
+      L.$('#b10c').onclick=async function(){this.disabled=true;st='crash';down=1;draw();await L.sleep(800);if(!L.$('#b10s'))return;moved=true;st='moved';draw();this.remove();
+        L.$('#b10act').innerHTML='<span id="b10ok"></span>';
+        L.sheet('info','Possible ≠ wise','The memory sum says one box could hold every connection. The single point of failure says don’t. With several chat servers, a crash drops only that server’s share, and '+L.g('service-discovery','service discovery')+' hands those phones a new server.');L.done();};draw();};draw();};
+  draw();}},
 {part:1,src:'Chapter 12 · High-level design',pts:5,run(L){
   L.h(L.kick('pr','Sort the services')+'<h1 class="q">Which kind of service handles each Maker chat job?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Stateless','Stateful','Third-party'],[
@@ -136,40 +427,41 @@ Course.lesson({
    ['Ben’s phone buzzes while Kitebird is closed',2,'Push notifications go through an outside service.'],
    ['The app asks which chat server to connect to',0,'Service discovery is one of the stateless services.']],
    'Only chat itself needs a server that holds open connections.');}},
-
-/* ---------- PART 3: STORAGE ---------- */
-{part:2,src:'Chapter 12 · Storage',run(L){
+{part:1,src:'Chapter 12 · Storage',run(L){
   L.h(L.kick('learn','Two kinds of data')+'<h1 class="q">Profiles and chat history want different databases</h1>'+
    L.lanes([['person','Generic data','Profiles, settings, friend lists. Stored in reliable <b>relational databases</b>, with '+L.g('replication','replication')+' and '+L.g('sharding','sharding')+'.',1],
-            ['chat','Chat history','Huge volume (the book cites 60 billion messages a day for Messenger and WhatsApp). Mostly recent chats are read. Still needs search and jumps to old messages. About as many reads as writes in 1-on-1 chat.',2]])+
-   L.prose('For chat history the book picks a '+L.g('kv-store','key-value store')+':')+
-   L.list([['Scales out easily','Add machines as history grows.'],
-     ['Very low latency','Fast to fetch by key.'],
-     ['Handles the long tail','Relational indexes grow large, and random access to old data gets expensive.'],
-     ['Proven','Facebook Messenger uses HBase; Discord uses Cassandra.']],2));
+            ['chat','Chat history','Huge (the book cites 60 billion messages a day for Messenger and WhatsApp). Mostly recent chats are read, but search and jumps to old messages must work. About 1 read per write in 1-on-1 chat.',2]])+
+   L.prose('For chat history the book picks a '+L.g('kv-store','key-value store')+': it scales out easily and is fast to read. Relational indexes grow large, and random access to old data gets expensive. The book’s examples (at the time): Messenger on HBase, Discord on Cassandra.')+
+   L.prose('Tables: 1-on-1 messages are keyed by <b>message_id</b>. Group messages are keyed by <b>(channel_id, message_id)</b>, with channel_id as the partition key, since every group query works inside one channel.'));
   L.done();}},
-{part:2,src:'Chapter 12 · Data models',run(L){
-  L.h(L.kick('learn','Tables and IDs')+'<h1 class="q">Order comes from the message ID, not the clock</h1>'+
-   L.prose('In the 1-on-1 table the key is <b>message_id</b>, which decides the order. The created_at time can’t, because two messages can be created at the same moment. The group table uses <b>(channel_id, message_id)</b>, with channel_id as the partition key, since every group query works inside one channel.')+
-   L.prose('So message IDs must be <b>unique</b> and <b>sortable by time</b> (newer means higher). Three ways:')+
-   L.tiers([['x','auto_increment','Most NoSQL databases don’t offer it.'],
-     ['layers','Global 64-bit generator','A snowflake-style ID, as in the unique ID lesson (Kite IDs). Works everywhere.'],
-     ['list','Local sequence per channel','IDs only unique inside one conversation. Enough, since order only matters within a chat, and easier to build.']]));
-  L.done();}},
-{part:2,src:'Chapter 12 · Message ID',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Two carvers hit send at once</h1>');
-  L.beats(L.card,[
-   ['The group','The workshop group <b>Spoon Carvers</b> is channel 88. Its rows live together, because channel_id is the partition key.'],
-   ['The clash','Ben and Cleo both send a message in the same millisecond. Their created_at times are identical, so the clock can’t order them.'],
-   ['Local IDs','Channel 88’s sequence hands out <b>412</b> to Ben’s message and <b>413</b> to Cleo’s. Every member sees the same order.'],
-   ['Elsewhere','Mira and Ben’s 1-on-1 chat has its own sequence; its IDs may also reach 412. That’s fine: IDs only need to be unique inside a conversation.']],
-   'Store by (channel_id, message_id), and let a per-channel sequence decide the order.');}},
-{part:2,src:'Chapter 12 · Data models',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why can’t created_at decide the order of messages?</h1>');
-  L.mc(L.card,['Timestamps take too much storage space','Key-value stores can’t hold timestamps','Two messages can be created at the same time'],2,
-   'A tie can’t be ordered. A unique, time-sortable message ID can.',
-   'The book’s reason is ties: two messages can share the same created_at, so the message ID decides.');}},
-{part:2,src:'Chapter 12 · Storage',pts:4,run(L){
+{part:1,src:'Chapter 12 · Message ID',
+ solve:async L=>{L.$('#i13o').children[0].click();L.$('#i13o').children[1].click();L.$('#i13g').children[0].click();L.$('#i13g').children[1].click();L.$('#i13g').children[2].click();},
+ run(L){
+  let ord=0,gen=2;const seen={c:true,ids:new Set()};
+  L.h(L.kick('ex','Same millisecond')+'<h1 class="q">In Spoon Carvers (channel 88), Ben and Cleo hit send in the <b>same millisecond</b>. What keeps every phone’s order the same?</h1>'+CX+tasks('i13t',['See the tie when sorting by created_at','Sort by message_id and try all three ID sources'])+
+   '<div class="cx-lbl">Sort messages by</div><div class="cx-row" id="i13o"></div>'+
+   '<div class="cx-lbl" id="i13gl">message_id comes from</div><div class="cx-row" id="i13g"></div>'+
+   '<div class="cx-ph" id="i13p"></div><div class="cx-cap" id="i13c" aria-live="polite"></div>');
+  const KITE=['7,301,559,861,002,241','7,301,559,861,002,242'];
+  function draw(){
+    L.$('#i13g').style.opacity=ord===1?1:.45;
+    const ts='18:42:07.153';const phones=[['Mira',0],['Dev',1],['Ben',0]];
+    const idOf=j=>gen===0?'no ID':gen===1?'id …'+KITE[j].slice(-5):'id '+(412+j);
+    const msg=(w)=>w===0?'<div class="cx-bub B">Ben: green ash?<small>'+(ord===0?ts:idOf(0))+'</small></div>':'<div class="cx-bub C">Cleo: sharpen first!<small>'+(ord===0?ts:idOf(1))+'</small></div>';
+    const broke=ord===0||gen===0;
+    L.$('#i13p').innerHTML=phones.map(p=>{const order=ord===0?(p[1]?[1,0]:[0,1]):[0,1];return '<div class="cx-pc '+(broke?(ord===0?'bad':''):'good')+'"><b>'+p[0]+'’s phone</b>'+(gen===0&&ord===1?'<div class="cx-bub">?</div><div class="cx-bub">?</div>':order.map(msg).join(''))+'</div>';}).join('');
+    L.$('#i13c').innerHTML=ord===0?'<span class="stp">created_at: a tie</span><span class="no-t">The phones disagree.</span> Both messages have the same time, so the clock can’t order them; each device may break the tie its own way (illustrative).':
+      gen===0?'<span class="stp">auto_increment</span>The obvious first idea, from MySQL. But NoSQL stores like the key-value store usually <b>don’t offer it</b>.':
+      gen===1?'<span class="stp">Global 64-bit ID (Kite IDs)</span><span class="ok-t">Same order everywhere.</span> A snowflake-style generator gives IDs that are unique and sortable by time across the whole system (numbers illustrative). It works, but it’s a bigger system to run.':
+      '<span class="stp">Local sequence for channel 88</span><span class="ok-t">Same order everywhere.</span> Row keys (88, 412) and (88, 413). Mira and Ben’s 1-on-1 chat may also have a message 412: fine, IDs only need to be unique inside one conversation. Easier to build than global IDs.';
+  }
+  chipRow(L,L.$('#i13o'),['created_at','message_id'],j=>{ord=j;if(j===0)seen.c=true;else seen.ids.add(gen);chk();draw();},0);
+  chipRow(L,L.$('#i13g'),['auto_increment','Global Kite ID','Per-channel sequence'],j=>{gen=j;if(ord===1)seen.ids.add(j);chk();draw();},2);
+  function chk(){if(seen.c)tick(L,'i13t',0);if(seen.ids.size===3)tick(L,'i13t',1);
+    if(seen.c&&seen.ids.size===3&&!L.$('#i13ok')){L.$('#i13t').insertAdjacentHTML('afterend','<span id="i13ok"></span>');
+      L.sheet('info','Order comes from the ID','The message ID must be <b>unique</b> and <b>sortable by time</b> (newer means higher). created_at can tie. A global snowflake ID works; a <b>local sequence per channel</b> is enough, because order only matters inside one chat, and it’s easier to build.');L.done();}}
+  chk();draw();}},
+{part:1,src:'Chapter 12 · Storage',pts:4,run(L){
   L.h(L.kick('pr','Where does it live?')+'<h1 class="q">Relational database or key-value store?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Relational DB','Key-value store'],[
    ['Mira’s profile and notification settings',0,'Generic data goes in a reliable relational database.'],
@@ -177,78 +469,179 @@ Course.lesson({
    ['The list of makers Ben is friends with',0,'Friend lists are generic data too.'],
    ['All messages ever sent in Spoon Carvers',1,'Group history, keyed by channel_id and message_id.']],
    'Generic data in relational databases; chat history in a key-value store.');}},
-{part:2,src:'Chapter 12 · Message ID',pts:1,run(L){
-  L.h(L.kick('pr','Design decision')+'<h1 class="q">Hana: “Our key-value store has no auto_increment. What’s the simplest way to keep messages in order inside each chat?”</h1>');
-  L.mc(L.card,['Sort each chat by its created_at time','Use a local sequence number per chat','Ask the store to add auto_increment'],1,
-   'Order only matters inside a conversation, so a per-chat sequence is enough, and the book says it’s easier than global IDs. Kite IDs would also work.',
-   'created_at can tie, and NoSQL stores usually lack auto_increment. The book’s simpler choice is a <b>local sequence per chat</b>.');}},
 
-/* ---------- PART 4: FLOWS AND PRESENCE ---------- */
-{part:3,src:'Chapter 12 · Message flows',run(L){
-  L.h(L.kick('learn','From login to delivery')+'<h1 class="q">How a message travels from Mira to Ben</h1>'+
-   L.prose('<b>Login.</b> Mira’s login goes through the load balancer to API servers. Once Mira is authenticated, service discovery (Apache ZooKeeper is the book’s example) picks the best chat server by location and capacity, say server 1. Mira’s app opens a WebSocket to it.')+
-   L.list([['Send','Mira sends a message to chat server 1.'],
-     ['ID','Chat server 1 gets a message ID from the ID generator.'],
-     ['Queue','It puts the message on the '+L.g('sync-queue','message sync queue')+'.'],
-     ['Store','The message is saved in the key-value store.'],
-     ['Route','Ben online: forward to chat server 2, where Ben is connected. Ben offline: push notification servers alert Ben.'],
-     ['Deliver','Chat server 2 sends it to Ben over Ben’s WebSocket.']],4));
+/* ---------- PART 3: MESSAGE FLOWS ---------- */
+{part:2,src:'Chapter 12 · Service discovery',run(L){
+  L.h(L.kick('learn','Login, then the parts of a send')+'<h1 class="q">Before Mira can chat, service discovery picks a chat server</h1>'+
+   L.flow([['person','Log in','Through the load balancer to the API servers.'],['compass','Pick a server','Service discovery (Apache ZooKeeper is the book’s example) picks the best chat server by location and capacity.'],['arrow','Connect','The app opens a WebSocket to that chat server.']])+
+   L.prose('Sending a message then uses four more parts. Their jobs:')+
+   L.list([['list','ID generator','Gives the message its ID, which fixes its order.'],
+     ['layers','Message sync queue','A per-recipient '+L.g('sync-queue','inbox')+' of new messages.'],
+     ['box','Key-value store','Keeps chat history.'],
+     ['alert','Push notification servers','Reach a phone whose app isn’t connected.']],4));
   L.done();}},
-{part:3,src:'Chapter 12 · Message synchronization across multiple devices',run(L){
+{part:2,src:'Chapter 12 · 1 on 1 chat flow',pts:1,
+ solve:async L=>{for(let i=0;i<300&&!L.$('#r16ok');i++){const b=L.$('#r16c [data-right="1"]');if(b)b.click();await L.sleep(40);}},
+ run(L){
+  const CH=['Chat server 1','ID generator','Message sync queue','Key-value store','Chat server 2','Push notification servers','Ben’s phone'];
+  const LN=['Mira','Chat 1','ID gen','Queue','KV','Chat 2','Push','Ben'];
+  const base=[{f:0,t:1,c:0,txt:'Mira sends the message to chat server 1.',h:'Mira’s phone only talks to the chat server it holds a WebSocket with.'},
+    {f:1,t:2,c:1,back:1,txt:'Chat server 1 gets a message ID from the ID generator.',h:'Before anything is stored, the message needs the thing that fixes its order.'},
+    {f:1,t:3,c:2,txt:'Chat server 1 puts the message on the message sync queue.',h:'With its ID, it goes into the recipient’s inbox.'},
+    {f:3,t:4,c:3,txt:'The message is stored in the key-value store.',h:'History is kept forever, so it must be saved.'}];
+  const R=[base.concat([{f:3,t:5,c:4,txt:'Ben is online: it is forwarded to chat server 2, where Ben is connected.',h:'Ben is online, connected to a different chat server.'},{f:5,t:7,c:6,txt:'Chat server 2 sends it to Ben over Ben’s WebSocket.',h:'Last hop: the open connection to Ben.'}]),
+    base.concat([{f:3,t:6,c:5,txt:'Ben is offline: the push notification servers take over.',h:'Ben has no open connection. Who can reach a phone whose app isn’t running?'},{f:6,t:7,c:6,txt:'Ben’s phone gets a push notification.',h:'Where does the push land?'}])];
+  let round=0,k=0,miss=0,lock=false;
+  L.h(L.kick('pr','Route the message')+'<h1 class="q">Mira sends Ben “Spare gouge?”. Tap where the message goes next, one hop at a time.</h1>'+CX+
+   '<div class="cx"><svg id="r16s" viewBox="0 0 320 236" role="img" aria-label="Sequence diagram with eight lanes: Mira, chat server 1, ID generator, sync queue, key-value store, chat server 2, push servers, Ben"></svg></div>'+
+   '<div class="cx-cap" id="r16q" aria-live="polite"></div><div class="cx-row" id="r16c"></div>');
+  const X=j=>20+j*40,Yr=i=>48+i*30;
+  function draw(){
+    let s='';LN.forEach((n,j)=>{const on=round===0?j!==6:j!==5;s+=tx(X(j),16,n,'font-size:11px;font-weight:700;text-anchor:middle;fill:'+(on?'var(--ink)':'var(--muted)'))+'<line x1="'+X(j)+'" y1="24" x2="'+X(j)+'" y2="226" style="stroke:var(--line2);stroke-width:1.5'+(on?'':';stroke-dasharray:3 4')+'"/>';});
+    s+=tx(X(7),232,round===0?'online':'offline','font-size:11px;text-anchor:middle;fill:'+(round===0?'var(--ok)':'var(--no)'));
+    R[round].slice(0,k).forEach((st,i)=>{const y=Yr(i);s+=arrow(X(st.f),y,X(st.t)+(st.t>st.f?-3:3),y,'stroke:var(--pri);stroke-width:2.4','var(--pri)');
+      if(st.back)s+=arrow(X(st.t),y+9,X(st.f)+4,y+9,'stroke:var(--pri);stroke-width:1.6;stroke-dasharray:3 3','var(--pri)');
+      s+='<circle cx="'+X(st.f)+'" cy="'+y+'" r="8" style="fill:var(--pri)"/>'+tx(X(st.f),y+4,i+1,'font-size:11px;font-weight:700;fill:var(--card);text-anchor:middle');});
+    L.$('#r16s').innerHTML=s;
+    const done=k===R[round].length;
+    L.$('#r16q').innerHTML=(k?'<span class="stp">'+(round===0?'Ben online':'Ben offline')+' · hop '+k+'</span>'+R[round][k-1].txt:'<span class="stp">'+(round===0?'Ben is online':'Now Ben’s phone is off')+'</span>Where does the message go first?')+(done?'':' <b>Next stop?</b>');
+    L.$('#r16c').innerHTML='';
+    if(!done)CH.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=c;b.dataset.right=j===R[round][k].c?'1':'0';b.onclick=()=>pick(j,b);L.$('#r16c').appendChild(b);});
+  }
+  function pick(j,b){if(lock)return;const st=R[round][k];
+    if(j!==st.c){miss++;b.classList.add('no');L.shake(b);L.$('#r16q').innerHTML='<span class="stp">Not there yet</span>'+st.h;return;}
+    k++;draw();
+    if(k===R[round].length){if(round===0){lock=true;setTimeout(async()=>{if(!L.$('#r16s'))return;round=1;k=0;draw();for(let i=0;i<4;i++){await L.sleep(160);if(!L.$('#r16s'))return;k++;draw();}lock=false;},700);}
+      else{L.$('#r16c').innerHTML='<span id="r16ok"></span>';const ok=miss===0;L.award(ok);
+        L.sheet(ok?'ok':'info',ok?'Both routes, no wrong turns':'Both routes traced','Get an ID, queue it, store it, then route it. Online: forward to the chat server holding Ben’s WebSocket. Offline: the push notification servers alert Ben, and the message waits in the key-value store until Ben opens the app.');L.done();}}}
+  draw();}},
+{part:2,src:'Chapter 12 · Message synchronization across multiple devices',run(L){
   L.h(L.kick('learn','Many devices, small groups')+'<h1 class="q">Each device keeps a bookmark; each member gets an inbox</h1>'+
-   L.prose('<b>Several devices.</b> Each device keeps <b>cur_max_message_id</b>, the newest message ID it has. A message is new for that device when it’s addressed to the logged-in user and its ID is bigger than that number. So each device fetches just what it’s missing from the key-value store.')+
-   L.prose('<b>Small groups.</b> A message is <b>copied into each member’s message sync queue</b>, like an inbox. Each app only checks its own inbox, and with few members the copies are cheap. WeChat does something similar and caps groups at 500. For very large groups, one copy per member is too costly.')+
-   L.note('<b>Beyond the book:</b> with per-chat IDs, one cur_max_message_id per device doesn’t quite work, since IDs repeat across chats. In practice a device keeps one bookmark per conversation.','info'));
+   L.prose('<b>Several devices.</b> Each device keeps <b>cur_max_message_id</b>, the newest message ID it has. A message is new for that device when two things hold: it’s addressed to the logged-in user, and its ID is bigger than that number. So each device fetches just what it’s missing from the key-value store.')+
+   L.prose('<b>Small groups.</b> A message is <b>copied into each member’s message sync queue</b>, like an inbox. Each app checks only its own inbox, and with few members the copies are cheap. WeChat does something similar and caps groups at 500. For very large groups, one copy per member is too costly.'));
   L.done();}},
-{part:3,src:'Chapter 12 · Small group chat flow',run(L){
-  L.h(L.kick('ex','Kitebird example')+'<h1 class="q">Mira posts in Spoon Carvers, and Ben’s laptop catches up</h1>');
-  L.beats(L.card,[
-   ['The send','Mira writes “Who has a hook knife to lend?” in Spoon Carvers (12 members).'],
-   ['The copies','Mira’s message is copied into the other 11 members’ inboxes. Each app reads only its own inbox.'],
-   ['Ben’s phone','Ben is online on their phone, so it arrives right away.'],
-   ['Ben’s laptop','Ben’s laptop was closed. Its cur_max_message_id is behind, so when Ben opens it, it fetches every newer message addressed to Ben.'],
-   ['Cleo','Cleo is offline. Kitebird pings sends Cleo a push notification.']],
-   'Inbox copies keep small groups simple; a per-device bookmark keeps every device in sync.');}},
-{part:3,src:'Chapter 12 · Message synchronization across multiple devices',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ben’s laptop has cur_max_message_id = 1041. The store holds messages to Ben numbered 1039 to 1046. What does the laptop fetch?</h1>');
-  L.mc(L.card,['Messages 1042 to 1046','Messages 1041 to 1046','Messages 1039 to 1046'],0,
-   'Only IDs bigger than 1041 are new to this device.',
-   'The laptop already has everything up to and including 1041. It fetches only IDs <b>greater</b> than that: 1042 to 1046.');}},
-{part:3,src:'Chapter 12 · 1 on 1 chat flow',pts:1,run(L){
-  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Ben is online. Order the steps of Mira’s 1-on-1 message.</h1>');
-  L.order(L.card,['Mira sends the message to chat server 1','Chat server 1 gets a message ID from the ID generator','Chat server 1 puts it on the message sync queue','The message is stored in the key-value store','It is forwarded to chat server 2, where Ben is connected','Chat server 2 sends it to Ben over Ben’s WebSocket'],
-   'Get an ID, queue it, store it, then route it. If Ben had been offline, the last two steps become a push notification.');}},
+{part:2,src:'Chapter 12 · Message synchronization across multiple devices',pts:1,
+ solve:async L=>{['1042','1044','1045','1046'].forEach(i=>L.$('#s18m'+i).click());L.$('#s18go').click();for(let i=0;i<100&&!L.$('#s18ok');i++)await L.sleep(30);},
+ run(L){
+  const M=[[1039,'Ben','Mira','Walnut blank arrived?'],[1040,'Ben','Mira','Photo of the bowl'],[1041,'Ben','Dev','Class at 6?'],[1042,'Ben','Mira','Oil or wax finish?'],
+    [1043,'Cleo','Mira','Hook knife back?'],[1044,'Ben','Dev','Running late'],[1045,'Ben','Mira','Wax it'],[1046,'Ben','Cleo','Spoon Carvers at 7']];
+  const RIGHT=new Set([1042,1044,1045,1046]),sel=new Set();let done=false;
+  L.h(L.kick('pr','Sync the laptop')+'<h1 class="q">Ben opens their laptop after a day on the phone. Tap every message the laptop should fetch, then sync.</h1>'+CX+
+   '<div class="cx-dev"><div class="cx-dv"><b>Ben’s phone</b>online all day<br><span style="font-size:12px;word-break:normal">cur_max_<wbr>message_id</span> <span class="bm">1046</span></div><div class="cx-dv"><b>Ben’s laptop</b>was closed<br><span style="font-size:12px;word-break:normal">cur_max_<wbr>message_id</span> <span class="bm" id="s18bm">1041</span></div></div>'+
+   '<div class="cx-lbl">Key-value store · ID · to · message</div><div class="cx-msgs" id="s18l"></div>'+
+   '<button class="btn pri" id="s18go">'+L.ic('cycle')+'Sync the laptop</button><div id="s18r"></div>');
+  M.forEach(m=>{const b=document.createElement('button');b.className='cx-m';b.id='s18m'+m[0];b.setAttribute('aria-pressed','false');
+    b.innerHTML='<b>'+m[0]+'</b><span>to '+m[1]+'</span><div>'+m[2]+': '+m[3]+'</div>';
+    b.onclick=()=>{if(done)return;sel.has(m[0])?sel.delete(m[0]):sel.add(m[0]);b.classList.toggle('sel',sel.has(m[0]));b.setAttribute('aria-pressed',sel.has(m[0]));};L.$('#s18l').appendChild(b);});
+  L.$('#s18go').onclick=async function(){if(done)return;done=true;this.disabled=true;
+    const ok=[...RIGHT].every(i=>sel.has(i))&&sel.size===RIGHT.size;
+    M.forEach(m=>{const b=L.$('#s18m'+m[0]);b.classList.remove('sel');if(RIGHT.has(m[0]))b.classList.add('ok');else if(sel.has(m[0]))b.classList.add('no');});
+    for(const v of [1042,1044,1045,1046]){await L.sleep(180);if(!L.$('#s18bm'))return;L.$('#s18bm').textContent=v;}
+    L.$('#s18r').innerHTML='<span id="s18ok"></span>';L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Laptop in sync':'The laptop fetches 1042, 1044, 1045, 1046','Two rules: addressed to Ben (so not 1043, which is Cleo’s), and an ID bigger than the laptop’s 1041 (so not 1039 to 1041, which it already has). The bookmark is now 1046. <b>Beyond the book:</b> with per-chat IDs, IDs repeat across chats, so in practice a device keeps one bookmark per conversation.');L.done();};}},
+
+/* ---------- PART 4: WHO’S ONLINE ---------- */
 {part:3,src:'Chapter 12 · Online presence',run(L){
   L.h(L.kick('learn','The green dot')+'<h1 class="q">Showing who’s online, without flicker</h1>'+
    L.list([['Login','After the WebSocket opens, the user’s status (online) and last_active_at time are saved in the key-value store.'],
      ['Logout','The status changes to offline in the key-value store.'],
-     ['Disconnection','Marking someone offline on every dropped connection makes the dot flicker, for example in a train tunnel. Instead, the app sends a '+L.g('heartbeat','heartbeat')+' to presence servers. No heartbeat for <b>x seconds</b> means offline. The book’s example: a heartbeat every 5 seconds, x = 30.'],
-     ['Telling friends','Presence servers use '+L.g('pubsub','publish-subscribe')+': one channel per friend pair. Mira’s change is published to channels Mira-Ben, Mira-Cleo and Mira-Dev, which those friends subscribe to.']],1)+
-   '<p class="small">That fanout suits small groups. In a group of 100,000, every change would mean 100,000 events, so fetch status only when someone enters the group or refreshes the friend list.</p>');
+     ['Disconnection','Marking someone offline on every dropped connection makes the dot flicker, for example in a train tunnel. Instead, the app sends a '+L.g('heartbeat','heartbeat')+' to presence servers. No heartbeat for <b>x seconds</b> means offline. The book’s example: a heartbeat every 5 seconds, x = 30, a number it picked only to show the idea.'],
+     ['Telling friends','Presence servers use '+L.g('pubsub','publish-subscribe')+': one channel per friend pair. Ben’s change is published to channels Ben-Mira, Ben-Cleo and Ben-Dev, which those friends subscribe to.']],1));
   L.done();}},
-{part:3,src:'Chapter 12 · User disconnection',pts:1,
- solve:async L=>{L.$('#po').children[0].click();L.$('#run').click();},
+{part:3,src:'Chapter 12 · User disconnection',
+ solve:async L=>{const h=L.hb;setRange(L,'h20x',10);h.o.tun[0].a=60;h.o.tun[0].len=20;h.upd('drag');setRange(L,'h20x',30);},
  run(L){
-  /* 20 cells of 5 s each. Tunnels: 21-33 s and 46-90 s. Heartbeat every 5 s, offline after 30 s silence (at 75 s). */
-  const sig=i=>!((i>=4&&i<=6)||(i>=9&&i<=17)),naive=sig,beat=i=>!(i>=15&&i<=17);let p=null;
-  const row=(lab,id)=>'<div class="small" style="margin-top:8px">'+lab+'</div><div id="'+id+'" style="display:flex;gap:2px;height:22px"></div>';
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Mira rides a train for 100 seconds: a 12-second tunnel, then a 44-second one. With heartbeats (x = 30 s), what does Ben see during the <b>short</b> tunnel?</h1><div id="po"></div>'+
-   '<div id="sim" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><div class="small">Train time</div><div class="week" id="wk">0 s</div></div><button class="btn pri" id="run">'+L.ic('play')+'Ride the train</button></div>'+
-   row('Mira’s signal','r0')+row('Ben sees · naive: offline on every drop','r1')+row('Ben sees · heartbeat: offline after 30 s silence','r2')+'</div>');
-  ['Mira stays online (green)','Mira shows offline for 12 s','Mira shows offline for 30 s'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#po').appendChild(b);});
-  const paint=(id,f,upto,dark)=>{const el=L.$('#'+id);if(!el)return;el.innerHTML=Array.from({length:20},(_,i)=>'<div style="flex:1;min-width:0;border-radius:4px;background:'+(i>=upto?'var(--soft2)':f(i)?(dark?'var(--h2)':'var(--ok-strong)'):'var(--no-line)')+'"></div>').join('');};
-  ['r0','r1','r2'].forEach(r=>paint(r,sig,0));
-  L.$('#run').onclick=function(){this.remove();let t=0;
-    const tm=setInterval(()=>{t+=2;const wk=L.$('#wk');if(!wk){clearInterval(tm);return;}wk.textContent=(t*5)+' s';paint('r0',sig,t,true);paint('r1',naive,t);paint('r2',beat,t);
-      if(t>=20){clearInterval(tm);L.award(p===0);
-        L.sheet(p===0?'ok':'no',p===0?'The dot stayed green':'Mira stayed online','Naive: Ben saw the dot change <b>4 times</b>. Heartbeat: <b>2 times</b>. The short tunnel left only a 15-second gap between heartbeats, under 30, so nothing changed. In the long tunnel the dot went grey 30 seconds after Mira’s last heartbeat, and turned green when Mira reconnected.');L.done();}},200);};}},
-{part:3,src:'Chapter 12 · Step 4 - Wrap up',pts:4,run(L){
+  let touched=false,a=false,b=false;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Ben rides a train. Drag the tunnel, change its length and x. Watch the two dots Mira could see.</h1>'+CX+
+   tasks('h20t',['Make the heartbeat dot go grey in a tunnel','Keep it green through a tunnel while the naive dot flickers'])+
+   '<div id="h20"></div>'+rng('h20len','Tunnel length',2,45,12)+rng('h20x','x: offline after this much silence',5,60,30,5)+'<p class="cx-ill">Tunnel lengths are illustrative. Heartbeat every 5 s and x = 30 s are the book’s example.</p>');
+  const h=L.hb=Beat(L,L.$('#h20'),{id:'h20',drag:true,on:e=>{
+    if(e.why)touched=true;if(!touched)return;
+    if(e.tunGrey)a=true;if(!e.tunGrey&&e.nChg>0)b=true;
+    if(a)tick(L,'h20t',0);if(b&&a)tick(L,'h20t',1);
+    if(a&&b&&!L.$('#h20ok')){L.$('#h20t').insertAdjacentHTML('afterend','<span id="h20ok"></span>');
+      L.sheet('info','Silence, not a dropped line','The heartbeat dot ignores any gap shorter than x: a tunnel that swallows a few heartbeats changes nothing. Only when the silence lasts longer than x does Ben turn grey, and the first heartbeat after the tunnel turns Ben green again.');L.done();}}});
+  const lu=()=>{L.$('#h20len-v').textContent=L.$('#h20len').value+' s';L.$('#h20x-v').textContent=L.$('#h20x').value+' s';};
+  L.$('#h20len').oninput=()=>{const u=h.o.tun[0];u.len=+L.$('#h20len').value;u.a=Math.min(u.a,BW-u.len);lu();h.upd('len');};
+  L.$('#h20x').oninput=()=>{lu();h.set({x:+L.$('#h20x').value},'x');};
+  lu();h.upd();}},
+{part:3,src:'Chapter 12 · User disconnection',pts:1,
+ solve:async L=>{L.$('#h21').children[0].click();for(let i=0;i<150&&!L.$('#h21ok');i++)await L.sleep(30);},
+ run(L){
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Ben’s train passes a <b>12-second</b> tunnel, then a <b>44-second</b> one. Heartbeat every 5 s, x = 30 s. What does Mira see during the <b>short</b> tunnel?</h1><div class="cx-row" id="h21"></div>'+CX+'<div id="h21s"></div><div id="h21x"></div>');
+  const h=Beat(L,L.$('#h21s'),{id:'h21',x:30,tun:[{a:21,len:12},{a:46,len:44}]});h.hold();
+  ['Ben stays online (green)','Ben shows offline for 12 s','Ben shows offline for 30 s'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
+    b.onclick=async()=>{if(p!==null)return;p=j;b.classList.add('sel');await h.play(2400);if(!L.$('#h21s'))return;
+      const ok=j===0;L.award(ok);L.$('#h21x').innerHTML='<span id="h21ok"></span>';
+      L.sheet(ok?'ok':'no',ok?'The dot stayed green':'Ben stayed green','In the short tunnel, heartbeats at 25 s and 30 s were lost, so the gap was 20 → 35 s: 15 seconds, under 30. Nothing changed. In the long tunnel the last heartbeat was at 45 s; at 75 s Ben turned grey, and green again at 90 s. Naive: <b>4</b> changes. Heartbeat: <b>2</b>.');L.done();};
+    L.$('#h21').appendChild(b);});}},
+{part:3,src:'Chapter 12 · User disconnection',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#h22p'+j).click();await L.sleep(20);}},
+ run(L){
+  const seen=new Set();
+  const P=[['x = 5 s',{x:5,tun:[{a:21,len:12},{a:43,len:3},{a:71,len:4}],dies:null,logout:null},'x equals the heartbeat interval, so <b>one</b> lost heartbeat turns Ben grey. Even a 3-second tunnel flickers the dot: no better than the naive way.'],
+   ['Phone dies at 50 s',{x:30,tun:[{a:21,len:12}],dies:50,logout:null},'The last heartbeat came at 45 s, so the presence server waits until 75 s. Mira sees a green dot for <b>25 s</b> after the phone died. That delay is the price of ignoring tunnels.'],
+   ['x = 60 s, phone dies',{x:60,tun:[{a:21,len:12}],dies:50,logout:null},'A big x hides every tunnel, but Ben now looks online for <b>55 s</b> after the phone died. Bigger x: less flicker, slower to notice a real drop.'],
+   ['Ben logs out',{x:30,tun:[{a:21,len:12}],dies:null,logout:60},'Logging out is not a disconnection. The logout flow sets Ben offline in the key-value store <b>at once</b>: no waiting for x. The heartbeat only covers connections that drop silently.']];
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does the heartbeat stop helping? Run at least three cases.</h1><div class="cx-row" id="h22"></div>'+CX+'<div class="cx-cap" id="h22c"><span class="stp">Pick a case</span>Each one replays Ben’s ride with different settings.</div><div id="h22s"></div>');
+  const h=Beat(L,L.$('#h22s'),{id:'h22',x:30,tun:[{a:21,len:12}]});h.upd();
+  P.forEach((q,j)=>{const b=document.createElement('button');b.className='chip';b.id='h22p'+j;b.textContent=q[0];
+    b.onclick=()=>{[...L.$('#h22').children].forEach(x=>x.classList.toggle('sel',x===b));h.set(JSON.parse(JSON.stringify(q[1])),'preset');L.$('#h22c').innerHTML='<span class="stp">'+q[0]+'</span>'+q[2];seen.add(j);b.classList.add('ok');
+      if(seen.size===3){L.sheet('info','x is a trade-off','Too small and the dot flickers like the naive way. Too big and a dead phone looks online for a long time. The book says its 30 s was picked only to show the logic, so x is a choice you have to argue for.');L.done();}};
+    L.$('#h22').appendChild(b);});}},
+{part:3,src:'Chapter 12 · User disconnection',pts:1,
+ solve:async L=>{setRange(L,'h23x',30);L.$('#h23go').click();for(let i=0;i<150&&!L.$('#h23ok');i++)await L.sleep(30);},
+ run(L){
+  let first=true,busy=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Ben’s commute has a <b>22-second</b> tunnel, then the phone dies at <b>81 s</b>. Pick x so Ben <b>stays green through the tunnel</b> but turns grey <b>within 30 s</b> of the phone dying.</h1>'+
+   '<p class="cx-ill">Tunnel, death time and the 30-second target are illustrative. Heartbeat every 5 s, as in the book.</p>'+CX+
+   rng('h23x','x: offline after this much silence',5,60,10,5)+'<div id="h23s"></div><button class="btn pri" id="h23go">'+L.ic('play')+'Run Ben’s commute</button><div id="h23r"></div>');
+  const h=Beat(L,L.$('#h23s'),{id:'h23',x:10,naive:false,tun:[{a:16,len:22}],dies:81});
+  const lu=()=>{L.$('#h23x-v').textContent=L.$('#h23x').value+' s';};
+  L.$('#h23x').oninput=()=>{if(busy)return;lu();h.set({x:+L.$('#h23x').value},'x');h.hold();};lu();h.hold();
+  L.$('#h23go').onclick=async function(){if(busy)return;busy=true;this.disabled=true;await h.play(2000);if(!L.$('#h23s'))return;busy=false;this.disabled=false;
+    const C=h.C,green=!C.tunGrey,fast=C.noticed!=null&&C.noticed<=30,pass=green&&fast;
+    L.$('#h23r').innerHTML='<table class="cx-tbl"><tr><td>Green through the tunnel</td><td class="'+(green?'ok-t':'no-t')+'">'+(green?'✓':'✗ grey')+'</td></tr><tr><td>Grey within 30 s of dying</td><td class="'+(fast?'ok-t':'no-t')+'">'+(C.noticed==null?'✗ never':(fast?'✓ ':'✗ ')+C.noticed+' s')+'</td></tr></table>'+(pass?'<span id="h23ok"></span>':'');
+    if(first){L.award(pass);first=false;}
+    if(pass){this.remove();L.sheet('ok','Both targets met','The tunnel swallowed the heartbeats at 20, 25, 30 and 35 s, so the longest silence was 25 s: x must be at least 25. The phone died just after the heartbeat at 80 s, so Ben turns grey at 80 + x: x can be at most about 30. So x = 25 or 30 works here, and the book’s example of 30 s fits.');L.done();}
+    else{L.sheet('no','Not yet',!green?'The tunnel’s longest silence is longer than x, so Ben flickers grey. Raise x.':'Ben looks online too long after the phone died. Lower x.');if(!L.$('#h23ok'))L.done();}};}},
+{part:3,src:'Chapter 12 · Online status fanout',
+ solve:async L=>{setRange(L,'f24n',6);L.$('#f24p').children[1].click();},
+ run(L){
+  const SZ=[3,12,50,100,500,5000,100000];let pull=false,big=false,fetched=false;
+  L.h(L.kick('pr','Group size')+'<h1 class="q">Inbox copies and status pushes grow with the group. Slide to see where the small-group design stops working.</h1>'+CX+
+   rng('f24n','Group size',0,6,1)+'<div class="cx-grid" id="f24g" aria-hidden="true"></div><p class="cx-ill" id="f24gl"></p>'+
+   '<div class="cx-mt"><span>Inbox copies written per message</span><b id="f24a"></b><div class="cx-bar"><i id="f24ab"></i></div>'+
+   '<span>Status events when one member goes online</span><b id="f24b"></b><div class="cx-bar"><i id="f24bb"></i></div></div>'+
+   '<div class="cx-lbl">Online status for this group</div><div class="cx-row" id="f24p"></div><div class="cx-cap" id="f24c" aria-live="polite"></div>'+tasks('f24t',['Slide to a group of 100,000','Switch status to fetch on demand']));
+  function draw(){
+    const n=SZ[+L.$('#f24n').value],cp=n-1,ev=pull?0:n;
+    L.$('#f24n-v').textContent=fmt(n)+(n===12?' (Spoon Carvers)':'');
+    const per=n<=101?1:Math.round(cp/100);const sq=Math.min(100,Math.ceil(cp/per));
+    L.$('#f24g').innerHTML=Array.from({length:100},(_,i)=>'<i style="background:'+(i<sq?(n<=100?'var(--ok-strong)':n<=500?'var(--h3)':'var(--no)'):'var(--line)')+'"></i>').join('');
+    L.$('#f24gl').textContent=per===1?'Each square = one member’s inbox.':'Each square ≈ '+fmt(per)+' inboxes.';
+    const w=v=>v<=0?0:Math.max(3,Math.log10(v)/5*100);
+    const col=n<=100?'var(--ok-strong)':n<=500?'var(--h3)':'var(--no)';
+    L.$('#f24a').textContent=fmt(cp);L.$('#f24ab').style.width=w(cp)+'%';L.$('#f24ab').style.background=col;
+    L.$('#f24b').textContent=pull?'0 pushed':fmt(ev);L.$('#f24bb').style.width=w(ev)+'%';L.$('#f24bb').style.background=col;
+    L.$('#f24c').innerHTML=n<=100?'<span class="stp">Small group: the book’s design</span>Each message is copied into every other member’s inbox, and each status change goes out on friend-pair channels. Cheap at this size, and the book caps groups at 100.':
+      n===500?'<span class="stp">500 members</span>WeChat uses a similar inbox approach and limits a group to 500 members.':
+      '<span class="stp">'+fmt(n)+' members</span>'+(n===100000?'Each status change would generate 100,000 events. ':'')+'The book: a copy per member is not acceptable for groups this big'+(pull?', and here status is now <b>fetched</b> only when someone enters the group or refreshes the friend list.':'. What about online status?');
+    if(n===100000)big=true;if(big)tick(L,'f24t',0);if(pull&&big){fetched=true;tick(L,'f24t',1);}
+    if(big&&fetched&&!L.$('#f24ok')){L.$('#f24t').insertAdjacentHTML('afterend','<span id="f24ok"></span>');
+      L.sheet('info','Push for small, fetch for big','Inbox copies and pushed status keep small groups simple: each app reads only its own inbox and hears about friends instantly. Both costs grow with every member, so for very large groups the book fetches status on demand instead of pushing every change.');L.done();}
+  }
+  chipRow(L,L.$('#f24p'),['Push every change','Fetch on demand'],j=>{pull=j===1;draw();},0);
+  L.$('#f24n').oninput=draw;draw();}},
+{part:3,src:'Chapter 12 · Step 4 - Wrap up',pts:5,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Tamsin’s curveballs',['Heartbeat timeout','Channel per friend pair','Fetch status on demand','Service discovery'],[
-   ['“Mira’s dot flickers every time Mira’s train goes under a bridge.”',0,'Only mark Mira offline after x seconds without a heartbeat.'],
+  L.quick(L.$('#qk'),'Tamsin’s curveballs',['Heartbeat timeout','Channel per friend pair','Fetch status on demand','Service discovery','Retry and queueing'],[
+   ['“Ben’s dot flickers every time Ben’s train goes under a bridge.”',0,'Only mark Ben offline after x seconds without a heartbeat.'],
    ['“Mira comes online. How do Ben, Cleo and Dev find out right away?”',1,'Mira’s status is published to Mira-Ben, Mira-Cleo and Mira-Dev, which they subscribe to.'],
    ['“Dario wants online dots in a 100,000-member community.”',2,'Pushing every change to 100,000 people is too costly. Fetch status when someone opens the group or refreshes.'],
-   ['“A chat server holding 200,000 connections crashes.”',3,'Service discovery gives those clients a new chat server to connect to.']]);}}
+   ['“A chat server holding 200,000 connections crashes.”',3,'Service discovery gives those clients a new chat server to connect to.'],
+   ['“Ben’s message didn’t reach the chat server on the first try.”',4,'The book’s wrap-up: retry and queueing are the common ways to resend messages.']]);}}
   ]
 });
 </script>

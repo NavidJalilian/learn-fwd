@@ -13,37 +13,209 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0007 only. The signature model, used across the lesson:
+   Trie – a tappable prefix tree. Type a prefix and watch the lookup:
+          the path lights, the plain method walks the subtree and sorts,
+          the optimized one reads the top 5 cached at the node. It can also
+          grow word by word, update a count up the ancestors, filter and
+          rebuild. A second, smaller model: the shard-map letter board.
+   ===================================================================== */
+const BOOK={be:15,bee:20,beer:10,best:35,bet:29,tree:10,true:35,try:29,toy:14,win:18,wish:25};
+const ILL='Counts for toy, win and wish are illustrative; the others are the book’s.';
+const CSS='<style>'+
+ '.tx svg{width:100%;display:block;touch-action:manipulation;margin:4px 0}.tx svg text{font-family:var(--sans)}'+
+ '.tx g[role=button]{cursor:pointer}.tx g[role=button]:focus{outline:none}.tx g[role=button]:focus rect{stroke-width:3px}'+
+ '.txbox{display:flex;align-items:center;justify-content:space-between;gap:8px;background:var(--card);border:2px solid var(--line2);border-radius:14px;padding:8px 12px;margin:6px 0}'+
+ '.txq{font-size:19px;font-weight:600;font-family:ui-monospace,Menlo,monospace;min-height:26px;word-break:break-all}.txq .ph{font-family:var(--sans);font-size:15px;font-weight:400;color:var(--muted)}'+
+ '.txq .cur{display:inline-block;width:2px;height:20px;background:var(--pri);vertical-align:-3px;margin-left:1px;animation:txb 1s steps(1) infinite}@keyframes txb{50%{opacity:0}}'+
+ '.txrq{font-size:13px;color:var(--muted);white-space:nowrap}.txrq b{color:var(--ink);font-size:15px}'+
+ '.txsug{display:flex;flex-wrap:wrap;gap:6px;min-height:36px;align-items:center;margin:2px 0 6px}.txsug .chip{margin:0;padding:5px 10px;font-size:14px}.txsug small{color:var(--muted);font-weight:600;margin-left:2px}'+
+ '.txsug .lbl{font-size:12.5px;font-weight:700;color:var(--muted);margin-right:2px}'+
+ '.txlbl{font-size:13px;color:var(--muted);margin:8px 0 4px}'+
+ '.txkeys{display:flex;flex-wrap:wrap;gap:6px}.txkeys .chip{margin:0;min-width:46px;min-height:42px;justify-content:center;font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:17px}'+
+ '.txread{display:grid;grid-template-columns:1fr auto;gap:3px 12px;font-size:14px;background:var(--soft);border-radius:14px;padding:10px 13px;margin:6px 0;font-variant-numeric:tabular-nums}'+
+ '.txread b{text-align:right}.txread .tot{font-weight:700;border-top:1px solid var(--line2);padding-top:4px}.txread .mut{color:var(--muted);font-weight:400}.txread .sto{color:var(--h4);font-weight:700}'+
+ '.simrow{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}.simrow .chip,.simrow .btn{margin:0}'+
+ '.cap{background:var(--soft);border-radius:14px;padding:11px 13px;font-size:15px;line-height:1.5;margin:10px 0 6px;min-height:48px}.cap .stp{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:3px}'+
+ '.mono{font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.6;background:var(--card);border-radius:10px;padding:8px 10px;margin-top:8px;overflow-wrap:anywhere}'+
+ '.ill{font-size:12.5px;color:var(--muted);margin:4px 0}'+
+ '.w1log{display:flex;flex-wrap:wrap;gap:5px;min-height:34px;margin:4px 0 10px}.w1log code{font-size:13px;background:var(--pri-bg);color:var(--pri-deep);border-radius:8px;padding:4px 7px}'+
+ '.pipe{display:flex;flex-wrap:wrap;align-items:center;gap:4px 2px;margin:8px 0}.pipe .ar{color:var(--muted);display:inline-flex}.pipe .ar svg{width:16px;height:16px}'+
+ '.pst{border:2px solid var(--line);border-radius:11px;padding:6px 9px;font-size:13.5px;font-weight:600;background:var(--card);color:var(--muted);min-height:36px}'+
+ '.pst.past{border-color:var(--h2);background:var(--h2-bg);color:var(--h2)}.pst.on{border-color:var(--pri);background:var(--pri-bg);color:var(--pri-deep)}'+
+ '.tbl{width:100%;border-collapse:collapse;font-size:13px;margin-top:8px}.tbl td,.tbl th{text-align:left;padding:4px 6px;border-bottom:1px solid var(--line)}.tbl th{color:var(--muted);font-weight:600}.tbl td:last-child,.tbl th:last-child{text-align:right}'+
+ '.lettergrid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;margin:8px 0}'+
+ '.lt{border:2px solid var(--line);border-radius:10px;min-height:48px;padding:3px 0;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.15}'+
+ '.lt b{font-size:17px}.lt span{font-size:11px;font-weight:600;opacity:.85}'+
+ '.lt.s0{background:var(--h1-bg);border-color:var(--h1);color:var(--h1)}.lt.s1{background:var(--h2-bg);border-color:var(--h2);color:var(--h2)}.lt.s2{background:var(--h3-bg);border-color:var(--h3);color:var(--h3)}'+
+ '.shm{display:grid;grid-template-columns:62px 1fr 44px;gap:8px;align-items:center;font-size:14px;margin:6px 0}.shm .bar{height:14px;background:var(--soft2);border-radius:99px;overflow:hidden}.shm .bar div{height:100%;border-radius:99px;transition:width .25s}'+
+ '.shm b{text-align:right;font-variant-numeric:tabular-nums}.shm .over{color:var(--no)}'+
+ '.lk{font-size:13.5px;background:var(--soft);border-radius:12px;padding:8px 11px;margin:8px 0;line-height:1.6}'+
+ '.nl{font-size:13.5px;line-height:1.55;background:var(--soft);border-radius:12px;padding:8px 11px;margin:8px 0}'+
+ '</style>';
+
+/* ---------- the trie explorer ---------- */
+function Trie(L,host,o){
+  o=Object.assign({id:'t',words:Object.keys(BOOK),base:null,counts:BOOK,cache:false,cap:false,keys:true,box:true,req:false,read:true,sug:true,tap:true,cnt:true,onSet:null,onTap:null,onSug:null},o||{});
+  const ID=o.id,BASE=o.base||o.words;
+  const S={counts:{},present:new Set(),cache:o.cache,cap:o.cap,p:null,busy:false,mark:{},blocked:new Set(),req:0,tok:0,res:null};
+  /* layout from every word this trie may ever hold, so nodes never jump */
+  const all=new Set(['']);o.words.forEach(w=>{for(let k=1;k<=w.length;k++)all.add(w.slice(0,k));});
+  const kidsAll=p=>[...all].filter(x=>x.length===p.length+1&&x.startsWith(p)).sort();
+  const pos={};let rows=0;
+  (function lay(p){const ch=kidsAll(p);if(!ch.length){pos[p]=rows++;return;}ch.forEach(lay);pos[p]=(pos[ch[0]]+pos[ch[ch.length-1]])/2;})('');
+  const XS=[12,50,102,172,262],RH=30,TOP=10,H=TOP+rows*RH+6;
+  const X=p=>XS[Math.min(p.length,4)],Y=p=>TOP+pos[p]*RH+RH/2;
+  host.insertAdjacentHTML('beforeend','<div class="tx" id="'+ID+'">'+
+    (o.box?'<div class="txbox"><span class="txq" id="'+ID+'-q"></span>'+(o.req?'<span class="txrq">Requests sent: <b id="'+ID+'-rq">0</b></span>':'')+'</div>':'')+
+    (o.sug?'<div class="txsug" id="'+ID+'-sg" aria-live="polite"></div>':'')+
+    (o.keys?'<div class="txlbl">Type the next letter, or tap a node</div><div class="txkeys" id="'+ID+'-k"></div>':'')+
+    '<svg id="'+ID+'-svg" viewBox="0 0 320 '+H+'" role="group" aria-label="Trie: the root on the left, one more letter per column to the right"></svg>'+
+    (o.read?'<div class="txread" id="'+ID+'-rd" aria-live="polite"></div>':'')+'</div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  const alive=()=>svg.isConnected;
+  const nodes=()=>{const s=new Set(['']);S.present.forEach(w=>{for(let k=1;k<=w.length;k++)s.add(w.slice(0,k));});return s;};
+  const isQ=p=>S.present.has(p);
+  const qIn=p=>[...S.present].filter(w=>w.startsWith(p));
+  const rank=a=>a.sort((x,y)=>S.counts[y]-S.counts[x]||(x<y?-1:1));
+  const top=p=>rank(qIn(p)).slice(0,5);
+  const sub=p=>[...nodes()].filter(x=>x.startsWith(p)).sort();
+  const stored=()=>{let s=S.present.size;if(S.cache)nodes().forEach(p=>{s+=Math.min(5,qIn(p).length);});return s;};
+  const label=p=>p+(o.cnt&&isQ(p)?' '+S.counts[p]:'');
+  const W=p=>Math.round(label(p).length*6.9+14);
+  const STY={path:['--pri-bg','--pri',2.4],target:['--pri-bg','--pri',3.4],walk:['--h3-bg','--h3',2.2],rew:['--h4-bg','--h4',2.8],sel:['--h2-bg','--h2',3],'new':['--ok-bg','--ok-line',2.6],ok:['--ok-bg','--ok-line',2.8],no:['--no-bg','--no-line',2.8]};
+  function draw(){
+    if(!alive())return;
+    const n=nodes();let s='';
+    n.forEach(p=>{if(!p)return;const par=p.slice(0,-1),lit=S.mark[p]&&S.mark[par]&&/path|target/.test(S.mark[p])&&/path|target/.test(S.mark[par]);
+      s+='<line x1="'+(par?X(par)+W(par)/2:20)+'" y1="'+Y(par)+'" x2="'+(X(p)-W(p)/2)+'" y2="'+Y(p)+'" style="stroke:var('+(lit?'--pri':'--line2')+');stroke-width:'+(lit?2.6:1.3)+'"/>';});
+    n.forEach(p=>{const x=p?X(p):12,y=Y(p),m=S.mark[p],q=isQ(p),bl=S.blocked.has(p);
+      let st=STY[m]||(q?['--card','--ink',2]:['--card','--line2',1.4]);if(bl)st=['--no-bg','--no',2];
+      const tap=!!(o.onTap||o.tap);
+      s+='<g data-p="'+p+'"'+(tap?' role="button" tabindex="0" aria-label="'+(p?'Node '+p+(q?', searched '+S.counts[p]+' times':''):'Root node')+'"':'')+'>';
+      if(!p){s+='<circle cx="12" cy="'+y+'" r="8" style="fill:var('+st[0]+');stroke:var('+st[1]+');stroke-width:'+st[2]+'"/><text x="12" y="'+(y-13)+'" style="font-size:11px;fill:var(--muted);text-anchor:middle">root</text>';
+        if(tap)s+='<rect x="0" y="'+(y-18)+'" width="26" height="36" style="fill:transparent"/>';}
+      else{const w=W(p);
+        s+='<rect x="'+(x-w/2)+'" y="'+(y-11)+'" width="'+w+'" height="22" rx="8" style="fill:var('+st[0]+');stroke:var('+st[1]+');stroke-width:'+st[2]+(bl?';stroke-dasharray:4 3':'')+'"/>';
+        s+='<text x="'+x+'" y="'+(y+4.3)+'" style="font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle'+(bl?';text-decoration:line-through':'')+'">'+p+(o.cnt&&q?'<tspan style="font-weight:500;fill:var(--muted)"> '+S.counts[p]+'</tspan>':'')+'</text>';}
+      if(S.cache){const k=Math.min(5,qIn(p).length);if(k)s+='<rect x="'+(p?x-W(p)/2+3:2)+'" y="'+(y+(p?12.5:10))+'" width="'+k*5+'" height="3.2" rx="1.6" style="fill:var(--h4)"/>';}
+      s+='</g>';});
+    svg.innerHTML=s;
+  }
+  function renderBox(){if(!o.box||!alive())return;const p=S.p||'';$('#'+ID+'-q').innerHTML=p?p+'<span class="cur"></span>':'<span class="ph">Nothing typed yet</span>';if(o.req)$('#'+ID+'-rq').textContent=S.req;}
+  function renderSug(){
+    if(!o.sug||!alive())return;const el=$('#'+ID+'-sg');
+    if(S.p===null||S.p===''){el.innerHTML='<span class="small">Suggestions appear here</span>';return;}
+    if(!S.res){el.innerHTML='<span class="small">Looking up…</span>';return;}
+    const l=top(S.p).filter(w=>!S.blocked.has(w));
+    el.innerHTML='<span class="lbl">Top '+l.length+'</span>'+(l.length?l.map(w=>o.onSug?'<button class="chip txs" data-w="'+w+'">'+w+'<small>'+S.counts[w]+'</small></button>':'<span class="chip static">'+w+'<small>'+S.counts[w]+'</small></span>').join(''):'<span class="small">none</span>');
+    if(o.onSug)el.querySelectorAll('.txs').forEach(b=>b.onclick=()=>o.onSug(b.dataset.w));
+  }
+  function renderKeys(){
+    if(!o.keys||!alive())return;const cur=S.p||'',el=$('#'+ID+'-k');
+    const ch=[...nodes()].filter(x=>x.length===cur.length+1&&x.startsWith(cur)).sort();
+    el.innerHTML=ch.map(c=>'<button class="chip" data-k="'+c+'" aria-label="Type '+c.slice(-1)+'">'+c.slice(-1)+'</button>').join('')+
+      (cur?'<button class="chip" data-k="'+cur.slice(0,-1)+'" id="'+ID+'-bk" aria-label="Backspace">⌫</button>':'');
+    el.querySelectorAll('[data-k]').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(k)set(k,true);else clear();});
+  }
+  function renderRead(){
+    if(!o.read||!alive())return;const el=$('#'+ID+'-rd');
+    const row=(a,b,c)=>'<span'+(c?' class="'+c+'"':'')+'>'+a+'</span><b'+(c?' class="'+c+'"':'')+'>'+b+'</b>';
+    let h='';
+    if(S.p===null||S.p==='')h=row('Type a prefix to see the work','');
+    else{const r=S.res,v=x=>r?x:'…',fl='1 · Find the prefix node'+(S.cap?' <span class="small">(cap 50)</span>':'');
+      if(S.cache)h=row(fl,v(r&&r.find))+row('2 · Read the cached top 5',v(1))+row('Walk and sort','skipped','mut')+row('Total steps',v(r&&r.total),'tot');
+      else h=row(fl,v(r&&r.find))+row('2 · Walk the subtree',v(r&&r.walk))+row('3 · Sort, keep top 5',v(r&&r.sort))+row('Total steps',v(r&&r.total),'tot');}
+    h+=row('Numbers stored in the trie',stored(),'sto');
+    el.innerHTML=h;
+  }
+  function calc(p){const f=S.cap?Math.min(p.length,50):p.length,q=qIn(p).length,c=sub(p).length;
+    if(S.cache)return {find:f,walk:0,sort:0,total:f+1,c,q};
+    const so=q>1?Math.round(q*Math.log2(q)):0;return {find:f,walk:c,sort:so,total:f+c+so,c,q};}
+  function renderAll(){draw();renderBox();renderSug();renderKeys();renderRead();}
+  function clear(){S.tok++;S.p=null;S.mark={};S.res=null;S.busy=false;renderAll();}
+  async function set(p,user){
+    const t=++S.tok;S.busy=true;S.p=p;S.mark={};S.res=null;if(user)S.req++;
+    renderBox();renderKeys();renderSug();renderRead();draw();
+    for(let k=0;k<=p.length;k++){S.mark[p.slice(0,k)]='path';draw();await L.sleep(75);if(t!==S.tok||!alive())return;}
+    S.mark[p]='target';draw();
+    if(!S.cache){for(const q of sub(p)){if(q===p)continue;S.mark[q]='walk';draw();await L.sleep(48);if(t!==S.tok||!alive())return;}}
+    else{await L.sleep(120);if(t!==S.tok||!alive())return;}
+    S.res=calc(p);S.busy=false;renderSug();renderRead();if(o.onSet)o.onSet(p,S.res,S.cache);
+  }
+  async function update(word,n){
+    S.tok++;S.busy=true;const anc=[];for(let k=word.length;k>=0;k--)anc.push(word.slice(0,k));
+    const sig=p=>top(p).map(w=>w+S.counts[w]).join();
+    const before={};anc.forEach(p=>before[p]=sig(p));
+    S.counts[word]=n;S.mark={};const changed=[];renderRead();
+    for(const p of anc){const ch=S.cache?before[p]!==sig(p):p===word;draw();
+      if(ch){changed.push(p);S.mark[p]='rew';draw();await L.sleep(260);if(!alive())return changed;}}
+    S.busy=false;renderSug();return changed;
+  }
+  async function insert(w){
+    S.tok++;S.busy=true;const n0=nodes();S.present.add(w);S.mark={};
+    for(let k=0;k<=w.length;k++){const p=w.slice(0,k);S.mark[p]=n0.has(p)?'path':'new';draw();await L.sleep(110);if(!alive())return;}
+    S.busy=false;renderKeys();renderRead();
+  }
+  function rebuild(){S.blocked.forEach(w=>S.present.delete(w));S.blocked.clear();S.mark={};renderAll();}
+  function setCache(v){S.cache=v;draw();renderRead();if(S.p)set(S.p);}
+  function setCap(v){S.cap=v;renderRead();if(S.p&&S.res){S.res=calc(S.p);renderRead();}}
+  function reset(){S.counts=Object.assign({},o.counts);S.present=new Set(BASE);S.p=null;S.mark={};S.blocked.clear();S.res=null;S.tok++;S.busy=false;S.req=0;renderAll();}
+  const fire=e=>{const g=e.target.closest('g[data-p]');if(!g)return;const p=g.getAttribute('data-p');if(o.onTap)o.onTap(p);else if(o.tap){if(p)set(p,true);else clear();}};
+  svg.addEventListener('click',fire);
+  svg.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();fire(e);}});
+  reset();
+  return {S,set,clear,update,insert,rebuild,reset,setCache,setCap,draw,renderAll,renderRead,renderSug,top,nodes,alive,
+    idle:async()=>{while(S.busy&&alive())await L.sleep(30);}};
+}
+/* solver helpers */
+function tapNode(L,id,p){const g=L.$('#'+id+'-svg g[data-p="'+p+'"]');if(g)g.dispatchEvent(new MouseEvent('click',{bubbles:true}));}
+async function typeKey(L,t,id,k){L.$('#'+id+'-k [data-k="'+k+'"]').click();await t.idle();}
+
 Course.lesson({
   id:'0007', title:'Design search autocomplete', minutes:20, icon:'tree',
-  goals:['Scope autocomplete and size it with the book’s numbers','Explain how a trie with a cached top 5 answers in O(1)','Trace the data from search logs to a sharded trie cache'],
+  goals:['Scope autocomplete and size it with the book’s numbers','Show why a trie with a cached top 5 answers each keystroke in one lookup, and what that costs','Trace the data from search logs to a sharded trie cache, and name where the design stops working'],
   parts:['Scope and numbers','The trie','Gather and serve','Scale and wrap up'],
   read:'Read chapter 13 of the book for the trie figures, the log and aggregation tables, and the shard map diagram.',
   glossary:{
     trie:'Trie (say “try”): a tree for storing words. The root is the empty string, each node adds one letter, so every node stands for a prefix (the start of a word).',
     bigo:'O(…) (“big O”): a rough measure of how the work grows as the data grows. O(1) means the work stays about the same, however big the data gets.',
     topk:'Top k: the k most popular results. Here k = 5, the five most searched queries that start with what the user typed.',
-    ajax:'AJAX request: a small background request a web page sends without reloading the whole page.'
+    ajax:'AJAX request: a small background request a web page sends without reloading the whole page.',
+    'shard-map':'Shard map manager: a lookup table that says which shard stores which letters, built from how many queries each letter got in the past.'
   },
   cheatsheet:[
     '<b>Scope:</b> prefix match only, top 5 by past popularity, no spell check, English lowercase, 10M DAU, answers within about 100 ms.',
     '<b>Numbers:</b> one request per keystroke, about 20 per search → ~24,000 QPS, peak ~48,000; ~0.4 GB of new data a day.',
-    '<b>Trie</b> with frequencies. Plain top k = find prefix + walk subtree + sort: too slow.',
-    '<b>Two fixes → O(1):</b> cap the prefix (say 50 characters) and cache the top 5 at every node. Trades memory for speed.',
+    '<b>Plain trie lookup:</b> find the prefix O(p) + walk the subtree O(c) + sort O(c log c). Short prefixes walk huge subtrees.',
+    '<b>Two fixes → O(1):</b> cap the prefix (say 50 characters) and cache the top 5 at every node. Paid for with memory.',
     '<b>Data gathering:</b> analytics logs → aggregators → aggregated data → workers build the trie weekly → trie DB → trie cache.',
-    '<b>Query service:</b> load balancer → API servers → trie cache (refill from DB on a miss). Plus AJAX, browser caching, 1-in-N sampling.',
-    '<b>Trie operations:</b> rebuild weekly; a single update touches the node and every ancestor; delete through a filter layer.',
-    '<b>Scale:</b> shard by first letter, then use a shard map manager built from history. Wrap-up: Unicode, per-country tries on CDNs, trending needs streaming.'
+    '<b>Query service:</b> load balancer → API servers → trie cache (refill from the DB on a miss). Plus AJAX, browser caching, 1-in-N sampling.',
+    '<b>Trie operations:</b> rebuild weekly; a direct update rewrites the node and every ancestor; delete with a filter layer, then clean the DB.',
+    '<b>Scale and limits:</b> shard by first letter, then balance with a shard map manager. Wrap-up: Unicode, per-country tries on CDNs; trending needs streaming.'
   ],
   steps:[
 /* ---------- PART 1: SCOPE AND NUMBERS ---------- */
-{part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kitebird’s search box asks the server for suggestions after every letter. A maker types “sourdough”. How many requests reach the server?</h1>');
-  L.mc(L.card,['One, sent when they press Enter','Nine, one for each letter typed','Two, one at the start, one at the end'],1,
-   'Every letter changes the prefix, so every letter needs fresh suggestions. That one fact drives the whole design.',
-   'The box asks after <i>every</i> letter: “s”, “so”, “sou”… That’s nine requests for one word.');}},
+{part:0,src:'Warm-up',pts:1,
+ solve:async L=>{L.$('#w1o').children[1].click();for(let k=0;k<6;k++){L.$('#w1k').click();await L.sleep(15);}},
+ run(L){
+  const W='dinner';let pick=null,k=0;
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A search box shows suggestions as you type. Guess first: by the time someone has typed “dinner”, how many requests has the box sent to the server?</h1>'+
+   '<div class="simrow" id="w1o"></div><div id="w1t" hidden><div class="txbox"><span class="txq" id="w1q"><span class="ph">Tap the key below to type</span></span><span class="txrq">Requests sent: <b id="w1n">0</b></span></div>'+
+   '<div class="w1log" id="w1l" aria-live="polite"></div><button class="btn pri" id="w1k">Type “d”</button></div>'+CSS);
+  ['1, when they press Enter','6, one per letter','2, at the first and last letter'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(pick!==null)return;pick=j;b.classList.add('sel');L.$('#w1t').hidden=false;};L.$('#w1o').appendChild(b);});
+  L.$('#w1k').onclick=()=>{if(k>=W.length)return;k++;const p=W.slice(0,k);
+    L.$('#w1q').innerHTML=p+'<span class="cur"></span>';L.$('#w1n').textContent=k;
+    L.$('#w1l').insertAdjacentHTML('beforeend','<code>search?q='+p+'</code>');
+    if(k<W.length){L.$('#w1k').textContent='Type “'+W[k]+'”';return;}
+    L.$('#w1k').remove();L.award(pick===1);
+    L.sheet(pick===1?'ok':'no',pick===1?'Six requests':'It was six',
+     'Every letter changes the prefix, so the box asks again: 6 requests for “dinner”. That one fact drives the whole design: the server answers far more often than people search.');L.done();};}},
 {part:0,src:'Chapter 13 · Step 1 - Understand the problem and establish design scope',run(L){
   L.h(L.kick('learn','Ask before you build')+'<h1 class="q">The book’s interview opens with seven questions. Tap each to see the answer.</h1>'+
-   L.prose('The interview question is often called “design top k”: return the k most searched queries for what the user typed so far.'));
+   L.prose('The question is often called “design top k”: return the k most searched queries for what the user typed so far.'));
   L.flips(L.card,[
    ['Match where?','Only at the <b>start</b> of the query (a prefix). Not in the middle.'],
    ['How many suggestions?','<b>5.</b>'],
@@ -52,14 +224,14 @@ Course.lesson({
    ['Which language?','<b>English.</b> Other languages only if time allows at the end.'],
    ['Capitals or symbols?','<b>No.</b> Every query is lowercase letters.'],
    ['How many users?','<b>10 million</b> '+L.g('dau','daily active users')+'.']],
-   'Seven short answers shrink a huge problem: prefix only, top 5 by popularity, lowercase English, 10 million users a day.');}},
+   'Seven short answers shrink a huge problem: prefix only, '+L.g('topk','top 5')+' by popularity, lowercase English, 10 million users a day.');}},
 {part:0,src:'Chapter 13 · Requirements',run(L){
   L.h(L.kick('learn','What “good” means here')+'<h1 class="q">Five requirements the design must meet</h1>'+
-   L.list([['clock','Fast','Suggestions must keep up with typing. The book cites a Facebook article: within about <b>100 milliseconds</b>, or the box stutters.'],
-     ['target','Relevant','Suggestions must match what was typed.'],
+   L.list([['clock','Fast','The book cites a Facebook article: results within about <b>100 milliseconds</b>, or the box stutters.'],
+     ['target','Relevant','Suggestions match what was typed.'],
      ['list','Sorted','Ordered by popularity (or another ranking model).'],
      ['trend','Scalable','Handles high traffic.'],
-     ['shield','Highly available','Keeps working when part of the system is down, slow or hit by network errors.']],1)+
+     ['shield','Highly available','Keeps working when part of the system is offline, slow or hit by network errors.']],1)+
    '<p class="small" style="margin-top:10px">“Fast” is the one to watch. Most of the deep dive exists to hit it.</p>');
   L.done();}},
 {part:0,src:'Chapter 13 · Back of the envelope estimation',run(L){
@@ -67,31 +239,15 @@ Course.lesson({
   L.beats(L.card,[
    ['Users','<b>10 million</b> DAU, each doing <b>10 searches</b> a day.'],
    ['Query size','A query is about 4 words of 5 letters: <b>20 characters</b>. In ASCII, 1 character = 1 byte, so <b>20 bytes</b>.'],
-   ['Requests','Every letter sends a request: <code>search?q=d</code>, <code>search?q=di</code> … <code>search?q=dinner</code>. So one search ≈ <b>20 requests</b>.'],
+   ['Requests','One request per character, like your “dinner” run. So one search ≈ <b>20 requests</b>.'],
    ['QPS','10M × 10 × 20 ÷ 86,400 seconds ≈ <b>24,000 '+L.g('qps','QPS')+'</b>. Peak is twice that: about <b>48,000</b>.'],
    ['Storage','Say 20% of queries are new each day: 10M × 10 × 20 bytes × 20% = <b>0.4 GB</b> of new data a day.']],
-   'Huge traffic, small data. Every keystroke is a request, yet new data is under half a gigabyte a day. That’s why the deep dive is about making each lookup fast.');}},
+   'Huge traffic, small data. Every keystroke is a request, yet new data is under half a gigabyte a day. So the deep dive is about making each lookup fast.');}},
 {part:0,src:'Chapter 13 · Back of the envelope estimation',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why does one search cost about 20 requests in the book’s sums?</h1>');
-  L.mc(L.card,['Each search is retried 20 times to be safe','A request goes out per character, and a query averages 20','Twenty servers are each asked for their own top 5'],1,
-   'One request per character, and the average query is 4 words × 5 letters = 20 characters.',
-   'Nothing is retried or spread over 20 servers. The client simply asks again after every character, and an average query has 20.');}},
-{part:0,src:'Chapter 13 · Back of the envelope estimation',pts:1,
- solve:async L=>{L.$('#ty').click();await L.sleep(1300);},
- run(L){
-  const W='sourdough';
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Press the button and watch the requests pile up as a maker types “sourdough”.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:6px 0 10px"><div class="small">Search box</div><div class="week" id="sb" style="font-size:22px;min-height:34px">|</div>'+
-   '<div class="small" style="margin:6px 0">Requests sent: <b id="sn">0</b></div><div id="sl" style="min-height:40px"></div></div>'+
-   '<button class="btn pri" id="ty">'+L.ic('play')+'Type it</button><div id="sq"></div>');
-  L.$('#ty').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const sb=L.$('#sb');if(!sb){clearInterval(t);return;}k++;const p=W.slice(0,k);sb.textContent=p+'|';L.$('#sn').textContent=k;
-      L.$('#sl').insertAdjacentHTML('beforeend','<span class="chip static" style="font-size:13px;padding:5px 9px">q='+p+'</span>');
-      if(k>=W.length){clearInterval(t);const q=L.$('#sq');
-        q.innerHTML='<h2 class="sub">Kitebird has 4 million DAU. Each makes 5 searches a day at about 20 requests each. Roughly what is the average QPS?</h2>';
-        L.mc(q,['About 460','About 4,600','About 46,000'],1,
-         '4M × 5 × 20 = 400 million requests a day. Divide by 86,400 seconds: about 4,600. Peak, twice that: about 9,300.',
-         'Multiply first: 4M × 5 × 20 = 400 million requests a day. Then divide by 86,400 seconds: about 4,600.');}},120);};}},
+  L.h(L.kick('try','Kitebird’s numbers')+'<h1 class="q">Tamsin opens the review of Kitebird’s search-as-you-type: “How big is it?” Kitebird has about 4 million DAU, each making 5 searches a day at about 20 requests each. Roughly what is the average QPS?</h1>');
+  L.mc(L.card,['About 460','About 4,600','About 46,000'],1,
+   '4M × 5 × 20 = 400 million requests a day. Divide by 86,400 seconds: about 4,600. Peak, twice that: about 9,300.',
+   'Multiply first: 4M × 5 × 20 = 400 million requests a day. Then divide by 86,400 seconds: about 4,600.');}},
 {part:0,src:'Chapter 13 · Step 1 - Understand the problem and establish design scope',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Inside the book’s scope?',['In scope','Out of scope'],[
@@ -106,70 +262,88 @@ Course.lesson({
   L.h(L.kick('learn','The first-cut design')+'<h1 class="q">Two services and one table</h1>'+
    L.lanes([['box','Data gathering service','Collects what users search and keeps a count for each query.',1],
             ['eye','Query service','Given a prefix, returns the 5 most searched queries that start with it.',2]])+
-   L.prose('Behind both sits a <b>frequency table</b> with two fields: the query and how many times it was searched. If users search “twitch”, “twitter”, “twitter”, “twillo”, the table ends up with twitter 2, twitch 1, twillo 1.')+
-   L.prose('To answer “tw”, the query service asks the database for rows that start with “tw”, sorted by frequency, top 5.')+
-   L.note('Fine while the data is small. Once it grows, hitting the database on every keystroke becomes the <b>bottleneck</b>.','alert'));
+   L.prose('Behind both sits a <b>frequency table</b>: the query and how many times it was searched. Users search “twitch”, “twitter”, “twitter”, “twillo”, and the table ends with twitter 2, twitch 1, twillo 1. For “tw”, the query service asks the database for rows starting with “tw”, sorted by count, top 5.')+
+   L.note('Fine while the data is small. Once it grows, hitting the database on every keystroke becomes the <b>bottleneck</b>. The deep dive replaces the table with a better shape.','alert'));
   L.done();}},
-{part:1,src:'Chapter 13 · Trie data structure',run(L){
-  const T='(root)\n├─ t\n│  ├─ tr\n│  │  ├─ tre ─ <b>tree</b> 10\n│  │  ├─ tru ─ <b>true</b> 35\n│  │  └─ <b>try</b> 29\n│  └─ to ─ <b>toy</b>\n└─ w ─ wi\n       ├─ wis ─ <b>wish</b>\n       └─ <b>win</b>';
-  L.h(L.kick('learn','A better shape for prefixes')+'<h1 class="q">The trie: a tree where every node is a prefix</h1>'+
-   L.prose('A '+L.g('trie','trie')+' (say “try”, from re<i>trie</i>val) stores strings compactly. The root is the empty string. Each node adds one letter and could have up to 26 children, one per letter.')+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:12px 0;overflow-x:auto"><div style="font-family:ui-monospace,Menlo,monospace;font-size:13.5px;line-height:1.55;white-space:pre">'+T+'</div></div>'+
-   '<p class="small">Bold nodes are full queries. The numbers are search counts from the book’s example.</p>'+
-   L.prose('To rank results, each query node also stores its <b>frequency</b>: how often it was searched.'));
-  L.done();}},
-{part:1,src:'Chapter 13 · Trie data structure',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Getting the top 2 for “tr” the plain way</h1>');
-  L.beats(L.card,[
-   ['Step 1 · Find the prefix','Walk down t → tr. That takes one step per letter typed: '+L.g('bigo','O(p)')+', where p is the prefix length.'],
-   ['Step 2 · Walk the subtree','Visit everything under “tr” and keep the full queries: tree 10, true 35, try 29. That’s O(c), where c is the number of nodes below.'],
-   ['Step 3 · Sort, take top k','Sort them by count and keep 2: <b>true 35, try 29</b>. Sorting costs O(c log c).'],
-   ['The problem','Total: O(p) + O(c) + O(c log c). For a short prefix like “t”, the subtree can be most of the trie. In the worst case you walk the <b>whole trie</b> on every keystroke.']],
-   'The plain method is simple but slow: the work grows with everything stored under the prefix.');}},
-{part:1,src:'Chapter 13 · Trie data structure',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">On a huge trie, a user types just “s”. Which step of the plain method does the most work?</h1>');
-  L.mc(L.card,['Finding the node for “s”','Sending the 5 results back','Walking and sorting all under “s”'],2,
-   'Everything that starts with “s” sits under that node. Visiting it all and sorting it is what makes the plain method slow.',
-   'Finding “s” is one step, and sending 5 results is tiny. The cost is walking and sorting everything under “s”.');}},
+{part:1,src:'Chapter 13 · Trie data structure',
+ solve:async L=>{for(const w of ['tree','try','true','toy','wish','win']){L.$('#g8 [data-w="'+w+'"]').click();await L.t8.idle();}},
+ run(L){
+  const WS=['tree','try','true','toy','wish','win'];const added=new Set();
+  L.h(L.kick('learn','A better shape for prefixes')+'<h1 class="q">Grow a trie: add the book’s six queries one by one</h1>'+
+   L.prose('A '+L.g('trie','trie')+' (say “try”, from re<i>trie</i>val) is a tree. The root is the empty string. Each node adds one letter, so every node is a prefix; it could have 26 children, one per letter.')+
+   '<div class="simrow" id="g8"></div><div class="nl" id="g8r"></div><div id="g8t"></div>'+CSS);
+  const t=L.t8=Trie(L,L.$('#g8t'),{id:'t8',words:WS,base:[],keys:false,box:false,sug:false,read:false,tap:false,cnt:false});
+  const rd=()=>{const n=t.nodes().size-1,lc=[...added].reduce((a,w)=>a+w.length,0);
+    L.$('#g8r').innerHTML='Queries: <b>'+added.size+'</b> · letters in them: <b>'+lc+'</b> · nodes: <b>'+n+'</b>'+(added.size?'<br><span class="small">Green = new node. Blue = an existing prefix, reused. Thick border = a full query.</span>':'');};
+  rd();
+  WS.forEach(w=>{const b=document.createElement('button');b.className='chip';b.dataset.w=w;b.textContent='+ '+w;
+    b.onclick=async()=>{if(added.has(w)||t.S.busy)return;added.add(w);b.classList.add('ok');await t.insert(w);if(!t.alive())return;rd();
+      if(added.size===WS.length){L.sheet('info','21 letters, 14 nodes (plus the root)','Queries that start the same way share the same nodes: “tree”, “true” and “try” all pass through t → tr. That sharing is why a trie stores strings compactly, and why everything starting with a prefix sits <b>under</b> that prefix’s node.');L.done();}};
+    L.$('#g8').appendChild(b);});}},
+{part:1,src:'Chapter 13 · Trie data structure',
+ solve:async L=>{const t=L.t9;await typeKey(L,t,'t9','t');await typeKey(L,t,'t9','tr');L.$('#t9-bk').click();await t.idle();L.$('#t9-bk').click();await t.idle();await typeKey(L,t,'t9','b');await typeKey(L,t,'t9','be');},
+ run(L){
+  const seen=new Set();
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Each query node now stores how often it was searched. Type “tr”, then “be”, and watch the plain lookup work.</h1>'+
+   '<div id="c9"></div><p class="ill">'+ILL+'</p>'+CSS);
+  const t=L.t9=Trie(L,L.$('#c9'),{id:'t9',onSet:p=>{if(p==='tr'||p==='be')seen.add(p);
+    if(seen.size===2&&!L.$('#c9done')){L.$('#c9').insertAdjacentHTML('beforeend','<span id="c9done"></span>');
+      L.sheet('info','Three steps, every keystroke','1) <b>Find</b> the prefix node: one step per letter, '+L.g('bigo','O(p)')+'. 2) <b>Walk</b> everything under it and collect the full queries, O(c). 3) <b>Sort</b> them by count and keep the top k, O(c log c). For “tr” that’s tree 10, true 35, try 29 → <b>true, try</b>, tree. (The book’s own example asks for the top 2: true 35 and try 29.)');L.done();}}});}},
+{part:1,src:'Chapter 13 · Trie data structure',pts:1,
+ solve:async L=>{L.$('#p10').children[1].click();await L.t10.idle();},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">On the same plain trie, a maker types just “b”. Counting the “b” node itself, how many nodes does the walk visit?</h1>'+
+   '<div class="simrow" id="p10"></div><div id="c10"></div>'+CSS);
+  const t=L.t10=Trie(L,L.$('#c10'),{id:'t10',keys:false,tap:false,box:false,sug:false,onSet:()=>{
+    const ok=pick===1;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Seven nodes':'It visits seven',
+     'b, be, bee, beer, bes, best, bet: <b>everything under the prefix</b>, then it sorts the 5 queries it found. The shorter the prefix, the bigger the subtree. In the worst case the walk covers the <b>whole trie</b>, and a real trie holds millions of queries.');L.done();}});
+  ['1: the b node only','7: everything under b','21: every node except the root'].forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s;
+    b.onclick=()=>{if(pick!==null)return;pick=j;b.classList.add('sel');t.set('b');};L.$('#p10').appendChild(b);});}},
 {part:1,src:'Chapter 13 · Trie data structure',run(L){
   L.h(L.kick('learn','Two fixes that buy O(1)')+'<h1 class="q">Cap the prefix, and cache the answer at every node</h1>'+
    L.lanes([['lock','1 · Limit prefix length','Users rarely type long queries, so cap p at a small number, say <b>50</b>. Finding the prefix becomes a small constant: O(1).',1],
-            ['layers','2 · Cache top k at each node','Store the top 5 queries <b>inside every node</b>. Now there’s nothing to walk or sort: just read the list. O(1).',2]])+
+            ['layers','2 · Cache top k at each node','Store the top 5 queries <b>inside every node</b>. Nothing left to walk or sort: just read the list. O(1).',2]])+
    L.prose('In the book’s example the “be” node stores <b>best 35, bet 29, bee 20, be 15, beer 10</b>. Typing “be” returns that list straight away.')+
-   L.note('<b>The price:</b> a lot of extra memory, since every node keeps its own list. The book judges it worth it, because a fast response matters most.','scale'));
+   L.note('<b>The price:</b> a lot of extra space, since every node keeps its own list. The book judges it well worth it, because a fast response matters most.','scale'));
   L.done();}},
 {part:1,src:'Chapter 13 · Trie data structure',pts:1,
- solve:async L=>{L.$('#ta').click();L.$('#tb').click();L.$('#run').click();},
+ solve:async L=>{const t=L.t12;await typeKey(L,t,'t12','b');await typeKey(L,t,'t12','be');L.$('#o12cap').click();L.$('#o12c').click();await t.idle();await L.sleep(30);},
  run(L){
-  const on={a:false,b:false};let asked=false;
-  const fmt=n=>n.toLocaleString('en-US');
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Kitebird’s trie has 180,000 queries under “s”. Switch the fixes on and off, and run the same two lookups.</h1>'+
-   '<div><button class="chip" id="ta">'+L.ic('lock')+'Cap prefix at 50</button><button class="chip" id="tb">'+L.ic('layers')+'Cache top 5 per node</button></div>'+
-   '<button class="btn pri" id="run" style="margin:6px 0 10px">'+L.ic('play')+'Run lookups</button>'+
-   '<div id="out"></div><p class="small">Kitebird numbers are made up. A “step” is one node visited or one comparison.</p><div id="oq"></div>');
-  const tog=(k,id)=>{on[k]=!on[k];L.$(id).classList.toggle('sel',on[k]);};
-  L.$('#ta').onclick=()=>tog('a','#ta');L.$('#tb').onclick=()=>tog('b','#tb');
-  L.$('#run').onclick=()=>{
-    const find1=1,find2=on.a?50:2000,walk=on.b?1:180000,sort=on.b?0:3150000;
-    const row=(lab,f,w,s)=>{const tot=f+w+s;return '<div style="background:var(--soft);border-radius:14px;padding:10px 12px;margin:0 0 8px"><b>'+lab+'</b><div class="small" style="margin:4px 0 0">Find: '+fmt(f)+' · Walk: '+fmt(w)+' · Sort: '+fmt(s)+'</div><div style="font-weight:700;color:'+(tot<100?'var(--ok)':'var(--no)')+'">≈ '+fmt(tot)+' steps</div></div>';};
-    L.$('#out').innerHTML=row('Prefix “s”',find1,walk,sort)+row('A pasted 2,000-character prefix',find2,on.b?1:0,0);
-    if(on.a&&on.b&&!asked){asked=true;const q=L.$('#oq');q.innerHTML='<h2 class="sub">Both lookups now take a handful of steps. Hana asks what Kitebird paid for that. What’s the answer?</h2>';
-      L.mc(q,['Fewer suggestions for each prefix','Much more memory for stored lists','Slower writes to the search log'],1,
-       'Every node keeps its own top 5, so the trie gets much bigger. Space traded for time.',
-       'Users still get 5 suggestions, and the logs are untouched. The cost is memory: every node now stores its own top 5.');}};}},
+  let naive=false,cached=false,asked=false;
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Look up “be” on the plain trie. Then switch both fixes on and compare the steps and the numbers stored.</h1>'+
+   '<div class="simrow"><button class="chip" id="o12cap" aria-pressed="false">'+L.ic('lock')+'Cap prefix at 50</button><button class="chip" id="o12c" aria-pressed="false">'+L.ic('layers')+'Cache top 5 at each node</button></div>'+
+   '<div id="c12"></div><p class="ill">The short bar under each node shows the size of its cached list. '+ILL+'</p><div id="q12"></div>'+CSS);
+  const t=L.t12=Trie(L,L.$('#c12'),{id:'t12',onSet:(p,r,c)=>{if(c)cached=true;else naive=true;check();}});
+  function check(){if(asked||!naive||!cached||!t.S.cap)return;asked=true;const q=L.$('#q12');
+    q.innerHTML='<h2 class="sub">One read instead of a walk and a sort. Hana asks what Kitebird paid for that. What’s the answer?</h2>';
+    L.mc(q,['Fewer suggestions for each prefix','Much more space for stored lists','Slower writes to the search log'],1,
+     'Every node keeps its own top 5, so “numbers stored” jumped. Space traded for time, and the book says the trade is worth it.',
+     'Users still get 5 suggestions, and the logs are untouched. Look at “numbers stored”: every node now keeps its own top 5. Space traded for time.');}
+  const tog=(id,fn)=>{const b=L.$('#'+id);b.onclick=()=>{const v=!b.classList.contains('sel');b.classList.toggle('sel',v);b.setAttribute('aria-pressed',v);fn(v);check();};};
+  tog('o12cap',v=>t.setCap(v));tog('o12c',v=>t.setCache(v));}},
 
 /* ---------- PART 3: GATHER AND SERVE ---------- */
-{part:2,src:'Chapter 13 · Data gathering service',run(L){
-  L.h(L.kick('learn','Don’t update on every search')+'<h1 class="q">Build the trie in batches, from logs</h1>'+
-   L.prose('Updating the trie live on every search is impractical: billions of queries a day would slow down the query service, and the top suggestions barely change once the trie is built.')+
-   L.list([['Analytics logs','Raw records of every search. Append-only, not indexed.'],
-     ['Aggregators','Squash the huge logs into counts. Real-time products aggregate often; for many, <b>once a week</b> is enough.'],
-     ['Aggregated data','One row per query per week: the query, the week’s start, and its count.'],
-     ['Workers','Servers that run jobs on a schedule. They <b>build the trie</b> and store it.'],
-     ['Trie DB','Persistent storage: a document store holding a weekly snapshot, or a key-value store (key = prefix, value = that node’s data).'],
-     ['Trie cache','A distributed '+L.g('cache','cache')+' holding the trie in memory for fast reads. Takes a weekly snapshot of the DB.']],3)+
-   '<p class="small" style="margin-top:10px">In an interview, ask whether real-time results matter. The book assumes a weekly rebuild.</p>');
-  L.done();}},
+{part:2,src:'Chapter 13 · Data gathering service',
+ solve:async L=>{for(let k=0;k<5;k++)L.$('#p13n').click();},
+ run(L){
+  const ST=[
+   ['Analytics logs','Raw records of every search. Append-only and not indexed.','<div class="mono">sock heel · Mon 09:14<br>sourdough starter · Mon 09:15<br>sock heel · Mon 09:20<br>spoon carving · Mon 09:21<br>… millions more lines</div>'],
+   ['Aggregators','Logs are huge and in the wrong shape, so aggregators squash them into counts. Real-time products like Twitter aggregate often; for many, <b>once a week</b> is enough. Ask which in the interview; the book assumes a weekly rebuild.','<div class="mono">sock heel ×3 · sourdough starter ×1 · spoon carving ×1 …</div>'],
+   ['Aggregated data','One row per query per week: the week’s start time and the week’s total.','<table class="tbl"><tr><th>query</th><th>week of</th><th>frequency</th></tr><tr><td>sock heel</td><td>2 Nov</td><td>4,120</td></tr><tr><td>sourdough starter</td><td>2 Nov</td><td>3,870</td></tr><tr><td>spoon carving</td><td>2 Nov</td><td>2,950</td></tr></table>'],
+   ['Workers','Servers that run jobs at regular intervals. They build the trie, with each node’s top 5, and store it in the trie DB.','<div class="mono">“s” → sock heel, sourdough starter, spoon carving<br>“so” → sock heel, sourdough starter</div>'],
+   ['Trie DB','Persistent storage, two options. A <b>document store</b> (like MongoDB) keeps each weekly trie as one serialized snapshot. A <b>key-value store</b> maps every prefix (key) to that node’s data (value).','<div class="mono">key “so” → value [sock heel 4,120, sourdough starter 3,870]</div>'],
+   ['Trie cache','A distributed '+L.g('cache','cache')+' that keeps the trie in memory for fast reads. It takes a weekly snapshot of the DB.','<div class="mono">every keystroke reads from here, not from the logs</div>']];
+  let k=0;
+  L.h(L.kick('learn','Don’t update on every search')+'<h1 class="q">Build the trie in batches, from logs. Step a week of Kitebird searches through the pipeline.</h1>'+
+   L.prose('Updating the trie live is impractical: billions of queries a day would slow the query service, and top suggestions barely change once the trie is built.')+
+   '<div class="pipe" id="p13"></div><div class="cap" id="p13c"></div><button class="btn pri" id="p13n">'+L.ic('play')+'Next stage</button>'+
+   '<p class="ill">Kitebird searches, times and counts are illustrative.</p>'+CSS);
+  function show(){L.$('#p13').innerHTML=ST.map((s,j)=>(j?'<span class="ar">'+L.ic('arrow')+'</span>':'')+'<span class="pst '+(j<k?'past':j===k?'on':'')+'">'+s[0]+'</span>').join('');
+    L.$('#p13c').innerHTML='<span class="stp">Stage '+(k+1)+' of 6</span><b>'+ST[k][0]+'.</b> '+ST[k][1]+ST[k][2];
+    if(k===ST.length-1){L.$('#p13n').remove();L.sheet('info','Logs in, trie out, once a week','Raw logs → weekly counts → workers build the trie → stored in the trie DB → loaded into the trie cache. Reads never touch the logs, and new searches don’t change the live trie until the next build.');L.done();}}
+  L.$('#p13n').onclick=()=>{if(k<ST.length-1){k++;show();}};show();}},
 {part:2,src:'Chapter 13 · Data gathering service',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tap the parts in the order a search flows through them, from typed to suggested.</h1>');
   L.order(L.card,['Analytics logs','Aggregators','Aggregated data','Workers','Trie DB','Trie cache'],
@@ -177,34 +351,74 @@ Course.lesson({
 {part:2,src:'Chapter 13 · Query service',run(L){
   L.h(L.kick('learn','Serving a keystroke')+'<h1 class="q">The query service reads from memory, not the database</h1>'+
    L.flow([['pointer','Load balancer','Spreads requests across servers',''],['layers','API servers','Build the 5 suggestions',''],['bowl','Trie cache','In-memory trie, the normal answer',''],['box','Trie DB','Only on a miss; the cache refills','']])+
-   L.prose('A cache miss happens when a cache server runs out of memory or goes offline. After a refill, later requests for that prefix come from the cache again. Three more speed tricks:')+
-   L.list([['pointer','AJAX requests','The page fetches suggestions in the background, without reloading.'],
+   L.prose('A cache miss happens when a cache server runs out of memory or goes offline. After the refill, later requests for that prefix come from the cache again. Three more speed tricks:')+
+   L.list([['pointer','AJAX requests','The page fetches suggestions in the background ('+L.g('ajax','AJAX')+'), without reloading.'],
      ['clock','Browser caching','Suggestions barely change in a short time, so the browser keeps them. Google keeps them for one hour (“private, max-age=3600”).'],
      ['eye','Data sampling','Logging every query costs a lot of processing and storage, so log only 1 in every N.']],2));
   L.done();}},
-{part:2,src:'Chapter 13 · Trie operations',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Create, update, delete: three things you do to a trie</h1>');
-  L.beats(L.card,[
-   ['Create','Workers build the trie from the aggregated data, which comes from the analytics logs.'],
-   ['Update, option 1','Rebuild weekly. The new trie simply <b>replaces</b> the old one.'],
-   ['Update, option 2','Change one node directly. It’s slow, so avoid it unless the trie is small. And it’s never just one node: every <b>ancestor</b> up to the root stores top queries from below, so they change too.'],
-   ['The “beer” case','“beer” goes from 10 to 30 searches. The node “beer” and its ancestors “bee”, “be”, “b” and the root all get the new value of 30.'],
-   ['Delete','Hateful, violent, sexually explicit or dangerous suggestions must go. A <b>filter layer</b> in front of the trie cache drops them at once, by rule. They’re removed from the database later, so the next weekly build is clean.']],
-   'Weekly rebuild is the normal path. A direct update touches a whole chain of ancestors. Deletes go through a filter first.');}},
-{part:2,src:'Chapter 13 · Trie operations',pts:1,
- solve:async L=>{['root','b','be','bee','beer'].forEach(k=>L.$('[data-n="'+k+'"]').click());L.$('#chk').click();},
+{part:2,src:'Chapter 13 · Trie operations',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#e16-'+j).click();await L.sleep(20);await L.t16.idle();if(j===3){L.$('#e16b').click();await L.sleep(20);await L.t16.idle();}}},
  run(L){
-  const N=['root','b','be','bes','bet','bee','best','beer'],R=['root','b','be','bee','beer'];const pick=new Set();let done=false;
-  L.h(L.kick('pr','Patch the trie')+'<h1 class="q">“beer” jumps from 10 to 30 searches. You patch the trie directly. Tap every node whose cached top 5 must change.</h1>'+
-   '<div id="nd" style="margin:6px 0 4px"></div><button class="btn pri" id="chk">'+L.ic('check')+'Check</button><div id="nf"></div>');
-  N.forEach(n=>{const b=document.createElement('button');b.className='chip';b.dataset.n=n;b.textContent=n==='root'?'(root)':n;
-    b.onclick=()=>{if(done)return;pick.has(n)?pick.delete(n):pick.add(n);b.classList.toggle('sel',pick.has(n));};L.$('#nd').appendChild(b);});
-  L.$('#chk').onclick=()=>{if(done)return;if(!pick.size){L.err('Tap at least one node');return;}done=true;
-    const ok=R.every(n=>pick.has(n))&&pick.size===R.length;
-    [...L.$('#nd').children].forEach(b=>{const n=b.dataset.n,r=R.includes(n);b.classList.remove('sel');if(r)b.classList.add('ok');else if(pick.has(n))b.classList.add('no');});
-    L.$('#chk').remove();L.award(ok);
-    L.sheet(ok?'ok':'no',ok?'Every ancestor patched':'Not quite',
-     'The path is root → b → be → bee → beer. Each of those nodes may hold “beer” in its cached list, so all five change. “bes”, “bet” and “best” sit on other branches; “beer” doesn’t start with them, so their lists never include it.');L.done();};}},
+  const words=Object.keys(BOOK).concat(['bees']),counts=Object.assign({bees:90},BOOK);
+  const seen=new Set();
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Both fixes are on. Run each case to see where the optimized trie still struggles.</h1>'+
+   '<div class="simrow" id="e16"></div><div class="cap" id="e16c" aria-live="polite"></div><div id="c16"></div><p class="ill">'+ILL+' “try 40” and “bees 90” are illustrative too.</p>'+CSS);
+  const t=L.t16=Trie(L,L.$('#c16'),{id:'t16',words,base:Object.keys(BOOK),counts,cache:true,cap:true,keys:false,tap:false});
+  const cap=h=>{L.$('#e16c').innerHTML=h;};
+  const P=[
+   ['Short prefix, huge subtree',async()=>{t.setCache(false);await t.set('t');if(!t.alive())return;
+     cap('<span class="stp">Plain trie, prefix “t”</span>The walk covers 9 of the trie’s 21 nodes (not counting the root; this merged trie is the lesson’s own, not a figure from the book). Now picture Kitebird’s real trie with, say, <b>180,000</b> queries under “s” (illustrative): about 180,000 nodes walked and over 3 million sort steps, for one keystroke. With the cached top 5 it’s still <b>2 steps</b>.');
+     t.setCache(true);await t.idle();}],
+   ['A 60-character query',async()=>{t.clear();t.S.busy=true;
+     const Q='sourdough starter for beginners with whole wheat and rye mix'.slice(0,60);
+     cap('<span class="stp">Someone pastes a 60-character query</span>Watch the “find” step walk down one node per character, with and without the cap…');
+     for(let n=1;n<=Q.length;n+=2){if(!t.alive())return;
+       L.$('#t16-q').innerHTML='<span style="color:var(--pri-deep)">'+Q.slice(0,Math.min(n,50))+'</span><span style="color:var(--no)">'+Q.slice(50,n)+'</span>';
+       L.$('#t16-rd').innerHTML='<span>Find, no cap</span><b>'+n+' steps</b><span>Find, cap 50</span><b>'+Math.min(n,50)+' steps'+(n>50?' (stopped)':'')+'</b>';
+       await L.sleep(30);}
+     t.S.busy=false;
+     cap('<span class="stp">Someone pastes a 60-character query</span>Without a cap, finding the node took <b>60</b> steps, and a longer paste would take longer. With the cap it stopped at <b>50</b> (the red tail is ignored): a fixed ceiling, which is why the book calls it O(1). Users rarely type that much, so the cap costs almost nothing. (The book doesn’t say what the box shows past 50 characters.)');}],
+   ['Update: try 29 → 40',async()=>{t.clear();cap('<span class="stp">Patch one count directly</span>Watch which cached lists get rewritten…');const ch=await t.update('try',40);if(!t.alive())return;
+     cap('<span class="stp">Patch one count directly</span>One number changed, yet <b>'+ch.length+' nodes</b> rewrote their lists: try, tr, t and the root. Every ancestor caches top queries from below. That’s why the book avoids direct updates unless the trie is small, and normally <b>builds a new trie weekly</b> and swaps it in.');}],
+   ['A brand-new trending query',async()=>{await t.set('be');if(!t.alive())return;
+     cap('<span class="stp">“bees” is suddenly searched 90 times today</span>The maker types “be” and still gets last week’s list: “bees” isn’t in the trie until the next weekly build. <button class="btn" id="e16b" style="margin-top:8px">'+L.ic('cycle')+'Fast-forward to the weekly build</button>');
+     L.$('#e16b').onclick=async function(){this.remove();await t.insert('bees');if(!t.alive())return;await t.set('be');if(!t.alive())return;
+       cap('<span class="stp">After the weekly build</span>Now “bees” tops the list, up to a week late, and building a trie takes long anyway. That’s the book’s point in the wrap-up: <b>trending</b> queries need a different design.');mark(3);};}]];
+  function mark(j){seen.add(j);L.$('#e16-'+j).classList.add('ok');
+    if(seen.size===4){L.sheet('info','Fast reads, slow changes','The cached trie makes every keystroke cheap, but changing it is expensive: one count rewrites a chain of ancestors, so the trie is rebuilt in batches. The price is freshness: a new query waits for the next build.');L.done();}}
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e16-'+j;b.textContent=p[0];
+    b.onclick=async()=>{if(t.S.busy)return;[...L.$('#e16').children].forEach(x=>x.classList.toggle('sel',x===b));t.reset();t.setCache(true);await p[1]();if(!t.alive())return;if(j!==3)mark(j);};
+    L.$('#e16').appendChild(b);});
+  cap('<span class="stp">Pick a case</span>Each one starts from the book’s trie with the top 5 cached at every node.');}},
+{part:2,src:'Chapter 13 · Trie operations',pts:1,
+ solve:async L=>{['','b','be','bee','beer'].forEach(p=>tapNode(L,'t17',p));L.$('#k17').click();await L.t17.idle();},
+ run(L){
+  const pick=new Set(),R=['','b','be','bee','beer'];let done=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">“beer” jumps from 10 to 30 searches, and you patch the cached trie directly. Tap every node whose cached top 5 must change, then check.</h1>'+
+   '<div id="c17"></div><div class="nl" id="s17">Selected: none</div><button class="btn pri" id="k17">'+L.ic('check')+'Check and apply the update</button><div id="r17"></div>'+CSS);
+  const nm=p=>p||'root';
+  const t=L.t17=Trie(L,L.$('#c17'),{id:'t17',cache:true,cap:true,keys:false,box:false,sug:false,read:false,onTap:p=>{if(done||t.S.busy)return;
+    pick.has(p)?pick.delete(p):pick.add(p);t.S.mark={};pick.forEach(x=>t.S.mark[x]='sel');t.draw();
+    L.$('#s17').innerHTML='Selected: '+(pick.size?[...pick].sort().map(nm).join(', '):'none');}});
+  L.$('#k17').onclick=async()=>{if(done)return;if(!pick.size){L.err('Tap at least one node');return;}done=true;L.$('#k17').remove();
+    const ok=R.every(p=>pick.has(p))&&pick.size===R.length;L.award(ok);
+    const ch=await t.update('beer',30);if(!t.alive())return;
+    pick.forEach(p=>{if(!ch.includes(p))t.S.mark[p]='no';});t.draw();
+    L.$('#r17').innerHTML='<div class="nl">'+R.map(p=>'<b>'+nm(p)+'</b>: '+t.top(p).map(w=>w+' '+t.S.counts[w]).join(', ')).join('<br>')+'</div>';
+    L.sheet(ok?'ok':'no',ok?'Every ancestor rewritten':'Not quite',
+     'The path is root → b → be → bee → beer. “beer” sits under all of them, so each list is rewritten (the root’s list now even includes beer 30). bes, best and bet are on other branches and stay the same. On a plain trie only the beer node’s count would change; caching makes reads cheap and updates expensive.');L.done();};}},
+{part:2,src:'Chapter 13 · Trie operations',
+ solve:async L=>{await L.t18.idle();L.$('#t18-sg [data-w="bet"]').click();await L.sleep(20);L.$('#b18').click();await L.t18.idle();},
+ run(L){
+  let built=false;
+  L.h(L.kick('ex','Delete with a filter')+'<h1 class="q">Hateful, violent, explicit or dangerous suggestions must go. Pretend “bet” breaks a rule: tap it in the suggestions to add a filter rule.</h1>'+
+   '<div id="c18"></div><div id="x18"></div><p class="ill">'+ILL+'</p>'+CSS);
+  const t=L.t18=Trie(L,L.$('#c18'),{id:'t18',cache:true,cap:true,read:false,onSug:w=>{if(t.S.blocked.size||built)return;t.S.blocked.add(w);t.draw();t.renderSug();
+    L.$('#x18').innerHTML='<div class="nl">The <b>filter layer</b> sits in front of the trie cache, so “'+w+'” vanished from the box at once. But the trie still holds it (red, dashed). Type “b” or “be” again: it stays hidden.</div><button class="btn pri" id="b18">'+L.ic('cycle')+'Run the next weekly build</button>';
+    L.$('#b18').onclick=async function(){this.remove();built=true;t.rebuild();await t.set('be');if(!t.alive())return;
+      L.$('#x18').innerHTML='<div class="nl">The bad row was removed from the database in the background, so the new trie was built without “'+w+'” at all.</div>';
+      L.sheet('info','Filter now, clean up later','A filter layer gives flexible, rule-based removal the moment you need it. The row is deleted from the database asynchronously, so the next weekly build uses the right data. Create, update and delete, all without touching the live trie.');L.done();};}});
+  t.set('be');}},
 {part:2,src:'Chapter 13 · Query service',pts:5,run(L){
   L.h(L.kick('pr','Pick the fix')+'<h1 class="q">Kitebird’s search team hits five problems. Which part of the book’s design fixes each?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Browser caching','Data sampling','Filter layer','Weekly rebuild'],[
@@ -218,34 +432,41 @@ Course.lesson({
 /* ---------- PART 4: SCALE AND WRAP UP ---------- */
 {part:3,src:'Chapter 13 · Scale the storage',run(L){
   L.h(L.kick('learn','When the trie outgrows one server')+'<h1 class="q">'+L.g('sharding','Shard')+' by first letter, then fix the uneven letters</h1>'+
-   L.prose('Since queries are English letters, the simple split is by <b>first character</b>. Two servers: a–m and n–z. Three: a–i, j–r and s–z. That goes up to 26 servers. Past 26, split on the second or third letter, e.g. “a” across aa–ag, ah–an, ao–au, av–az.')+
+   L.prose('Queries are English letters, so the simple split is by <b>first character</b>. Two servers: a–m and n–z. Three: a–i, j–r and s–z. That goes up to 26 servers. Past 26, split on the second or third letter, e.g. “a” across aa–ag, ah–an, ao–au, av–az.')+
    L.prose('The catch: far more words start with “c” than with “x”, so the shards fill unevenly.')+
-   L.note('<b>Shard map manager:</b> a lookup database that says which shard holds which letters, built from <b>historical</b> query counts. If “s” gets about as many queries as u–z combined, give “s” one shard and u–z another.','map'));
+   L.note('<b>'+L.g('shard-map','Shard map manager')+':</b> a lookup database that says which shard holds which letters, built from <b>historical</b> query counts. If “s” gets about as many queries as u, v, w, x, y and z combined, give “s” one shard and u–z another.','map'));
   L.done();}},
-{part:3,src:'Chapter 13 · Scale the storage',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kitebird shards its trie by first letter on two servers, a–m and n–z. Where do queries for “quilt binding” live?</h1>');
-  L.mc(L.card,['On the a–m server','On the n–z server'],1,
-   'First-level sharding only looks at the first character, and “q” falls in n–z.',
-   'Only the first character counts, and “q” comes after “m”, so it lives on the n–z server.');}},
 {part:3,src:'Chapter 13 · Scale the storage',pts:1,
- solve:async L=>{L.$('#pp').children[2].click();L.$('#gorun').click();L.$('#fix').click();},
+ solve:async L=>{const tap=(c,n)=>{for(let k=0;k<n;k++)L.$('#lt-'+c).click();};tap('w',1);['t','u','v','x','y','z'].forEach(c=>tap(c,2));L.$('#k21').click();},
  run(L){
-  const A=[['a–i',34],['j–r',21],['s–z',45]],B=[['s only',31],['a–i',34],['j–r + t–z',35]];let p=null;
-  const meters=(set)=>set.map((x,j)=>'<div class="meterrow"><div class="lb">Shard '+(j+1)+' · '+x[0]+'</div><div class="meter"><div id="m'+j+'" style="background:'+(x[1]>40?'var(--no-strong)':'var(--ok-strong)')+'"></div></div><b style="width:40px;text-align:right">'+x[1]+'%</b></div>').join('');
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Kitebird’s top searches: sourdough starter, sock heel, spoon carving, sewing machine, stitch markers, crochet hat. Three shards split by letter. Which will be busiest?</h1>'+
-   '<div id="pp"></div><div id="sh" hidden><button class="btn pri" id="gorun">'+L.ic('play')+'Send a week of searches</button><div id="mt"></div></div><div id="fx"></div>');
-  A.forEach((x,j)=>{const b=document.createElement('button');b.className='chip';b.textContent='Shard '+(j+1)+' · '+x[0];b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sh').hidden=false;};L.$('#pp').appendChild(b);});
-  const fill=set=>requestAnimationFrame(()=>requestAnimationFrame(()=>set.forEach((x,j)=>{const m=L.$('#m'+j);if(m)m.style.width=x[1]*2+'%';})));
-  L.$('#gorun').onclick=function(){this.remove();L.$('#mt').innerHTML='<p class="small" style="margin:8px 0 0">Share of Kitebird’s queries (made-up numbers)</p>'+meters(A);fill(A);L.award(p===2);
-    L.fb(L.$('#mt'),(p===2?'<b>You called it.</b> ':'<b>It’s shard 3.</b> ')+'Kitebird’s popular queries cluster on “s”, so s–z carries 45% while j–r idles at 21%.',p===2?'ok':'no');
-    L.$('#fx').innerHTML='<button class="btn" id="fix" style="margin-top:10px">'+L.ic('map')+'Rebalance with a shard map manager</button>';
-    L.$('#fix').onclick=function(){this.remove();L.$('#mt').innerHTML='<p class="small" style="margin:8px 0 0">After the shard map manager, from last year’s counts</p>'+meters(B);fill(B);
-      L.sheet('info','Balanced by history','The lookup table gives “s” a shard of its own and puts j–r and t–z together. Shards don’t have to be neat letter ranges; they follow where the queries actually are.');L.done();};};}},
+  const SH={a:4,b:5,c:5,d:3,e:2,f:3,g:3,h:4,i:1,j:1,k:3,l:3,m:4,n:2,o:1,p:5,q:4,r:3,s:30,t:5,u:1,v:1,w:5,x:0,y:2,z:0};
+  const LET=Object.keys(SH),MAX=36;const as={};let first=true,won=false;
+  const init=()=>LET.forEach((c,j)=>as[c]=j<9?0:j<18?1:2);init();
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kitebird’s trie sits on three shards: a–i, j–r and s–z. Makers search “sourdough”, “sock”, “spoon” and “sewing” a lot. Tap letters to move them between shards until no shard carries more than '+MAX+'%.</h1>'+
+   '<div class="lettergrid" id="g21"></div><div id="m21"></div><div class="lk" id="l21"></div>'+
+   '<div class="simrow"><button class="btn pri" id="k21">'+L.ic('check')+'Check my shard map</button><button class="btn" id="r21">Reset to a–i / j–r / s–z</button></div>'+
+   '<p class="ill">Each tile shows the letter’s share of Kitebird’s queries last year (illustrative). Tap a tile to move it to the next shard.</p>'+CSS);
+  const load=()=>[0,1,2].map(s=>LET.filter(c=>as[c]===s).reduce((a,c)=>a+SH[c],0));
+  const ranges=s=>{const l=LET.filter(c=>as[c]===s);const out=[];let st=null,pv=null;
+    l.forEach(c=>{const i=LET.indexOf(c);if(st===null){st=c;pv=i;}else if(i===pv+1){pv=i;}else{out.push(st===LET[pv]?st:st+'–'+LET[pv]);st=c;pv=i;}});
+    if(st!==null)out.push(st===LET[pv]?st:st+'–'+LET[pv]);return out.join(', ')||'(empty)';};
+  function draw(){const ld=load();
+    L.$('#g21').innerHTML=LET.map(c=>'<button class="lt s'+as[c]+'" id="lt-'+c+'" aria-label="Letter '+c+', '+SH[c]+' percent, shard '+(as[c]+1)+'"><b>'+c+'</b><span>'+SH[c]+'%</span></button>').join('');
+    L.$('#m21').innerHTML=ld.map((v,s)=>'<div class="shm"><span>Shard '+(s+1)+'</span><div class="bar"><div style="width:'+Math.min(100,v*2)+'%;background:var(--h'+(s+1)+')"></div></div><b class="'+(v>MAX?'over':'')+'">'+v+'%</b></div>').join('');
+    L.$('#l21').innerHTML='<b>Shard map</b> (the lookup table)<br>'+[0,1,2].map(s=>'Shard '+(s+1)+': '+ranges(s)).join('<br>');
+    LET.forEach(c=>L.$('#lt-'+c).onclick=()=>{if(won)return;as[c]=(as[c]+1)%3;draw();});}
+  draw();
+  L.$('#r21').onclick=()=>{if(won)return;init();draw();};
+  L.$('#k21').onclick=()=>{if(won)return;const ld=load(),ok=ld.every(v=>v<=MAX);
+    if(first){L.award(ok);first=false;}
+    if(ok){won=true;L.$('#k21').remove();L.$('#r21').remove();
+      L.sheet('ok','Balanced','Your table is a shard map manager: it says where each letter’s rows live, based on <b>history</b>, not on neat alphabet ranges. One busy letter like “s” can get a shard to itself. The book’s example uses the same idea: if “s” gets about as many queries as u–z combined, “s” gets one shard and u–z another.');L.done();}
+    else L.sheet('no','Still lopsided','Shard loads: '+ld.join('%, ')+'%. “s” alone is 30%, so it can hardly share a shard. Try giving “s” its own shard and spreading t–z over the other two.');};}},
 {part:3,src:'Chapter 13 · Step 4 - Wrap up',run(L){
   L.h(L.kick('learn','Follow-up questions')+'<h1 class="q">Three curveballs the interviewer may throw at the end</h1>'+
    L.tiers([['compass','Other languages?','Store <b>Unicode</b> characters in trie nodes. Unicode is a standard that covers the characters of every writing system.'],
      ['map','Different top queries per country?','Build a <b>separate trie per country</b>, and store tries in '+L.g('cdn','CDNs')+' to cut response time.'],
-     ['flame','Trending queries?','The design breaks: workers run weekly, and building a trie takes too long anyway. The book only sketches ideas: shard to shrink the working set, weigh recent queries more in ranking, and process data as streams (e.g. Kafka, Spark Streaming). Details are beyond its scope.']])+
+     ['flame','Trending queries?','The design breaks, as you saw with “bees”: workers run weekly, and building a trie takes too long anyway. The book only sketches ideas: shard to shrink the working set, weigh recent queries more in ranking, and process data as streams (e.g. Kafka, Spark Streaming). Details are beyond its scope.']])+
    L.note('<b>Beyond the book:</b> a weekly rebuild plus an hour of browser caching means suggestions can be up to about a week old. Fine for “sourdough”, not for a news spike.','info'));
   L.done();}},
 {part:3,src:'Chapter 13 · Step 4 - Wrap up',pts:5,run(L){

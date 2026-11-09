@@ -13,10 +13,180 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* ===== This lesson's own visuals: the bill wiring, the upload map, the DAG, the worker Gantt chart and the long-tail CDN chart ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.yt-svg{display:block;width:100%;max-width:340px;margin:4px auto 2px;touch-action:manipulation}
+.yt-svg text{font-family:var(--sans)}
+.yt-sl{display:block;margin:8px 0 0}
+.yt-slh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:14px}
+.yt-slh b{font-variant-numeric:tabular-nums}
+.yt-sl input{width:100%;height:34px;margin:0;accent-color:var(--pri)}
+.yt-ro{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0 4px}
+.yt-ro>div{background:var(--soft);border-radius:12px;padding:7px 10px;font-size:12.5px;color:var(--muted);line-height:1.35}
+.yt-ro>div b{display:block;font-size:17px;color:var(--ink);font-variant-numeric:tabular-nums}
+.yt-ro>div.bad{background:var(--no-bg)}.yt-ro>div.bad b{color:var(--no)}
+.yt-ro>div.good{background:var(--ok-bg)}.yt-ro>div.good b{color:var(--ok)}
+.yt-ro>div.wide{grid-column:1/3}
+.yt-tg{display:flex;flex-wrap:wrap;gap:0;margin:6px 0 0}
+.yt-tg .chip{font-size:13.5px;padding:7px 11px;min-height:38px;text-align:left}
+.yt-tg .chip[aria-pressed=true]{border-color:var(--pri);background:var(--pri-bg);color:var(--pri-deep)}
+.yt-tg .chip[aria-pressed=true]::before{content:"✓ ";font-weight:700}
+.yt-pre{display:flex;flex-wrap:wrap;margin:4px 0 2px}
+.yt-pre .chip{font-size:13.5px;padding:7px 10px;min-height:38px}
+.yt-say{border-left:4px solid var(--pri);background:var(--soft);border-radius:12px;padding:9px 12px;margin:8px 0;font-size:14.5px;line-height:1.5}
+.yt-say b.t{display:block;font-size:12px;letter-spacing:.3px;color:var(--muted);margin-bottom:2px}
+.yt-qs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 2px}
+.yt-qs>div{border:1.5px solid var(--line);border-radius:12px;padding:6px 8px;font-size:12px;color:var(--muted);min-height:52px}
+.yt-qs>div b{display:block;color:var(--ink);font-size:12.5px;margin-bottom:3px}
+.yt-qs i{display:inline-block;font-style:normal;font-size:11.5px;font-weight:600;border-radius:6px;padding:1px 5px;margin:0 3px 3px 0;background:var(--soft2);color:var(--ink)}
+.yt-qs i.run{background:var(--pri-bg);color:var(--pri-deep)}
+.yt-qs i.ok{background:var(--ok-bg);color:var(--ok)}
+.yt-leg{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:12px;color:var(--muted);margin:2px 0 4px}
+.yt-leg span::before{content:"";display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px;background:var(--c)}
+.yt-node{cursor:pointer}
+.yt-node:focus{outline:none}
+.yt-node:focus rect{stroke-width:3}
+.yt-fine{font-size:12px;color:var(--muted);line-height:1.5;margin:6px 0 0}
+`;document.head.appendChild(st);})();
+
+const ytFmt=n=>Math.round(n).toLocaleString('en-US');
+const ytTap=el=>el.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+const ytSlide=(el,v)=>{el.value=v;el.dispatchEvent(new Event('input',{bubbles:true}));};
+const ytAlive=id=>{const e=document.getElementById(id);return !!(e&&e.isConnected);};
+
+/* ---------- Signature 2: the transcoding scheduler (illustrative ticks) ---------- */
+function ytTasks(gop){const t=[['v','V','Split out video',1,null,'h2'],['a','A','Split out audio',1,null,'h2'],['m','M','Metadata',1,null,'h2'],['i','I','Inspection',2,'v','h3']];
+  if(gop)for(let n=1;n<=6;n++)t.push(['e'+n,'C'+n,'Encode chunk '+n,3,'v','h1']);else t.push(['e','Whole video','Encode the whole video',18,'v','h1']);
+  t.push(['th','T','Thumbnail',1,'v','h3'],['ae','AE','Audio encoding',2,'a','h4']);
+  return t.map(x=>({id:x[0],sh:x[1],lab:x[2],dur:x[3],dep:x[4],col:x[5]}));}
+function ytSim(W,gop,fail){
+  const T=ytTasks(gop),done=new Set(),rel=new Set();let queue=[],segs=[],att=[],busy=Array(W).fill(null),tries={},err=null,t;
+  for(t=0;t<99;t++){
+    busy.forEach((b,w)=>{if(b&&b.end===t){busy[w]=null;const x=b.x;tries[x.id]=(tries[x.id]||0)+1;
+      if(fail==='bad'&&x.id==='i'){b.seg.st='bad';err={t,k:'bad'};}
+      else if((fail==='once'&&x.id==='e3'&&tries[x.id]===1)||(fail==='always'&&x.id==='e3')){b.seg.st='fail';
+        if(tries[x.id]<3){const a={x,q:t,avoid:w};queue.unshift(a);att.push(a);}else err={t,k:'gave'};}
+      else done.add(x.id);}});
+    if(err&&err.k==='bad'){busy.forEach((b,w)=>{if(b){b.seg.end=t;b.seg.st='stop';busy[w]=null;}});queue.forEach(a=>a.drop=t);queue=[];break;}
+    T.forEach(x=>{if(!rel.has(x.id)&&(!x.dep||done.has(x.dep))){rel.add(x.id);const a={x,q:t};queue.push(a);att.push(a);}});
+    for(let w=0;w<W;w++){if(busy[w]||!queue.length)continue;let k=queue.findIndex(a=>a.avoid!==w);if(k<0)k=0;const a=queue.splice(k,1)[0];a.s=t;
+      const seg={w,s:t,end:t+a.x.dur,x:a.x,st:'ok'};segs.push(seg);busy[w]={x:a.x,end:seg.end,seg};}
+    if(busy.every(b=>!b)&&!queue.length)break;}
+  const work=segs.reduce((s,g)=>s+g.end-g.s,0);
+  return {end:t,segs,att,err,T,W,use:t?work/(W*t):0};}
+/* o: {W, gop, fail, slider, scrub, deadline, change(kind)} */
+function ytGantt(host,o){
+  const S={W:o.W||1,gop:o.gop!==false,fail:o.fail||null,t:0};
+  host.insertAdjacentHTML('beforeend','<div class="yt-g">'+
+    (o.slider!==false?'<label class="yt-sl"><div class="yt-slh"><span>Task workers</span><b class="yt-wv"></b></div><input type="range" class="yt-w" min="1" max="10" step="1" aria-label="Number of task workers, 1 to 10"></label>':'')+
+    '<svg class="yt-svg yt-gs" role="img" aria-label="Gantt chart: one row per worker, bars are tasks over time"></svg>'+
+    '<div class="yt-leg"><span style="--c:var(--h2)">Stage 1: split</span><span style="--c:var(--h1)">Encode chunk</span><span style="--c:var(--h3)">Inspect, thumbnail</span><span style="--c:var(--h4)">Audio</span><span style="--c:var(--no-strong)">✕ failed · ! malformed · ■ stopped</span></div>'+
+    '<p class="yt-gr" aria-live="polite" style="margin:4px 0;font-size:14.5px"></p>'+
+    (o.scrub!==false?'<label class="yt-sl"><div class="yt-slh"><span>Look inside the resource manager at tick</span><b class="yt-tv"></b></div><input type="range" class="yt-t" min="0" max="25" step="1" value="0" aria-label="Time to inspect"></label><div class="yt-qs"></div>':'')+
+    '<p class="yt-fine">Ticks, task lengths and the 6 chunks are illustrative. The stages and queues are the book’s.</p></div>');
+  const el=host.lastElementChild,api={S,el,r:null};
+  const wIn=el.querySelector('.yt-w'),tIn=el.querySelector('.yt-t');
+  function draw(){const r=ytSim(S.W,S.gop,S.fail);api.r=r;
+    const ax=Math.max(26,r.end+(r.end>26?1:0)),x0=30,x1=326,px=(x1-x0)/ax,rh=21,top=6,H=top+S.W*rh+26;
+    let s='';
+    for(let w=0;w<S.W;w++){const y=top+w*rh;s+='<rect x="'+x0+'" y="'+y+'" width="'+(x1-x0)+'" height="'+(rh-4)+'" rx="4" fill="var(--soft)"/><text x="2" y="'+(y+12.5)+'" font-size="12" fill="var(--muted)">W'+(w+1)+'</text>';}
+    for(let k=0;k<=ax;k+=5){const x=x0+k*px;s+='<line x1="'+x+'" x2="'+x+'" y1="'+top+'" y2="'+(top+S.W*rh)+'" stroke="var(--line)" stroke-width="1"/><text x="'+x+'" y="'+(H-8)+'" font-size="12" text-anchor="middle" fill="var(--muted)">'+k+'</text>';}
+    r.segs.forEach(g=>{const y=top+g.w*rh,x=x0+g.s*px,wd=Math.max(1,(g.end-g.s)*px)-1;
+      const fill=g.st==='fail'?'var(--no-strong)':g.st==='stop'?'var(--soft2)':g.st==='bad'?'var(--no-strong)':'var(--'+g.x.col+')';
+      s+='<rect x="'+x.toFixed(1)+'" y="'+y+'" width="'+wd.toFixed(1)+'" height="'+(rh-4)+'" rx="3" fill="'+fill+'"'+(g.st==='stop'?' stroke="var(--no)" stroke-dasharray="3 2"':'')+'/>';
+      const lab=g.st==='fail'?'✕':g.st==='bad'?'!':g.st==='stop'?'■':g.x.sh;
+      if(wd>=9)s+='<text x="'+(x+wd/2).toFixed(1)+'" y="'+(y+12.5)+'" font-size="12" font-weight="700" text-anchor="middle" fill="'+(g.st==='stop'?'var(--no)':'var(--card)')+'">'+lab+'</text>';});
+    if(o.deadline){const x=x0+o.deadline*px;s+='<line x1="'+x+'" x2="'+x+'" y1="'+(top-4)+'" y2="'+(top+S.W*rh)+'" stroke="var(--no-strong)" stroke-width="2" stroke-dasharray="4 3"/>';}
+    const xe=x0+r.end*px;s+='<line x1="'+xe+'" x2="'+xe+'" y1="'+(top-4)+'" y2="'+(top+S.W*rh+2)+'" stroke="var(--ink)" stroke-width="2"/>';
+    if(tIn){const xt=x0+Math.min(S.t,ax)*px;s+='<line x1="'+xt+'" x2="'+xt+'" y1="'+(top-4)+'" y2="'+(top+S.W*rh+2)+'" stroke="var(--pri)" stroke-width="2.5" opacity=".8"/>';}
+    const svg=el.querySelector('.yt-gs');svg.setAttribute('viewBox','0 0 330 '+H);svg.innerHTML=s;
+    if(wIn){wIn.value=S.W;el.querySelector('.yt-wv').textContent=S.W+(S.W===1?' worker':' workers');}
+    let msg;
+    if(r.err&&r.err.k==='bad')msg='<b style="color:var(--no)">Inspection finds a malformed file at tick '+r.err.t+'.</b> Running tasks stop; an error code goes back to the client.';
+    else if(r.err&&r.err.k==='gave')msg='<b style="color:var(--no)">Chunk 3 failed 3 times.</b> The system stops retrying and returns an error code to the client (tick '+r.err.t+').';
+    else msg='Video ready at tick <b>'+r.end+'</b>'+(o.deadline?(r.end<=o.deadline?' <span style="color:var(--ok)">(on time)</span>':' <span style="color:var(--no)">(late)</span>'):'')+' · workers busy <b>'+Math.round(r.use*100)+'%</b> of the time'+(S.fail==='once'?' · chunk 3 was retried':'');
+    el.querySelector('.yt-gr').innerHTML=msg;
+    if(tIn){tIn.max=r.end;if(S.t>r.end)S.t=r.end;tIn.value=S.t;el.querySelector('.yt-tv').textContent=S.t;
+      const t=S.t,run=r.segs.filter(g=>g.s<=t&&t<g.end),qd=r.att.filter(a=>a.q<=t&&(a.s===undefined?(a.drop===undefined||t<a.drop):t<a.s)),
+        doneN=r.segs.filter(g=>g.st==='ok'&&g.end<=t).length,rels=new Set(r.att.filter(a=>a.q<=t).map(a=>a.x.id)),wait=r.T.filter(x=>!rels.has(x.id)),
+        free=S.W-run.length;
+      const chips=(arr,c)=>arr.length?arr.join(''):'<span>empty</span>';
+      el.querySelector('.yt-qs').innerHTML=
+        '<div><b>Task queue</b>'+chips(qd.map(a=>'<i>'+a.x.sh+'</i>'))+'</div>'+
+        '<div><b>Running queue</b>'+chips(run.map(g=>'<i class="run">'+g.x.sh+'→W'+(g.w+1)+'</i>'))+'</div>'+
+        '<div><b>Worker queue</b>'+(free?free+' free':'none free')+'</div>'+
+        '<div><b>Not released yet</b>'+chips(wait.map(x=>'<i>'+x.sh+'</i>'))+' <span class="ok-n">· done '+doneN+'</span></div>';}}
+  if(wIn)wIn.addEventListener('input',()=>{S.W=+wIn.value;draw();if(o.change)o.change('W');});
+  if(tIn)tIn.addEventListener('input',()=>{S.t=+tIn.value;draw();if(o.change)o.change('t');});
+  api.set=p=>{Object.assign(S,p);draw();};api.draw=draw;
+  draw();return api;}
+
+/* ---------- Signature 1: Kitebird Classes long-tail CDN chart (illustrative curve) ---------- */
+const YT_C=2000,YT_GB=3000000,YT_CAP=900000,YT_K=[0,1,2,3,5,10,20,40,50,100,150,200,250,300,400,500,750,1000,1500,2000];
+const ytShare=(flat)=>{const w=[];let s=0;for(let i=1;i<=YT_C;i++){const v=flat?1:1/i;w.push(v);s+=v;}return w.map(v=>v/s);};
+const YT_SH={tail:ytShare(false),flat:ytShare(true)};
+const YT_CUM={};['tail','flat'].forEach(k=>{let c=0;YT_CUM[k]=[0].concat(YT_SH[k].map(v=>(c+=v)));});
+function ytCost(st){const cum=YT_CUM[st.flat?'flat':'tail'][st.k],cdn=YT_GB*cum,own=YT_GB-cdn;
+  return {cum,cdn,bill:cdn*0.02,own,load:own/YT_CAP,ver:st.few?6*st.k+2*(YT_C-st.k):6*YT_C,copies:st.reg?Math.round(st.k*(0.7*4+0.3)):4*st.k};}
+/* o: {k, few, reg, flat, showFlat, change(kind)} */
+function ytTail(host,o){
+  const S={k:o.k===undefined?2000:o.k,few:!!o.few,reg:!!o.reg,flat:!!o.flat};
+  const tg=(key,lab)=>'<button class="chip" data-tg="'+key+'" aria-pressed="false">'+lab+'</button>';
+  host.insertAdjacentHTML('beforeend','<div class="yt-tl">'+
+    '<svg class="yt-svg yt-ts" viewBox="0 0 330 178" role="img" aria-label="Views per class, ranked from most to least watched; classes left of the cut line stream from the CDN"></svg>'+
+    '<label class="yt-sl"><div class="yt-slh"><span>Classes served from the CDN</span><b class="yt-kv"></b></div><input type="range" class="yt-k" min="0" max="'+(YT_K.length-1)+'" step="1" aria-label="How many top classes stream from the CDN"></label>'+
+    '<div class="yt-tg">'+tg('few','Fewer versions for unpopular classes')+tg('reg','Regional classes: one region only')+(o.showFlat?tg('flat','No long tail: all equally watched'):'')+'</div>'+
+    '<div class="yt-ro"></div>'+
+    '<p class="yt-fine">Kitebird’s numbers: 2M learners × 3 classes × 0.5 GB = 3,000,000 GB a day at $0.02 per GB. Illustrative: 2,000 classes, the curve’s shape, own-server capacity of 900,000 GB a day, 6 versions per class (2 when trimmed), 4 regions, 30% of CDN classes popular in one region only (so 70% go to every region).</p></div>');
+  const el=host.lastElementChild,api={S,el};const kIn=el.querySelector('.yt-k');
+  function x(k){return k<=40?28+k*(186/40):220+Math.log(k/40)/Math.log(YT_C/40)*104;}
+  function draw(){const sh=YT_SH[S.flat?'flat':'tail'],mx=sh[0],y0=146,hh=118,H=v=>Math.max(1.2,v/mx*hh);let s='';
+    for(let i=0;i<40;i++){const h=H(sh[i]),on=i<S.k;s+='<rect x="'+(28+i*4.65).toFixed(2)+'" y="'+(y0-h).toFixed(1)+'" width="3.6" height="'+h.toFixed(1)+'" fill="var('+(on?'--pri':'--h3')+')"/>';}
+    for(let j=0;j<52;j++){const a=40*Math.pow(YT_C/40,j/52),b=40*Math.pow(YT_C/40,(j+1)/52),rk=Math.round(a),h=H(sh[Math.min(YT_C-1,rk)]),on=rk<S.k;
+      s+='<rect x="'+x(a).toFixed(2)+'" y="'+(y0-h).toFixed(1)+'" width="'+(x(b)-x(a)+0.3).toFixed(2)+'" height="'+h.toFixed(1)+'" fill="var('+(on?'--pri':'--h3')+')"/>';}
+    s+='<line x1="26" x2="326" y1="'+y0+'" y2="'+y0+'" stroke="var(--line2)"/>';
+    s+='<text x="28" y="160" font-size="12" fill="var(--muted)">#1</text><text x="214" y="160" font-size="12" text-anchor="end" fill="var(--muted)">#40</text><text x="326" y="160" font-size="12" text-anchor="end" fill="var(--muted)">#2,000</text>';
+    s+='<text x="326" y="173" font-size="12" text-anchor="end" fill="var(--muted)">#41–2,000 squeezed</text><text x="28" y="173" font-size="12" fill="var(--muted)">classes, most watched first</text>';
+    s+='<line x1="217" x2="217" y1="'+(y0-6)+'" y2="'+(y0+4)+'" stroke="var(--muted)" stroke-dasharray="2 2"/>';
+    if(!S.flat)s+='<text x="38" y="'+(y0-hh+9)+'" font-size="12" fill="var(--ink)">← #1 Bowl turning 101</text>';
+    s+='<text x="2" y="10" font-size="12" fill="var(--muted)">views a day ↑</text>';
+    const cx=x(S.k);s+='<line x1="'+cx.toFixed(1)+'" x2="'+cx.toFixed(1)+'" y1="16" y2="'+(y0+3)+'" stroke="var(--ink)" stroke-width="2" stroke-dasharray="5 3"/>';
+    const lft=cx>60,rgt=cx<290;
+    if(lft)s+='<text x="'+(cx-4).toFixed(1)+'" y="'+(y0-hh-6)+'" font-size="12" font-weight="700" text-anchor="end" fill="var(--pri)">CDN</text>';
+    if(rgt)s+='<text x="'+(cx+4).toFixed(1)+'" y="'+(y0-hh-6)+'" font-size="12" font-weight="700" fill="var(--h3)">'+(cx<240?'own servers':'own')+'</text>';
+    el.querySelector('.yt-ts').innerHTML=s;
+    kIn.value=YT_K.indexOf(S.k);el.querySelector('.yt-kv').textContent=S.k===0?'none':S.k===YT_C?'all 2,000':'top '+ytFmt(S.k);
+    el.querySelectorAll('[data-tg]').forEach(b=>b.setAttribute('aria-pressed',String(!!S[b.dataset.tg])));
+    const c=ytCost(S),pct=Math.round(c.cum*100);
+    el.querySelector('.yt-ro').innerHTML=
+      '<div class="'+(c.bill<=45000?'good':'')+'">CDN bill a day<b>$'+ytFmt(c.bill)+'</b>'+pct+'% of views</div>'+
+      '<div class="'+(c.load>1?'bad':'')+'">Own video servers<b>'+Math.round(c.load*100)+'%</b>of capacity'+(c.load>1?' · overloaded':'')+'</div>'+
+      '<div>Encoded versions stored<b>'+ytFmt(c.ver)+'</b></div>'+
+      '<div>Copies on CDN edges<b>'+ytFmt(c.copies)+'</b></div>';}
+  kIn.addEventListener('input',()=>{S.k=YT_K[+kIn.value];draw();if(o.change)o.change('k');});
+  el.querySelectorAll('[data-tg]').forEach(b=>b.onclick=()=>{const k=b.dataset.tg;S[k]=!S[k];draw();if(o.change)o.change(k);});
+  api.set=p=>{Object.assign(S,p);draw();};api.cost=()=>ytCost(S);
+  draw();return api;}
+const ytSetK=(L,k)=>ytSlide(L.$('.yt-k'),YT_K.indexOf(k));
+
+/* ---------- the upload map ---------- */
+const YT_UN={cl:[5,8,['Yusuf’s','phone']],or:[119,8,['Original','storage']],tr:[233,8,['Transcoding','servers']],
+  api:[5,96,['API','servers']],cdn:[119,96,['CDN']],ts:[233,96,['Transcoded','storage']],
+  md:[5,184,['Metadata','DB + cache']],ch:[119,184,['Completion','handler']],cq:[233,184,['Completion','queue']]};
+const YT_UE={'cl-or':'M97 29 L117 29','or-tr':'M211 29 L231 29','tr-ts':'M279 50 L279 94','tr-cq':'M325 29 C331 29 331 205 325 205','ts-cdn':'M233 117 L213 117',
+  'cq-ch':'M233 205 L213 205','ch-md':'M119 205 L99 205','api-cl':'M66 96 L66 52','b1':'M36 50 L36 94','b2':'M36 138 L36 182'};
+const YT_UP=[
+ {q:'Yusuf taps Upload on a new class. Where does the file land first?',want:{or:'cl-or'},why:'Raw uploads land in <b>original storage</b>, a '+'blob store.'},
+ {q:'Who fetches the file next?',want:{tr:'or-tr'},why:'<b>Transcoding servers</b> fetch it from original storage and convert it.'},
+ {q:'Transcoding is done. Two things now happen in parallel. Tap both.',want:{ts:'tr-ts',cq:'tr-cq'},why:'The converted files go to <b>transcoded storage</b> while a “done” event goes into the <b>completion queue</b>, at the same time.'},
+ {q:'Where does each of those lead? Tap both next stops.',want:{cdn:'ts-cdn',ch:'cq-ch'},why:'Transcoded files are distributed to the <b>CDN</b>. The <b>completion handler</b>’s workers keep pulling events off the queue.'},
+ {q:'What does the completion handler update?',want:{md:'ch-md'},why:'It updates the <b>metadata DB and cache</b>.'},
+ {q:'Last hop: who tells Yusuf the class is ready to stream?',want:{api:'api-cl'},why:'The <b>API servers</b> tell the client the video is uploaded and ready.'}];
+
 Course.lesson({
-  id:'0008', title:'Design YouTube', minutes:20, icon:'play',
-  goals:['Scope a video platform and size its storage and CDN bill','Trace a video from upload through transcoding to the CDN','Make it faster, safer and cheaper, and say what to do when parts fail'],
-  parts:['Scope and cost','Upload and stream','Transcoding','Faster, safer, cheaper'],
+  id:'0008', title:'Design YouTube', minutes:22, icon:'play',
+  goals:['Scope a video platform and size its storage and CDN bill','Trace a video from upload through transcoding to the CDN, and see how workers and stages set the speed','Cut the CDN bill using the long tail, and say what to do when parts fail'],
+  parts:['Scope and flows','Transcoding','Faster, safer, cheaper','When things fail'],
   read:'Read chapter 14 of the book for the upload, transcoding and pre-signed URL diagrams.',
   glossary:{
     blob:'Blob storage: a cloud store for big files (“binary large objects”) such as whole videos, kept as single items.',
@@ -24,28 +194,28 @@ Course.lesson({
     bitrate:'Bitrate: how many bits of video are processed per second. Higher bitrate usually means better picture, but needs more processing and a faster connection.',
     dag:'DAG (directed acyclic graph): a map of tasks with arrows showing what must finish before what, with no loops. Tasks with no arrow between them can run at the same time.',
     gop:'GOP (group of pictures): a short chunk of video frames, usually a few seconds long, that can be played on its own.',
-    presigned:'Pre-signed URL: an upload link that carries permission for one specific file location, so only an authorised user can upload there.',
+    presigned:'Pre-signed URL: an upload link that carries permission for one specific file location, so only an authorized user can upload there.',
     longtail:'Long-tail distribution: a few items get most of the views, while a long “tail” of many items gets few or none.'
   },
   cheatsheet:[
     '<b>Scope:</b> upload and watch; mobile, web, smart TV; 5M DAU; international; most formats; encryption; videos up to 1 GB; use existing cloud services.',
-    '<b>Numbers:</b> 5M × 10% × 300 MB = <b>150 TB a day</b> of new video. CDN: 5M × 5 × 0.3 GB × $0.02 = <b>$150,000 a day</b>.',
+    '<b>Numbers:</b> storage = 5M × 10% × 300 MB = <b>150 TB a day</b> (uploads). CDN = 5M × 5 × 0.3 GB × $0.02 = <b>$150,000 a day</b> (views).',
     '<b>Three boxes:</b> client, CDN (streams video), API servers (everything else). Buy blob storage and CDN; don’t build them.',
-    '<b>Upload:</b> original storage → transcoding servers → transcoded storage → CDN; a completion queue and handler update metadata. Metadata is sent in parallel.',
-    '<b>Transcode</b> for storage, compatibility, bandwidth and changing networks. Container = the basket (.mp4); codec = the compression (H.264).',
-    '<b>Pipeline:</b> preprocessor (GOP split, DAG from config, temp cache) → DAG scheduler (stages) → resource manager (task, worker, running queues) → task workers.',
-    '<b>Optimize:</b> GOP-chunk resumable uploads, upload centers near users, message queues; pre-signed URLs, DRM/AES/watermark; popular videos on the CDN, the long tail elsewhere.',
-    '<b>Errors:</b> recoverable → retry a few times; non-recoverable → stop and return an error code. Each component has its own playbook.'
+    '<b>Upload:</b> original storage → transcoding servers → transcoded storage → CDN, while a completion queue and handler update metadata. Metadata is sent in parallel.',
+    '<b>Transcode</b> for size, compatibility, bandwidth and changing networks. Container = the basket (.mp4); codec = the compression (H.264).',
+    '<b>Pipeline:</b> preprocessor (GOP split, DAG from config, temp storage) → DAG scheduler (stages) → resource manager (task, worker, running queues) → task workers. More workers help only until the stages set the floor.',
+    '<b>Optimize:</b> GOP-chunk resumable uploads, upload centers near users, message queues; pre-signed URLs, DRM/AES/watermark; popular videos on the CDN, the long tail on your own servers.',
+    '<b>Errors:</b> recoverable → retry a few times, then return an error code; non-recoverable → stop the video’s running tasks and return an error code.'
   ],
   steps:[
-/* ---------- PART 1: SCOPE AND COST ---------- */
+/* ---------- PART 1: SCOPE AND FLOWS ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tamsin opens the review: “Design YouTube.” You have 45 minutes. What’s your first move?</h1>');
   L.mc(L.card,['Start sketching servers and storage','Ask which features and scale matter','List every YouTube feature to cover'],1,
    'YouTube has comments, likes, playlists, subscriptions… You can’t design it all in 45 minutes, so narrow the scope first.',
    'There’s far too much to cover, and sketching before you know the scope wastes time. Ask what matters first.');}},
 {part:0,src:'Chapter 14 · Step 1 - Understand the problem and establish design scope',run(L){
-  L.h(L.kick('learn','Narrow it down')+'<h1 class="q">The book’s interview asks nine questions. Tap each to see the answer.</h1>');
+  L.h(L.kick('learn','Narrow it down')+'<h1 class="q">The book’s interview narrows the scope with a few questions. Tap each to see the answer.</h1>');
   L.flips(L.card,[
    ['Which features?','Just two: <b>upload</b> a video and <b>watch</b> a video.'],
    ['Which clients?','Mobile apps, web browsers and <b>smart TVs</b>.'],
@@ -56,77 +226,73 @@ Course.lesson({
    ['File size limit?','Small and medium videos. Max <b>1 GB</b>.'],
    ['Use existing cloud?','<b>Yes.</b> Building everything from scratch is unrealistic, so use cloud services from Amazon, Google or Microsoft.']],
    'So the design aims for: fast uploads, smooth streaming, changeable video quality, low infrastructure cost, and high availability, scalability and reliability.');}},
-{part:0,src:'Chapter 14 · Back of the envelope estimation',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Two numbers that shape the whole design</h1>');
-  L.beats(L.card,[
-   ['Assumptions','5 million DAU. Each watches <b>5 videos</b> a day. <b>10%</b> of users upload <b>1 video</b> a day. The average video is <b>300 MB</b>.'],
-   ['Storage','New video per day: 5M × 10% × 300 MB = <b>150 TB</b>. Every single day.'],
-   ['CDN price','A '+L.g('cdn','CDN')+' charges for data sent out. Using Amazon CloudFront, all traffic from the US: about <b>$0.02 per GB</b>.'],
-   ['CDN bill','Streaming only: 5M × 5 videos × 0.3 GB × $0.02 = <b>$150,000 a day</b>.'],
-   ['So what?','Even with big-customer discounts, serving video from the CDN is expensive. The deep dive comes back to cutting this bill.']],
-   'Storage grows by 150 TB a day, and the CDN costs $150,000 a day. Those two numbers drive the later optimizations.');}},
-{part:0,src:'Chapter 14 · Back of the envelope estimation',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why is daily storage 5M × 10% × 300 MB, and not 5M × 5 × 300 MB?</h1>');
-  L.mc(L.card,['Only 10% of users upload, one video each','Videos shrink to 10% after transcoding','Only 10% of videos are ever watched'],0,
-   'The 5 is videos <i>watched</i>, which drives the CDN bill. Storage depends on uploads: 10% of users, one video each.',
-   'The 10% is the share of users who upload one video a day. The 5 is videos watched, which belongs in the CDN sum, not storage.');}},
-{part:0,src:'Chapter 14 · Back of the envelope estimation',pts:1,run(L){
-  L.h(L.kick('pr','Kitebird numbers')+'<h1 class="q">Hana sizes Kitebird Classes: 2 million learners a day, 3 classes each, about 0.5 GB streamed per class, $0.02 per GB. What’s the daily CDN bill?</h1>');
-  L.mc(L.card,['About $600','About $6,000','About $60,000'],2,
-   '2M × 3 × 0.5 GB = 3 million GB a day. × $0.02 = $60,000 a day, over $20 million a year. Hana is right to be alarmed.',
-   'Multiply it out: 2M × 3 × 0.5 GB = 3,000,000 GB a day, then × $0.02 = $60,000 a day.');}},
-
-/* ---------- PART 2: UPLOAD AND STREAM ---------- */
-{part:1,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',run(L){
+{part:0,src:'Chapter 14 · Back of the envelope estimation',
+ solve:async L=>{const s=L.$$('#env input');ytSlide(s[0],5);ytSlide(s[1],5);ytSlide(s[2],10);ytSlide(s[3],300);},
+ run(L){
+  L.h(L.kick('learn','Explore · two numbers')+'<h1 class="q">Set the dials to the book’s assumptions. Watch which dial feeds which number.</h1>'+
+   '<p class="small">Target: <b>5M</b> users a day · <b>5</b> videos watched each · <b>10%</b> upload one video · <b>300 MB</b> average. CDN price: $0.02 per GB (Amazon CloudFront, all US traffic).</p>'+
+   '<svg id="envw" class="yt-svg" viewBox="0 0 330 118" role="img" aria-label="Which assumptions feed storage and which feed the CDN bill"></svg><div id="env"></div><div id="envx"></div>');
+  const D=[['dau','Users a day (DAU)',0.5,10,0.5,1,v=>v+'M'],['vw','Videos watched each',1,10,1,2,v=>String(v)],['up','Share who upload',1,20,1,4,v=>v+'%'],['sz','Average video size',100,1000,50,600,v=>v+' MB']];
+  const V={};let hot=null,fin=false;
+  D.forEach(d=>{V[d[0]]=d[5];L.$('#env').insertAdjacentHTML('beforeend','<label class="yt-sl"><div class="yt-slh"><span>'+d[1]+'</span><b id="ev-'+d[0]+'"></b></div><input type="range" min="'+d[2]+'" max="'+d[3]+'" step="'+d[4]+'" value="'+d[5]+'" aria-label="'+d[1]+'"></label>');
+    const inp=L.$('#env').lastElementChild.querySelector('input');inp.addEventListener('input',()=>{V[d[0]]=+inp.value;hot=d[0];draw();});});
+  const WIRE={dau:['st','cdn'],vw:['cdn'],up:['st'],sz:['st','cdn']};
+  function draw(){const st=V.dau*V.up/100*V.sz,bill=V.dau*V.vw*V.sz*20;
+    D.forEach(d=>L.$('#ev-'+d[0]).textContent=d[6](V[d[0]]));
+    let s='';const ys={dau:16,vw:46,up:76,sz:106},yo={st:30,cdn:90};
+    D.forEach(d=>{const on=hot===d[0];s+='<text x="0" y="'+(ys[d[0]]+4)+'" font-size="12.5" font-weight="'+(on?700:500)+'" fill="var('+(on?'--pri':'--ink')+')">'+d[1]+'</text>';
+      WIRE[d[0]].forEach(t=>{s+='<path d="M130 '+ys[d[0]]+' C166 '+ys[d[0]]+' 166 '+yo[t]+' 196 '+yo[t]+'" fill="none" stroke="var('+(on?'--pri':'--line2')+')" stroke-width="'+(on?2.6:1.4)+'"/>';});});
+    [['st','Storage added a day',ytFmt(st)+' TB',st===150],['cdn','CDN bill a day','$'+ytFmt(bill),bill===150000]].forEach(b=>{const y=yo[b[0]]-26;
+      s+='<rect x="198" y="'+y+'" width="130" height="52" rx="10" fill="var('+(b[3]?'--ok-bg':'--soft')+')" stroke="var('+(b[3]?'--ok-line':'--line')+')"/><text x="263" y="'+(y+18)+'" font-size="12" text-anchor="middle" fill="var(--muted)">'+b[1]+'</text><text x="263" y="'+(y+40)+'" font-size="17" font-weight="700" text-anchor="middle" fill="var(--ink)">'+b[2]+'</text>';});
+    L.$('#envw').innerHTML=s;
+    if(!fin&&V.dau===5&&V.vw===5&&V.up===10&&V.sz===300){fin=true;
+      L.$('#envx').innerHTML=L.note('<b>150 TB</b> of new video every day, and <b>$150,000</b> a day for the CDN, counting streaming only. Even with discounts for big customers, the CDN is the scary number. The deep dive comes back to it.','eye');
+      L.sheet('info','Two numbers, two different inputs','Storage grows with <b>uploads</b>: 5M × 10% × 300 MB. The CDN bill grows with <b>views</b>: 5M × 5 × 0.3 GB × $0.02. The “videos watched” dial never touches storage, and “share who upload” never touches the bill.');L.done();}}
+  draw();}},
+{part:0,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',run(L){
   L.h(L.kick('learn','Three boxes, and buy the hard parts')+'<h1 class="q">The high-level design has just three parts</h1>'+
    L.flow([['person','Client','Computer, phone or smart TV',''],['play','CDN','Stores videos and streams them when you press play',''],['layers','API servers','Everything else: feed, upload URLs, metadata, sign-up','']],false)+
-   L.prose('Hana’s favourite question, “do we need to build this ourselves?”, gets a firm no for '+L.g('blob','blob storage')+' and the CDN. Two reasons:')+
-   L.list([['An interview tests choices','Picking the right technology matters more than explaining its insides. “Use blob storage” is enough.'],
-     ['They’re hard and costly to build','Even Netflix uses Amazon’s cloud, and Facebook uses Akamai’s CDN.']],2));
+   L.prose('Hana’s favorite question, “do we need to build this ourselves?”, gets a firm no for '+L.g('blob','blob storage')+' and the '+L.g('cdn','CDN')+'. In an interview, choosing the right tool matters more than explaining its insides. And both are hard and costly to build: even Netflix uses Amazon’s cloud, and Facebook uses Akamai’s CDN.'));
   L.done();}},
-{part:1,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these requests does the CDN handle, not the API servers?</h1>');
-  L.mc(L.card,['Signing up for a new account','Getting a URL to upload a video','Playing the next part of a video'],2,
-   'Streaming video is the CDN’s only job. Everything else goes through the API servers.',
-   'Sign-up and upload URLs go through the API servers. The CDN does one thing: stream the video.');}},
-{part:1,src:'Chapter 14 · Video uploading flow',run(L){
-  L.h(L.kick('learn','The upload flow')+'<h1 class="q">An upload is two processes running in parallel</h1>'+
-   L.lanes([['box','a · Upload the video','The file goes to <b>original storage</b> (blob storage). <b>Transcoding servers</b> fetch it and convert it. Then, in parallel: the results go to <b>transcoded storage</b> and on to the CDN, and a “done” event goes into the <b>completion queue</b>.',1],
-            ['list','b · Update the metadata','While the file uploads, the client sends its metadata (file name, size, format…). API servers write it to the <b>metadata cache</b> and <b>metadata DB</b>.',2]])+
-   L.prose('The <b>completion handler</b> is a set of workers that pull events from the completion queue and update the metadata DB and cache. Then the API servers tell the client the video is ready to stream.')+
-   '<p class="small">The metadata DB is '+L.g('sharding','sharded')+' and '+L.g('replication','replicated')+' for speed and availability.</p>');
-  L.done();}},
-{part:1,src:'Chapter 14 · Flow a: upload the actual video',pts:1,
- solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#fq [data-r="1"]');if(!b)break;b.click();await L.sleep(5);}},
+{part:0,src:'Chapter 14 · Flow a: upload the actual video',pts:1,
+ solve:async L=>{for(const st of YT_UP)for(const k of Object.keys(st.want)){const g=L.$('#um [data-n="'+k+'"]');if(g)ytTap(g);await L.sleep(5);}},
  run(L){
-  const Q=[
-   ['Yusuf uploads a new woodturning class. Where does the file land first?',['CDN','Original storage','Transcoding servers'],1,'Raw uploads go to original storage, a blob store.'],
-   ['Who picks the file up next?',['Transcoding servers','Completion handler','Metadata DB'],0,'Transcoding servers fetch it from original storage and convert it.'],
-   ['Transcoding is done. Where do the converted files go?',['API servers','Original storage','Transcoded storage'],2,'Converted files go to transcoded storage. At the same moment, a completion event goes into the completion queue.'],
-   ['From transcoded storage, the files are sent to…',['The CDN','The metadata cache','The completion queue'],0,'They’re distributed to the CDN, ready for streaming.'],
-   ['Who reads the completion event and updates the metadata DB and cache?',['The load balancer','The completion handler','The transcoding servers'],1,'The completion handler’s workers keep pulling events from the queue.']];
-  let k=0,miss=0;const path=['Client'];
-  L.h(L.kick('pr','Follow the video')+'<h1 class="q">Route Yusuf’s class through the upload flow, one hop at a time.</h1>'+
-   '<div id="fp" style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:6px 0 12px"></div><div id="fq"></div><div id="ff"></div>');
-  const draw=()=>{L.$('#fp').innerHTML=path.map((p,j)=>(j?'<span style="color:var(--faint)"> → </span>':'')+'<span class="chip static ok" style="margin:0 2px 6px 0;font-size:13.5px;padding:5px 9px">'+p+'</span>').join('');
-    const fq=L.$('#fq');if(k>=Q.length){fq.innerHTML='';return;}
-    fq.innerHTML='<h2 class="sub">'+(k+1)+' of '+Q.length+' · '+Q[k][0]+'</h2>';const box=document.createElement('div');fq.appendChild(box);
-    Q[k][1].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;if(j===Q[k][2])b.dataset.r='1';
-      b.onclick=()=>{L.$('#ff').innerHTML='';
-        if(j!==Q[k][2]){miss++;b.classList.add('no');L.shake(b);L.fb(L.$('#ff'),'Not there. Think about what has to happen to the file before that.','no');return;}
-        path.push(o.replace(/^The /,''));L.fb(L.$('#ff'),Q[k][3],'ok');k++;draw();
-        if(k===Q.length){L.award(miss===0);L.sheet(miss===0?'ok':'info',miss===0?'Clean run!':'Video delivered','Original storage → transcoding servers → transcoded storage → CDN, while the completion queue and handler update the metadata. Finally the API servers tell Yusuf the class is ready.');L.done();}};
-      box.appendChild(b);});};
+  L.h(L.kick('pr','Follow the video')+'<h1 class="q">Route Yusuf’s new class through the upload flow. Tap each next stop on the map.</h1>'+
+   '<div class="yt-say" id="uq"></div><svg id="um" class="yt-svg" viewBox="0 0 330 232" role="group" aria-label="Upload flow map"></svg><div id="uf"></div>');
+  let k=0,miss=0,got={},lit=new Set(['cl']),edges=[],flowB=false,fin=false;
+  function draw(){let s='<defs><marker id="uar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--pri)"/></marker><marker id="uab" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--h2)"/></marker></defs>';
+    if(flowB)['b1','b2'].forEach(e=>s+='<path d="'+YT_UE[e]+'" fill="none" stroke="var(--h2)" stroke-width="2" stroke-dasharray="4 3" marker-end="url(#uab)"/>');
+    edges.forEach(e=>s+='<path d="'+YT_UE[e]+'" fill="none" stroke="var(--pri)" stroke-width="2.5" marker-end="url(#uar)"/>');
+    for(const id in YT_UN){const n=YT_UN[id],on=lit.has(id);
+      s+='<g class="yt-node" data-n="'+id+'" role="button" tabindex="0" aria-label="'+n[2].join(' ')+'"><rect x="'+n[0]+'" y="'+n[1]+'" width="92" height="42" rx="10" fill="var('+(on?'--pri-bg':'--card')+')" stroke="var('+(on?'--pri':'--line2')+')" stroke-width="2"/>';
+      n[2].forEach((t,j)=>s+='<text x="'+(n[0]+46)+'" y="'+(n[1]+(n[2].length===1?26:18+j*14))+'" font-size="12.5" font-weight="600" text-anchor="middle" fill="var('+(on?'--pri-deep':'--ink')+')">'+t+'</text>');
+      s+='</g>';}
+    if(flowB)s+='<text x="40" y="160" font-size="12" fill="var(--h2)">flow b</text>';
+    L.$('#um').innerHTML=s;
+    L.$$('#um .yt-node').forEach(g=>{g.addEventListener('click',()=>tap(g.dataset.n));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tap(g.dataset.n);}});});
+    if(k<YT_UP.length)L.$('#uq').innerHTML='<b class="t">STEP '+(k+1)+' OF '+YT_UP.length+'</b>'+YT_UP[k].q;}
+  function tap(id){if(fin)return;const st=YT_UP[k];L.$('#uf').innerHTML='';
+    if(st.want[id]&&!got[id]){got[id]=1;lit.add(id);edges.push(st.want[id]);
+      const all=Object.keys(st.want).every(x=>got[x]);
+      if(!all){draw();L.fb(L.$('#uf'),'One of two. The other branch runs at the same time: find it.','info');return;}
+      if(k===0)flowB=true;
+      L.fb(L.$('#uf'),st.why+(k===0?' <span style="color:var(--h2)">Meanwhile, flow b (dashed): the phone sends the metadata (file name, size, format) to the API servers, which update the metadata DB and cache.</span>':''),'ok');
+      k++;got={};draw();
+      if(k===YT_UP.length){fin=true;L.$('#uq').innerHTML='<b class="t">DELIVERED</b>Yusuf’s class is ready to stream.';L.award(miss===0);
+        L.sheet(miss===0?'ok':'info',miss===0?'Clean run!':'Video delivered','Original storage → transcoding servers → then, in parallel, transcoded storage → CDN and completion queue → completion handler → metadata DB and cache. Finally the API servers tell Yusuf the class is ready. The metadata upload (flow b) ran alongside the whole time.');L.done();}
+      return;}
+    if(lit.has(id))return;
+    miss++;const g=L.$('#um [data-n="'+id+'"]');if(g)L.shake(g);
+    L.fb(L.$('#uf'),'Not there yet. Think about what has to happen to the file first.','no');}
   draw();}},
-{part:1,src:'Chapter 14 · Video streaming flow',run(L){
+{part:0,src:'Chapter 14 · Video streaming flow',run(L){
   L.h(L.kick('learn','Stream, don’t download')+'<h1 class="q">Watching starts before the whole file arrives</h1>'+
    L.lanes([['down','Downloading','The whole video is copied to your device first. You wait.',4],
-            ['play','Streaming','Your device keeps receiving small pieces from far away, so you can start watching right away.',2]])+
-   L.prose('A <b>streaming protocol</b> is a standard way to control that data transfer. Popular ones: MPEG-DASH, Apple HLS, Microsoft Smooth Streaming and Adobe HDS.')+
-   L.note('You don’t need to remember the names. What matters: different protocols support different video encodings and players, so pick one that fits your use case.','info')+
+            ['play','Streaming','Your device keeps receiving small pieces, so you can start watching right away.',2]])+
+   L.prose('A <b>streaming protocol</b> is a standard way to control that transfer: MPEG-DASH, Apple HLS, Microsoft Smooth Streaming, Adobe HDS. Don’t memorize the names. What matters: they support different encodings and players, so pick one that fits.')+
    L.prose('Videos stream straight from the CDN. The <b>edge server</b> closest to you delivers it, so there’s very little delay.'));
   L.done();}},
-{part:1,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',pts:5,run(L){
+{part:0,src:'Chapter 14 · Step 2 - Propose high-level design and get buy-in',pts:5,run(L){
   L.h(L.kick('pr','Which box?')+'<h1 class="q">Kitebird Classes gets five requests. Send each to the CDN or the API servers.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['CDN','API servers'],[
    ['A learner on a smart TV plays minute 12 of “Bowl turning 101”.',0,'Video bytes stream from the nearest CDN edge.'],
@@ -136,48 +302,118 @@ Course.lesson({
    ['A new learner signs up for Kitebird.',1,'Sign-up is “everything else”, so it goes through the API servers.']],
    'One rule: video bytes come from the CDN; everything else goes through the API servers.');}},
 
-/* ---------- PART 3: TRANSCODING ---------- */
-{part:2,src:'Chapter 14 · Video transcoding',run(L){
+/* ---------- PART 2: TRANSCODING ---------- */
+{part:1,src:'Chapter 14 · Video transcoding',run(L){
   L.h(L.kick('learn','Why transcode?')+'<h1 class="q">A raw video must be converted before it plays well everywhere</h1>'+
-   L.prose('A phone or camera saves video in its own format. '+L.g('transcode','Transcoding')+' converts it into compatible formats and '+L.g('bitrate','bitrates')+'. Four reasons:')+
+   L.prose(L.g('transcode','Transcoding')+' converts a video into compatible formats and '+L.g('bitrate','bitrates')+'. Four reasons:')+
    L.list([['box','Size','Raw video is huge: an hour of HD at 60 frames a second can take a few hundred GB.'],
      ['check','Compatibility','Many devices and browsers support only certain formats.'],
-     ['trend','Bandwidth','Send higher resolution to fast connections, lower to slow ones.'],
-     ['cycle','Changing networks','Especially on phones. Switching quality, automatically or by hand, keeps playback smooth.']],1)+
-   L.lanes([['box','Container','The basket holding video, audio and metadata. You can tell it by the file extension: .avi, .mov, .mp4.',3],
-            ['lock','Codec','The compression method that shrinks video while keeping quality. Common ones: H.264, VP9, HEVC.',4]]));
+     ['trend','Bandwidth','Higher resolution for fast connections, lower for slow ones.'],
+     ['cycle','Changing networks','Especially on phones. Switching quality keeps playback smooth.']],1)+
+   L.lanes([['box','Container','The basket for video, audio and metadata. The file extension tells you: .avi, .mov, .mp4.',3],
+            ['lock','Codec','The compression method: shrinks video, keeps quality. H.264, VP9, HEVC.',4]]));
   L.done();}},
-{part:2,src:'Chapter 14 · Video transcoding',pts:1,run(L){
+{part:1,src:'Chapter 14 · Video transcoding',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Yusuf uploads <b>lathe-basics.mov</b>, compressed with H.264. Which part is the container?</h1>');
   L.mc(L.card,['H.264, since it holds the video','.mov, the basket for video and audio','Both, since they mean the same thing'],1,
    'The extension names the container: .mov is the basket. H.264 is the codec that compressed the video inside it.',
    'A container is the basket you can spot by the extension (.mov). H.264 is the codec, the compression method. They’re different layers.');}},
-{part:2,src:'Chapter 14 · Directed acyclic graph (DAG) model',run(L){
-  const D='Original video\n ├─ Video ─┬─ Inspection\n │        ├─ Video encodings\n │        ├─ Thumbnail\n │        └─ Watermark\n ├─ Audio ─── Audio encoding\n └─ Metadata';
-  L.h(L.kick('learn','The DAG model')+'<h1 class="q">Let each creator’s needs become a graph of tasks</h1>'+
-   L.prose('Transcoding is slow and expensive, and creators differ: some want a watermark, some bring their own thumbnail, some upload HD. So the pipeline lets programmers <b>define the tasks</b> in a '+L.g('dag','DAG')+'. Tasks run in stages, one after another or in parallel. Facebook’s streaming video engine works this way.')+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:12px 0 4px;overflow-x:auto"><div style="font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.6;white-space:pre">'+D+'</div></div><p class="small">A simplified sketch of the book’s example DAG.</p>'+
-   L.list([['Inspection','Checks the video is good quality and not malformed.'],['Video encodings','Versions in different resolutions, codecs and bitrates.'],['Thumbnail','Uploaded by the user or generated.'],['Watermark','An image overlay that identifies the video.']],2));
-  L.done();}},
-{part:2,src:'Chapter 14 · Video transcoding architecture',run(L){
-  L.h(L.kick('learn','The transcoding architecture')+'<h1 class="q">Six parts turn one upload into many encoded files</h1>'+
-   L.list([['Preprocessor','Splits the video into '+L.g('gop','GOP')+' chunks (also for old clients that can’t split), builds the DAG from config files, and saves GOPs and metadata in temporary storage so a failed encode can be retried.'],
-     ['DAG scheduler','Splits the DAG into <b>stages</b> and puts their tasks in the task queue. Stage 1: video, audio, metadata. Stage 2: video encoding and thumbnail, plus audio encoding.'],
-     ['Resource manager','Three queues: a <b>task queue</b> (by priority), a <b>worker queue</b> (worker load, by priority) and a <b>running queue</b>. A task scheduler matches tasks to workers.'],
-     ['Task workers','Run the tasks. Different workers may run different tasks.'],
-     ['Temporary storage','Small, often-read metadata in memory; video and audio in blob storage. Freed when processing ends.'],
-     ['Encoded video','The final output, e.g. <code>funny_720p.mp4</code>.']],3));
-  L.done();}},
-{part:2,src:'Chapter 14 · Resource manager',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">The task scheduler handles one job from Yusuf’s class</h1>');
-  L.beats(L.card,[
-   ['Take a task','The scheduler takes the <b>highest-priority</b> task from the task queue: “encode chunk 7 at 720p”.'],
-   ['Pick a worker','It checks the worker queue and picks the <b>best worker</b> for that task, say an encoding worker that’s lightly loaded.'],
-   ['Run it','It tells that worker to run the task.'],
-   ['Track it','It binds the task and worker together and puts the pair in the <b>running queue</b>.'],
-   ['Clear it','When the job is done, it removes the pair from the running queue. Next task.']],
-   'Priority decides what runs next, worker load decides who runs it, and the running queue tracks what’s in flight.');}},
-{part:2,src:'Chapter 14 · Video transcoding architecture',pts:5,run(L){
+{part:1,src:'Chapter 14 · Directed acyclic graph (DAG) model',
+ solve:async L=>{ytTap(L.$('#dg [data-d="root"]'));ytTap(L.$('#dg [data-d="v"]'));ytTap(L.$('#dg [data-d="a"]'));L.$('#dgp').children[1].click();},
+ run(L){
+  L.h(L.kick('learn','Build the DAG')+'<h1 class="q">Creators want different things, so the tasks form a graph. Tap to grow it.</h1>'+
+   L.prose('Transcoding is slow and costly, and creators differ: some want a watermark, some bring their own thumbnail. So programmers <b>define the tasks</b> in a '+L.g('dag','DAG')+', run in stages, one after another or side by side. Facebook’s video engine works this way.')+
+   '<div class="yt-pre" id="dgp"></div><svg id="dg" class="yt-svg" viewBox="0 0 330 240" role="group" aria-label="Task graph for one video"></svg><div class="yt-say" id="dgx">Tap <b>Original video</b> to split it.</div>');
+  const PR=[['Yusuf’s class',{wm:true,own:false}],['Mae’s class',{wm:false,own:true}]];let prof=0,open={root:false,v:false,a:false},tried=false,fin=false;
+  const INFO={v:'The video track. Tap it to see its stage-2 tasks.',a:'The audio track. Tap it to see its task.',m:'Metadata travels on its own, with no encoding task.',
+    i:'<b>Inspection</b>: checks the video is good quality and not malformed.',e:'<b>Video encodings</b>: versions in different resolutions, codecs and bitrates.',
+    th:'<b>Thumbnail</b>: uploaded by the creator, or generated by the system.',wm:'<b>Watermark</b>: an image overlay with identifying information, such as a logo.',ae:'<b>Audio encoding</b>: the audio’s own encoding task.',root:'The original upload.'};
+  PR.forEach((p,j)=>{const b=document.createElement('button');b.className='chip'+(j===0?' sel':'');b.textContent=p[0];b.onclick=()=>{prof=j;[...L.$('#dgp').children].forEach((x,z)=>x.classList.toggle('sel',z===j));if(j===1)tried=true;draw();check();
+      L.$('#dgx').innerHTML=j===1?'Mae wants <b>no watermark</b> and uploads <b>their own thumbnail</b>. Same pipeline, different graph.':'Yusuf wants the Kitebird <b>watermark</b>; the system <b>generates</b> the thumbnail.';};L.$('#dgp').appendChild(b);});
+  function node(id,x,y,w,lines,col,shown){if(!shown)return '';
+    let s='<g class="yt-node" data-d="'+id+'" role="button" tabindex="0" aria-label="'+lines.join(' ')+'"><rect x="'+x+'" y="'+y+'" width="'+w+'" height="36" rx="9" fill="var(--'+col+'-bg)" stroke="var(--'+col+')" stroke-width="1.8"/>';
+    lines.forEach((t,j)=>s+='<text x="'+(x+w/2)+'" y="'+(y+(lines.length===1?22:15+j*13))+'" font-size="12.5" font-weight="600" text-anchor="middle" fill="var(--ink)">'+t+'</text>');return s+'</g>';}
+  function ln(x1,y1,x2,y2,on){return on?'<path d="M'+x1+' '+y1+' C'+(x1+14)+' '+y1+' '+(x2-14)+' '+y2+' '+x2+' '+y2+'" fill="none" stroke="var(--line2)" stroke-width="1.6"/>':'';}
+  function draw(){const P=PR[prof][1];let s='';
+    const vt=[['i',['Inspection']],['e',['Video','encodings']],['th',[P.own?'Thumbnail':'Thumbnail',P.own?'(uploaded)':'(generated)']]].concat(P.wm?[['wm',['Watermark']]]:[]);
+    s+=ln(70,112,98,40,open.root)+ln(70,112,98,128,open.root)+ln(70,112,98,192,open.root);
+    vt.forEach((t,j)=>s+=ln(182,40,214,2+j*40+18,open.v));s+=ln(182,128,214,194,open.a);
+    s+=node('root',2,94,68,['Original','video'],'h2',true);
+    s+=node('v',100,22,82,['Video'],'h2',open.root)+node('a',100,110,82,['Audio'],'h2',open.root)+node('m',100,174,82,['Metadata'],'h2',open.root);
+    vt.forEach((t,j)=>s+=node(t[0],216,2+j*40,112,t[1],t[0]==='e'?'h1':'h3',open.v));
+    s+=node('ae',216,176,112,['Audio','encoding'],'h4',open.a);
+    if(open.root)s+='<text x="141" y="236" font-size="12" text-anchor="middle" fill="var(--muted)">stage 1</text>';
+    if(open.v||open.a)s+='<text x="272" y="236" font-size="12" text-anchor="middle" fill="var(--muted)">stage 2</text>';
+    L.$('#dg').innerHTML=s;
+    L.$$('#dg .yt-node').forEach(g=>{g.addEventListener('click',()=>tap(g.dataset.d));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tap(g.dataset.d);}});});}
+  function tap(id){if(id==='root'&&!open.root){open.root=true;draw();L.$('#dgx').innerHTML='<b>Stage 1</b>: the original splits into video, audio and metadata. Now tap <b>Video</b> and <b>Audio</b>.';return;}
+    if((id==='v'||id==='a')&&!open[id]){open[id]=true;draw();}
+    L.$('#dgx').innerHTML=INFO[id]+(open.v&&open.a&&!tried?' <br>Now switch to <b>Mae’s class</b> above.':'');check();}
+  function check(){if(fin||!(open.v&&open.a&&tried))return;fin=true;
+    L.sheet('info','One engine, many graphs','Each creator’s needs become a different graph from the same building blocks. Tasks in one stage with no arrow between them, like the encodings, thumbnail and audio, can run <b>at the same time</b>. That’s where the speed comes from.');L.done();}
+  draw();}},
+{part:1,src:'Chapter 14 · Video transcoding architecture',
+ solve:async L=>{for(let j=0;j<6;j++){const b=L.$('#arn');if(b)b.click();}},
+ run(L){
+  L.h(L.kick('learn','The transcoding architecture')+'<h1 class="q">Six parts turn one upload into many encoded files. Reveal them in order.</h1>'+
+   '<svg id="ar" class="yt-svg" viewBox="0 0 330 150" role="img" aria-label="Transcoding architecture"></svg><div class="yt-say" id="arx"></div><button class="btn pri" id="arn">'+L.ic('arrow')+'Next part</button>');
+  const P=[['pre',5,10,['Preprocessor'],'h2','<b>Preprocessor</b>: splits the video into '+L.g('gop','GOP')+' chunks (also for old clients that can’t), builds the DAG from config files programmers write, and caches GOPs and metadata in temporary storage, so a failed encode can be retried.'],
+    ['dag',115,10,['DAG','scheduler'],'h1','<b>DAG scheduler</b>: cuts the DAG into <b>stages</b> and puts their tasks in the resource manager’s task queue.'],
+    ['rm',225,10,['Resource','manager'],'h3','<b>Resource manager</b>: three queues. A <b>task queue</b> by priority, a <b>worker queue</b> with how busy each worker is, and a <b>running queue</b> of task-and-worker pairs. A task scheduler matches the top task to the best worker.'],
+    ['tw',115,96,['Task','workers'],'h4','<b>Task workers</b>: run the tasks in the DAG. Different workers may run different tasks.'],
+    ['tmp',5,96,['Temporary','storage'],'h2','<b>Temporary storage</b>: small, often-read metadata in memory; video and audio in blob storage. Freed once processing ends.'],
+    ['out',225,96,['Encoded','video'],'h1','<b>Encoded video</b>: the final output, such as <code>funny_720p.mp4</code>.']];
+  const E=[['pre','dag','M105 31 L113 31'],['dag','rm','M215 31 L223 31'],['rm','tw','M240 52 L210 94'],['tw','out','M215 117 L223 117'],['pre','tmp','M55 52 L55 94'],['tmp','tw','M105 117 L113 117']];
+  let n=0;
+  function draw(){const on=new Set(P.slice(0,n).map(p=>p[0]));let s='<defs><marker id="aar" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L8 4L0 8z" fill="var(--muted)"/></marker></defs>';
+    E.forEach(e=>{if(on.has(e[0])&&on.has(e[1]))s+='<path d="'+e[2]+'" stroke="var(--muted)" stroke-width="1.8" fill="none" marker-end="url(#aar)"'+(e[0]==='pre'&&e[1]==='tmp'||e[0]==='tmp'?' stroke-dasharray="4 3"':'')+'/>';});
+    P.forEach((p,j)=>{const o=j<n,cur=j===n-1;s+='<rect x="'+p[1]+'" y="'+p[2]+'" width="100" height="42" rx="10" fill="var('+(o?'--'+p[4]+'-bg':'--soft')+')" stroke="var('+(cur?'--ink':o?'--'+p[4]:'--line')+')" stroke-width="'+(cur?2.5:1.5)+'"/>';
+      p[3].forEach((t,q)=>s+='<text x="'+(p[1]+50)+'" y="'+(p[2]+(p[3].length===1?26:18+q*14))+'" font-size="12.5" font-weight="600" text-anchor="middle" fill="var('+(o?'--ink':'--faint')+')">'+(o?t:'?')+'</text>');});
+    L.$('#ar').innerHTML=s;L.$('#arx').innerHTML=n?'<b class="t">'+n+' OF 6</b>'+P[n-1][5]:'Tap <b>Next part</b> to follow one upload through the pipeline.';}
+  L.$('#arn').onclick=()=>{if(n>=6)return;n++;draw();if(n===6){L.$('#arn').remove();L.done();}};
+  draw();}},
+{part:1,src:'Chapter 14 · Resource manager',
+ solve:async L=>{const w=L.$('.yt-w');ytSlide(w,3);ytSlide(w,8);ytSlide(L.$('.yt-t'),2);},
+ run(L){
+  L.h(L.kick('learn','Explore · the worker chart')+'<h1 class="q">Yusuf’s class, split into 6 GOP chunks, runs on the task workers. Add workers and look inside the queues.</h1>'+
+   '<p class="small">Each row is a worker; each bar is a task. Move <b>Task workers</b>, then drag the <b>tick</b> slider to see what sits in each queue.</p><div id="gh"></div>');
+  const ws=new Set([1]);let scr=false,fin=false;
+  const g=ytGantt(L.$('#gh'),{W:1,change(k){if(k==='W')ws.add(g.S.W);if(k==='t')scr=true;
+    if(!fin&&ws.size>=3&&scr){fin=true;L.sheet('info','What you just saw','The task scheduler takes the <b>highest-priority</b> task from the task queue, picks a free worker from the worker queue, and puts the pair in the <b>running queue</b> until it’s done. Stage-2 tasks can’t be released until “split out video” finishes. More workers finish sooner, but watch how the gain shrinks.');L.done();}}});}},
+{part:1,src:'Chapter 14 · Directed acyclic graph (DAG) model',pts:1,
+ solve:async L=>{L.$('#gpo').children[1].click();L.$('#gpl').click();await L.sleep(1300);},
+ run(L){
+  let p=null;const O=['About 2.6 ticks: ten times faster','4 ticks: the stages set a floor','26 ticks: it’s still one video'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">With 1 worker, Yusuf’s class takes 26 ticks. What happens with 10 workers?</h1><div id="gpo" class="yt-pre"></div>'+
+   '<button class="btn pri" id="gpl" hidden>'+L.ic('play')+'Add workers one by one</button><div id="gph"></div>');
+  const g=ytGantt(L.$('#gph'),{W:1,scrub:false,slider:false});
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#gpl').hidden=false;};L.$('#gpo').appendChild(b);});
+  L.$('#gpl').onclick=function(){this.remove();let w=1;const tm=setInterval(()=>{if(!ytAlive('gph')){clearInterval(tm);return;}w++;g.set({W:w});
+    if(w>=10){clearInterval(tm);L.award(p===1);
+      L.sheet(p===1?'ok':'no',p===1?'You called it':'It stops at 4 ticks','From 1 to 4 workers the time drops fast (26 → 14 → 9 → 7). After 8 workers it stays at <b>4</b>: stage 1 takes 1 tick and each chunk takes 3, and no worker can start a chunk before its video track is split out. The DAG’s stages set the floor; extra workers just sit idle.');L.done();}},110);};}},
+{part:1,src:'Chapter 14 · Error handling',
+ solve:async L=>{for(const j of [0,2,3,5]){L.$('#gx').children[j].click();}},
+ run(L){
+  L.h(L.kick('ex','Edge cases · where it breaks')+'<h1 class="q">Try the extremes. Which ones does adding workers fix, and which need a different answer?</h1><div id="gx" class="yt-pre"></div><div class="yt-say" id="gxt">Pick a case.</div><div id="gxh"></div>');
+  const PS=[['One worker',{W:1,gop:true,fail:null},'All 26 ticks of work in a row: no parallelism at all.'],
+    ['Ten workers',{W:10,gop:true,fail:null},'4 ticks, and most workers idle. The DAG’s stages are the limit, not the worker count.'],
+    ['No GOP split',{W:10,gop:false,fail:null},'One 18-tick “whole video” task can only run on one worker: 19 ticks even with 10 workers. Splitting into GOP chunks is what lets encoding run in parallel.'],
+    ['Chunk 3 fails once',{W:4,gop:true,fail:'once'},'A <b>recoverable error</b>: the failed chunk is retried, using the GOP saved in temporary storage. Only one chunk is redone, and the video is two ticks late.<br><span class="small">Retrying on a different worker is beyond the book (it says retry, and a dead worker’s task goes to a new worker). Timing illustrative.</span>'],
+    ['Chunk 3 keeps failing',{W:4,gop:true,fail:'always'},'Retry a few times; if it keeps failing and the system decides it isn’t recoverable, it <b>returns an error code to the client</b>.<br><span class="small">Illustrative: the chart gives up after 3 tries; the book says only “a few times”.</span>'],
+    ['Malformed file',{W:4,gop:true,fail:'bad'},'A <b>non-recoverable error</b>: inspection finds a malformed video, so the system <b>stops the running tasks</b> for that video and returns an error code. No retry would help.<br><span class="small">Illustrative timing: when inspection finishes and which tasks are running then.</span>']];
+  const seen=new Set();let fin=false;const g=ytGantt(L.$('#gxh'),{W:1,slider:false,scrub:false});
+  PS.forEach((ps,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=ps[0];b.onclick=()=>{[...L.$('#gx').children].forEach((x,z)=>x.classList.toggle('sel',z===j));g.set(ps[1]);L.$('#gxt').innerHTML='<b class="t">'+ps[0].toUpperCase()+'</b>'+ps[2];seen.add(j);
+    if(!fin&&seen.size>=3&&[3,4,5].some(x=>seen.has(x))){fin=true;L.done();L.sheet('info','Workers fix speed, not everything','Adding workers helps until the stages set a floor. GOP chunks make the work splittable in the first place. And failures need their own rules: <b>retry</b> what can recover, <b>stop and return an error</b> for what can’t. Try the others too.');}};L.$('#gx').appendChild(b);});}},
+{part:1,src:'Chapter 14 · Resource manager',pts:1,
+ solve:async L=>{ytSlide(L.$('.yt-w'),4);L.$('#gcr').click();},
+ run(L){
+  L.h(L.kick('pr','Challenge · Obi’s budget')+'<h1 class="q">Yusuf’s class must be ready by tick 7 (red line). Obi pays for every worker. Pick the fewest workers that make it.</h1><div id="gch"></div>'+
+   '<button class="btn pri" id="gcr">'+L.ic('check')+'Lock in this many</button><div id="gcf"></div>');
+  const g=ytGantt(L.$('#gch'),{W:1,scrub:false,deadline:7});let first=true,fin=false;
+  L.$('#gcr').onclick=()=>{if(fin)return;const W=g.S.W,end=g.r.end,ok=W===4;L.$('#gcf').innerHTML='';if(first){L.award(ok);first=false;}
+    if(ok){fin=true;L.$('#gcr').remove();L.sheet('ok','Four is the sweet spot','4 workers finish at tick 7. Three finish at tick 9, too late. Five still finish at 7, so the fifth worker adds cost and no speed. Matching workers to the work is the resource manager’s job.');L.done();}
+    else L.fb(L.$('#gcf'),end>7?'<b>Late: ready at tick '+end+'.</b> Add a worker and look again.':'<b>On time, but '+(W-4)+' worker'+(W-4>1?'s':'')+' more than needed.</b> Remove workers until one fewer would be late.','no');};}},
+{part:1,src:'Chapter 14 · Video transcoding architecture',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which part does this?',['Preprocessor','DAG scheduler','Resource manager','Task workers','Temporary storage'],[
    ['Reads the config Kitebird engineers wrote for “classes with a watermark” and turns it into a task graph.',0,'Building the DAG from config files is one of the preprocessor’s four jobs.'],
@@ -186,46 +422,80 @@ Course.lesson({
    ['Matches the highest-priority task to the best free worker.',2,'Its task scheduler pairs the task queue with the worker queue.'],
    ['Actually stamps the Kitebird watermark onto the video.',3,'Task workers run the tasks the DAG defines.']]);}},
 
-/* ---------- PART 4: FASTER, SAFER, CHEAPER ---------- */
-{part:3,src:'Chapter 14 · System optimizations',run(L){
-  L.h(L.kick('learn','Faster and safer')+'<h1 class="q">Six upgrades for speed and safety</h1>'+
-   L.lanes([['clock','Speed','<b>Upload in GOP chunks.</b> The client can split the video, so uploads run in parallel and resume after a failure.<br><br><b>Upload centers near users.</b> Use CDNs as upload centers, e.g. North America and Asia.<br><br><b>'+L.g('message-queue','Message queues')+' between modules.</b> Encoding no longer waits for download to finish; it works on queued events in parallel.',1],
-            ['shield','Safety','<b>'+L.g('presigned','Pre-signed upload URL')+'.</b> 1) Client asks the API servers for one. 2) They return it. 3) Client uploads with it. (Azure calls it a Shared Access Signature.)<br><br><b>Protect videos:</b> DRM (Apple FairPlay, Google Widevine, Microsoft PlayReady), AES encryption with an authorisation policy, or a visual watermark.',2]]));
+/* ---------- PART 3: FASTER, SAFER, CHEAPER ---------- */
+{part:2,src:'Chapter 14 · System optimizations',run(L){
+  L.h(L.kick('learn','Faster and safer')+'<h1 class="q">Five upgrades for speed and safety</h1>'+
+   L.lanes([['clock','Speed','<b>Upload in GOP chunks.</b> The client splits the video, so uploads are fast and resume after a failure.<br><br><b>Upload centers near users.</b> Use CDNs as upload centers, such as North America and Asia.<br><br><b>'+L.g('message-queue','Message queues')+' between modules.</b> Encoding no longer waits for download to finish; it works on queued events in parallel.',1],
+            ['shield','Safety','<b>'+L.g('presigned','Pre-signed upload URL')+'.</b> The client asks the API servers for one, gets it, then uploads with it. (Azure calls it a Shared Access Signature.)<br><br><b>Protect videos:</b> DRM (Apple FairPlay, Google Widevine, Microsoft PlayReady), AES encryption with an authorization policy, or a visual watermark.',2]]));
   L.done();}},
-{part:3,src:'Chapter 14 · Speed optimization: parallelize video uploading',pts:1,
- solve:async L=>{L.$('#rp').children[1].click();L.$('#rgo').click();await L.sleep(2800);},
+{part:2,src:'Chapter 14 · Speed optimization: parallelize video uploading',pts:1,
+ solve:async L=>{L.$('#rp').children[1].click();L.$('#rgo').click();await L.sleep(2700);},
  run(L){
   let p=null;const C=['Whole file','GOP chunks','They tie'];
-  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Two makers upload a 1 GB class on hotel wifi. The connection drops once, at about three-quarters. Who finishes first?</h1><div id="rp"></div>'+
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Two makers upload a 1 GB class on hotel wifi. The connection drops once, at about three-quarters. Who finishes first?</h1><div id="rp" class="yt-pre"></div>'+
    '<div id="rr" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap"><div><div class="small">Simulated time</div><div class="week" id="rt">Minute 0</div></div><button class="btn pri" id="rgo">'+L.ic('play')+'Start uploads</button></div>'+
    '<div class="meterrow"><div class="lb">Whole file</div><div class="meter"><div id="ra" style="background:var(--h3);transition:none"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">GOP chunks</div><div class="meter"><div id="rb" style="background:var(--ok-strong);transition:none"></div></div></div><div id="rn" class="small"></div></div>');
+   '<div class="meterrow"><div class="lb">GOP chunks</div><div class="meter"><div id="rb" style="background:var(--ok-strong);transition:none"></div></div></div><div id="rn" class="small"></div><p class="yt-fine">Minutes and the drop point are illustrative.</p></div>');
   C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=c;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#rr').hidden=false;};L.$('#rp').appendChild(b);});
   L.$('#rgo').onclick=function(){this.remove();let m=0,a=0,b=0,da=null,db=null;
-    const t=setInterval(()=>{if(!L.$('#rt')){clearInterval(t);return;}m++;
+    const t=setInterval(()=>{if(!ytAlive('rt')){clearInterval(t);return;}m++;
       if(da===null)a=Math.min(100,a+7);if(db===null)b=Math.min(100,b+7);
-      if(m===11){a=0;b=70;L.$('#rn').innerHTML='<b style="color:var(--no)">Connection dropped at minute 11.</b> Whole file restarts from zero; chunks lose only the one in flight.';}
+      if(m===11){a=0;b=70;L.$('#rn').innerHTML='<b style="color:var(--no)">Connection dropped at minute 11.</b> The whole file restarts from zero; chunks lose only the one in flight.';}
       if(a>=100&&da===null)da=m;if(b>=100&&db===null)db=m;
       L.$('#rt').textContent='Minute '+m;L.$('#ra').style.width=a+'%';L.$('#rb').style.width=b+'%';
       if(da!==null&&db!==null){clearInterval(t);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'Chunks win':'Chunks finish first','GOP chunks finished at minute '+db+', the whole file at minute '+da+'. Splitting by GOP makes uploads resumable: a failure costs one chunk, not the whole file. Chunks can also upload in parallel.');L.done();}},90);};}},
-{part:3,src:'Chapter 14 · Cost-saving optimization',run(L){
+        L.sheet(p===1?'ok':'no',p===1?'Chunks win':'Chunks finish first','GOP chunks finished at minute '+db+', the whole file at minute '+da+'. Splitting by GOP makes uploads resumable: a failure costs one chunk, not the whole file.');L.done();}},85);};}},
+{part:2,src:'Chapter 14 · Cost-saving optimization',run(L){
   L.h(L.kick('learn','Cut the CDN bill')+'<h1 class="q">A few videos get most of the views</h1>'+
-   L.prose('Research shows YouTube views follow a '+L.g('longtail','long-tail distribution')+': a few popular videos are watched constantly, and many get few or no viewers. The book builds four savings on that:')+
-   L.list([['star','Popular on the CDN only','Serve the most popular videos from the CDN, and the rest from high-capacity storage video servers.'],
+   L.prose('Research shows YouTube views follow a '+L.g('longtail','long-tail distribution')+': a few popular videos are watched constantly, while many get few or no viewers. The book builds four savings on that:')+
+   L.list([['star','Popular on the CDN only','Serve the most popular videos from the CDN, the rest from your own high-capacity storage video servers.'],
      ['cycle','Fewer versions for the tail','Less popular videos don’t need many encoded versions. Short ones can be encoded on demand.'],
-     ['map','Regional videos stay regional','A video popular in one region doesn’t need to go to others.'],
-     ['home','Your own CDN, with ISPs','A giant project, like Netflix’s, partnering with internet providers near users. Makes sense only for large streaming companies.']],4)+
-   L.note('Analyse historical viewing patterns before choosing any of these.','eye'));
+     ['map','Regional videos stay regional','A video popular in one region needn’t be sent to others.'],
+     ['home','Your own CDN, with ISPs','A giant project, like Netflix’s, partnering with internet providers near users. Only for large streaming companies.']],4)+
+   L.note('All of these depend on popularity, access patterns and video size. Analyze historical viewing patterns before choosing any of them.','eye'));
   L.done();}},
-{part:3,src:'Chapter 14 · Cost-saving optimization',pts:4,run(L){
-  L.h(L.kick('pr','Hana’s cost review')+'<h1 class="q">Four Kitebird classes. Which saving fits each?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Serve from CDN','Storage video servers','Encode on demand','Keep in one region'],[
-   ['Yusuf’s “Bowl turning 101”, watched thousands of times a day worldwide.',0,'Popular everywhere: exactly what the CDN is for.'],
-   ['A 2019 hour-long loom-repair class with three views last month.',1,'Long-tail video: serve it from cheaper high-capacity storage servers.'],
-   ['A 40-second tip clip that almost nobody watches.',2,'Short and unpopular: skip storing many versions, encode when asked.'],
-   ['A Portuguese class on Brazilian lace, watched almost only in Brazil.',3,'Popular in one region only, so don’t copy it to every region.']],
-   'Popularity, region and length decide where a video lives and how many versions it gets.');}},
+{part:2,src:'Chapter 14 · Cost-saving optimization',
+ solve:async L=>{ytSetK(L,500);ytSetK(L,100);},
+ run(L){
+  L.h(L.kick('learn','Explore · the long tail')+'<h1 class="q">Hana’s chart of Kitebird Classes: every class, most watched first. Drag the cut line left.</h1>'+
+   '<p class="prose" style="margin:4px 0">Kitebird’s daily CDN bill: 2M learners × 3 classes × 0.5 GB × $0.02 = <b>$60,000 a day</b>.</p><p class="small">Classes left of the line stream from the CDN; the rest from Kitebird’s own video servers. Notice how far you can move the line before the bill really drops.</p><div id="th"></div>');
+  let fin=false;const t=ytTail(L.$('#th'),{k:2000,change(){if(!fin&&t.S.k>0&&t.S.k<=500){fin=true;
+    L.sheet('info','Most classes, little of the bill','Moving the slowest three-quarters of the catalog (classes 501 to 2,000) off the CDN cuts the bill only from $60,000 to about $50,000 in this illustrative curve, because those classes carry few views. The tall bars on the left are the bill. Keep going and watch the own-servers meter.');L.done();}}});}},
+{part:2,src:'Chapter 14 · Cost-saving optimization',pts:1,
+ solve:async L=>{L.$('#lpo').children[1].click();L.$('#lpl').click();await L.sleep(1500);},
+ run(L){
+  let p=null;const O=['Falls by about 90%','Falls by about 30%','Doesn’t change'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Hana keeps only the top 200 classes, 10% of the catalog, on the CDN. What happens to the $60,000 bill?</h1><div id="lpo" class="yt-pre"></div>'+
+   '<button class="btn pri" id="lpl" hidden>'+L.ic('play')+'Move the cut line</button><div id="lph"></div>');
+  const t=ytTail(L.$('#lph'),{k:2000});L.$$('#lph input,#lph [data-tg]').forEach(x=>x.disabled=true);
+  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#lpl').hidden=false;};L.$('#lpo').appendChild(b);});
+  L.$('#lpl').onclick=function(){this.remove();let i=YT_K.length-1;const tm=setInterval(()=>{if(!ytAlive('lph')){clearInterval(tm);return;}i--;t.set({k:YT_K[i]});
+    if(YT_K[i]===200){clearInterval(tm);L.award(p===1);const c=t.cost();
+      L.sheet(p===1?'ok':'no',p===1?'Right: about 30%':'About 30%','The bill drops to <b>$'+ytFmt(c.bill)+'</b>. Cutting 90% of the classes cuts only about 28% of the bill, because the bill follows <b>views</b>, not classes, and the top 10% carry about 72% of views here. The popular classes stay on the CDN, where speed matters most. (Curve shape illustrative.)');L.done();}},150);};}},
+{part:2,src:'Chapter 14 · Cost-saving optimization',
+ solve:async L=>{for(const j of [0,1,2,3])L.$('#lx').children[j].click();},
+ run(L){
+  L.h(L.kick('ex','Edge cases · where it breaks')+'<h1 class="q">Push the idea to its extremes. Where does serving only popular classes from the CDN stop working?</h1><div id="lx" class="yt-pre"></div><div class="yt-say" id="lxt">Pick a case.</div><div id="lxh"></div>');
+  const PS=[['Everything on the CDN',{k:2000,few:false,reg:false,flat:false},'All 3,000,000 GB a day through the CDN: <b>$60,000 a day</b>. Fast everywhere, and the full bill. That’s Kitebird’s version of the book’s $150,000.'],
+    ['Nothing on the CDN',{k:0,few:false,reg:false,flat:false},'The bill is zero, but Kitebird’s own servers get <b>333%</b> of what they can carry, and no learner gets a nearby edge server. The CDN exists to deliver fast around the world.'],
+    ['No long tail',{k:200,few:false,reg:false,flat:true},'If every class were equally watched, the top 10% carry only 10% of views: 90% of the traffic lands on your own servers. The trick needs a long tail, which is why the book says to <b>analyze viewing history first</b>.'],
+    ['Lace class viral in Brazil',{k:200,few:false,reg:true,flat:false},'A Brazilian lace class is huge in South America and unknown elsewhere. With regional placement, classes like it get a copy only where they’re popular, so edge copies drop. In this model the per-GB delivery bill follows views, so the saving is in not copying the class to every region (beyond the book: it gives no figure).'],
+    ['Rare short tip clip',{k:200,few:true,reg:false,flat:false},'A 40-second tip almost nobody watches doesn’t need six stored versions: keep fewer for unpopular classes and encode short ones on demand. Stored versions fall from 12,000 to under 5,000.']];
+  const seen=new Set();let fin=false;const t=ytTail(L.$('#lxh'),{k:2000,showFlat:true});
+  PS.forEach((ps,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=ps[0];b.onclick=()=>{[...L.$('#lx').children].forEach((x,z)=>x.classList.toggle('sel',z===j));t.set(ps[1]);L.$('#lxt').innerHTML='<b class="t">'+ps[0].toUpperCase()+'</b>'+ps[2];seen.add(j);
+    if(!fin&&seen.size>=3&&(seen.has(1)||seen.has(2))){fin=true;L.done();L.sheet('info','The limits','The saving depends on the shape of the curve. With a long tail, a small set of classes carries most views, so you can move many classes off the CDN cheaply. Push too far and your own servers drown; flatten the curve and the trick stops paying. (Values illustrative.)');}};L.$('#lx').appendChild(b);});}},
+{part:2,src:'Chapter 14 · Cost-saving optimization',pts:1,
+ solve:async L=>{ytSetK(L,200);L.$('#ch [data-tg="few"]').click();L.$('#chk').click();},
+ run(L){
+  L.h(L.kick('pr','Challenge · Hana’s targets')+'<h1 class="q">Hit all three of Hana’s targets for Kitebird Classes.</h1>'+
+   L.list([['CDN bill at or under $45,000 a day','Down from $60,000.'],['Own servers at or under 100%','So popular classes stay fast on the CDN.'],['At most 6,000 encoded versions stored','Down from 12,000.']],3)+
+   '<p class="yt-fine" style="margin-top:0">Targets illustrative.</p><div id="ch"></div><button class="btn pri" id="chk">'+L.ic('check')+'Send to Hana</button><div id="chf"></div>');
+  const t=ytTail(L.$('#ch'),{k:2000});let first=true,fin=false;
+  L.$('#chk').onclick=()=>{if(fin)return;const c=t.cost(),a=c.bill<=45000,b=c.load<=1,v=c.ver<=6000,ok=a&&b&&v;L.$('#chf').innerHTML='';if(first){L.award(ok);first=false;}
+    if(ok){fin=true;L.$('#chk').remove();L.sheet('ok','Hana signs off','Top '+t.S.k+' classes on the CDN: $'+ytFmt(c.bill)+' a day, own servers at '+Math.round(c.load*100)+'%, '+ytFmt(c.ver)+' versions stored. Only the window between about 200 and 250 classes meets both the bill and the server limit, and only trimming versions for the tail meets the storage target.');L.done();}
+    else L.fb(L.$('#chf'),'<b>Not yet.</b> '+[a?'':'The bill is still over $45,000: move the cut line left.',b?'':'Own servers are overloaded: keep more classes on the CDN.',v?'':'Too many versions stored: what does the book say about unpopular classes?'].filter(Boolean).join(' '),'no');};}},
+
+/* ---------- PART 4: WHEN THINGS FAIL ---------- */
 {part:3,src:'Chapter 14 · Error handling',run(L){
   L.h(L.kick('learn','When things break')+'<h1 class="q">Two kinds of error, and a playbook per part</h1>'+
    L.lanes([['cycle','Recoverable','E.g. a video segment fails to transcode. <b>Retry a few times</b>; if it keeps failing, return a proper error code to the client.',2],

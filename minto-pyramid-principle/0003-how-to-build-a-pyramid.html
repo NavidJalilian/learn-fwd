@@ -13,8 +13,234 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* ======================================================================
+   Lesson-only pieces. The pyramid builder (PB) is the signature
+   interactive: idea cards go into the boxes of a pyramid, every box is
+   checked against the book's rules, and a live chat shows what the
+   reader hears. A second interactive (the chain board) is on the
+   bottom-up screen.
+   ====================================================================== */
+const PBCSS='<style>'+
+'.pb{margin-top:6px}'+
+'.pb-cap{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:0 0 6px}'+
+'.pb-subj{text-align:center;font-size:13px;color:var(--muted);margin:0 0 8px}'+
+'.pb-intro{border:1.5px dashed var(--line2);border-radius:14px;padding:8px;display:grid;gap:6px}'+
+'.pb-s{display:block;width:100%;text-align:left;border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:12px;padding:6px 9px;font:inherit;font-size:13.5px;line-height:1.35;cursor:pointer;min-height:42px;transition:border-color .2s,background .2s}'+
+'.pb-l{display:block;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:1px}'+
+'.pb-s.e{border-style:dashed;color:var(--faint)}'+
+'.pb-s.ok{border-color:var(--ok-line);background:var(--ok-bg)}.pb-s.ok .pb-l{color:var(--ok)}'+
+'.pb-s.no{border-color:var(--no-line);background:var(--no-bg)}.pb-s.no .pb-l{color:var(--no)}'+
+'.pb-s.arm{border-color:var(--pri);box-shadow:0 0 0 3px var(--pri-bg)}'+
+'.pb-s.lk{cursor:default}'+
+'.pb-s.pop{animation:pbpop .35s ease}@keyframes pbpop{0%{transform:scale(.94)}100%{transform:scale(1)}}'+
+'.pb-stem{width:2px;height:12px;background:var(--line2);margin:0 auto}'+
+'.pb-top .pb-s{font-weight:600;font-size:14.5px;text-align:center}'+
+'.pb-nq{text-align:center;font-size:13px;color:var(--muted);min-height:18px;margin-top:3px}'+
+'.pb-kl{display:grid;gap:6px}'+
+'.pb-kl .pb-s{font-size:12.5px;padding:6px 6px;min-height:58px}'+
+'.pb-noun{text-align:center;font-size:13px;margin-top:6px;min-height:18px}'+
+'.pb-tray{display:flex;flex-wrap:wrap;gap:6px}.pb-pick{border:2px solid var(--pri);background:var(--pri-bg);border-radius:14px;padding:8px;margin:2px 0 4px}.pb-pick .chip{background:var(--card)}'+
+'.pb-tray .chip{font-size:13.5px;text-align:left;margin:0;padding:7px 11px;min-height:38px}'+
+'.pb-msgs{font-size:13.5px;line-height:1.45;margin-top:8px}.pb-msgs div{margin-top:4px}'+
+'.pb-rv{background:var(--soft);border-radius:16px;padding:10px 10px 6px;margin-top:12px}'+
+'.pb-b{max-width:88%;width:fit-content;padding:7px 10px;border-radius:14px;font-size:13.5px;line-height:1.4;margin:0 0 6px}'+
+'.pb-b small{display:block;font-size:10.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}'+
+'.pb-b.w{margin-left:auto;background:var(--pri-bg);border-bottom-right-radius:4px}'+
+'.pb-b.r{background:var(--card);border:1.5px solid var(--line);border-bottom-left-radius:4px}'+
+'.pb-b.r.bad{border-color:var(--no-line);color:var(--no)}.pb-b.r.good{border-color:var(--ok-line);color:var(--ok)}'+
+'.mn{width:100%;display:block}.mn rect{fill:var(--card);stroke:var(--line2);stroke-width:1.5}'+
+'.mn text{fill:var(--ink);font-size:12px;font-weight:600;font-family:var(--sans)}.mn .sm{font-size:11px;font-weight:400;fill:var(--muted)}'+
+'.mn .ln{stroke:var(--line2);stroke-width:1.5;fill:none}.mn g{transition:opacity .35s}.mn .off{opacity:.14}'+
+'.mn .hl rect{fill:var(--pri-bg);stroke:var(--pri);stroke-width:2.5}.mn .hl text{fill:var(--pri-deep)}'+
+'.mn .dash rect{stroke-dasharray:4 3}'+
+'</style>';
+const KIND={reason:'reasons',step:'steps'};
+const NEED={'Why?':'reason','How?':'step'};
+const LAB={S:'Situation',C:'Complication',Q:'Question',A:'Main Point (the Answer)',K1:'Key Line',K2:'Key Line',K3:'Key Line'};
+const cap=t=>t.charAt(0).toUpperCase()+t.slice(1);
+function sc(o){Object.keys(o.cards).forEach(k=>o.cards[k].id=k);o.ks=o.ks||['K1','K2','K3'];return o;}
+
+/* judge every box against the book's rules */
+function pbJudge(S_,st){
+  const g=k=>st[k]?S_.cards[st[k]]:null,R=S_.R,ks=S_.ks;
+  const S=g('S'),C=g('C'),Q=g('Q'),A=g('A'),r={};
+  r.S=!S?null:S.k==='s'?(S.known===false?['no','New to '+R+'. A fact the reader doesn’t know distorts their Question.']:['ok',cap(R)+' already knows this.']):S.k==='c'?['no','This is what happened to raise the Question: a Complication.']:['no','Not something '+R+' already accepts as true.'];
+  const rc=C&&C.k==='c'?C:null;
+  r.C=!C?null:!rc?['no','Nothing happens here that would raise a question.']:(Q&&Q.k==='q'&&C.q!==Q.id)?['no','It makes '+R+' ask “'+C.rq+'”, not your Question.']:['ok','It raises '+R+'’s Question.'];
+  r.Q=!Q?null:Q.k!=='q'?['no','Not a question.']:(rc&&rc.q!==Q.id)?['no','The Complication raises a different question. Change one of them.']:['ok','The question '+R+' wants answered.'];
+  const target=Q&&Q.k==='q'?Q.id:rc?rc.q:null;
+  r.A=!A?null:A.k!=='a'?['no','That doesn’t answer the Question.']:A.blank?['no','It describes, but never answers the Question.']:(target&&A.q!==target)?['no','It answers a different question.']:['ok','It answers the Question.'];
+  const nq=r.A&&r.A[0]==='ok'?A.nq:null,need=nq?NEED[nq]:null;
+  const ps=ks.map(g).filter(x=>x&&x.k==='p'&&x.kind!=='topic');
+  let maj=need;if(!maj&&ps.length){const n={};ps.forEach(p=>n[p.kind]=(n[p.kind]||0)+1);maj=Object.keys(n).sort((a,b)=>n[b]-n[a])[0];}
+  ks.forEach(k=>{const x=g(k);r[k]=!x?null:
+    x.k==='s'?(x.known===false?['no','New, but it doesn’t answer '+(nq?'“'+nq+'”':'the question')+'.']:['no',cap(R)+' already knows this. Facts and history belong in the introduction; the body holds only ideas.']):
+    x.k!=='p'?['no','Not a point that answers the New Question.']:
+    x.kind==='topic'?['no','Just a topic. It states no idea, so it answers nothing.']:
+    (maj&&x.kind!==maj)?['no',need?(x.kind==='step'?'A step answers “How?”, not “'+nq+'”.':'A reason answers “Why?”, not “'+nq+'”.'):'A different kind of idea from the others.']:
+    ['ok',need?'Answers “'+nq+'”.':'Same kind as the others.'];});
+  const kinds=[...new Set(ks.map(g).filter(Boolean).map(x=>x.k==='p'?x.kind:'x'))];
+  r.noun=ks.every(k=>st[k])&&kinds.length===1&&KIND[kinds[0]]&&ks.every(k=>r[k][0]==='ok')?KIND[kinds[0]]:null;
+  r.mixed=ks.filter(k=>st[k]).length>1&&kinds.length>1;
+  r.nq=nq;r.rq=rc?rc.rq:null;r.rqid=rc?rc.q:null;
+  r.all=['S','C','Q','A'].concat(ks).every(k=>r[k]&&r[k][0]==='ok');
+  return r;}
+
+/* what the reader hears, line by line */
+function pbTalk(S_,st,r){
+  const g=k=>st[k]?S_.cards[st[k]]:null,out=[],w=t=>out.push(['w',t]),rd=(t,c)=>out.push(['r',t,c||'']);
+  const S=g('S'),C=g('C'),A=g('A');
+  if(!S&&!C&&A)rd('No introduction? I’m not sure what question this answers.','bad');
+  if(S){w(S.t);rd(r.S[0]==='ok'?'Yes, I know that. So what?':S.known===false?'Hang on, I didn’t know that. Where’s it from?':'Is that something I already know?',r.S[0]==='ok'?'':'bad');}
+  if(C){w(C.t);rd(C.k==='c'?C.rq:'So what’s the problem?',C.k==='c'?'':'bad');}
+  if(!A)return out;
+  w(A.t);
+  if((S||C)&&!C){rd('Wait, what question are you answering?','bad');return out;}
+  if(r.A[0]!=='ok'){rd(A.blank?'Fine, but you haven’t answered me.'+(r.rq?' '+r.rq:''):'That answers a question I didn’t ask.','bad');return out;}
+  if(r.rqid&&A.q!==r.rqid){rd('That answers a question I didn’t ask. I asked: '+r.rq,'bad');return out;}
+  rd(r.nq);
+  const pts=S_.ks.map(g).filter(Boolean);if(!pts.length)return out;
+  w(pts.map(p=>'• '+p.t).join('<br>'));
+  if(pts.length<S_.ks.length)return out;
+  const bad=S_.ks.filter(k=>r[k][0]!=='ok');
+  if(bad.some(k=>g(k).k==='s'&&g(k).known!==false))rd('I know that already. Why tell me again?','bad');
+  else if(bad.length)rd('Some of those don’t answer my “'+r.nq+'”.','bad');
+  else if(!r.all)rd('The points work, but the opening threw me.','bad');
+  else rd(S_.end||'Clear. I have your whole thinking.','good');
+  return out;}
+
+/* render a pyramid into host. o: {id, st, lock[], tray[], talk, msgs, mute, after(k,r)} */
+function PB(host,S_,o){
+  o=o||{};const ks=S_.ks,id=o.id||'pb',st={S:null,C:null,Q:null,A:null};ks.forEach(k=>st[k]=null);Object.assign(st,o.st||{});
+  const lock=new Set(o.lock||[]);let arm=null,frozen=false,last=null;
+  const slot=k=>'<button type="button" class="pb-s" data-s="'+k+'" id="'+id+'-'+k+'"></button>';
+  const path=ks.length===3?'M150 0V9M50 9H250M50 9V18M150 9V18M250 9V18':'M150 0V9M75 9H225M75 9V18M225 9V18';
+  host.innerHTML='<div class="pb">'+(S_.subj?'<p class="pb-subj">Subject: <b>'+S_.subj+'</b>'+(o.tray?'<br>Tap a box to choose a card for it.':'')+'</p>':'')+
+    '<div class="pb-intro"><div class="pb-cap" style="margin:0">Introduction</div>'+slot('S')+slot('C')+slot('Q')+'</div>'+
+    '<div class="pb-stem"></div><div class="pb-top">'+slot('A')+'</div><div class="pb-nq" id="'+id+'-nq"></div>'+
+    '<svg viewBox="0 0 300 18" preserveAspectRatio="none" style="width:100%;height:18px;display:block" aria-hidden="true"><path d="'+path+'" stroke="var(--line2)" stroke-width="2" fill="none" vector-effect="non-scaling-stroke"/></svg>'+
+    '<div class="pb-kl" style="grid-template-columns:repeat('+ks.length+',minmax(0,1fr))">'+ks.map(slot).join('')+'</div>'+
+    '<div class="pb-noun" id="'+id+'-noun"></div>'+
+    '<div class="pb-pick" id="'+id+'-pick" hidden></div>'+
+    (o.msgs===false?'':'<div class="pb-msgs" id="'+id+'-msgs"></div>')+
+    (o.talk===false?'':'<div class="pb-rv"><div class="pb-cap">What '+S_.R+' hears</div><div id="'+id+'-rv" aria-live="polite"></div></div>')+'</div>';
+  const $=s=>host.querySelector(s);
+  function draw(){
+    const r=pbJudge(S_,st);
+    ['S','C','Q','A'].concat(ks).forEach(k=>{const b=$('#'+id+'-'+k),c=st[k]?S_.cards[st[k]]:null,v=r[k];
+      b.className='pb-s'+(!c?' e':o.mute?'':' '+v[0])+(arm===k?' arm':'')+(lock.has(k)||!o.tray?' lk':'')+(k===last?' pop':'');
+      b.innerHTML='<span class="pb-l">'+LAB[k]+(c&&!o.mute?(v[0]==='ok'?' ✓':' ✗'):'')+'</span>'+(c?c.t:(o.tray&&!lock.has(k)?'Tap to choose':'…'));
+      b.setAttribute('aria-label',LAB[k]+': '+(c?c.t+(o.mute?'':v[0]==='ok'?' (passes)':' (broken: '+v[1]+')'):'empty'));});
+    last=null;
+    $('#'+id+'-nq').innerHTML=r.nq&&!o.mute?'↓ '+cap(S_.R)+' asks: <b>'+r.nq+'</b>':'';
+    $('#'+id+'-noun').innerHTML=o.mute?'':r.noun?'<span style="color:var(--ok)">One kind of idea: <b>'+r.noun+'</b></span>':r.mixed?'<span style="color:var(--no)">Mixed kinds: no single plural noun fits</span>':'';
+    
+    const m=$('#'+id+'-msgs');if(m&&!o.mute){const bad=['S','C','Q','A'].concat(ks).filter(k=>r[k]&&r[k][0]==='no');
+      m.innerHTML=bad.map(k=>'<div style="color:var(--no)"><b>'+LAB[k].replace(' (the Answer)','')+':</b> '+r[k][1]+'</div>').join('')+(r.all?'<div style="color:var(--ok)"><b>Every box passes.</b></div>':'');}
+    const rv=$('#'+id+'-rv');if(rv){const t=o.mute?[]:pbTalk(S_,st,r);rv.innerHTML=t.length?t.map(x=>'<div class="pb-b '+x[0]+(x[2]?' '+x[2]:'')+'"><small>'+(x[0]==='w'?S_.W:S_.R)+'</small>'+x[1]+'</div>').join(''):'<div class="small" style="padding:4px 2px 8px">'+(o.empty||'Nothing yet. Place cards to start the conversation.')+'</div>';}
+    return r;}
+  function put(k,c){Object.keys(st).forEach(x=>{if(st[x]===c)st[x]=null;});st[k]=c;last=k;}
+  const $p=()=>$('#'+id+'-pick');
+  function closePick(){const p=$p();p.hidden=true;p.innerHTML='';}
+  function openPick(k){const p=$p(),used=Object.values(st),av=o.tray.filter(c=>!used.includes(c));
+    p.innerHTML='<div class="pb-cap">Choose a card for the '+LAB[k].replace(' (the Answer)','')+'</div><div class="pb-tray">'+av.map(c=>'<button type="button" class="chip" data-c="'+c+'">'+S_.cards[c].t+'</button>').join('')+'</div>'+
+      '<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">'+(st[k]?'<button type="button" class="btn" data-x="rm">Take card out</button>':'')+'<button type="button" class="btn" data-x="no">Cancel</button></div>';
+    p.hidden=false;(k[0]==='K'?$('.pb-kl'):$('#'+id+'-'+k)).after(p);if(p.scrollIntoView)p.scrollIntoView({block:'nearest',behavior:'smooth'});}
+  host.onclick=e=>{if(frozen||!o.tray)return;const c=e.target.closest('[data-c]'),s=e.target.closest('[data-s]'),x=e.target.closest('[data-x]');
+    if(c&&arm){const k=arm;arm=null;put(k,c.dataset.c);closePick();const r=draw();if(o.after)o.after(k,r);return;}
+    if(x){const k=arm;arm=null;closePick();if(x.dataset.x==='rm'&&k){st[k]=null;const r=draw();if(o.after)o.after(k,r);}else draw();return;}
+    if(s){const k=s.dataset.s;if(lock.has(k))return;if(arm===k){arm=null;closePick();draw();return;}arm=k;openPick(k);draw();}};
+  draw();
+  return {st,draw,set(x){Object.assign(st,x);return draw();},judge:()=>pbJudge(S_,st),freeze(v){frozen=v;}};}
+
+/* autoplay helper: place cards through the real controls */
+async function pbPlace(L,id,pairs){for(const [k,c] of pairs){L.$('#'+id+'-'+k).click();L.$('#'+id+'-pick [data-c="'+c+'"]').click();await L.sleep(5);}}
+
+/* small pyramid sketch used on the two opening Learn screens */
+function MINI(id){
+  const box=(gid,x,y,w,h,t1,t2,cls)=>'<g id="'+id+'-'+gid+'"'+(cls?' class="'+cls+'"':'')+'><rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="9"/><text x="'+(x+w/2)+'" y="'+(y+(t2?h/2-2:h/2+4))+'" text-anchor="middle">'+t1+'</text>'+(t2?'<text class="sm" x="'+(x+w/2)+'" y="'+(y+h/2+13)+'" text-anchor="middle">'+t2+'</text>':'')+'</g>';
+  return '<svg class="mn" viewBox="0 0 320 250" role="img" aria-label="A pyramid: an introduction (Situation, Complication, Question) leads to the Main Point, with Key Line points below it.">'+
+   '<g id="'+id+'-sc">'+box('s',4,8,96,44,'Situation','reader knows')+box('c',112,8,96,44,'Complication','reader knows')+
+   '<path class="ln" d="M100 30H112M208 30H220"/></g>'+
+   '<g id="'+id+'-qq">'+box('q',220,8,96,44,'Question','in reader’s mind')+'<path class="ln" d="M268 52V66H160V80"/></g>'+
+   '<g id="'+id+'-tp">'+box('top',60,80,200,48,'Main Point','Answer to the Question')+'</g>'+
+   '<g id="'+id+'-sp"><rect x="62" y="133" width="196" height="15" rx="4" style="stroke:none;fill:var(--card)"/><text class="sm" x="160" y="144" text-anchor="middle">its subject = the document’s Subject</text></g>'+
+   '<g id="'+id+'-kk" class="dash"><path class="ln" d="M160 128V150M55 150H265M55 150V160M160 150V160M265 150V160"/>'+box('k1',12,160,86,34,'Key Line')+box('k2',117,160,86,34,'Key Line')+box('k3',222,160,86,34,'Key Line')+'</g>'+
+   '<g id="'+id+'-lw" class="dash"><path class="ln" d="M55 194V206M160 194V206M265 194V206"/>'+
+     [12,57,117,162,222,267].map((x,j)=>'<rect x="'+x+'" y="206" width="41" height="26" rx="7"/>').join('')+
+     '<text class="sm" x="160" y="246" text-anchor="middle">support points</text></g></svg>';}
+
+/* scenarios (Fellwick running example + the book's Big Chief memo) */
+const COURIER=sc({R:'Theo',W:'Nadia',subj:'the courier’s offer of a second daily collection',end:'Clear. Accept it, and I know why.',cards:{
+  s1:{k:'s',t:'The courier has offered to collect from Mill Lane twice a day, not once.'},
+  c1:{k:'c',q:'q1',rq:'Should we accept it?',t:'You asked whether we should accept.'},
+  c2:{k:'c',q:'q2',rq:'Why are online orders late?',t:'Online orders keep arriving late.'},
+  c3:{k:'c',q:'q3',rq:'Is the higher price worth paying?',t:'The courier wants a higher price for it.'},
+  q1:{k:'q',t:'Should we accept the second collection?'},
+  q2:{k:'q',t:'Why are online orders late?'},
+  a1:{k:'a',q:'q1',nq:'Why?',t:'Yes, we should accept the second collection.'},
+  a2:{k:'a',blank:true,t:'Here’s how a second collection would work.'},
+  p1:{k:'p',kind:'reason',t:'Parcels leave sooner'},
+  p2:{k:'p',kind:'reason',t:'The packing floor stays clear'},
+  p3:{k:'p',kind:'reason',t:'The cost stays the same'},
+  p4:{k:'p',kind:'step',t:'Call the courier to sign up'},
+  p5:{k:'p',kind:'topic',t:'The courier contract'}}});
+const CHIEF=sc({R:'the reader',W:'Accounting',subj:'Big Chief’s request for a change',cards:{
+  s1:{k:'s',t:'Big Chief has asked to change how it pays us.'},
+  c1:{k:'c',q:'q1',rq:'Does it make sense?',t:'You asked me whether the change makes sense.'},
+  q1:{k:'q',t:'Is the change a good idea?'},
+  a0:{k:'a',blank:true,t:'Here’s how the new system would work…'},
+  a1:{k:'a',q:'q1',nq:'Why?',t:'Yes, the change makes sense.'},
+  p1:{k:'p',kind:'reason',t:'It gives us the information we need'},
+  p2:{k:'p',kind:'reason',t:'It increases our cash flow'},
+  p3:{k:'p',kind:'reason',t:'It reduces our workload'}}});
+const OVER=sc({R:'Theo',W:'Nadia',subj:'overflow space for the November peak',cards:{
+  s1:{k:'s',t:'Late online orders rose from 4% to 15% this year, and Mill Lane is full at peak.'},
+  s2:{k:'s',known:false,t:'A new count shows pickers walk twice as far at peak.'},
+  s3:{k:'s',t:'The courier contract changed in spring'},
+  s4:{k:'s',t:'Late orders rose to 15% this year'},
+  s5:{k:'s',t:'Because Mill Lane is full at peak'},
+  c1:{k:'c',q:'q1',rq:'What should we do before peak?',t:'You asked what we should do before the November peak.'},
+  c2:{k:'c',q:'q2',rq:'Why are online orders late?',t:'Online orders keep arriving late.'},
+  q1:{k:'q',t:'What should we do before the November peak?'},
+  a1:{k:'a',q:'q1',nq:'Why?',t:'Rent overflow space near Mill Lane for the peak.'},
+  a0:{k:'a',blank:true,t:'We looked at three options: Quarry Road, overflow space and an outside firm.'},
+  p1:{k:'p',kind:'reason',t:'It’s quick to set up'},
+  p2:{k:'p',kind:'reason',t:'It costs little'},
+  p3:{k:'p',kind:'reason',t:'It’s easy to undo'},
+  p4:{k:'p',kind:'step',t:'Book a viewing with the landlord'},
+  p5:{k:'p',kind:'topic',t:'The Quarry Road option'},
+  p6:{k:'p',kind:'reason',t:'Therefore we need more room fast'}}});
+const KENJI=sc({R:'Theo',W:'Kenji',ks:['K1','K2'],subj:'Saturdays in the stores',cards:{
+  s1:{k:'s',t:'Saturday is the stores’ busiest day.'},
+  c1:{k:'c',q:'q1',rq:'Why are we losing Saturday sales?',t:'Saturday sales keep slipping, and you asked me why.'},
+  c2:{k:'c',q:'q2',rq:'Can we fix it?',t:'Shelves run empty and overtime is over budget. You asked if it can be fixed.'},
+  q1:{k:'q',t:'Why are we losing Saturday sales?'},
+  q2:{k:'q',t:'Can we fix Saturdays?'},
+  a1:{k:'a',q:'q1',nq:'Why?',t:'Late stock and stretched staff are costing Saturday sales.'},
+  a2:{k:'a',q:'q2',nq:'How?',t:'Yes, we can fix Saturdays.'},
+  p1:{k:'p',kind:'reason',t:'Store orders are picked last, so stock arrives late'},
+  p2:{k:'p',kind:'reason',t:'Too few weekend staff, so unpacking eats busy hours'},
+  p3:{k:'p',kind:'step',t:'Pick store orders first on Fridays'},
+  p4:{k:'p',kind:'step',t:'Fill the open weekend jobs'}}});
+const READY=sc({R:'Theo',W:'Nadia',subj:'getting Mill Lane ready for the November peak',end:'Clear. I know what you’ll do.',cards:{
+  s1:{k:'s',t:'Late online orders rose from 4% to 15% this year, and Mill Lane is full at peak.'},
+  p2:{k:'p',kind:'step',t:'Put fast sellers near packing'},
+  c2:{k:'c',q:'q2',rq:'Should we move to Quarry Road?',t:'You asked whether we should move to Quarry Road.'},
+  a0:{k:'a',blank:true,t:'We studied the floor, the stock and the courier.'},
+  q1:{k:'q',t:'How do we get Mill Lane ready for the November peak?'},
+  p4:{k:'p',kind:'reason',t:'Pickers would walk less'},
+  s2:{k:'s',known:false,t:'A new count shows slow sellers fill a third of the aisles.'},
+  a1:{k:'a',q:'q1',nq:'How?',t:'Make room on the picking floor before November.'},
+  p1:{k:'p',kind:'step',t:'Move slow sellers to the overflow space'},
+  c1:{k:'c',q:'q1',rq:'How do we get ready for peak?',t:'The peak is eight weeks away, and you asked how we get ready.'},
+  s3:{k:'s',t:'The courier contract changed in spring'},
+  q2:{k:'q',t:'Should we move to Quarry Road?'},
+  p3:{k:'p',kind:'step',t:'Accept the courier’s second daily collection'},
+  a2:{k:'a',q:'q2',nq:'Why?',t:'Yes, move to Quarry Road.'}}});
+
 Course.lesson({
-  id:'0003', title:'How to build a pyramid', minutes:18, icon:'pencil',
+  id:'0003', title:'How to build a pyramid', minutes:20, icon:'pencil',
   goals:['Build a pyramid top down, from Subject to Key Line','Rescue a rambling list of points by working bottom up','Avoid the beginner mistakes the book warns about'],
   parts:['Top down','Bottom up','Caveats'],
   read:'Read chapter 3 of the book for the full soft-drinks memo and the printing-company memo, before and after.',
@@ -22,13 +248,13 @@ Course.lesson({
     'new-question':'New Question: the question your Main Point raises in the reader’s mind (often “Why?” or “How?”). The Key Line answers it.'
   },
   cheatsheet:[
-    'You know more than you think before you write: a Subject, a reader with a Question, and the story that raised it.',
-    '<b>Top down:</b> Subject → Question → Answer → Situation → Complication → recheck Question and Answer → '+'New Question → Key Line.',
+    'You know more than you think before you write: a sentence at the top, a reader with a Question, and the story that raised it.',
+    '<b>Top down:</b> Subject → Question → Answer → Situation → Complication → recheck Question and Answer → New Question → Key Line.',
     'If the Complication doesn’t raise your Question, change the Question, or rethink the Complication.',
-    '<b>Bottom up</b> (when you can’t see the point): list all the points → work out how they relate → draw conclusions → think through the introduction.',
+    'The New Question sets the kind of point on the Key Line: “Why?” always needs reasons; “How?” needs steps. One kind, one plural noun.',
+    '<b>Bottom up</b> (when you can’t see the point): list all the points → work out how they relate → draw conclusions → think through the introduction to choose.',
     'State the Key Line in the introduction so the reader gets your whole thinking in about 30 seconds. Headings state ideas, never “Findings”.',
-    'Always try top down first; don’t dictate a draft “to get it all down”.',
-    'The introduction holds the history and only what the reader already accepts as true. The body holds only ideas.',
+    'Always try top down first. The introduction holds the history and only what the reader accepts as true; the body holds only ideas.',
     'Given a choice, make the Key Line inductive, even if you worked it out deductively.'
   ],
   steps:[
@@ -36,132 +262,218 @@ Course.lesson({
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Fellwick’s courier has offered to collect parcels from the Mill Lane warehouse twice a day instead of once. Theo asks Nadia for a note on it. Nadia isn’t sure yet what to say. What does Nadia already know for sure?</h1>');
   L.mc(L.card,['The exact wording of each paragraph','Who will read it and what it’s about'],1,
-   'Even before writing a single sentence, Nadia knows the reader and the subject. This lesson shows how to build the whole pyramid out of what Nadia already knows.',
+   'Even before writing a sentence, Nadia knows the reader and the subject. This lesson shows how to build the whole pyramid out of what Nadia already knows.',
    'Wording comes last. What Nadia already knows is the reader (Theo) and the subject (the courier’s offer), and that is enough to start building.');}},
-{part:0,src:'Chapter 3 · opening',run(L){
-  L.h(L.kick('learn','You know more than you think')+'<h1 class="q">A blank page isn’t really blank</h1>'+
-   L.prose('When you sit down to write, you usually know roughly what you’ll write <i>about</i>, but not what you’ll <i>say</i>. The book points out that you still know quite a lot about the finished pyramid:')+
-   L.list([['target','A sentence at the top','It will be your '+L.g('main-point','Main Point')+', and its subject will be the '+L.g('subject','Subject')+' of the whole document.'],
-     ['chat','It answers a question','The reader already has that question in mind.'],
-     ['book','A story raised the question','A '+L.g('situation','Situation')+' the reader knows, then a '+L.g('complication','Complication')+' they also know.']],1)+
-   L.prose('You can use that knowledge in two ways: start at the top and work down, or start at the bottom and work up. Top down is usually easier, so <b>try it first</b>.'));
-  L.done();}},
-{part:0,src:'Chapter 3 · The top-down approach',run(L){
-  L.h(L.kick('learn','The top-down approach')+'<h1 class="q">Pull the right points out of your head, one at a time</h1>'+
-   L.prose('Don’t start by writing the opening paragraph. Use the parts of the introduction as prompts, in this order:')+
-   L.list([['Subject','Draw a box for the top of the pyramid. Write in it what you’re discussing.'],
-     ['Question','Picture your reader. What question about the Subject should be answered in their mind when they finish?'],
-     ['Answer','Write it down, or at least note that you can answer it.'],
-     ['Situation','The first statement about the Subject the reader will agree is true.'],
-     ['Complication','The reader nods: “Yes, I know that, so what?” What happened that raised the Question?'],
-     ['Recheck','Does the Complication raise the Question you wrote? If not, fix one of them.']],2)+
-   '<p class="small" style="margin-top:10px">Then move down: what '+L.g('new-question','New Question')+' does your Answer raise? Its answer is your '+L.g('key-line','Key Line')+'.</p>');
-  L.done();}},
+
+{part:0,src:'Chapter 3 · How to build a pyramid structure',
+ solve:async L=>{for(const b of [...L.$('#kn').children])b.click();},
+ run(L){
+  const F=[['tp','A sentence will sit at the top','It will be your '+L.g('main-point','Main Point')+'.'],
+    ['sp','Its subject is the document’s Subject','Whatever the top sentence is about, the whole document is about.'],
+    ['qq','It answers a Question','The reader already has that question in mind.'],
+    ['sc','A story raised the Question','A '+L.g('situation','Situation')+' the reader knows, then a '+L.g('complication','Complication')+' they also know.'],
+    ['kk','You may know some of the points','Not all, and not their order. But some.']];
+  L.h(PBCSS+L.kick('learn','You know more than you think')+'<h1 class="q">A blank page isn’t really blank. Tap each thing you already know and watch the pyramid fill in.</h1>'+
+   MINI('m2')+'<div id="kn" style="margin-top:10px"></div><div id="kt" class="small" style="min-height:44px"></div>');
+  ['tp','sp','qq','sc','kk','lw'].forEach(g=>L.$('#m2-'+g).classList.add('off'));
+  const seen=new Set();
+  F.forEach((f,j)=>{const b=document.createElement('button');b.className='chip';b.type='button';b.innerHTML=L.ic('check')+f[1];
+    b.onclick=()=>{L.$('#m2-'+f[0]).classList.remove('off');b.classList.add('sel');L.$('#kt').innerHTML='<b>'+f[1]+'.</b> '+f[2];seen.add(j);
+      if(seen.size===F.length&&!L.$('#kt').dataset.done){L.$('#kt').dataset.done=1;
+        L.sheet('info','That’s quite a lot to know','You can build on it in two ways: start at the top and work down, or start at the bottom and work up. Top down is generally easier, so try it first.');L.done();}};
+    L.$('#kn').appendChild(b);});}},
+
+{part:0,src:'Chapter 3 · The top-down approach',
+ solve:async L=>{for(let n=0;n<8;n++)L.$('#nx').click();},
+ run(L){
+  const P=[['Fill in the top box',['top'],'<b>1 · Subject.</b> Draw a box. Write in it what you’re discussing. Don’t know yet? Move on.'],
+   ['Fill in the top box',['q'],'<b>2 · Question.</b> Picture your reader. What question about the Subject should be answered in their mind when you finish?'],
+   ['Fill in the top box',['top'],'<b>3 · Answer.</b> Write it down, or just note that you can answer it.'],
+   ['Match the Answer to the introduction',['s'],'<b>4 · Situation.</b> The first thing you can say about the Subject that the reader will agree is true: they know it, or it’s history anyone can check.'],
+   ['Match the Answer to the introduction',['c'],'<b>5 · Complication.</b> Picture the reader nodding: “Yes, I know that. So what?” What happened in that Situation to raise their Question?'],
+   ['Match the Answer to the introduction',['c','q','top'],'<b>Recheck.</b> The Complication should raise the Question you wrote. If it doesn’t, change the Question, or rethink the Complication.'],
+   ['Find the Key Line',['k1','k2','k3'],'<b>6–7 · New Question.</b> What does your Answer make the reader ask? Will you answer it deductively or inductively? If inductively, what is the plural noun (reasons, steps…)?'],
+   ['Structure the support points',['lw'],'<b>8 · Repeat.</b> Run the same question/answer dialogue one level down, for each Key Line point.']];
+  let n=-1;
+  L.h(PBCSS+L.kick('learn','The top-down approach')+'<h1 class="q">Don’t start with the opening paragraph. Let each prompt pull one point out of your head.</h1>'+
+   MINI('m3')+'<div id="stg" class="pb-cap" style="margin-top:10px">Tap “Next prompt” to start</div><div id="ptx" style="font-size:15px;line-height:1.5;min-height:92px"></div>'+
+   '<div style="display:flex;gap:8px;align-items:center"><button type="button" class="btn" id="bk">Back</button><button type="button" class="btn pri" id="nx">Next prompt</button><span class="small" id="pc"></span></div>');
+  const all=['s','c','q','top','k1','k2','k3','lw'];
+  function show(){const p=P[n];all.forEach(g=>{const e=L.$('#m3-'+g);if(e)e.classList.toggle('hl',p[1].includes(g));});
+    L.$('#stg').textContent=p[0];L.$('#ptx').innerHTML=p[2];L.$('#pc').textContent=(n+1)+' of '+P.length;L.$('#bk').disabled=n===0;
+    if(n===P.length-1){L.$('#nx').disabled=true;if(!L.$('#ptx').dataset.done){L.$('#ptx').dataset.done=1;L.sheet('info','The point of the exercise','Every step serves one goal: be sure which Question you’re answering. Once you have the Question, the rest falls into place fairly easily.');L.done();}}}
+  L.$('#bk').disabled=true;
+  L.$('#bk').onclick=()=>{if(n>0){n--;L.$('#nx').disabled=false;show();}};
+  L.$('#nx').onclick=()=>{if(n<P.length-1){n++;show();}};}},
+
 {part:0,src:'Chapter 3 · The top-down approach',run(L){
   L.h(L.kick('ex','A story from the book')+'<h1 class="q">A memo that never answered the question</h1>');
   L.beats(L.card,[
-   ['The request','A big burger-chain customer of a soft-drinks company asks to change how it pays: track deliveries itself, then send one disk and one check a month.'],
-   ['The memo','The head of accounting is asked whether that’s feasible. Their memo explains, step by step, how the new system <i>would work</i>. It never says yes or no.'],
-   ['Top of the box','Run the steps instead. Subject: the customer’s request for change. Question: is it a good idea? Answer: yes.'],
-   ['Check it','Situation: they’ve asked for a change. Complication: you asked me if it makes sense. That raises “Does it make sense?”, which matches the Question.'],
-   ['Move down','The Answer “yes” raises a New Question: <i>Why?</i> The answer to “Why?” is always reasons. Key Line: it gives us the information we need, it increases our cash flow, and it reduces our workload.']],
-   'The method draws out only what answers the reader’s question, and it forces the writer to answer it fully.');}},
-{part:0,src:'Chapter 3 · The top-down approach',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Nadia has drawn the box and written the Subject: “the courier’s offer of a second daily collection.” What should Nadia do next?</h1>');
-  L.mc(L.card,['Write the opening paragraph of the note','Decide what question Theo wants answered','List every known fact about the courier'],1,
-   'Right. Picture the reader and the question about the Subject they want answered. Here: “Should we accept it?”',
-   'The next step is the Question: picture Theo and ask what they want answered about the Subject. Writing paragraphs or listing facts comes much later, if at all.');}},
-{part:0,src:'Chapter 3 · The top-down approach',pts:1,run(L){
-  L.h(L.kick('pr','Put in order')+'<h1 class="q">Tap Nadia’s thinking steps in the order the top-down approach uses them.</h1>');
-  L.order(L.card,['Subject: the courier’s offer','Question: should we accept it?','Answer: yes','Situation: the courier offered two collections a day','Complication: Theo asked if we should accept','New Question: why?'],
-   'Top of the box first (Subject, Question, Answer), then the introduction to check them, then down to the Key Line.');}},
+   ['The request','A burger-chain customer of a soft-drinks company (the book calls it Big Chief) wants to change how it pays: record each delivery itself, then send one disk and one check a month.'],
+   ['The memo','The head of accounting is asked whether that’s feasible. Their memo explains, step by step, how the new system <i>would work</i>.'],
+   ['The gap','It never says yes or no. The reader finishes it still holding their question.']],
+   'Next, watch the top-down steps rebuild this memo.');}},
+
 {part:0,src:'Chapter 3 · The top-down approach',pts:1,
- solve:async L=>{L.$('#cx').children[1].click();},
+ solve:async L=>{L.$('#pr').children[1].click();await L.sleep(10);L.$('#run').click();await L.sleep(20);L.$('#run').click();},
  run(L){
-  const C=[['Online orders keep arriving late','Why are orders late?',false],['Theo asked whether we should accept','Should we accept it?',true],['The courier wants a higher price for it','Is the higher price worth paying?',false]];
-  let first=true,done=false;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Nadia’s Question is “Should we accept the second collection?” Try each Complication and see which question it raises.</h1>'+
-   L.note('<b>Situation:</b> The courier has offered to collect from Mill Lane twice a day, not once.','book')+
-   '<div id="cx" style="margin-top:12px"></div><div style="background:var(--soft);border-radius:16px;padding:14px;margin:6px 0;min-height:70px"><div class="small">The reader then asks:</div><div id="raise" style="font-weight:600;margin-top:4px">Pick a Complication above.</div></div><div id="cf"></div>');
-  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=c[0];
-    b.onclick=()=>{if(done)return;[...L.$('#cx').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');
-      L.$('#raise').innerHTML=(c[2]?L.ic('check'):L.ic('x'))+' “'+c[1]+'”';L.$('#cf').innerHTML='';
-      if(first){L.award(c[2]);first=false;}
-      if(c[2]){done=true;b.classList.add('ok');L.sheet('ok','It matches','This Complication leads straight to Nadia’s Question, so Nadia’s Question and Answer are confirmed. The book says the whole point of the exercise is to be sure which question you’re answering.');L.done();}
-      else L.fb(L.$('#cf'),'<b>That raises a different question.</b> If this really were what happened, Nadia would have to change the Question to the one it raises, or rethink. Try another.','no');};
-    L.$('#cx').appendChild(b);});}},
-{part:0,src:'Chapter 3 · The top-down approach',pts:1,run(L){
-  L.h(L.kick('pr','Find the Key Line')+'<h1 class="q">Nadia’s Main Point: “Yes, we should accept the second collection.” Theo’s New Question is “Why?” Which Key Line fits?</h1>');
-  L.mc(L.card,['Ask the courier, compare prices, sign by Friday','Parcels leave sooner, the floor stays clear, cost is unchanged','The courier, the contract, the warehouse floor'],1,
-   'The answer to “Why?” is always reasons, and these three are all reasons.',
-   'An answer to “Why?” must be a set of reasons. The first option is steps (an answer to “How?”), and the last is just topics.');}},
+  const O=['How the disk would be balanced','Whether the change is a good idea','Who asked for the change'];let picked=false;
+  L.h(PBCSS+L.kick('pr','Predict, then watch')+'<h1 class="q">Here is the memo’s pyramid as written. When the reader finishes it, which question are they still asking?</h1>'+
+   '<div id="pr" class="opts" style="display:flex;flex-direction:column;gap:6px"></div><div id="pf"></div><div id="go2"></div><div id="pbx" style="margin-top:8px"></div>');
+  PB(L.$('#pbx'),CHIEF,{id:'ch',st:{A:'a0'},mute:true,talk:false,msgs:false});
+  O.forEach((t,j)=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(picked)return;picked=true;const ok=j===1;b.classList.add(ok?'ok':'no');if(!ok)L.$('#pr').children[1].classList.add('ok');L.award(ok);
+      L.fb(L.$('#pf'),ok?'<b>Right.</b> Watch the reader’s side of it below.':'<b>Not quite.</b> The memo is full of detail about the disk. What it lacks is any answer to “Is it a good idea?”. See below.',ok?'ok':'no');
+      const api=PB(L.$('#pbx'),CHIEF,{id:'ch',st:{S:'s1',C:'c1',Q:'q1',A:'a0'}});
+      L.$('#go2').innerHTML='<button type="button" class="btn pri" id="run" style="margin-top:12px">'+L.ic('play')+'Run the top-down steps</button><div id="rs" class="small" style="margin-top:6px"></div>';
+      const seq=[['A','a1','Step 3 · Write the Answer: yes, it makes sense.'],['K1','p1','Steps 6–7 · The Answer raises “Why?”, which always needs reasons.'],['K2','p2','Step 7 · Every point a reason: one kind of idea.'],['K3','p3','Done. The memo now answers the question it was asked.']];let s=0,tm=null;
+      const tick=()=>{if(!L.$('#run')||s>=seq.length)return;const x=seq[s];const o={};o[x[0]]=x[1];api.set(o);L.$('#rs').textContent=x[2];s++;
+        if(s<seq.length)tm=setTimeout(tick,450);else{L.$('#run').disabled=true;L.$('#run').innerHTML=L.ic('check')+'Steps complete';L.sheet('info','The method forces the answer','Run the steps and the writer draws out only what answers the reader’s question, and answers it fully. Situation and Complication check that the Question is the right one; the Answer’s “Why?” sets the Key Line.');L.done();}};
+      L.$('#run').onclick=()=>{if(s===0){L.$('#run').innerHTML='Skip to the end';tick();}else{clearTimeout(tm);while(s<seq.length)tick();}};};
+    L.$('#pr').appendChild(b);});}},
+
+{part:0,src:'Chapter 3 · The top-down approach',pts:1,
+ solve:async L=>{await pbPlace(L,'tc',[['C','c1']]);},
+ run(L){
+  let first=true;
+  L.h(PBCSS+L.kick('try','Recheck the Question')+'<h1 class="q">Nadia’s Question is set. Tap the Complication box and try cards until Theo asks that Question.</h1><div id="tcf"></div><div id="tcb"></div>');
+  const api=PB(L.$('#tcb'),COURIER,{id:'tc',st:{S:'s1',Q:'q1',A:'a1',K1:'p1',K2:'p2',K3:'p3'},lock:['S','Q','A','K1','K2','K3'],tray:['c2','c1','c3'],
+    after:(k,r)=>{if(k!=='C'||!api.st.C)return;const ok=r.C[0]==='ok';L.$('#tcf').innerHTML='';
+      if(first){L.award(ok);first=false;}
+      if(ok){api.freeze(true);L.sheet('ok','It matches','“You asked whether we should accept” leads straight to Nadia’s Question, so the Question and Answer are confirmed. The whole point of the exercise is to be sure which Question you’re answering.');L.done();}
+      else L.fb(L.$('#tcf'),'<b>That makes Theo ask “'+COURIER.cards[api.st.C].rq+'”.</b> If that’s really what happened, Nadia must change the Question to that one, or rethink. Try another card.','no');}});}},
+
+{part:0,src:'Chapter 3 · The top-down approach',
+ solve:async L=>{await pbPlace(L,'ex',[['S','s1'],['C','c1'],['Q','q1'],['A','a1'],['K1','p1'],['K2','p2'],['K3','p3']]);},
+ run(L){
+  let fired=false;
+  L.h(PBCSS+L.kick('pr','Build it yourself')+'<h1 class="q">Build Nadia’s note to Theo. Fill every box and watch each one turn green or red, and what Theo hears.</h1>'+
+   '<p class="small" style="margin:-8px 0 4px">Try a wrong card on purpose too. Tap a filled box to swap its card.</p><div id="exb"></div>');
+  const api=PB(L.$('#exb'),COURIER,{id:'ex',tray:['q2','a2','p4','c2','s1','p1','c1','a1','p5','q1','p2','c3','p3'],
+    after:(k,r)=>{const full=Object.keys(api.st).every(x=>api.st[x]);if(!full||fired)return;fired=true;
+      const g=['S','C','Q','A','K1','K2','K3'].filter(x=>r[x][0]==='ok').length;
+      L.sheet('info',g+' of 7 boxes pass',r.all?'Every box passes, and Theo hears one clean dialogue: the story they know, their Question, the Answer, then the reasons their “Why?” asks for. Swap a card to see what breaks.':'Read Theo’s side: each red box shows where the dialogue breaks. Keep swapping until it all passes, or move on.');L.done();}});}},
+
+{part:0,src:'Chapter 3 · The top-down approach',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which New Question does this Main Point raise, so what goes on the Key Line?',['“Why?” → reasons','“How?” → steps'],[
+   ['“Yes, we should accept the courier’s second collection.”',0,'A yes raises “Why?”, and the answer to “Why?” is always reasons. That’s the book’s Big Chief memo pattern.'],
+   ['“We can bring late orders back to 4% by the November peak.”',1,'“We can” makes Theo ask “How?”. The Key Line must be the steps.'],
+   ['“The overflow unit is the best short-term option.”',0,'A judgment makes Theo ask “Why do you say so?”. Answer with reasons.'],
+   ['“Kenji’s Saturday gaps can be fixed.”',1,'Like the book’s printing memo (“could costs be cut? Yes”), this raises “How?”. The Key Line is the actions.']]);}},
 
 /* ---------- PART 2: BOTTOM UP ---------- */
 {part:1,src:'Chapter 3 · The bottom-up approach',run(L){
   L.h(L.kick('learn','The bottom-up approach')+'<h1 class="q">When you can’t see the top yet</h1>'+
-   L.prose('Sometimes your thinking isn’t far enough along. You can’t pin down the Subject, the Question isn’t clear, or you aren’t sure what the reader knows. Then drop to the Key Line. If no Key Line points come to you either, don’t despair. Work up from the bottom in three steps:')+
+   L.prose('Sometimes you can’t pin down the Subject, the Question isn’t clear, or you can’t sort out what the reader knows. Then drop to the Key Line. If no Key Line points come either, don’t despair. Work up from the bottom:')+
    L.flow([['list','1 · List','every point you want to make','',1],['cycle','2 · Relate','how the points connect','',2],['bulb','3 · Conclude','what they add up to','',3]])+
-   L.prose('Then think through the introduction to choose between the possible conclusions. One tip from the book: look at the recommendations first, because action ideas are easier to judge than situation ideas.'));
+   L.prose('Then think through the introduction to choose between the possible conclusions. One tip: look at the recommendations first, because action ideas are easier to judge than situation ideas.'));
   L.done();}},
+
 {part:1,src:'Chapter 3 · The bottom-up approach',run(L){
   L.h(L.kick('ex','A story from the book')+'<h1 class="q">A young consultant’s memo that rambles</h1>');
   L.beats(L.card,[
-   ['The memo','After two weeks at a printing company, a new consultant writes to their manager. Costs, staff shortages, overtime and two vague “conclusions” all tumble out in no clear order.'],
-   ['1 · List','Eight problems (low productivity, every job going through the same steps, low wages, staff shortage, high overtime…) and two solutions. The two solutions turn out to say the same thing.'],
-   ['2 · Relate','Laid out as cause and effect, the problems form two separate chains: low wages lead to too few staff, then overtime and high costs; identical steps for every job lead to low productivity and high costs.'],
-   ['3 · Conclude','Either “costs are high because of low productivity and high overtime”, or “to cut costs, simplify the steps and raise wages”.'],
-   ['Introduction','What does the reader already know? That these costs matter, and that the firm’s prices look uncompetitive. So the Question is “Could the costs be cut?” Answer: yes. New Question: how? Key Line: eliminate unnecessary steps, and raise wages to competitive levels.']],
+   ['The memo','After two weeks at a printing company, a new consultant writes to their manager. Costs, staff shortages, overtime and two vague “conclusions” tumble out in no clear order.'],
+   ['1 · List','Eight problems (low productivity, every job going through the same steps, low wages, a staff shortage, high overtime…) and two solutions. The two solutions turn out to say the same thing.'],
+   ['2 · Relate','Laid out as cause and effect, the problems form two separate chains: low wages lead to too few staff, overtime and high costs; identical steps for every job lead to low productivity and high costs.'],
+   ['3 · Conclude','Either “costs are high because productivity is low and overtime is high”, or “to cut costs, simplify the steps and raise wages”.'],
+   ['Introduction','What does the reader know? That these costs matter, and that the firm’s prices look uncompetitive. So the Question is “Could the costs be cut?” Answer: yes. New Question: how? Key Line: cut unnecessary steps, and raise wages to competitive levels.']],
    'The rewrite barely changed the wording. The clarity came from putting the ideas in pyramid order.');}},
+
 {part:1,src:'Chapter 3 · The bottom-up approach',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kenji, Fellwick’s regional manager, has notes from store visits but can’t see the point yet. What should Kenji do first?</h1>');
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kenji, Fellwick’s regional manager, has eleven notes from store visits but can’t see the point yet. What should Kenji do first?</h1>');
   L.mc(L.card,['Choose headings for the main sections','Guess a Main Point and defend it','List every point to be made'],2,
    'Step one of bottom up: get all the points down in a list. Relationships and conclusions come next.',
    'When you can’t see the point, don’t force a top or pick headings. Start bottom up: list every point, then work out how they relate.');}},
-{part:1,src:'Chapter 3 · The bottom-up approach',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Kenji rebuilds the email to Theo, bottom up</h1>');
-  L.beats(L.card,[
-   ['The email','“Eleven things I noticed on my store visits.” Friday deliveries arrive mid-afternoon. Boots run out by Saturday. Staff unpack boxes in the busy hours. Weekend overtime is over budget. And so on.'],
-   ['1 · List','Problems: the warehouse picks store orders after online orders; Friday deliveries arrive mid-afternoon; stock isn’t on the shelves for Saturday; customers leave without buying; stores are short of weekend staff; staff unpack in busy hours; overtime is over budget.'],
-   ['2 · Relate','Two chains appear. <b>Stock:</b> store orders picked last → late Friday deliveries → empty shelves on Saturday → lost sales. <b>Staff:</b> too few weekend staff → unpacking in busy hours → overtime over budget.'],
-   ['3 · Conclude','Each chain points to a fix: pick store orders first on Fridays, and fill the open weekend jobs.'],
-   ['Introduction','Situation: Saturday is the stores’ busiest day. Complication: shelves run empty and overtime is over budget. Question: can we fix it? Answer: yes. New Question: how? Key Line: pick store orders before online orders on Fridays, and fill the open weekend jobs.']],
-   'Same facts as the eleven-point list, but now Theo sees the point and both actions in the first lines.');}},
-{part:1,src:'Chapter 3 · The bottom-up approach',pts:1,run(L){
-  L.h(L.kick('pr','Work out the relationships')+'<h1 class="q">Kenji’s stock chain is scrambled. Tap the points from cause to final effect.</h1>');
-  L.order(L.card,['The warehouse picks store orders after online orders','Friday deliveries reach stores mid-afternoon','Boots and jackets aren’t on shelves for Saturday','Saturday customers leave without buying'],
-   'Laid out as cause and effect, the chain shows where to act: at the start, by picking store orders first.',['Cause','Then','Then','Effect']);}},
-{part:1,src:'Chapter 3 · The bottom-up approach',pts:1,run(L){
-  L.h(L.kick('pr','The 30-second test')+'<h1 class="q">Theo reads only the first few lines on their phone. Where should Kenji state the two Key Line points?</h1>');
-  L.mc(L.card,['In the introduction, right after the Main Point','In a closing section headed “Conclusions”','Only as headings further down the email'],0,
-   'The book says the introduction should include the Key Line, so the reader gets your whole thinking in about 30 seconds. If they can’t, rewrite.',
-   'If the Key Line waits until the end or hides in headings, Theo misses it. State it in the introduction so Theo has the whole thinking in about 30 seconds, and can skip the rest if they trust it.');}},
-{part:1,src:'Chapter 3 · The bottom-up approach',pts:4,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Does this heading help a scanning reader?',['Yes, it states an idea','No, it’s just a category'],[
-   ['“Findings”',1,'The book says never use a heading like “Findings”: it tells a scanning reader nothing.'],
-   ['“Picking store orders first fixes Saturday gaps”',0,'It states the point of the section, so the reader can find it at a glance.'],
-   ['“Conclusions”',1,'Another category. The reader still has to read on to learn what was concluded.'],
-   ['“Filling weekend jobs cuts overtime”',0,'It reflects the idea, not the category.']]);}},
+
+{part:1,src:'Chapter 3 · The bottom-up approach',pts:1,
+ solve:async L=>{for(const [a,b] of [['a','b'],['b','c'],['c','d'],['e','f'],['f','g']]){L.$('#cb [data-p="'+a+'"]').click();L.$('#cb [data-p="'+b+'"]').click();await L.sleep(5);}},
+ run(L){
+  const P={a:['The warehouse picks store orders after online orders','b',1],b:['Friday deliveries reach stores mid-afternoon','c',1],c:['Boots and jackets aren’t on shelves for Saturday','d',1],d:['Saturday customers leave without buying',null,1],
+    e:['Stores are short of weekend staff','f',2],f:['Staff unpack boxes in the busy hours','g',2],g:['Weekend overtime is over budget',null,2]};
+  const order=['c','e','a','g','b','f','d'],links={};let sel=null,miss=0,fin=false;
+  L.h(PBCSS+L.kick('pr','Work out the relationships')+'<h1 class="q">Kenji’s notes, listed. Tap a cause, then the point it leads to. Link them all.</h1>'+
+   '<div id="cb" style="display:grid;gap:6px"></div><div id="cm" style="min-height:8px"></div><div class="pb-cap" style="margin-top:14px">Chains so far</div><div id="cc"></div>');
+  const inc=x=>Object.keys(links).find(k=>links[k]===x);
+  function draw(){
+    L.$('#cb').innerHTML=order.map(k=>{const used=links[k]||inc(k),col=P[k][2]===1?'h1':'h2';
+      return '<button type="button" class="chip" data-p="'+k+'" style="margin:0;text-align:left;justify-content:flex-start;min-height:40px'+(sel===k?';border-color:var(--pri);background:var(--pri-bg)':used?';border-color:var(--'+col+');background:var(--'+col+'-bg)':'')+'">'+(sel===k?'<b>Cause:</b> ':'')+P[k][0]+'</button>';}).join('');
+    const roots=Object.keys(links).filter(k=>!inc(k));
+    L.$('#cc').innerHTML=roots.length?roots.map(r=>{const ch=[r];let x=r;while(links[x]){x=links[x];ch.push(x);}const col=P[r][2]===1?'h1':'h2';
+      return '<div style="border-left:4px solid var(--'+col+');background:var(--'+col+'-bg);border-radius:10px;padding:8px 10px;margin-bottom:8px;font-size:13.5px;line-height:1.45">'+ch.map(k=>P[k][0]).join('<br><span style="color:var(--'+col+');font-weight:700">↓</span><br>')+'</div>';}).join(''):'<p class="small">No links yet.</p>';}
+  draw();
+  L.$('#cb').onclick=e=>{const b=e.target.closest('[data-p]');if(!b||fin)return;const k=b.dataset.p;L.$('#cm').innerHTML='';
+    if(!sel){if(!P[k][1]){L.fb(L.$('#cm'),'“'+P[k][0]+'” is a final effect: nothing else on the list follows from it. Pick a cause first.','info');return;}
+      if(links[k]){L.fb(L.$('#cm'),'Already linked. Pick another cause.','info');return;}sel=k;draw();return;}
+    if(k===sel){sel=null;draw();return;}
+    if(P[sel][1]===k){links[sel]=k;sel=null;draw();
+      if(Object.keys(links).length===5){fin=true;L.award(miss===0);
+        L.sheet(miss===0?'ok':'info',miss===0?'Two clean chains':'Both chains found','Kenji’s list hides two separate lines of reasoning. <b>Stock:</b> store orders picked last, so Friday deliveries arrive late, shelves are empty on Saturday, and sales walk out. <b>Staff:</b> too few weekend staff, so unpacking eats the busy hours, and overtime runs over budget. Each chain starts where Kenji can act, and that gives the conclusions: pick store orders first on Fridays; fill the open weekend jobs.');L.done();}}
+    else{miss++;const back=P[k][1]===sel;L.fb(L.$('#cm'),back?'<b>Backwards.</b> “'+P[k][0]+'” comes first and leads to “'+P[sel][0]+'”.':'<b>Not a direct link.</b> Ask: what does “'+P[sel][0]+'” lead to straight away?','no');L.shake(b);sel=null;draw();}};}},
+
+{part:1,src:'Chapter 3 · The bottom-up approach',
+ solve:async L=>{const c=L.$('#ik').children;c[0].click();c[1].click();},
+ run(L){
+  const V=[{S:'s1',C:'c1',Q:'q1',A:'a1',K1:'p1',K2:'p2'},{S:'s1',C:'c2',Q:'q2',A:'a2',K1:'p3',K2:'p4'}];const seen=new Set();
+  L.h(PBCSS+L.kick('pr','Let the introduction choose')+'<h1 class="q">Kenji’s two chains support two different conclusions. Which one goes on top? Switch what Theo asked and watch.</h1>'+
+   '<div class="pb-cap">What did Theo ask Kenji?</div><div id="ik"></div><div id="ib"></div>');
+  const api=PB(L.$('#ib'),KENJI,{id:'ik',msgs:false,empty:'Pick what Theo asked, above.'});
+  ['“Why are we losing Saturday sales?”','“Can we fix it?”'].forEach((t,j)=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=t;
+    b.onclick=()=>{[...L.$('#ik').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');api.set(V[j]);seen.add(j);
+      if(seen.size===2&&!L.$('#ib').dataset.done){L.$('#ib').dataset.done=1;
+        L.sheet('info','The facts stayed put. The introduction moved.','Same notes, same chains. What the reader already knows and asks decides which conclusion is the Main Point. In Kenji’s real case Theo already knows the shelves run empty and overtime is over budget, so the Question is “Can we fix it?” and the Key Line is the two actions. The book’s printing memo was settled the same way.');L.done();}};
+    L.$('#ik').appendChild(b);});}},
+
+{part:1,src:'Chapter 3 · The bottom-up approach',pts:1,
+ solve:async L=>{L.$('#kp').children[0].click();L.$('#hp').children[1].click();L.$('#pck').click();},
+ run(L){
+  let kl=1,hd=0,first=true;
+  L.h(PBCSS+L.kick('pr','The 30-second test')+'<h1 class="q">Theo reads Kenji’s email on their phone and stops after about 30 seconds. Set it up so Theo gets Kenji’s whole thinking, and can find each section by its heading.</h1>'+
+   '<div class="pb-cap">Where is the Key Line?</div><div id="kp"></div><div class="pb-cap">Section headings</div><div id="hp"></div>'+
+   '<div id="ph" style="border:2px solid var(--line2);border-radius:22px;padding:12px 12px 6px;margin-top:6px;background:var(--bg);font-size:13.5px;line-height:1.45"></div>'+
+   '<div id="po" style="font-size:14px;line-height:1.6;margin-top:10px"></div><button type="button" class="btn pri" id="pck" style="margin-top:10px">'+L.ic('check')+'Check</button><div id="pf"></div>');
+  const chips=(host,opts,get,set)=>opts.forEach((t,j)=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=t;b.onclick=()=>{set(j);draw();};L.$(host).appendChild(b);});
+  chips('#kp',['In the introduction','In a closing “Conclusions” section'],()=>kl,v=>kl=v);
+  chips('#hp',['“Findings” and “Staffing”','The two Key Line points'],()=>hd,v=>hd=v);
+  const KL='Two changes will fix it: pick store orders first on Fridays, and fill the open weekend jobs.';
+  function H(t){return '<div style="font-weight:700;margin-top:2px">'+t+'</div>';}
+  function draw(){
+    [...L.$('#kp').children].forEach((b,j)=>b.classList.toggle('sel',j===kl));[...L.$('#hp').children].forEach((b,j)=>b.classList.toggle('sel',j===hd));
+    const h=hd?['Pick store orders first on Fridays','Fill the open weekend jobs']:['Findings','Staffing'];
+    const B=['<div class="small" style="margin-bottom:4px">From: Kenji · To: Theo</div>Saturday is our stores’ busiest day. But shelves keep running empty, and weekend overtime is over budget. Can we fix it? Yes.'];
+    if(kl===0)B.push('<b>'+KL+'</b>');
+    B.push(H(h[0])+'The warehouse picks store orders after online orders, so Friday deliveries reach stores mid-afternoon…');
+    B.push(H(h[1])+'Stores are short of weekend staff, so boxes get unpacked in the busy hours…');
+    if(kl===1)B.push(H('Conclusions')+KL);
+    L.$('#ph').innerHTML=B.map((b,j)=>(j===2?'<div style="border-top:2px dashed var(--no-line);margin:8px 0 6px;font-size:11px;font-weight:700;color:var(--no);text-transform:uppercase;letter-spacing:.05em;padding-top:3px">About 30 seconds · Theo stops here</div>':'')+'<div style="margin-bottom:8px;'+(j>=2?'opacity:.4':'')+'">'+b+'</div>').join('');
+    L.$('#po').innerHTML='<div style="color:var(--'+(kl===0?'ok':'no')+')">'+(kl===0?'✓ In 30 seconds Theo gets the Main Point <b>and</b> the Key Line.':'✗ In 30 seconds Theo gets the Main Point, but not how to fix it.')+'</div><div style="color:var(--'+(hd?'ok':'no')+')">'+(hd?'✓ Each heading states its idea, so Theo can scan to it.':'✗ “Findings” tells a scanning reader nothing.')+'</div>';}
+  draw();
+  L.$('#pck').onclick=()=>{const ok=kl===0&&hd===1;L.$('#pf').innerHTML='';if(first){L.award(ok);first=false;}
+    if(ok){L.$('#pck').disabled=true;L.sheet('ok','Whole thinking, first 30 seconds','The book says the introduction should include the Key Line points, so the reader gets your entire thinking in about 30 seconds and can trust nothing will surprise them later. If they can’t, rewrite. And word headings as ideas, never “Findings” or “Conclusions”.');L.done();}
+    else L.fb(L.$('#pf'),kl!==0?'<b>Theo stops before the Key Line.</b> Move it into the introduction, right after the Main Point.':'<b>The headings are categories.</b> Make each one state its point.','no');};}},
 
 /* ---------- PART 3: CAVEATS ---------- */
 {part:2,src:'Chapter 3 · Caveats for beginners',run(L){
   L.h(L.kick('learn','Caveats for beginners, 1–3')+'<h1 class="q">Plan first, before the words fall in love with you</h1>'+
    L.list([['Always try top down first','Don’t dictate the whole document “to get it all down” and plan to fix the structure later. Once an idea is written, it looks far better than it is.'],
      ['Start your thinking with the Situation','When you write, you can put Situation, Complication, Question and Answer in any order to set the tone. But think them through starting from the Situation: you’ll find the right Complication and Question more easily.'],
-     ['Don’t skip the introduction','Even when the Main Point is obvious, think the introduction through. Skip it and you end up stuffing background into the body as a clumsy chain of “because… therefore…”.']],1)+
+     ['Don’t skip the introduction','Even when the Main Point is obvious, think the introduction through. Skip it and background ends up in the body as a clumsy deductive chain of “because… therefore…”.']],1)+
    L.quote('It appears to have been chiseled in gold.','Barbara Minto, on a first draft'));
   L.done();}},
+
 {part:2,src:'Chapter 3 · Caveats for beginners',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Nadia plans to dictate the whole warehouse report “to get it all down”, then fix the structure afterwards. What’s the risk?</h1>');
   L.mc(L.card,['Nadia will grow attached to a draft whose thinking is disjointed','The report will come out too short for the board','Dictating takes longer than typing the report'],0,
    'Once it’s written, the draft looks finished, so Nadia won’t want to change it. Plan top down first.',
    'The book’s worry isn’t length or speed. A written draft looks far better than it is, so Nadia won’t want to restructure it. Plan top down first.');}},
+
 {part:2,src:'Chapter 3 · Caveats for beginners',run(L){
   L.h(L.kick('learn','Caveats for beginners, 4–5')+'<h1 class="q">What goes in the introduction, and what goes in the body</h1>'+
-   L.lanes([['book','Introduction','The history: what happened, in time order. Only things the reader knows, or would accept as true because anyone could easily check them.',1],
-            ['layers','Body (the pyramid)','Only ideas: new thinking that raises a question. Events can appear only as cause and effect you worked out by analysis.',2]])+
-   L.prose('Mixing them up breaks the pyramid. Put something the reader <i>doesn’t</i> know in the introduction and you distort their Question. Use something they <i>do</i> know to answer a question lower down, and it means you left it out of the introduction, which would have led them to a different Question.'));
+   L.lanes([['book','Introduction','The history: what happened. Only what the reader knows, or would accept as true because anyone could easily check it.',1],
+            ['layers','Body (the pyramid)','Only ideas: new thinking that raises a question. Events appear only as cause and effect you worked out by analysis.',2]])+
+   L.prose('Put something the reader <i>doesn’t</i> know in the introduction and you distort their Question. Use something they <i>do</i> know to answer a question lower down, and you left it out of the introduction, which would have led them to a different Question.'));
   L.done();}},
+
 {part:2,src:'Chapter 3 · Caveats for beginners',pts:5,run(L){
   L.h(L.kick('pr','Introduction or body?')+'<h1 class="q">Nadia is writing to Theo about late online orders. Where does each item belong?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Introduction','Body'],[
@@ -171,6 +483,29 @@ Course.lesson({
    ['Theo asked Nadia last week what to do about it',0,'That’s the Complication that raises the Question.'],
    ['Overflow space near Mill Lane would ease picking at peak times',1,'It’s new thinking that raises “Why?” or “How?”, so it’s in the pyramid.']],
    'Known and checkable: introduction. New thinking: body. Getting this right keeps the Question true to what the reader is really asking.');}},
+
+{part:2,src:'Chapter 3 · Caveats for beginners',
+ solve:async L=>{const c=L.$('#ep').children;for(let j=0;j<4;j++){c[j].click();await L.sleep(5);}},
+ run(L){
+  const BASE={S:'s1',C:'c1',Q:'q1',A:'a1',K1:'p1',K2:'p2',K3:'p3'};
+  const PR=[['No Main Point',{A:'a0'},'The top box reports what Nadia looked at instead of answering. It’s the Big Chief memo’s flaw, and Theo is left asking.','Step 3 (write the Answer), then the recheck.'],
+    ['Wrong question',{C:'c2'},'The Complication makes Theo ask “Why are online orders late?”, but Nadia answers a different question. To Theo the note dodges them.','The recheck: change the Question to the one the Complication raises, or find the right Complication.'],
+    ['Mixed kinds on the Key Line',{K2:'p4',K3:'p5'},'Theo asked “Why?”, so every point must be a reason. A step answers “How?”, and a bare topic answers nothing. No plural noun fits the group.','Step 7: the New Question sets the plural noun. “Why?” always needs reasons.'],
+    ['New fact in the introduction',{S:'s2'},'Theo has never seen this count. A fact the reader doesn’t know, put in the introduction, distorts their Question.','Caveat 5: the introduction holds only what the reader will agree is true. New findings go in the pyramid.'],
+    ['History in the body',{K3:'s3'},'A plain event isn’t an idea: it raises no question, and Theo already knows it.','Caveat 4: history goes in the introduction. The body holds only ideas.'],
+    ['Skipped the introduction',{S:null,C:null,Q:null,K1:'s4',K2:'s5',K3:'p6'},'With no introduction, the background lands on the Key Line as a “because… therefore…” chain, and Theo can’t tell which question is being answered.','Caveat 3: think the introduction through first, so the Key Line holds only ideas.']];
+  const seen=new Set();
+  L.h(PBCSS+L.kick('pr','Break it on purpose')+'<h1 class="q">Here is Nadia’s overflow-space note, working. Tap each way to break it, see where it fails, then repair it.</h1>'+
+   '<div id="ep"></div><div id="en"></div><div id="eb"></div>');
+  const api=PB(L.$('#eb'),OVER,{id:'eg',st:BASE});
+  PR.forEach((p,j)=>{const b=document.createElement('button');b.type='button';b.className='chip';b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#ep').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');api.set(Object.assign({},BASE,p[1]));seen.add(j);
+      L.$('#en').innerHTML='<div class="fb no" style="margin-top:4px;font-size:14px"><b>What breaks:</b> '+p[2]+'<br><b>What catches it:</b> '+p[3]+'<div style="margin-top:8px"><button type="button" class="btn" id="rep">'+L.ic('cycle')+'Repair it</button> <span class="small">'+seen.size+' of 6 tried</span></div></div>';
+      L.$('#rep').onclick=()=>{api.set(BASE);L.$('#en').innerHTML='<div class="fb ok" style="margin-top:4px;font-size:14px"><b>Repaired.</b> Every box passes again. Try another break.</div>';};
+      if(seen.size>=4&&!L.$('#eb').dataset.done){L.$('#eb').dataset.done=1;
+        L.sheet('info','Where the method stops protecting you','Each break looks fine from the writer’s side and only shows up in the reader’s dialogue. The top-down steps and the caveats are the checks that catch them: write an actual Answer, recheck the Question against the Complication, let the New Question set the plural noun, and keep the introduction to what the reader already knows.');L.done();}};
+    L.$('#ep').appendChild(b);});}},
+
 {part:2,src:'Chapter 3 · Caveats for beginners',pts:1,
  solve:async L=>{const g=L.$('#tg').children;g[0].click();g[1].click();},
  run(L){
@@ -185,6 +520,7 @@ Course.lesson({
       L.mc(q,['Keep it as a chain, in the order it was reasoned','Rent overflow space, because it meets our needs','Drop the reasons and give the decision only'],1,
        'You can work it out deductively and still present it inductively. The book notes most deductive thinking can be turned this way.',
        'The order you reasoned in isn’t the order the reader needs, and dropping the reasons leaves Theo asking “Why?”. State the point with its reasons side by side.');}};L.$('#tg').appendChild(b);});}},
+
 {part:2,src:'Chapter 3 · Caveats for beginners',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which caveat is being broken?',['Try top down first','Think the introduction through','History goes in the introduction','Intro holds only what’s accepted','Prefer induction on the Key Line'],[
@@ -192,7 +528,22 @@ Course.lesson({
    ['A section in the body of Nadia’s report is titled “What happened this spring” and lists events in date order.',2,'Plain history belongs in the introduction. The body can hold only ideas.'],
    ['Kenji opens an email with figures from a survey Theo has never seen, then states the Question.',3,'New information in the introduction distorts the reader’s Question. Keep it to what they know or would accept.'],
    ['Kenji writes a first draft straight through, planning to “sort out the structure later”.',0,'A finished-looking draft is hard to give up. Plan top down first.'],
-   ['Nadia’s Key Line reads: our criteria are A, B and C; the overflow unit meets them; therefore, take it.',4,'That chain is overstructured. State the point with the reasons side by side.']]);}}
+   ['Nadia’s Key Line reads: our criteria are A, B and C; the overflow unit meets them; therefore, take it.',4,'That chain is overstructured. State the point with the reasons side by side.']]);}},
+
+{part:2,src:'Chapter 3 · The top-down approach',pts:3,
+ solve:async L=>{await pbPlace(L,'rd',[['S','s1'],['C','c1'],['Q','q1'],['A','a1'],['K1','p1'],['K2','p2'],['K3','p3']]);L.$('#rck').click();},
+ run(L){
+  let first=true;
+  L.h(PBCSS+L.kick('pr','Challenge · build it from scratch')+'<h1 class="q">Theo wants to know how Mill Lane gets ready for the November peak. Build Nadia’s pyramid so every box passes, then check it.</h1>'+
+   '<p class="small" style="margin:-8px 0 4px">Some cards are traps. Boxes turn green or red as you go; your first check earns the points.</p><div id="rdb"></div>'+
+   '<button type="button" class="btn pri" id="rck" style="margin-top:12px">'+L.ic('check')+'Check my pyramid</button><div id="rf"></div>');
+  const api=PB(L.$('#rdb'),READY,{id:'rd',tray:Object.keys(READY.cards)});
+  L.$('#rck').onclick=()=>{L.$('#rf').innerHTML='';
+    if(!Object.keys(api.st).every(k=>api.st[k])){L.fb(L.$('#rf'),'Fill every box first.','info');return;}
+    const r=api.judge(),c1=['S','C','Q'].every(k=>r[k][0]==='ok'),c2=r.A[0]==='ok',c3=['K1','K2','K3'].every(k=>r[k][0]==='ok');
+    if(first){first=false;L.award(c1);L.award(c2);L.award(c3);}
+    if(c1&&c2&&c3){api.freeze(true);L.$('#rck').disabled=true;L.sheet('ok','A pyramid Theo can read in 30 seconds','The introduction raises Theo’s own Question; the Main Point answers it; “How?” calls for steps, so the Key Line is three steps. One kind of idea, one plural noun.');L.done();}
+    else L.fb(L.$('#rf'),[c1?'':'<b>Introduction:</b> the Situation must be something Theo knows, and the Complication must raise your Question.',c2?'':'<b>Main Point:</b> it must answer that Question, not describe your work.',c3?'':'<b>Key Line:</b> the Main Point raises “How?”, so all three points must be steps.'].filter(Boolean).join('<br>'),'no');};}}
   ]
 });
 </script>

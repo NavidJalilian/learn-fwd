@@ -13,114 +13,309 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* ===== The trust dial: this lesson's own gauge, fraction and sliders ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.tq-g{display:block;width:100%;max-width:280px;margin:2px auto 0}
+.tq-leg{font-size:12.5px;color:var(--muted);text-align:center;margin:0 0 6px}
+.tq-fr{display:flex;flex-direction:column;align-items:center;margin:6px auto 4px;width:max-content;max-width:100%}
+.tq-row{display:flex;align-items:center;gap:6px}
+.tq-op{font-weight:700;color:var(--muted);font-size:18px;width:12px;text-align:center}
+.tq-bar{height:3px;background:var(--ink);border-radius:2px;width:100%;margin:6px 0}
+.tq-t{position:relative;width:58px;min-height:54px;border-radius:12px;border:2px solid var(--line);border-bottom-width:3px;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3px 0;color:var(--ink)}
+.tq-t span{font-size:11px;font-weight:700}
+.tq-g.cp{max-width:220px}
+.tq-sticky{position:sticky;top:78px;z-index:2;background:var(--card);padding:6px 0 4px;border-bottom:1px solid var(--line)}
+.tq-t b{font-size:21px;line-height:1.15}
+.tq-t.c{border-color:var(--h1);background:var(--h1-bg)}.tq-t.c span{color:var(--h1)}
+.tq-t.r{border-color:var(--h2);background:var(--h2-bg)}.tq-t.r span{color:var(--h2)}
+.tq-t.i{border-color:var(--h3);background:var(--h3-bg)}.tq-t.i span{color:var(--h3)}
+.tq-t.s{border-color:var(--h4);background:var(--h4-bg)}.tq-t.s span{color:var(--h4)}
+.tq-t.hit{outline:3px solid var(--ok-strong);outline-offset:2px}
+.tq-t.miss{outline:3px solid var(--no-strong);outline-offset:2px}
+button.tq-t:active{transform:translateY(2px)}
+.tq-d{position:absolute;top:-11px;right:-10px;font-style:normal;font-size:12px;font-weight:700;background:var(--card);border:1.5px solid var(--line2);border-radius:8px;padding:0 5px;opacity:0;pointer-events:none}
+.tq-d.on{animation:tqpop 1.6s ease}
+@keyframes tqpop{0%{opacity:0;transform:translateY(5px)}12%{opacity:1;transform:none}75%{opacity:1}100%{opacity:0}}
+.tq-ro{text-align:center;margin:2px 0 6px;font-size:14px;color:var(--muted)}
+.tq-sl{display:block;margin:6px 0 0}
+.tq-slh{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:14px}
+.tq-slh small{color:var(--muted);font-size:12px;white-space:nowrap}
+.tq-sl input{width:100%;height:34px;margin:0}
+.tq-chips{display:flex;flex-wrap:wrap;margin:8px 0 2px}
+.tq-chips.sm .chip{padding:6px 10px;font-size:13.5px;margin:0 5px 6px 0}
+.tq-bub{border-radius:14px;padding:10px 13px;margin:8px 0;font-size:15px;line-height:1.5;background:var(--soft)}
+.tq-bub.me{background:var(--pri-bg);color:var(--ink);margin-left:18px}
+.tq-bub b{display:block;font-size:12px;letter-spacing:.3px;color:var(--muted);margin-bottom:2px}
+.tq-ln{display:block;width:100%;text-align:left;border:2px solid var(--line);border-radius:14px;padding:9px 12px;margin:7px 0;background:var(--card);font-size:15px;line-height:1.45;opacity:0;animation:tqin .4s ease forwards}
+.tq-ln.dana{background:var(--soft);border-color:transparent;cursor:default}
+.tq-ln.pick{border-color:var(--no-line);background:var(--no-bg)}
+.tq-ln b{font-size:12px;letter-spacing:.3px;color:var(--muted);display:block}
+.tq-ln .tag{display:block;margin-top:5px;font-size:13px;font-weight:600}
+@keyframes tqin{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.tq-res{display:grid;grid-template-columns:auto 1fr auto;gap:6px 10px;align-items:center;font-size:14px;margin-top:10px}
+.tq-res .bar{height:12px;border-radius:6px;background:var(--soft2);overflow:hidden}
+.tq-res .bar i{display:block;height:100%;width:0;transition:width .5s}
+.tq-meter{display:grid;grid-template-columns:96px 1fr 34px;gap:8px;align-items:center;font-size:13.5px;margin:6px 0}
+.tq-meter .bar{height:12px;border-radius:6px;background:var(--soft2);overflow:hidden}
+.tq-meter .bar i{display:block;height:100%;transition:width .35s}
+.tq-slot{font-size:13px;font-weight:700;color:var(--muted);margin:12px 0 4px;letter-spacing:.2px}
+.tq-slot+div .chip{text-align:left;line-height:1.35}
+`;document.head.appendChild(st);})();
+
+const TQK=[['c','C','Credibility','words','h1'],['r','R','Reliability','actions','h2'],['i','I','Intimacy','emotions','h3'],['s','S','Self-orientation','motives','h4']];
+const TQN={c:'credibility',r:'reliability',i:'intimacy',s:'self-orientation'};
+const tqT=v=>(v.c+v.r+v.i)/v.s;
+const tqF=x=>{let s=x.toFixed(2);if(s.endsWith('0'))s=s.slice(0,-1);return s;};
+function tqGauge(cp){
+  const P=(v,r)=>{const a=Math.PI*(1-v/10);return [150+r*Math.cos(a),140-r*Math.sin(a)];};
+  let t='';if(!cp)for(let k=0;k<=10;k+=2){const p=P(k,93);t+='<text x="'+p[0].toFixed(1)+'" y="'+(p[1]+4).toFixed(1)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+k+'</text>';}
+  const mk=(v,lab)=>{const p=P(v,115),q=P(v,cp?84:133);return '<circle cx="'+p[0].toFixed(1)+'" cy="'+p[1].toFixed(1)+'" r="'+(cp?7:5)+'" fill="var(--card)" stroke="var(--ink)" stroke-width="2"/><text x="'+q[0].toFixed(1)+'" y="'+(q[1]+(cp?6:4)).toFixed(1)+'" text-anchor="middle" font-size="'+(cp?17:11.5)+'" font-weight="700" fill="var(--ink)">'+lab+'</text>';};
+  return '<svg class="tq-g'+(cp?' cp':'')+'" viewBox="0 -8 300 202" role="img" aria-label="Trust gauge, 0 to 10"><path d="M35 140 A115 115 0 0 1 265 140" fill="none" stroke="var(--soft2)" stroke-width="16" stroke-linecap="round"/>'+
+   '<path class="tq-arc" d="M35 140 A115 115 0 0 1 265 140" fill="none" stroke="var(--pri)" stroke-width="16" stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100" style="transition:stroke-dashoffset .45s"/>'+t+mk(1.25,'1.25')+mk(5,'5')+
+   '<g class="tq-nd" style="transform-origin:150px 140px;transform:rotate(-90deg);transition:transform .45s"><line x1="150" y1="140" x2="150" y2="58" stroke="var(--ink)" stroke-width="3.5" stroke-linecap="round"/></g><circle cx="150" cy="140" r="7" fill="var(--ink)"/>'+
+   '<text class="tq-gv" x="150" y="186" text-anchor="middle" font-size="'+(cp?40:28)+'" font-weight="700" fill="var(--ink)">T = 0</text></svg>';}
+function tqSetGauge(root,v){const c=Math.min(Math.max(v,0),10);root.querySelector('.tq-arc').style.strokeDashoffset=String(100-c*10);root.querySelector('.tq-nd').style.transform='rotate('+(-90+18*c)+'deg)';root.querySelector('.tq-gv').textContent='T = '+tqF(v)+(v>10?' (off the dial)':'');}
+function tqTile(k,tap,big,small){return '<'+(tap?'button':'div')+' class="tq-t '+k+'" data-k="'+k+'"'+(tap?' aria-label="'+TQN[k]+'"':'')+'><span>'+small+'</span><b>'+big+'</b><i class="tq-d"></i></'+(tap?'button':'div')+'>';}
+function tqFrac(tap,letters){const T=(k)=>tqTile(k,tap,letters?k.toUpperCase():'',letters?'tap':k.toUpperCase());
+  return '<div class="tq-fr"><div class="tq-row">'+T('c')+'<span class="tq-op">+</span>'+T('r')+'<span class="tq-op">+</span>'+T('i')+'</div><div class="tq-bar"></div>'+T('s')+'</div>';}
+/* the dial: gauge + live fraction (+ optional sliders). o: {sliders, tap, legend, change(k)} */
+function tqDial(host,v0,o){o=o||{};const v=Object.assign({},v0);
+  const sl=K=>'<label class="tq-sl"><div class="tq-slh"><span style="color:var(--'+K[4]+')"><b>'+K[1]+'</b> '+K[2]+' · '+K[3]+'</span><span><b class="tq-sv">'+v[K[0]]+'</b> <small class="tq-nx"></small></span></div><input type="range" min="1" max="10" step="1" value="'+v[K[0]]+'" data-k="'+K[0]+'" aria-label="'+K[2]+', 1 to 10" style="accent-color:var(--'+K[4]+')"></label>';
+  const G=tqGauge(o.cp)+(o.legend===false?'':'<div class="tq-leg">Markers: the book’s <b>new client 1.25</b> and <b>existing client 5</b></div>'),F=tqFrac(!!o.tap);
+  host.insertAdjacentHTML('beforeend','<div class="tq-dial">'+(o.fracFirst?F+G:G+F)+'<p class="tq-ro" aria-live="polite"></p>'+(o.sliders?TQK.map(sl).join(''):'')+'</div>');
+  const el=host.lastElementChild;
+  const api={v,el,
+    set(nv,flash){for(const k in nv){if(nv[k]===v[k])continue;const d=nv[k]-v[k];v[k]=nv[k];
+        if(flash){const t=el.querySelector('.tq-t.'+k+' .tq-d');t.textContent=(d>0?'+':'−')+Math.abs(d);t.classList.remove('on');void t.offsetWidth;t.classList.add('on');}}
+      draw();},
+    t:()=>tqT(v)};
+  function draw(){
+    TQK.forEach(K=>{const k=K[0];el.querySelector('.tq-t.'+k+' b').textContent=v[k];
+      const inp=el.querySelector('input[data-k="'+k+'"]');if(inp){if(+inp.value!==v[k])inp.value=v[k];
+        const lab=inp.parentNode;lab.querySelector('.tq-sv').textContent=v[k];
+        const sum=v.c+v.r+v.i;let nx;
+        if(k==='s')nx=v.s<=1?'at the bottom':'1 lower → +'+(sum/(v.s-1)-sum/v.s).toFixed(2);
+        else nx=v[k]>=10?'at the top':'1 higher → +'+(1/v.s).toFixed(2);
+        lab.querySelector('.tq-nx').textContent='('+nx+')';}});
+    el.querySelector('.tq-ro').innerHTML='Trust = ('+v.c+' + '+v.r+' + '+v.i+') ÷ '+v.s+' = <b style="color:var(--ink)">'+tqF(tqT(v))+'</b>';
+    tqSetGauge(el,tqT(v));}
+  el.querySelectorAll('input[data-k]').forEach(inp=>inp.addEventListener('input',()=>{const k=inp.dataset.k;v[k]=+inp.value;draw();if(o.change)o.change(k);}));
+  if(o.tap)el.querySelectorAll('.tq-t').forEach(b=>b.onclick=()=>o.tap(b.dataset.k,b));
+  requestAnimationFrame(()=>draw());draw();
+  return api;}
+const tqSlide=(L,k,val)=>{const s=L.$('input[data-k="'+k+'"]');s.value=val;s.dispatchEvent(new Event('input',{bubbles:true}));};
+
+/* data for the hands-on screens */
+const TQ_TAG=[
+ ['When Noor says the consultation must run 30 days, Dana doesn’t double-check.','c',1,'Believing what someone says is credibility, the realm of words.'],
+ ['Ines promised Dana a draft by Friday. It came on Monday, with no warning.','r',-1,'A broken link between a promise and an action hurts reliability, the realm of actions.'],
+ ['Dana tells Noor they’re afraid Felix will blame them if the closures go badly.','i',1,'A personal worry about the issue is now on the table. That is intimacy, the realm of emotions.'],
+ ['In every meeting, Ines mentions two big-name clients Larkmoor works for.','s',1,'Name-dropping is a classic sign of self-orientation, the realm of motives. Here, up is bad.'],
+ ['Corran says “colleagues”, never “staff”. Noor’s letters do too.','r',1,'Doing things the client’s way is the emotional side of reliability.'],
+ ['Dana stops to think. Noor lets the silence sit instead of filling it.','s',-1,'Letting the client fill the silence shows low self-orientation. Here, down is good.']];
+const TQ_RING=[
+ {say:'“So, the letters. Can we go through them?”',opts:[
+   ['Stay on the letters. Feelings aren’t a lawyer’s job.','aloof','Dana: “Fine.” The call stays polite and shallow. Keeping a cool distance is the most common way trust fails.'],
+   ['Go first: “Closures are the part of my job I find hardest. How are the staff taking it?”','in','Dana: “Badly, honestly. People are scared.” Noor took a small risk first, and Dana met it.'],
+   ['“Forget the letters. How are you really coping? You can tell me anything.”','far','Dana: “I’m fine. Let’s stick to the letters.” Too much, too soon, so Dana draws a line.']]},
+ {say:'“…and Gail keeps telling the shop managers the list is unfair.”',opts:[
+   ['“So what’s your real problem with Gail?”','far','Dana stiffens: “There’s no problem.” With no easy way out, Dana closes the topic.'],
+   ['“Gail’s name keeps coming up. Worth talking about, or not today?”','in','Dana: “Worth it. Gail has been here 20 years, and Felix listens to Gail.” The question left a face-saving way out, so Dana chose to step in.'],
+   ['Steer back to the consultation timeline.','aloof','The door Dana half-opened closes again. Nothing new gets said.']]},
+ {say:'Quietly: “If this goes wrong, I think it lands on me.”',opts:[
+   ['“Don’t worry, it’ll be fine.”','aloof','Brushing it off tells Dana the feeling isn’t welcome here.'],
+   ['Jump in with a five-point plan to protect Dana.','far','Dana goes quiet. Rushing to fix the feeling cut Dana off mid-thought.'],
+   ['“That sounds like a lot to carry. Want to say more?”','in','Dana talks about Felix and the board for ten minutes. Noor doesn’t fix the feeling, only makes it safe to say. The real issue is on the table.']]}];
+const TQ_RINGLAB=['The paperwork','How the staff feel','Gail’s resistance','Dana’s fear'];
+const TQ_TALK=[
+ ['Dana','Gail is pushing back hard on the shop list, and I’m…'],
+ ['Ines','“…worried Gail will go over your head? We see that all the time.”',1,'Finishing the client’s sentence'],
+ ['Noor','“What do you think is behind Gail’s push-back?”',0,'Asks what’s behind the issue'],
+ ['Dana','Gail has been here 20 years. Felix listens to Gail.'],
+ ['Noor','“That reminds me of a closure I ran where a regional boss fought me for weeks…”',1,'Relating their story to yourself'],
+ ['Ines','“We handled exactly this for two national chains last year.”',1,'Name-dropping other clients'],
+ ['Dana','(pauses, thinking)'],
+ ['Noor','“Take your time.”',0,'Lets the client fill the silence'],
+ ['Noor','“So the risk is less the law, more Gail turning the shops against the plan?”',0,'Summarizes to check what was meant'],
+ ['Ines','“Easy. We draft the letters tonight and Gail will have to accept it.”',1,'Answering before hearing the problem out']];
+const TQ_SLOTS=[
+ {lab:'1 · Noor opens',best:1,opts:[
+   ['“We’ve handled dozens of closures. Our best people will be on yours.”',{h:-1},'Sounds like spin. Dana wonders: who are the worst people, then?'],
+   ['“I saw how the town took the bakery closure last year. How did your own staff react?”',{b:1,h:1},'Homework on Dana’s world makes Noor believable, and a real question invites the whole story.']]},
+ {lab:'2 · Then',best:2,opts:[
+   ['“Here’s our standard redundancy pack.”',{},'Accurate, but it leaves the real worry unspoken.'],
+   ['“Felix will blame you if this goes badly, so let’s protect you.”',{},'An insight stated as fact. The book says to offer it gently, without asserting it, so Dana can reach the conclusion.'],
+   ['“In your seat, I might be wondering how Felix will judge this. Is that on your mind at all?”',{h:1},'Naming a need Dana hasn’t said, offered gently. This builds the “honest” side of credibility.']]},
+ {lab:'3 · Dana asks if part-time bakers count toward the 60. Noor isn’t sure.',best:0,opts:[
+   ['“I don’t know. I’ll check and tell you by tomorrow.”',{b:1,h:1},'Saying “I don’t know” quickly makes everything else Noor says easier to believe.'],
+   ['“Part-timers never count. Don’t worry about it.”',{b:-2},'A confident guess. If it’s wrong, Dana will doubt every other answer.'],
+   ['“Let me tell you about a similar case we won.”',{h:-1},'Dodging a direct question makes Dana wonder what’s being left out.']]}];
+const TQ_PRESETS=[
+ ['New client (Sasha)',{c:5,r:3,i:2,s:8},'The book’s guess for a new client: 10 ÷ 8 = <b>1.25</b>. Self-orientation starts at 8 because, from past experience, clients assume a professional is mainly looking after themselves.'],
+ ['Existing client (Dana)',{c:7,r:8,i:5,s:4},'The book’s reasonably good existing client: 20 ÷ 4 = <b>5</b>. Four times the new client. Same kind of advisor, different history.'],
+ ['The famous surgeon',{c:10,r:10,i:1,s:5},'Superb skill carries weak intimacy: <b>4.2</b>. The book says this works only if you are truly superb, not just good. (Self-orientation here is a guess.)'],
+ ['Good, not superb, and aloof',{c:7,r:7,i:1,s:5},'The same coldness with ordinary skill: <b>3.0</b>. The rest of us can’t get by on technical excellence alone.'],
+ ['Credible but unreliable',{c:9,r:2,i:5,s:4},'On paper this scores <b>4.0</b>, because the top line is a sum: one strength hides a weakness. The book is stricter. You need to do well on all four, in the client’s eyes. A client who keeps chasing late work won’t average it out.'],
+ ['Brilliant but self-serving',{c:10,r:10,i:8,s:10},'Near-perfect on top, yet only <b>2.8</b>. Seeming to be in it for yourself divides everything. The book says nothing destroys trust more.'],
+ ['Zero self-interest',{c:3,r:3,i:2,s:1},'On paper, a weak advisor with no ego scores <b>8</b> and beats the surgeon. This is where the numbers stop helping. The equation is a framework for thinking, not a measurement, and the book still asks for all four.']];
+const TQ_MEET=[
+ {ctx:'Before the call. Dana likes short calls before 9 am.',opts:[
+   ['Book 8:30. Send the agenda the day before and ask Dana what to change.',{r:1},'Dana: “Perfect, thanks. I added one item.”','Reliability up: the client’s hours, and the agenda reviewed with them first.',1],
+   ['Book 2 pm, when Noor’s diary is free. Bring the agenda to the call.',{r:-1},'Dana joins late, between two other meetings.','Reliability down: consistent for Noor, not for Dana. It has to fit the client’s habits.',0],
+   ['Skip the agenda. Noor knows what needs covering.',{r:-1},'Dana: “Wait, are we doing the timeline today?”','Reliability down: clients should always be asked how time will be spent.',0]]},
+ {ctx:'Ten minutes in, Dana goes quiet and looks tense.',opts:[
+   ['Fill the gap with the next item on the timeline.',{s:1},'Dana nods along and says nothing more.','Self-orientation up: filling empty space keeps the spotlight on Noor.',0],
+   ['“You look stressed. Is Felix giving you a hard time?”',{i:-1},'Dana: “I’d rather not get into that.”','Intimacy down: too much, too soon, and no easy way to decline.',0],
+   ['Let the silence sit. Then: “This looks heavy. Want to talk about it, or stick to the plan?”',{i:2,s:-1},'Dana: “Actually, yes. Felix is watching this closely.”','Intimacy up and self-orientation down: room to speak, and a way out.',1]]},
+ {ctx:'Dana mentions an HR policy review might be useful “some day”.',opts:[
+   ['“What’s prompting that?” Then listen.',{s:-1},'Dana explains two grievances that went badly last year.','Self-orientation down: asking what’s behind an issue keeps the focus on Corran.',1],
+   ['Pitch Larkmoor’s HR review package on the spot.',{s:2},'Dana: “Let’s not get ahead of ourselves.”','Self-orientation up, a lot: the motive now looks like Larkmoor’s gain.',0],
+   ['Mention two big firms that bought the review.',{s:1},'Dana: “Mm. We’re a bakery.”','Self-orientation up: name-dropping is about you, not the client.',0]]},
+ {ctx:'Dana asks straight out: “Could we have avoided some of this if we’d called you earlier?” The honest answer is: partly.',opts:[
+   ['“Hard to say. Every case is different.”',{s:1,c:-1},'Dana: “That’s a lawyer’s answer.”','Self-orientation up, credibility down: no direct answer to a direct question.',0],
+   ['“No. Nothing could have been done.”',{c:-1},'Dana later learns otherwise from a colleague.','Credibility down: not the whole truth. Never exaggerate, not even to comfort.',0],
+   ['“Partly, yes. Here’s what to watch for next time.”',{c:1},'Dana: “Good to know. Thank you for being straight.”','Credibility up: the complete answer makes Noor sound honest.',1]]}];
+
 Course.lesson({
   id:'0007', title:'The trust equation', minutes:20, icon:'scale',
-  goals:['Name the four parts of trust and the realm each one covers','Spot what helps or hurts credibility, reliability, intimacy and self-orientation','Explain why a new client’s trust starts so much lower than an old client’s'],
-  parts:['The equation','Words and actions','Feelings and motives','The economics'],
-  read:'Read chapter 8 of the book for the full tip lists under each part of the equation and the surgeon story.',
+  goals:['Explain why self-orientation, underneath, moves trust more than anything on top','Spot which part of trust a behavior helps or hurts: credibility, reliability, intimacy or self-orientation','Use the equation, and its limits, to see why a new client starts so much lower than an old one'],
+  parts:['The equation','Words and actions','Feelings and motives','Limits and payoff'],
+  read:'Read chapter 8 of the book for the full tip lists under each part of the equation, the surgeon story and the lunch with Mary Doyle.',
   glossary:{
    'trust-realms':'Trust realms: the area of life each part of the equation covers. Credibility = words, reliability = actions, intimacy = emotions, self-orientation = motives.'
   },
   cheatsheet:[
-    '<b>T = (C + R + I) ÷ S</b>: credibility, reliability and intimacy on top, self-orientation underneath. A way of thinking, not a science.',
+    '<b>T = (C + R + I) ÷ S</b>: credibility, reliability and intimacy add up on top; self-orientation divides them. A framework for thinking, not a scientific result.',
     'Realms: credibility = <b>words</b>, reliability = <b>actions</b>, intimacy = <b>emotions</b>, self-orientation = <b>motives</b>.',
-    '<b>Credibility</b> = expertise plus presence. Accuracy makes you “believable”; completeness makes you “honest”. Say “I don’t know” fast.',
-    '<b>Reliability</b> = promises kept again and again, done the way the <i>client</i> likes. Make small promises and keep them quietly.',
-    '<b>Intimacy</b> is the most common failure. It is closeness about the issue at hand, built by taking a small risk first and giving the client a way out.',
-    '<b>Self-orientation</b> is anything that keeps your attention on you: money, looking clever, being right, filling silences, rushing to the answer.',
-    'Intimacy and low self-orientation are rare, so they are what set you apart.',
-    'Book’s numbers: new client (5+3+2)/8 = <b>1.25</b>, existing client (7+8+5)/4 = <b>5</b>. New business costs 4 to 7 times more to win.'
+    'One point off self-orientation lifts trust far more than one point on top, because it divides everything.',
+    '<b>Credibility</b> = expertise plus presence. Accuracy makes you “believable”, completeness makes you “honest”. Never exaggerate; say “I don’t know” fast.',
+    '<b>Reliability</b> = promises kept again and again, done the way the <i>client</i> likes. Announce a changed date as soon as it changes.',
+    '<b>Intimacy</b> is the most common failure. Go first with a small risk, give the client a way out, and don’t try to fix their feelings.',
+    '<b>Self-orientation</b> is anything that keeps the focus on you: money, looking clever, being right, filling silences, answering too fast.',
+    'Limits: the sum can hide a weak part, so do well on all four in the client’s eyes. Book’s numbers: new client <b>1.25</b>, existing <b>5</b>; new business costs 4 to 7 times more.'
   ],
   steps:[
 /* ---------- PART 1: THE EQUATION ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Noor’s work for Corran is accurate and always on time. Yet Dana still calls Noor only when a contract needs signing. What’s the most likely reason?</h1>');
   L.mc(L.card,['Trust needs more than being right and on time','Dana needs to see more of Noor’s expertise'],0,
-   'Being right and on time matters, but it is only part of trust. This lesson breaks trust into four parts.',
+   'Being right and on time matters, but it is only part of trust. The book’s authors hear this puzzle a lot: “My client knows I’m credible and reliable, so why no trust?”',
    'Dana already knows Noor is expert. More proof of skill won’t change much. Trust has other parts, and this lesson names them.');}},
-{part:0,src:'Chapter 8 · The Trust Equation',run(L){
+
+{part:0,src:'Chapter 8 · The Trust Equation',
+ solve:async L=>{L.$$('#eqh .tq-t').forEach(b=>b.click());},
+ run(L){
   L.h(L.kick('learn','The trust equation')+'<h1 class="q">Trust has four parts, and one of them divides the rest</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:16px;text-align:center;margin:6px 0 12px"><div style="font-size:22px;font-weight:700;letter-spacing:.5px">T = (C + R + I) ÷ S</div><div class="small" style="margin-top:6px">trustworthiness = (credibility + reliability + intimacy) ÷ self-orientation</div></div>'+
-   L.prose('The book offers the '+L.g('trust-equation','trust equation')+' as a framework for thinking, not a scientific result. Each part covers a different area of life, which the book calls a '+L.g('trust-realms','realm')+':')+
-   L.list([['chat','Credibility · words','Can I believe what you say?'],['check','Reliability · actions','Can I count on what you do?'],['people','Intimacy · emotions','Do I feel safe raising hard things with you?'],['eye','Self-orientation · motives','Whose interests are you really serving?']],1)+
-   L.prose('The first three go up to raise trust. Self-orientation sits underneath, so the more you focus on yourself, the more it drags everything down.'));
-  L.done();}},
+   L.prose('The book offers the '+L.g('trust-equation','trust equation')+' as a framework for thinking, not a scientific result. Tap each part to see the '+L.g('trust-realms','realm')+' it covers.')+
+   '<div id="eqh">'+tqFrac(true,true)+'</div><div id="eqx"></div>');
+  const INFO={c:['Credibility · words','Can I believe what you say?'],r:['Reliability · actions','Can I count on what you do?'],i:['Intimacy · emotions','Do I feel safe raising hard things with you?'],s:['Self-orientation · motives','Whose interests are you really serving?']};
+  const seen=new Set();
+  L.$$('#eqh .tq-t').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(seen.has(k))return;seen.add(k);
+    b.querySelector('span').textContent=TQK.find(x=>x[0]===k)[3];
+    L.$('#eqx').insertAdjacentHTML('beforeend','<div class="tq-bub" style="border-left:4px solid var(--'+TQK.find(x=>x[0]===k)[4]+')"><b>'+INFO[k][0].toUpperCase()+'</b>'+INFO[k][1]+'</div>');
+    if(seen.size===4){L.$('#eqx').insertAdjacentHTML('beforeend',L.note('The top three <b>add up</b>. Self-orientation sits <b>underneath</b> and divides them all. Most professionals focus on credibility and reliability, then wonder why the client still holds back.','scale'));L.done();}});}},
+
+{part:0,src:'Chapter 8 · The Trust Equation',
+ solve:async L=>{tqSlide(L,'c',10);tqSlide(L,'s',4);},
+ run(L){
+  L.h(L.kick('learn','Explore · the trust dial')+'<h1 class="q">Suppose this is how Dana rates Noor today. Which slider moves trust the most?</h1>'+
+   '<p class="small">Scores run 1 to 10, as in the book. Move the top sliders, then self-orientation, and watch the gauge and the “1 higher / 1 lower” hints.</p><div id="dh"></div>');
+  const moved=new Set();let fin=false;
+  tqDial(L.$('#dh'),{c:8,r:8,i:2,s:6},{sliders:true,change(k){moved.add(k);
+    if(!fin&&moved.has('s')&&moved.size>=2){fin=true;
+      L.sheet('info','The bottom slider is the strong one','Each point on top adds just 1 ÷ S to trust: with S at 6, that’s 0.17. Each point off self-orientation divides the whole top line by less, and the gain grows as S falls. Try S from 2 to 1: trust doubles.');L.done();}}});}},
+
+{part:0,src:'Chapter 8 · The Trust Equation',pts:1,
+ solve:async L=>{L.$('#po').children[2].click();L.$('#play').click();},
+ run(L){
+  let p=null;const O=['Credibility 8 → 10','Intimacy 2 → 4','Self-orientation 6 → 4'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Noor can improve one thing by 2 points. Which raises Dana’s trust the most?</h1><div id="po" class="tq-chips"></div><div id="ph"></div>'+
+   '<button class="btn pri" id="play" hidden>'+L.ic('play')+'Play all three</button><div class="tq-res" id="pres"></div>');
+  const d=tqDial(L.$('#ph'),{c:8,r:8,i:2,s:6},{legend:false});
+  O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#play').hidden=false;};L.$('#po').appendChild(b);});
+  const RUN=[['More C',{c:10},'var(--h1)'],['More I',{i:4},'var(--h3)'],['Less S',{s:4},'var(--h4)']];
+  L.$('#play').onclick=function(){this.remove();let j=0;
+    const step=()=>{if(!L.$('#pres')||!L.$('#pres').isConnected)return;
+      if(j===RUN.length){L.award(p===2);
+        L.sheet(p===2?'ok':'no',p===2?'You called it':'Less self-orientation wins','On top, every point is worth the same: 2 more credibility and 2 more intimacy both give 20 ÷ 6 = 3.33. Taking 2 off self-orientation gives 18 ÷ 4 = <b>4.5</b>, because it divides everything. The numbers are a way of thinking, not a measurement.');L.done();return;}
+      const r=RUN[j];d.set({c:8,r:8,i:2,s:6});d.set(r[1],true);const t=d.t();
+      L.$('#pres').insertAdjacentHTML('beforeend','<span><b>'+r[0]+'</b></span><div class="bar"><i style="background:'+r[2]+'"></i></div><span><b>'+tqF(t)+'</b></span>');
+      const bars=L.$$('#pres .bar i');requestAnimationFrame(()=>{bars[bars.length-1].style.width=Math.min(100,t/5*100)+'%';});
+      j++;setTimeout(step,650);};
+    step();};}},
+
 {part:0,src:'Chapter 8 · The Trust Equation',run(L){
   L.h(L.kick('ex','A story from the book')+'<h1 class="q">A world-famous surgeon and two stunned parents</h1>');
   L.beats(L.card,[
-   ['The case','Rob’s three-year-old daughter needed complex surgery. She was sent to a surgeon so famous that a book had been written about his work.'],
-   ['Strong on two parts','On credibility and reliability, few people anywhere could match him.'],
-   ['Weak on one','After six hours of surgery he came out and told the anxious parents that “he” was fine. They had a daughter. He shrugged, corrected himself, called it an interesting case, and walked off.'],
-   ['Did he get away with it?','Yes. He was world-famous, so his skill made up for the rest.'],
-   ['The lesson','You can win trust while weak on one part only if you are truly superb, not just good, on the others. Most of us are not world-famous.']],
-   'To win trust you need to do well on all four parts, in the <i>client’s</i> eyes.');}},
-{part:0,src:'Chapter 8 · The Trust Equation',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Dana thinks: “Noor knows the law, but I suspect Noor mainly wants more billable hours.” Which part of trust is hurting?</h1>');
-  L.mc(L.card,['Credibility, the realm of words','Self-orientation, the realm of motives','Reliability, the realm of actions'],1,
-   'Dana doubts Noor’s motives, not Noor’s knowledge. That is self-orientation, and it pulls the whole equation down.',
-   'Dana trusts Noor’s knowledge and work. The doubt is about <i>why</i> Noor does it: motives, which is self-orientation.');}},
-{part:0,src:'Chapter 8 · The Trust Equation',pts:5,run(L){
-  L.h(L.kick('pr','Which part?')+'<h1 class="q">Five things Corran people say about Larkmoor. Which part of trust does each one touch?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Credibility','Reliability','Intimacy','Self-orient.'],[
-   ['“When Noor says the consultation must last 30 days, I don’t double-check.”',0,'Believing what someone says is credibility, the realm of words.'],
-   ['“If Noor promises a draft by Friday, it arrives by Friday.”',1,'Promises turning into action, again and again, is reliability.'],
-   ['“I could tell Noor that I’m worried Felix will blame me.”',2,'Feeling safe to raise a personal worry about the issue is intimacy.'],
-   ['“Every meeting with Ines turns into a pitch for more work.”',3,'Seeming to be in it for yourself is self-orientation, the realm of motives.'],
-   ['“Noor always sends the papers the day before, the way I like.”',1,'Doing things in the way the client prefers is the emotional side of reliability.']],
-   'Every remark lands in one realm: words, actions, emotions or motives.');}},
-{part:0,src:'Chapter 8 · The Trust Equation',pts:1,
- solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();},
+   ['The case','Rob’s three-year-old daughter needed complex surgery. She was sent to a surgeon so famous that a book had been written about the surgeon’s work.'],
+   ['Superb on two parts','On credibility and reliability, few people anywhere could match this surgeon.'],
+   ['Weak on one','After six hours of surgery, the surgeon came out and told the anxious parents that “he” was fine. Corrected, the surgeon shrugged, called it an interesting case and strolled off.'],
+   ['Did it work?','Yes, barely. World-famous skill made up for the rest.'],
+   ['The rule','You must do well on all four parts, in the client’s eyes, unless you are truly superb, not just good, on the others. Most of us are not world-famous.']],
+   'You’ll put the surgeon on the trust dial later, next to some other extreme cases.');}},
+
+{part:0,src:'Chapter 8 · The Trust Equation',pts:6,
+ solve:async L=>{for(let j=0;j<TQ_TAG.length;j++){L.$('#th .tq-t.'+TQ_TAG[j][1]).click();const n=L.$('#tgn');if(n)n.click();}},
  run(L){
-  let p=null;const O=['Raise credibility from 8 to 10','Cut self-orientation from 6 to 4'];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Dana rates Noor: credibility 8, reliability 8, intimacy 2, self-orientation 6. Noor can improve one thing by 2 points. Which raises trust more?</h1><div id="po"></div>'+
-   '<div id="rc" hidden><button class="btn pri" id="run" style="margin-top:8px">'+L.ic('play')+'Work it out</button>'+
-   '<div class="meterrow"><div class="lb">Today</div><div class="meter"><div id="m0" style="background:var(--h3)"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">More C</div><div class="meter"><div id="m1" style="background:var(--h2)"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">Less S</div><div class="meter"><div id="m2" style="background:var(--ok-strong)"></div></div></div><div class="small" id="sum"></div></div>');
-  O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#rc').hidden=false;};L.$('#po').appendChild(b);});
-  L.$('#run').onclick=function(){this.remove();const V=[3,20/6,4.5];
-    V.forEach((v,j)=>{const el=L.$('#m'+j);if(el)el.style.width=Math.round(v/5*100)+'%';});
-    L.$('#sum').innerHTML='Today: 18 ÷ 6 = <b>3.0</b> · More credibility: 20 ÷ 6 = <b>3.3</b> · Less self-orientation: 18 ÷ 4 = <b>4.5</b>';
-    L.award(p===1);
-    L.sheet(p===1?'ok':'no',p===1?'You called it':'Less self-orientation wins','Self-orientation divides everything else, so lowering it lifts the whole score. Noor is already strong on credibility; more of it adds little. Remember the numbers are only a way of thinking, not a measurement.');L.done();};}},
+  L.h(L.kick('pr','Which part moves?')+'<h1 class="q">Things happen at Corran. Tap the part of the equation each one moves, and watch Dana’s trust.</h1>'+
+   '<div id="tc"></div><div id="th"></div><div id="tf"></div>');
+  let j=0,ans=false,n=0;
+  const d=tqDial(L.$('#th'),{c:8,r:8,i:2,s:6},{legend:false,cp:true,fracFirst:true,tap(k,b){if(ans)return;ans=true;const it=TQ_TAG[j],ok=k===it[1];n+=ok?1:0;L.award(ok);
+    b.classList.add(ok?'hit':'miss');if(!ok)L.$('#th .tq-t.'+it[1]).classList.add('hit');
+    const before=d.t(),nv={};nv[it[1]]=d.v[it[1]]+it[2];d.set(nv,true);const after=d.t();
+    const last=j===TQ_TAG.length-1;
+    L.fb(L.$('#tf'),(ok?'<b>Yes.</b> ':'<b>It moves '+TQN[it[1]]+'.</b> ')+it[3]+' Trust '+tqF(before)+' → <b>'+tqF(after)+'</b>.',ok?'ok':'no');
+    if(!last)L.$('#tf').insertAdjacentHTML('beforeend','<button class="btn pri" id="tgn" style="margin-top:10px">'+L.ic('arrow')+'Next</button>');
+    if(!last)L.$('#tgn').onclick=()=>{j++;show();};
+    else{L.sheet(n===TQ_TAG.length?'ok':'info',n+' of '+TQ_TAG.length+' right','Look at the jumps: each self-orientation point moved trust about three times as far as a point on top. Every remark lands in one realm: words, actions, emotions or motives.');L.done();}}});
+  function show(){ans=false;L.$('#tf').innerHTML='';L.$$('#th .tq-t').forEach(t=>t.classList.remove('hit','miss'));
+    L.$('#tc').innerHTML='<div class="tq-bub"><b>'+(j+1)+' OF '+TQ_TAG.length+'</b>'+TQ_TAG[j][0]+'</div>';}
+  show();}},
 
 /* ---------- PART 2: WORDS AND ACTIONS ---------- */
 {part:1,src:'Chapter 8 · Credibility',run(L){
   L.h(L.kick('learn','Credibility')+'<h1 class="q">The part most professionals already do well</h1>'+
-   L.prose('Credibility is the part of trust that is achieved most often, because professionals focus on their expertise. That also means your competitors probably do it well too.')+
-   L.prose('It is not just knowing your subject. It is expertise plus <b>presence</b>: how you look, act, react and talk about your subject. And it has two sides:')+
-   L.lanes([['check','Accuracy','Mostly rational. Clients check facts, logic and references. If you are accurate, they call you <b>believable</b>. This is judged fairly fast.',2],
-            ['eye','Completeness','Mostly emotional. Are you telling the whole story? If so, they call you <b>honest</b>. This takes longer to judge.',3]]));
+   L.prose('Credibility is the part of trust achieved most often, because professionals focus on their expertise. So your competitors probably do it well too.')+
+   L.prose('It is expertise plus <b>presence</b>: how you look, act, react and talk about your subject. It has two sides:')+
+   L.lanes([['check','Accuracy','Mostly rational. Clients check facts, logic and references. Accurate people seem <b>believable</b>. Judged fairly fast.',2],
+            ['eye','Completeness','Mostly emotional. Are you telling the whole story? Then you seem <b>honest</b>. This takes longer to judge.',3]]));
   L.done();}},
 {part:1,src:'Chapter 8 · Credibility',run(L){
   L.h(L.kick('learn','The side we neglect')+'<h1 class="q">Sellers lead with logic; buyers decide with feelings</h1>'+
-   L.prose('Most professionals sell on technical skill, but most clients buy on emotion. So we polish our facts and list our credentials, and neglect the emotional side: showing we are honest and leaving nothing out.')+
-   L.prose('The best professionals do two things here: they <b>anticipate needs</b>, and they <b>speak about needs the client hasn’t said out loud</b>. They offer the insight gently, not as a claim.')+
-   L.note('A gentle way in: “In your seat, I’d probably be asking myself about X. Is that on your mind at all?”','chat')+
-   L.list([['Never exaggerate','Not even a little. Avoid lines that sound like spin, such as promising your “top team”.'],
+   L.prose('Most professionals sell on technical skill, but most clients buy on emotion. So we polish facts and list credentials, and neglect the honest side.')+
+   L.prose('The best do two things: they <b>anticipate needs</b>, and they <b>name needs the client hasn’t said</b>, offered gently, not asserted.')+
+   L.list([['Never exaggerate','Not even a little. Avoid lines that sound like spin, such as promising your “best people”.'],
            ['Say “I don’t know”','Quickly and directly, when you don’t.'],
            ['Don’t show off','Clients already assume you know your subject. They rarely want to test you.']],2));
   L.done();}},
-{part:1,src:'Chapter 8 · Credibility',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Noor meets Dana about the site closures, twice</h1>');
-  L.beats(L.card,[
-   ['Take one','Noor opens with Larkmoor’s record: “We’ve handled dozens of closures. Our top team will be on yours.” Dana nods politely and asks for the paperwork.'],
-   ['What went wrong','All rational credibility. “Our top team” even sounds like spin: who are the others?'],
-   ['Take two','Noor did homework first: the rival bakery in town that closed last year. Noor asks how staff and the town reacted to it.'],
-   ['The unspoken need','Then gently: “In your seat, I’d probably be asking how Felix will judge this if it goes badly. Is that on your mind at all?”'],
-   ['A hard question','Dana asks whether a part-time baker counts toward the numbers. Noor isn’t sure: “I don’t know. I’ll check and tell you by tomorrow.”']],
-   'Take two builds the emotional side of credibility: anticipating needs, naming the unsaid, and an honest “I don’t know”.');}},
-{part:1,src:'Chapter 8 · Credibility',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ines is asked a question about overseas hiring rules and isn’t sure of the answer. What helps credibility most?</h1>');
-  L.mc(L.card,['Give a confident guess so as not to look weak','Change the subject to an area Ines knows well','Say plainly that they don’t know, and offer to find out'],2,
-   'The book is direct: when you don’t know, say so, quickly. It also makes you sound honest about the rest.',
-   'Guessing or dodging risks being caught out, and clients notice. Saying “I don’t know” quickly builds the honest side of credibility.');}},
+{part:1,src:'Chapter 8 · Credibility',pts:1,
+ solve:async L=>{TQ_SLOTS.forEach((s,j)=>L.$('#sl'+j).children[s.best].click());L.$('#ochk').click();},
+ run(L){
+  L.h(L.kick('pr','Build Noor’s words')+'<h1 class="q">Noor’s first call with Dana about the closures. Pick each line and watch how Dana reads Noor.</h1>'+
+   '<div class="tq-sticky"><div class="small" style="font-weight:600">How Dana reads Noor</div><div class="tq-meter"><span>Believable<br><small class="small">accuracy</small></span><div class="bar"><i id="mb" style="background:var(--h2)"></i></div><b id="mbv"></b></div>'+
+   '<div class="tq-meter"><span>Honest<br><small class="small">completeness</small></span><div class="bar"><i id="mh" style="background:var(--h3)"></i></div><b id="mhv"></b></div></div>'+
+   '<div id="slots"></div><div class="tq-bub me" id="say"><b>NOOR SAYS</b><span></span></div>'+
+   '<button class="btn pri" id="ochk" disabled style="margin-top:8px">'+L.ic('check')+'Check with Dana</button><div id="of"></div>');
+  const pick=TQ_SLOTS.map(()=>null);let first=true,doneS=false;
+  TQ_SLOTS.forEach((s,j)=>{L.$('#slots').insertAdjacentHTML('beforeend','<div class="tq-slot">'+s.lab.toUpperCase()+'</div><div id="sl'+j+'"></div>');
+    s.opts.forEach((o,q)=>{const b=document.createElement('button');b.className='chip';b.textContent=o[0];b.onclick=()=>{if(doneS)return;pick[j]=q;[...L.$('#sl'+j).children].forEach((x,z)=>x.classList.toggle('sel',z===q));draw();};L.$('#sl'+j).appendChild(b);});});
+  function draw(){let b=2,h=2;pick.forEach((q,j)=>{if(q===null)return;const e=TQ_SLOTS[j].opts[q][1];b+=e.b||0;h+=e.h||0;});
+    b=Math.max(0,Math.min(5,b));h=Math.max(0,Math.min(5,h));
+    L.$('#mb').style.width=b*20+'%';L.$('#mh').style.width=h*20+'%';L.$('#mbv').textContent=b+'/5';L.$('#mhv').textContent=h+'/5';
+    L.$('#say span').innerHTML=pick.map((q,j)=>q===null?'…':TQ_SLOTS[j].opts[q][0]).join(' ');
+    L.$('#ochk').disabled=pick.includes(null);}
+  draw();
+  L.$('#ochk').onclick=()=>{const ok=pick.every((q,j)=>q===TQ_SLOTS[j].best);L.$('#of').innerHTML='';
+    const notes=pick.map((q,j)=>'<li>'+(q===TQ_SLOTS[j].best?'✓ ':'✗ ')+TQ_SLOTS[j].opts[q][2]+'</li>').join('');
+    if(first){L.award(ok);first=false;}
+    if(ok){doneS=true;L.$('#ochk').disabled=true;L.sheet('ok','Believable and honest','<ul style="margin:4px 0 0;padding-left:18px">'+notes+'</ul>');L.done();}
+    else L.fb(L.$('#of'),'<b>Dana isn’t convinced yet.</b><ul style="margin:6px 0 0;padding-left:18px">'+notes+'</ul>Change the ✗ lines and check again.','no');};}},
 {part:1,src:'Chapter 8 · Reliability',run(L){
   L.h(L.kick('learn','Reliability')+'<h1 class="q">The only part of trust that is about action</h1>'+
-   L.prose('Reliability is whether clients can count on you to behave consistently. It depends on <b>how often</b> they have dealt with you: five dealings in six months tell them more than one dealing a year ago. Reports from other clients can stand in for a while, but the client’s own experience soon replaces them.')+
-   L.lanes([['check','Rational side','Promises turning into actions, again and again. On time, to the standard agreed, calls returned, meetings kept.',2],
+   L.prose('Reliability links words and deeds. It depends on <b>how often</b> clients deal with you: five dealings in six months say more than one dealing a year ago. Other clients’ reports can stand in, but only until the client’s own experience replaces them.')+
+   L.lanes([['check','Rational side','Promises turning into actions, again and again. On time, on spec, calls returned, meetings kept.',2],
             ['people','Emotional side','Expectations met, again and again. Things done the way the client likes: their terms, formats, hours and habits.',3]])+
-   L.note('Consistency alone is not enough. It has to be consistent with the <b>client’s</b> preferences, not just yours. The book thinks the emotional side offers the most room to improve.','info'));
+   L.note('Consistency alone isn’t enough. It must fit the <b>client’s</b> preferences, not just yours. The book sees the biggest room to improve on the emotional side.','info'));
   L.done();}},
 {part:1,src:'Chapter 8 · Reliability',pts:6,run(L){
   L.h('<div id="qk"></div>');
@@ -129,103 +324,158 @@ Course.lesson({
    ['Corran says “colleagues”, never “staff”. Noor’s letters use “colleagues” too.',1,'Using the client’s own terms fits how they like things done.'],
    ['Dana prefers short calls before 9 am, so Noor schedules them then.',1,'Matching the client’s hours and habits is emotional reliability.'],
    ['Noor said they would call back within the hour, and does.',0,'A small promise kept builds the rational side.'],
-   ['Noor formats the board summary the way Corran’s board papers always look.',1,'Familiar format, chosen for the client’s comfort.'],
-   ['Ines delivers the research memo on the agreed date, to the agreed scope.',0,'On time and to the agreed standard: promises linked to action.']]);}},
+   ['Noor formats the board summary the way Corran’s board papers always look.',1,'A familiar format, chosen for the client’s comfort.'],
+   ['Ines delivers the research memo on the agreed date, to the agreed scope.',0,'On time and on spec: promises linked to action.']]);}},
 {part:1,src:'Chapter 8 · Reliability',pts:1,run(L){
   L.h(L.kick('pr','A slipping deadline')+'<h1 class="q">On Tuesday, Ines realizes the consultation memo promised to Dana for Friday will be three days late. What should Ines do?</h1>');
-  L.mc(L.card,['Tell Dana today and give a new date','Work all weekend and hope Dana won’t mind','Wait until Friday in case it gets done after all'],0,
+  L.mc(L.card,['Work all weekend and hope Dana won’t mind','Tell Dana today and give a new date','Wait until Friday in case it gets done after all'],1,
    'The book says to announce a change to a committed date as soon as it changes. Surprises damage reliability more than honest delays.',
    'Hoping or waiting turns a delay into a surprise. The book’s rule: tell the client about a changed date the moment it changes.');}},
 
 /* ---------- PART 3: FEELINGS AND MOTIVES ---------- */
 {part:2,src:'Chapter 8 · Intimacy',run(L){
   L.h(L.kick('learn','Intimacy')+'<h1 class="q">The most common way trust fails</h1>'+
-   L.prose('Credibility and reliability are common. Intimacy and low self-orientation are rare, so they are what really set advisors apart. And the most common failure is a <b>lack of intimacy</b>: some professionals keep a cool distance on purpose.')+
-   L.prose('In the book’s sense, '+L.g('intimacy','intimacy')+' does not mean sharing private lives. It means emotional closeness about the <b>issue at hand</b>. The more intimacy, the fewer topics are off-limits.')+
-   L.note('Business is personal. Hiring, firing, reorganizing and closing sites affect many lives and go well beyond logic. That is Noor’s daily work.','people')+
+   L.prose('Credibility and reliability are common. Intimacy and low self-orientation are rare, so they are what set advisors apart. The most common failure is a <b>lack of intimacy</b>: some professionals keep a cool distance on purpose.')+
+   L.prose(L.g('intimacy','Intimacy')+' here doesn’t mean sharing private lives. It means emotional closeness about the <b>issue at hand</b>. The more intimacy, the fewer topics are off-limits.')+
+   L.note('Business is personal. Hiring, firing, reorganizing and closing sites touch many lives and go well beyond logic. That is Noor’s daily work.','people')+
    L.quote('Intimacy is more about who we are than any other aspect of trust.','Maister, Green and Galford, chapter 8'));
   L.done();}},
 {part:2,src:'Chapter 8 · Intimacy',run(L){
-  L.h(L.kick('learn','A dance of rising risk')+'<h1 class="q">One person offers a little; the other responds, or doesn’t</h1>'+
-   L.flow([['pointer','You offer','Share a bit of what you see, think or feel'],['people','They respond','Intimacy deepens'],['shield','Or they decline','Notice the line and respect it']])+
+  L.h(L.kick('learn','A dance of rising risk')+'<h1 class="q">One person offers a little; the other responds, or draws a line</h1>'+
+   L.flow([['pointer','You offer','A bit of what you see, think or feel'],['people','They respond','Intimacy deepens'],['shield','Or decline','Notice the line, respect it']])+
    L.list([['You go first','Waiting for the client to open up is a useless debate. You only control your own moves.'],
-           ['Leave a way out','Ask in a way that lets the client decline without losing face. Right topic, right time, right words.'],
+           ['Leave a way out','Ask so the client can decline without losing face. Right topic, right time, right words.'],
            ['Practice the words','You can’t rehearse spontaneity, but you can write two or three ways to ask a hard question.'],
-           ['Don’t overrate the risk','Often what is at risk is your comfort, not the business.']],3)+
-   '<p class="small" style="margin-top:10px">Too much, too soon backfires. But intimacy need not take the longest: done well, it can be the part that depends least on time.</p>');
+           ['Don’t overrate the risk','Often what’s at risk is your comfort, not the business.']],3)+
+   '<p class="small" style="margin-top:10px">Too much, too soon backfires. But done well, intimacy is the part that depends least on time.</p>');
   L.done();}},
-{part:2,src:'Chapter 8 · Intimacy',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Noor takes the first small risk with Dana</h1>');
-  L.beats(L.card,[
-   ['The moment','The closure plan is drafted. Dana seems tense and keeps checking their phone.'],
-   ['Noor offers something','“I’ll be honest, closures are the part of my job I find hardest. Sixty people is a lot. How is this landing for you, if you want to say? Happy to stick to the paperwork if not.”'],
-   ['The way out','The last line gives Dana an easy, face-saving way to decline.'],
-   ['Dana responds','Dana admits feeling exposed: Gail is resisting, and Felix will look for someone to blame if it goes wrong.'],
-   ['What Noor does','Noor doesn’t try to fix the feeling. Noor acknowledges it is hard and lets Dana keep talking. The real issues are now on the table.']],
-   'The book tells a similar story: Rob simply let a sidelined executive vent and acknowledged the discomfort. You don’t have to solve the client’s emotions, only make it safe to show them.');}},
-{part:2,src:'Chapter 8 · Intimacy',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Noor wants to ask Dana about tension with Gail. Which question best fits the book’s advice?</h1>');
-  L.mc(L.card,['“How is it really going with Gail? Tell me everything.”','“So, what’s the problem between you and Gail?”','“Gail may be a factor here. Is that worth discussing, or not today?”'],2,
-   'It raises the topic and gives Dana an easy way not to answer. That makes the risk safe for both sides.',
-   'That pushes Dana to answer with no face-saving way out. The book says to give the client an easy way to decline.');}},
+{part:2,src:'Chapter 8 · Intimacy',pts:1,
+ solve:async L=>{for(let j=0;j<TQ_RING.length;j++){const q=TQ_RING[j].opts.findIndex(o=>o[1]==='in');L.$('#rop').children[q].click();const n=L.$('#rnx');if(n)n.click();}},
+ run(L){
+  L.h(L.kick('pr','The dance with Dana')+'<h1 class="q">Help Noor reach the topic Dana is really worried about, one ring at a time.</h1>'+
+   '<svg id="rg" viewBox="0 0 310 170" style="width:100%;max-width:320px;display:block;margin:0 auto" role="img" aria-label="Rings of topics, from the paperwork outside to Dana’s fear at the center"></svg>'+
+   '<p class="small" id="rst" style="text-align:center;margin:2px 0 4px"></p><div id="rsay"></div><div id="rop"></div><div id="rfb"></div>');
+  const R=[150,116,82,44];let depth=0,step=0,clean=true,line=-1,over=false;
+  function drawRings(){let s='';R.forEach((r,j)=>{const open=j<=depth,ln=j===line;
+      s+='<path d="M'+(155-r)+' 162 A'+r+' '+r+' 0 0 1 '+(155+r)+' 162 Z" fill="var('+(open?'--h3-bg':'--soft')+')" stroke="var('+(ln?'--no-strong':open?'--h3':'--line2')+')" stroke-width="'+(ln?3:1.5)+'"'+(ln?' stroke-dasharray="6 5"':'')+'/>';});
+    R.forEach((r,j)=>{const open=j<=depth,col=open?'var(--h3)':'var(--muted)';
+      if(j<3){const y=162-R[j+1]-7;s+='<text x="155" y="'+y+'" text-anchor="middle" font-size="12" font-weight="'+(open?700:500)+'" fill="'+col+'">'+TQ_RINGLAB[j]+'</text>';}
+      else s+='<text x="155" y="141" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+col+'">Dana’s</text><text x="155" y="155" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+col+'">fear</text>';});
+    L.$('#rg').innerHTML=s;
+    L.$('#rst').textContent='Open topics: '+(depth+1)+' of 4'+(line>=0?' · Dana drew a line':'');}
+  function show(){line=-1;drawRings();const st=TQ_RING[step];
+    L.$('#rsay').innerHTML='<div class="tq-bub"><b>DANA</b>'+st.say+'</div>';L.$('#rop').innerHTML='';L.$('#rfb').innerHTML='';
+    st.opts.forEach((o,q)=>{const b=document.createElement('button');b.className='opt';b.textContent=o[0];b.onclick=()=>pick(q,b);L.$('#rop').appendChild(b);});}
+  function pick(q,b){if(over||b.getAttribute('aria-disabled'))return;const o=TQ_RING[step].opts[q];L.$('#rfb').innerHTML='';
+    if(o[1]==='in'){depth++;line=-1;b.classList.add('ok');drawRings();
+      if(step===TQ_RING.length-1){over=true;L.award(clean);
+        L.sheet(clean?'ok':'info',clean?'All four rings open':'You got there','<div style="margin-bottom:6px">'+o[2]+'</div>Each ring opened only after Noor took a small risk <i>and</i> left Dana a way out. You don’t have to solve the client’s emotions, only make it safe to show them. In the book, Rob simply let a sidelined executive vent and named the discomfort; that was enough.');L.done();return;}
+      L.fb(L.$('#rfb'),o[2],'ok');const nx=document.createElement('button');nx.className='btn pri';nx.style.marginTop='10px';nx.innerHTML=L.ic('arrow')+'Next moment';nx.id='rnx';
+      nx.onclick=()=>{step++;show();};L.$('#rfb').appendChild(nx);[...L.$('#rop').children].forEach(x=>x.setAttribute('aria-disabled','true'));}
+    else{clean=false;b.classList.add('no');b.setAttribute('aria-disabled','true');if(o[1]==='far'){line=depth+1;drawRings();}
+      L.fb(L.$('#rfb'),o[2]+' Try another move.','no');}}
+  show();}},
 {part:2,src:'Chapter 8 · Self-Orientation',run(L){
   L.h(L.kick('learn','Self-orientation')+'<h1 class="q">Nothing destroys trust faster than seeming to serve yourself</h1>'+
-   L.prose('The obvious form is greed: being in it for the money. But '+L.g('self-orientation','self-orientation')+' is broader. It is <b>anything</b> that keeps your focus on you instead of the client.')+
-   L.tiers([['alert','What drives it','Selfishness, self-consciousness, wanting to look clever or on top of things, a long to-do list, wanting to win, to be right, to be seen to add value, fear of not knowing.'],
-            ['eye','How clients spot it','Relating their stories to yourself, finishing their sentences, filling silences, dodging direct questions, name-dropping, reciting credentials, answering too fast, wanting the last word.'],
-            ['check','How to show it’s low','Let the client fill silences, ask open questions, define the problem before guessing the answer, summarize what you heard, say “I don’t know”, take responsibility when communication fails.','',true]]));
+   L.prose('The obvious form is greed. But '+L.g('self-orientation','self-orientation')+' is <b>anything</b> that keeps your focus on you instead of the client.')+
+   L.tiers([['alert','What drives it','Self-consciousness, wanting to look clever or on top of things, a long to-do list, wanting to win, to be right, to be seen adding value, fear of not knowing.'],
+            ['eye','How clients spot it','Relating their stories to yourself, finishing their sentences, filling silences, dodging direct questions, name-dropping, reciting credentials, answering too fast.'],
+            ['check','How to show it’s low','Let the client fill silences, ask what’s behind an issue, define the problem before guessing the answer, summarize what you heard, say “I don’t know”, take the blame when communication fails.','',true]]));
   L.done();}},
-{part:2,src:'Chapter 8 · Self-Orientation',pts:6,run(L){
-  L.h(L.kick('pr','High or low?')+'<h1 class="q">Sort what Noor and Ines do in meetings with Corran.</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Shows high self-orientation','Shows low self-orientation'],[
-   ['Dana pauses to think. Ines quickly fills the silence with another point.',0,'Filling empty space puts the focus on Ines. Let the client fill it.'],
-   ['Noor asks: “What’s behind the timing of these closures?”',1,'An open question about what lies behind an issue keeps the focus on the client.'],
-   ['Ines mentions two big-name clients Larkmoor works for.',0,'Name-dropping is a classic sign of self-orientation.'],
-   ['Noor sums up: “So the real worry is the town’s reaction, not the law?”',1,'Reflective listening checks you heard what was meant.'],
-   ['Ten minutes in, Noor proposes the solution before Dana finishes explaining.',0,'Answering too fast, before hearing the client’s view of the problem, is a sign of self-orientation.'],
-   ['After a mix-up, Noor says: “I wasn’t clear enough, that’s on me.”',1,'Taking most of the responsibility for failed communication shows low self-orientation.']],
-   'Signs of high self-orientation are about <i>you</i>: looking clever, being quick, being impressive. Low self-orientation keeps the spotlight on the client.');}},
+{part:2,src:'Chapter 8 · Self-Orientation',pts:1,
+ solve:async L=>{L.$$('#tk button.tq-ln').forEach(b=>{if(b.dataset.bad==='1')b.click();});L.$('#tkc').click();},
+ run(L){
+  L.h(L.kick('pr','Spot it live')+'<h1 class="q">Five minutes of a Corran meeting. Tap every Larkmoor line that shows high self-orientation.</h1><div id="tk"></div>'+
+   '<button class="btn pri" id="tkc" style="margin-top:6px">'+L.ic('eye')+'Check</button><div id="tkf"></div>');
+  let first=true,fin=false;
+  TQ_TALK.forEach((t,j)=>{const isD=t[0]==='Dana';const el=document.createElement(isD?'div':'button');el.className='tq-ln'+(isD?' dana':'');el.style.animationDelay=(j*0.12)+'s';
+    el.innerHTML='<b>'+t[0].toUpperCase()+'</b>'+t[1];if(!isD){el.dataset.bad=String(t[2]);el.setAttribute('aria-pressed','false');
+      el.onclick=()=>{if(fin)return;const on=el.classList.toggle('pick');el.setAttribute('aria-pressed',String(on));};}
+    L.$('#tk').appendChild(el);});
+  L.$('#tkc').onclick=()=>{const btns=L.$$('#tk button.tq-ln');const ok=btns.every(b=>b.classList.contains('pick')===(b.dataset.bad==='1'));
+    const found=btns.filter(b=>b.dataset.bad==='1'&&b.classList.contains('pick')).length,wrong=btns.filter(b=>b.dataset.bad==='0'&&b.classList.contains('pick')).length;
+    if(first){L.award(ok);first=false;}
+    L.$('#tkf').innerHTML='';
+    if(ok){fin=true;L.$('#tkc').remove();
+      btns.forEach((b,q)=>{const t=TQ_TALK.filter(x=>x[0]!=='Dana')[q];b.insertAdjacentHTML('beforeend','<span class="tag" style="color:var('+(t[2]?'--no':'--ok')+')">'+(t[2]?'✗ ':'✓ ')+t[3]+'</span>');});
+      L.sheet('ok','Four signs in five minutes','Each one tells Dana the meeting is about Larkmoor, not Corran. Notice that Noor did some of them too: self-orientation isn’t greed, it’s anything that pulls the focus onto you.');L.done();}
+    else L.fb(L.$('#tkf'),'Not yet: you found '+found+' of 4 signs'+(wrong?', and marked '+wrong+' line'+(wrong>1?'s':'')+' that actually keep the focus on Dana':'')+'. Look for finishing sentences, relating it to yourself, name-dropping and answering too fast.','no');};}},
 {part:2,src:'Chapter 8 · Self-Orientation',pts:1,run(L){
   L.h(L.kick('pr','Build the reply')+'<h1 class="q">Felix interrupts five minutes in: “Just tell me what to do.” Tap each part until Noor’s reply keeps self-orientation low.</h1>');
   L.sentence(L.card,[['Simple:','I will,'],['as soon as I understand','close two shops and'],['the rest is detail.','what success looks like for you.']],[1,0,1],
    [['Jumping straight in skips understanding the problem.'],['That gives the answer before hearing the client. The book says to resist, with confidence, an early invitation to solve.'],['“The rest is detail” waves away the client’s concerns.']],
    'Noor stays confident but stays in the listening and problem-defining phase, trusting that they can add value <i>after</i> listening.');}},
 
-/* ---------- PART 4: THE ECONOMICS ---------- */
+/* ---------- PART 4: LIMITS AND PAYOFF ---------- */
 {part:3,src:'Chapter 8 · Trust and Relationship Economics',run(L){
   L.h(L.kick('learn','Trust pays')+'<h1 class="q">Why new clients cost so much more</h1>'+
-   L.prose('The book gives sample scores out of 10 for a new client and a reasonably good existing one. Your own guesses may differ; the point is the pattern.')+
+   L.prose('The book gives sample scores out of 10 for a new client and a reasonably good existing one. Substitute your own guesses; the pattern is the point.')+
    L.lanes([['person','New client','C 5 (reputation) · R 3 (no track record) · I 2 (takes time) · S 8<br><b>(5+3+2) ÷ 8 = 1.25</b>',4],
             ['people','Existing client','C 7 · R 8 · I 5 · S 4<br><b>(7+8+5) ÷ 4 = 5</b>',2]])+
-   L.prose('Why is self-orientation 8 for a new client? Past experience teaches clients to assume a professional is mostly looking after their own interests. Low self-orientation is rarely assumed at the start.')+
-   L.note('The ratio here is 4. The authors find that winning new-client business costs 4 to 7 times as much as winning the same business from an existing client. High-retention relationships are high-trust relationships.','trend'));
+   L.note('A ratio of 4. The authors find that winning business from a new client costs 4 to 7 times as much as winning the same business from an existing one. High-retention relationships are high-trust relationships.','trend'));
   L.done();}},
 {part:3,src:'Chapter 8 · Trust and Relationship Economics',run(L){
   L.h(L.kick('ex','Meet a new client')+'<h1 class="q">Brightwell Clinics, and a COO who is slow to trust</h1>');
   L.beats(L.card,[
    ['The prospect','Brightwell Clinics, a fast-growing chain of physiotherapy clinics, is choosing a new employment law firm. Its last firm sent surprise bills and generic advice.'],
    ['The person','Sasha Moreno, Brightwell’s COO, is comparing Larkmoor with two other firms. Sasha is cautious and analytical, and wants proof before opening up.'],
-   ['Tomasz’s estimate','Tomasz guesses Sasha’s view of Larkmoor: credibility 5 from reputation, reliability 3, intimacy 2, and self-orientation 8, because the last firm burned them.'],
-   ['The score','(5 + 3 + 2) ÷ 8 = 1.25. Dana at Corran, after six years, is far higher.'],
+   ['Tomasz’s estimate','Credibility 5 from reputation, reliability 3, intimacy 2, and self-orientation 8, because the last firm burned them. (5 + 3 + 2) ÷ 8 = 1.25.'],
    ['Tomasz’s point','“Winning Brightwell will take far more effort than growing Corran. Both matter, but let’s not neglect Dana while we chase Sasha.”']],
-   'The same firm, the same skills, very different trust. A new client starts low mainly because they assume you are in it for yourself.');}},
+   'Same firm, same skills, very different trust. A new client starts low mainly because they assume you’re in it for yourself.');}},
+{part:3,src:'Chapter 8 · The Trust Equation',
+ solve:async L=>{const c=L.$('#pre').children;for(let j=0;j<4;j++)c[j].click();},
+ run(L){
+  L.h(L.kick('learn','Edge cases · where the equation breaks')+'<h1 class="q">Load the extreme cases. Tap at least four.</h1><div id="pre" class="tq-chips sm"></div><div id="pcap"></div><div id="peh"></div>');
+  const tried=new Set();
+  const d=tqDial(L.$('#peh'),{c:5,r:5,i:5,s:5},{sliders:true,cp:true,legend:false});
+  d.el.insertBefore(L.$('#pcap'),d.el.querySelector('.tq-sl'));
+  TQ_PRESETS.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];
+    b.onclick=()=>{L.$$('#pre .chip').forEach(x=>x.classList.remove('sel'));b.classList.add('sel');d.set(p[1],true);
+      L.$('#pcap').innerHTML='<div class="fb info" style="margin:4px 0 6px">'+p[2]+'</div>';tried.add(j);
+      if(tried.size===4){L.sheet('info','Three limits to remember','<b>1.</b> The top line is a sum, so a strength can hide a weak part on paper. The book asks for all four. <b>2.</b> Only the <i>client’s</i> view counts, not your own rating. <b>3.</b> It’s a framework, not a measurement: use it to ask “which part is weak?”, not to compute trust.');L.done();}};
+    L.$('#pre').appendChild(b);});}},
+{part:3,src:'Chapter 8 · Trust and Relationship Economics',pts:1,
+ solve:async L=>{tqSlide(L,'s',4);L.$('#cchk').click();},
+ run(L){
+  const base={c:5,r:3,i:2,s:8};
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Double Sasha’s trust, from 1.25 to 2.5 or more, by changing just one slider.</h1>'+
+   '<p class="small">Moving a second slider puts the first one back to Tomasz’s estimate.</p><div id="ch"></div><p class="small" id="cst"></p>'+
+   '<button class="btn pri" id="cchk">'+L.ic('target')+'Check</button><div id="cf"></div>');
+  let first=true,fin=false;
+  const d=tqDial(L.$('#ch'),base,{sliders:true,change(k){const nv={};TQK.forEach(K=>{if(K[0]!==k)nv[K[0]]=base[K[0]];});d.set(nv);stat();}});
+  function stat(){const ch=TQK.filter(K=>d.v[K[0]]!==base[K[0]]).map(K=>K[2].toLowerCase());L.$('#cst').textContent='Changed: '+(ch.length?ch.join(', '):'nothing yet')+' · trust '+tqF(d.t());}
+  stat();
+  L.$('#cchk').onclick=()=>{if(fin)return;const t=d.t(),ok=t>=2.5-1e-9;if(first){L.award(ok);first=false;}L.$('#cf').innerHTML='';
+    if(ok){fin=true;L.sheet('ok','Only self-orientation can do it','Even credibility at a perfect 10 gives (10 + 3 + 2) ÷ 8 = 1.9. Self-orientation at 4 gives 10 ÷ 4 = <b>2.5</b>. That’s why new clients are so costly: they start out assuming you’re mainly in it for yourself, and only showing otherwise moves them far.');L.done();}
+    else L.fb(L.$('#cf'),'Trust is '+tqF(t)+'. Push a top slider all the way to 10 and see how far it gets you, then try the one underneath.','no');};}},
 {part:3,src:'Chapter 8 · Trust and Relationship Economics',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In the book’s numbers, which part of trust most holds a new client’s score down?</h1>');
-  L.mc(L.card,['Low credibility, since nobody knows your work yet','High self-orientation, which clients assume at the start'],1,
-   'Self-orientation 8 divides the whole top line. Clients start by assuming you are mainly looking after yourself.',
-   'Credibility starts at a middling 5, from reputation. The big drag is self-orientation at 8, which divides everything else.');}},
-{part:3,src:'Chapter 8 · Trust and Relationship Economics',pts:1,run(L){
-  L.h(L.kick('pr','First meeting')+'<h1 class="q">Noor gets a first meeting with Sasha. Given where Sasha’s trust starts, what should Noor focus on?</h1>');
-  L.mc(L.card,['A full list of Larkmoor’s awards and big-name clients','Asking about Brightwell’s problems before offering answers','A firm proposal and price before the meeting ends'],1,
+  L.h(L.kick('pr','First meeting')+'<h1 class="q">Noor will meet Sasha for the first time. Given where Sasha’s trust starts, what should Noor focus on?</h1>');
+  L.mc(L.card,['A full list of Larkmoor’s awards and big-name clients','A firm proposal and price before the meeting ends','Asking about Brightwell’s problems before offering answers'],2,
    'Sasha’s biggest doubt is Larkmoor’s motives. Keeping the focus on Brightwell’s problems is how Noor shows low self-orientation.',
    'Credentials and name-dropping are signs of self-orientation, and rushing to a proposal says “I want the deal”. Sasha already assumes that. Focus on Brightwell instead.');}},
+{part:3,src:'Chapter 8',pts:4,
+ solve:async L=>{for(let j=0;j<TQ_MEET.length;j++){const q=TQ_MEET[j].opts.findIndex(o=>o[4]===1);L.$('#mop').children[q].click();const n=L.$('#mnx');if(n)n.click();}},
+ run(L){
+  L.h(L.kick('pr','Final challenge · a call with Dana')+'<h1 class="q">Four moments in one call. Each choice moves a part of the equation. Can Noor end at 5 or higher?</h1>'+
+   '<div id="mctx"></div><div id="mop"></div><div id="mh"></div><div id="mfb"></div>');
+  const d=tqDial(L.$('#mh'),{c:8,r:8,i:2,s:6},{cp:true});let j=0,ans=false,n=0;
+  function show(){ans=false;const m=TQ_MEET[j];L.$('#mfb').innerHTML='';
+    L.$('#mctx').innerHTML='<div class="tq-bub"><b>MOMENT '+(j+1)+' OF '+TQ_MEET.length+'</b>'+m.ctx+'</div>';L.$('#mop').innerHTML='';
+    m.opts.forEach((o,q)=>{const b=document.createElement('button');b.className='opt';b.textContent=o[0];b.onclick=()=>pick(q,b);L.$('#mop').appendChild(b);});}
+  function pick(q,b){if(ans)return;ans=true;const o=TQ_MEET[j].opts[q],ok=o[4]===1;n+=ok?1:0;L.award(ok);
+    [...L.$('#mop').children].forEach((x,z)=>{x.setAttribute('aria-disabled','true');if(z!==q)x.style.display='none';});b.classList.add(ok?'ok':'no');
+    const nv={};for(const k in o[1])nv[k]=Math.max(1,Math.min(10,d.v[k]+o[1][k]));d.set(nv,true);
+    L.$('#mfb').innerHTML='<div class="tq-bub"><b>WHAT HAPPENS</b>'+o[2]+'</div>';L.fb(L.$('#mfb'),o[3]+(ok?'':' Best move: '+TQ_MEET[j].opts.find(x=>x[4]===1)[0]),ok?'ok':'no');
+    if(j<TQ_MEET.length-1){L.$('#mfb').insertAdjacentHTML('beforeend','<button class="btn pri" id="mnx" style="margin-top:10px">'+L.ic('arrow')+'Next moment</button>');L.$('#mnx').onclick=()=>{j++;show();};}
+    else{const t=d.t();L.sheet(t>=5?'ok':'info','Trust ends at '+tqF(t),(t>=5?'Noor reached the book’s “reasonably good existing client” level. ':'Short of 5, the book’s “reasonably good existing client” level. ')+'Look at which moves did the most: the ones that lowered self-orientation. These scores are illustrative; the habits are the point.');L.done();}}
+  show();}},
 {part:3,src:'Chapter 8',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Mixed review: which part needs work?',['Credibility','Reliability','Intimacy','Self-orientation'],[
    ['Noor tells Sasha “our reports never end up gathering dust”. Sasha wonders what that implies.',0,'A line that sounds like spin makes the words harder to believe.'],
    ['Dana has to chase Larkmoor twice to get a call back.',1,'Calls returned slowly break the link between promise and action.'],
    ['Dana has never mentioned the pressure from Felix, though it shapes every decision.',2,'A key topic is off-limits. Intimacy is about which subjects can be raised.'],
-   ['Noor keeps steering Corran meetings toward an HR policy review Larkmoor could sell.',3,'Pushing your own agenda shows the motive is your gain.'],
+   ['Noor keeps steering Corran meetings toward an HR policy review Larkmoor could sell.',3,'Pushing your own agenda suggests the motive is your gain.'],
    ['Ines quotes three cases from memory but leaves out the one that goes against Corran.',0,'Leaving things out damages the “honest” side of credibility: completeness.']]);}}
   ]
 });

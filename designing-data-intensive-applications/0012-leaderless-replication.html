@@ -13,10 +13,283 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0012 only. Two hands-on models used across the lesson:
+   1. Sim  – Otterpost’s courier location store: replicas, writes, reads,
+             crashes, read repair, anti-entropy, sloppy quorums, hinted handoff.
+   2. Van  – van 7’s load list written by two dispatchers: version numbers,
+             siblings and merging, versus last write wins.
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const STREETS=['Mill Lane','Dock Road','Elm Street','Quay Road','Hill Road','Park Row','Canal Walk','Rope Walk','Ferry Lane','Bay Street','Oak Lane','Kiln Road'];
+const street=v=>STREETS[v%STREETS.length];
+const CSS='<style>'+
+ '.sim>svg{width:100%;display:block;touch-action:manipulation}svg text{font-family:var(--sans)}'+
+ '.simhd{font-size:13px;font-weight:600;color:var(--muted);margin:2px 0 6px;letter-spacing:.01em}'+
+ '.simlbl{font-size:13px;color:var(--muted);margin:10px 0 4px}'+
+ '.simrow{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0}.simrow .btn{min-height:42px;white-space:nowrap;flex:0 0 auto;padding:8px 12px}.simrow .chip{margin:0}'+
+ '.nchip{min-width:54px;min-height:40px;justify-content:center;padding:6px 10px;font-size:15px!important;font-weight:600}'+
+ '.nchip.down{background:var(--no-bg);border-color:var(--no-line);color:var(--no);text-decoration:line-through}'+
+ '.simlog .fb{margin-top:8px;font-size:14.5px}'+
+ '.tasks{margin:12px 0 0;padding:0;list-style:none}.tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.tasks li.done{color:var(--ok)}.tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.tasks li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.rng{display:grid;grid-template-columns:62px 1fr 34px;gap:10px;align-items:center;font-size:15px;margin:6px 0}.rng input{width:100%;accent-color:var(--pri);height:30px}.rng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.qread{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.55;margin:8px 0}'+
+ '.cap{background:var(--soft);border-radius:14px;padding:11px 13px;font-size:15px;line-height:1.5;margin:10px 0 6px;min-height:48px}.cap .stp{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.van .vcl{display:grid;grid-template-columns:1fr 1fr;gap:8px}'+
+ '.vc{border-radius:14px;padding:10px;min-width:0;font-size:13.5px;line-height:1.4}.vc b{font-size:15px;display:block}.vc .sm{color:var(--muted);font-size:12.5px}'+
+ '.vc.A{background:var(--h1-bg)}.vc.J{background:var(--h2-bg)}.vc .lst{margin-top:6px;display:flex;flex-direction:column;gap:4px}'+
+ '.vsrv{margin-top:8px;border:2px solid var(--line);border-radius:16px;padding:10px}.vsh{font-size:13px;font-weight:700;color:var(--muted);margin-bottom:6px}'+
+ '.sib{display:flex;align-items:center;flex-wrap:wrap;gap:5px;padding:7px 8px;border-radius:12px;background:var(--soft);margin:5px 0;transition:opacity .45s,transform .45s}'+
+ '.sib.gone{opacity:.35;text-decoration:line-through}.sib.new{animation:in .4s}.sib.kept{outline:2px solid var(--h3);outline-offset:-2px}'+
+ '.sib .st{margin-left:auto;font-size:12px;font-weight:700;color:var(--h3)}.sib.gone .st{color:var(--no)}'+
+ '.vb{font-size:12.5px;font-weight:700;border-radius:99px;padding:2px 8px;background:var(--card);border:1.5px solid var(--line2)}'+
+ '.pc{display:inline-block;font-size:12.5px;font-weight:700;border-radius:7px;padding:2px 6px}.pc.A{background:var(--h1-bg);color:var(--h1);border:1.5px solid var(--h1)}.pc.J{background:var(--h2-bg);color:var(--h2);border:1.5px solid var(--h2)}'+
+ '.pc.tomb{background:var(--no-bg);color:var(--no);border:1.5px dashed var(--no);text-decoration:line-through}'+
+ '.lost{margin-top:8px;border-radius:12px;padding:8px 10px;background:var(--no-bg);color:var(--no);font-size:14px}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '</style>';
+
+/* a dot travelling along a line; frac<1 = the message is lost on the way */
+function fly(g,x1,y1,x2,y2,col,frac,ms){
+  return new Promise(res=>{
+    if(!g||!g.isConnected){res();return;}
+    frac=frac==null?1:frac;
+    const c=document.createElementNS(NS,'circle');c.setAttribute('r',5.5);c.setAttribute('style','fill:'+col);c.setAttribute('cx',x1);c.setAttribute('cy',y1);g.appendChild(c);
+    const t0=performance.now();
+    (function step(){
+      if(!c.isConnected){res();return;}
+      const p=Math.min(1,(performance.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2,f=e*frac;
+      c.setAttribute('cx',x1+(x2-x1)*f);c.setAttribute('cy',y1+(y2-y1)*f);
+      if(p<1){setTimeout(step,16);return;}
+      c.remove();
+      if(frac<1){const x=x1+(x2-x1)*frac,y=y1+(y2-y1)*frac,t=document.createElementNS(NS,'path');
+        t.setAttribute('d','M'+(x-5)+' '+(y-5)+'l10 10m0 -10l-10 10');t.setAttribute('style','stroke:var(--no);stroke-width:2.6;stroke-linecap:round;fill:none');g.appendChild(t);setTimeout(()=>t.remove(),650);}
+      res();
+    })();
+  });
+}
+
+/* ---------- 1. The location-store simulator ---------- */
+function Sim(L,host,o){
+  o=Object.assign({id:'s',n:3,w:2,r:2,ver:7,stand:0,rr:true,tap:true,acts:['w','r'],speed:1,hd:true,on:()=>{}},o||{});
+  const S={w:o.w,r:o.r,rr:o.rr,sloppy:false,cutW:new Set(),busy:false,hl:new Set(),top:o.ver,lastOk:o.ver,speed:o.speed};
+  let nodes=[];
+  const P=48,BH=40,X=146,ID=o.id;
+  host.insertAdjacentHTML('beforeend','<div class="sim">'+(o.hd?'<div class="simhd" id="'+ID+'-hd"></div>':'')+
+    '<svg id="'+ID+'-svg" viewBox="0 0 320 156" role="img" aria-label="Diagram: the writer and the reader on the left, the replicas on the right"><g id="'+ID+'-b"></g><g id="'+ID+'-fx"></g></svg>'+
+    (o.tap?'<div class="simlbl">Tap a replica to crash or restart it</div><div class="simrow" id="'+ID+'-c"></div>':'')+
+    (o.acts.length?'<div class="simrow" id="'+ID+'-a"></div>':'')+
+    '<div class="simlog" id="'+ID+'-log" aria-live="polite"></div></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg'),base=$('#'+ID+'-b'),fx=$('#'+ID+'-fx');
+  const alive=()=>svg.isConnected;
+  const homes=()=>nodes.map((n,k)=>n.home?k:-1).filter(k=>k>=0);
+  const H=()=>Math.max(nodes.length*P+12,156);
+  const top=()=>(H()-(nodes.length*P-8))/2;
+  const cy=k=>top()+k*P+BH/2;
+  const wy=()=>H()*.27,ry=()=>H()*.73;
+  const T=ms=>ms*S.speed;
+  function reset(n,ver){
+    ver=ver==null?o.ver:ver;S.top=S.lastOk=ver;S.cutW.clear();S.hl.clear();nodes=[];
+    for(let k=0;k<n;k++)nodes.push({name:'R'+(k+1),up:true,ver,val:street(ver),home:true,full:false,hint:null,tag:''});
+    for(let j=0;j<o.stand;j++)nodes.push({name:'N'+(n+j+1),up:true,ver:0,val:null,home:false,full:false,hint:null,tag:''});
+    draw();
+  }
+  function txt(x,y,s,st){return '<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';}
+  function draw(){
+    if(!alive())return;
+    const h=H();svg.setAttribute('viewBox','0 0 320 '+h);
+    const newest=Math.max(...nodes.map(n=>n.ver));
+    let s='';
+    nodes.forEach((n,k)=>{const y=cy(k);
+      s+='<line x1="88" y1="'+wy()+'" x2="'+X+'" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.2"/>';
+      if(S.cutW.has(k)){const mx=(88+X)/2+8,my=(wy()+y)/2+(y-wy())*.14;s+='<path d="M'+(mx-5)+' '+(my-5)+'l10 10m0 -10l-10 10" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>';}
+      if(n.home)s+='<line x1="88" y1="'+ry()+'" x2="'+X+'" y2="'+y+'" style="stroke:var(--line2);stroke-width:1.2;stroke-dasharray:3 3"/>';});
+    const cl=(y,a,b,c,f,t)=>'<rect x="2" y="'+(y-27)+'" width="86" height="54" rx="12" style="fill:'+f+'"/>'+txt(45,y-6,a,'font-size:12.5px;font-weight:700;fill:'+t+';text-anchor:middle')+txt(45,y+9,b,'font-size:12.5px;font-weight:700;fill:'+t+';text-anchor:middle')+txt(45,y+23,c,'font-size:11px;fill:'+t+';text-anchor:middle');
+    s+=cl(wy(),'Ravi’s','phone','writes','var(--h1-bg)','var(--h1)')+cl(ry(),'Tracking','page','reads','var(--h2-bg)','var(--h2)');
+    nodes.forEach((n,k)=>{const y=cy(k),fresh=n.ver&&n.ver===newest;
+      let fill,stroke,dash='';
+      if(!n.up){fill='var(--soft)';stroke='var(--line2)';dash='5 4';}
+      else if(!n.home&&!n.ver){fill='var(--card)';stroke='var(--line2)';dash='2 3';}
+      else if(fresh){fill='var(--ok-bg)';stroke='var(--ok-line)';}
+      else{fill='var(--h3-bg)';stroke='var(--h3)';}
+      if(S.hl.has(k))stroke='var(--pri)';
+      s+='<g data-k="'+k+'" style="cursor:'+(o.tap&&n.home?'pointer':'default')+'"><rect x="'+X+'" y="'+(y-BH/2)+'" width="172" height="'+BH+'" rx="10" style="fill:'+fill+';stroke:'+stroke+';stroke-width:'+(S.hl.has(k)?3:1.6)+(dash?';stroke-dasharray:'+dash:'')+'"/>';
+      s+=txt(X+9,y+4.5,n.name,'font-size:12.5px;font-weight:700;fill:var(--ink)');
+      const tag=!n.up?'':n.full?'disk full':n.hint?'hint: for '+n.hint:n.tag||(!n.home?'not a home node':'');
+      const val=!n.up?'down':n.ver?n.val:'empty';
+      s+=txt(X+38,tag?y-2:y+4.5,val,'font-size:12.5px;fill:'+(n.up&&n.ver?'var(--ink)':'var(--muted)')+(n.up?'':';font-style:italic'));
+      if(tag)s+=txt(X+38,y+13,tag,'font-size:11px;font-weight:600;fill:'+(n.full?'var(--no)':'var(--muted)'));
+      if(n.ver&&n.up)s+='<rect x="'+(X+132)+'" y="'+(y-11)+'" width="34" height="22" rx="11" style="fill:var(--card);stroke:'+(fresh?'var(--ok-line)':'var(--h3)')+'"/>'+txt(X+149,y+4.5,'v'+n.ver,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:'+(fresh?'var(--ok)':'var(--h3)'));
+      if(!n.up)s+='<path d="M'+(X+146)+' '+(y-7)+'l14 14m0 -14l-14 14" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>';
+      s+='</g>';});
+    base.innerHTML=s;
+    if(o.hd)$('#'+ID+'-hd').textContent='n = '+homes().length+' · w = '+S.w+' · r = '+S.r+(S.rr?' · read repair on':' · read repair off')+(o.stand?(S.sloppy?' · sloppy quorums ON':' · sloppy quorums off'):'');
+    if(o.tap){$('#'+ID+'-c').innerHTML=homes().map(k=>'<button class="chip nchip'+(nodes[k].up?'':' down')+'" id="'+ID+'-n'+k+'" aria-label="'+nodes[k].name+(nodes[k].up?' is up. Tap to crash it':' is down. Tap to restart it')+'">'+nodes[k].name+'</button>').join('');
+      homes().forEach(k=>{$('#'+ID+'-n'+k).onclick=()=>toggle(k);});}
+    if(o.acts.length){const A={w:['btn pri','arrow','Send position'],r:['btn','eye','Read'],ae:['btn','cycle','Anti-entropy']};
+      const box=$('#'+ID+'-a');if(!box.children.length){box.innerHTML=o.acts.map(a=>'<button class="'+A[a][0]+'" id="'+ID+'-b'+a+'">'+L.ic(A[a][1])+A[a][2]+'</button>').join('');
+        o.acts.forEach(a=>{$('#'+ID+'-b'+a).onclick=()=>{a==='w'?write():a==='r'?read():antiEntropy();};});}
+      o.acts.forEach(a=>{$('#'+ID+'-b'+a).disabled=S.busy;});}
+  }
+  svg.addEventListener('click',e=>{const g=e.target.closest('g[data-k]');if(!g||!o.tap)return;const k=+g.dataset.k;if(nodes[k].home)toggle(k);});
+  function log(h,kind){if(alive())$('#'+ID+'-log').innerHTML='<div class="fb '+(kind||'info')+'">'+h+'</div>';}
+  function toggle(k){if(S.busy)return;nodes[k].up=!nodes[k].up;S.hl.clear();draw();o.on({type:'toggle',k});}
+  const pr=n=>n.name+' v'+n.ver;
+  async function write(op){
+    op=op||{};if(S.busy||!alive())return null;S.busy=true;S.hl.clear();draw();
+    const ver=op.same?S.top:++S.top,val=street(ver);
+    let plan=[];
+    if(op.to)plan=op.to.map(k=>({k,arrive:true,ok:true}));
+    else{homes().forEach(k=>{const n=nodes[k],arrive=n.up&&!S.cutW.has(k);plan.push({k,arrive,ok:arrive&&!n.full});});
+      if(S.sloppy){const miss=homes().filter(k=>!(nodes[k].up&&!S.cutW.has(k)));const st=nodes.map((n,k)=>(!n.home&&n.up&&!S.cutW.has(k))?k:-1).filter(k=>k>=0);
+        miss.forEach((m,j)=>{if(st[j]!=null)plan.push({k:st[j],arrive:true,ok:true,hint:nodes[m].name});});}}
+    if(!op.quiet)log('Ravi’s phone sends <b>v'+ver+'</b> ('+val+') to '+(op.to?op.to.map(k=>nodes[k].name).join(', '):'every replica')+'…');
+    await Promise.all(plan.map(p=>fly(fx,88,wy(),X,cy(p.k),'var(--pri)',p.arrive?1:.55,T(420))));
+    if(!alive())return null;
+    plan.forEach(p=>{if(p.ok){const n=nodes[p.k];if(n.ver<ver||p.hint){n.ver=ver;n.val=val;}n.hint=p.hint||null;}});
+    draw();
+    const acks=plan.filter(p=>p.ok);
+    if(!op.pending)await Promise.all(acks.map(p=>fly(fx,X,cy(p.k),88,wy(),'var(--ok-strong)',1,T(320))));
+    if(!alive())return null;
+    const holders=nodes.filter(n=>n.ver===ver).length;
+    const ok=op.pending?null:(op.same?holders>=S.w:acks.length>=S.w);
+    if(ok)S.lastOk=Math.max(S.lastOk,ver);
+    if(!op.quiet&&!op.pending){
+      if(ok)log('Write <b>v'+ver+'</b>: '+acks.length+' OK'+(acks.length===1?'':'s')+', w = '+S.w+' needed. <span class="ok-t">Success.</span>'+(acks.some(p=>p.hint)?' Some copies sit on stand-in nodes, tagged with a hint.':''),'ok');
+      else log('Write <b>v'+ver+'</b>: only '+acks.length+' OK'+(acks.length===1?'':'s')+', w = '+S.w+' needed. <span class="no-t">The phone gets an error.</span>'+(acks.length?' But '+acks.map(p=>nodes[p.k].name).join(' and ')+' keep'+(acks.length===1?'s':'')+' v'+ver+': nothing is rolled back.':''),'no');}
+    S.busy=false;draw();
+    const res={type:'write',ok,acks:acks.length,ver};o.on(res);return res;
+  }
+  async function read(op){
+    op=op||{};if(S.busy||!alive())return null;S.busy=true;S.hl.clear();draw();
+    const hs=homes(),cand=hs.filter(k=>nodes[k].up);
+    await Promise.all(hs.map(k=>fly(fx,88,ry(),X,cy(k),'var(--h2)',nodes[k].up?1:.55,T(380))));
+    if(!alive())return null;
+    let res;
+    if(cand.length<S.r){
+      log('Read: '+(cand.length?'only '+cand.length:'no')+' replica'+(cand.length===1?'':'s')+' answered, r = '+S.r+' needed. <span class="no-t">The tracking page gets an error.</span>','no');
+      res={type:'read',ok:false,stale:false,repaired:[]};
+    }else{
+      const order=op.from||cand.slice().sort((a,b)=>nodes[a].ver-nodes[b].ver||a-b);
+      const resp=order.slice(0,S.r);resp.forEach(k=>S.hl.add(k));draw();
+      const best=Math.max(...resp.map(k=>nodes[k].ver));
+      await Promise.all(resp.map(k=>fly(fx,X,cy(k),88,ry(),nodes[k].ver===best?'var(--ok-strong)':'var(--h3)',1,T(320))));
+      if(!alive())return null;
+      const bn=nodes[resp.find(k=>nodes[k].ver===best)],stale=best<S.lastOk;
+      let h='Replies: '+resp.map(k=>pr(nodes[k])).join(', ')+'. The tracking page shows <b>'+bn.val+' (v'+best+')</b>.';
+      h+=stale?' <span class="no-t">Stale!</span> The newest successful write is v'+S.lastOk+'.':' <span class="ok-t">Up to date.</span>';
+      const lag=resp.filter(k=>nodes[k].ver<best);let rep=[];
+      if(S.rr&&lag.length){log(h+' Read repair: writing v'+best+' back to '+lag.map(k=>nodes[k].name).join(' and ')+'…',stale?'no':'ok');
+        await Promise.all(lag.map(k=>fly(fx,88,ry(),X,cy(k),'var(--ok-strong)',1,T(380))));
+        if(!alive())return null;
+        lag.forEach(k=>{nodes[k].ver=best;nodes[k].val=bn.val;nodes[k].tag='';});rep=lag.map(k=>nodes[k].name);
+        h+=' <b>Read repair</b> copied v'+best+' to '+rep.join(' and ')+'.';}
+      log(h,stale?'no':'ok');
+      res={type:'read',ok:true,ver:best,stale,repaired:rep,replies:resp.map(k=>nodes[k].ver)};
+    }
+    S.busy=false;draw();o.on(res);return res;
+  }
+  async function antiEntropy(){
+    if(S.busy||!alive())return;S.busy=true;S.hl.clear();draw();
+    const up=homes().filter(k=>nodes[k].up);
+    if(!up.length){S.busy=false;draw();return;}
+    const best=Math.max(...up.map(k=>nodes[k].ver)),src=up.find(k=>nodes[k].ver===best);
+    const lag=up.filter(k=>nodes[k].ver<best).sort(()=>Math.random()-.5);
+    if(!lag.length)log('Anti-entropy compared the replicas that are up: nothing missing.','info');
+    for(const k of lag){await fly(fx,X-6,cy(src),X-6,cy(k),'var(--h4)',1,T(420));if(!alive())return;nodes[k].ver=best;nodes[k].val=nodes[src].val;nodes[k].tag='';draw();}
+    if(lag.length)log('Anti-entropy, in the background: copied v'+best+' to '+lag.map(k=>nodes[k].name).join(' and ')+', in no particular order. No read was needed.','ok');
+    S.busy=false;draw();o.on({type:'ae',n:lag.length});
+  }
+  async function handoff(){
+    if(!alive())return 0;S.busy=true;draw();let c=0;
+    for(let k=0;k<nodes.length;k++){const n=nodes[k];if(n.home||!n.hint)continue;const hk=nodes.findIndex(x=>x.name===n.hint);
+      await fly(fx,X-6,cy(k),X-6,cy(hk),'var(--h4)',1,T(450));if(!alive())return c;
+      if(nodes[hk].ver<n.ver){nodes[hk].ver=n.ver;nodes[hk].val=n.val;}n.ver=0;n.val=null;n.hint=null;c++;draw();}
+    S.busy=false;draw();return c;
+  }
+  const idle=async()=>{for(let i=0;i<200&&S.busy;i++)await L.sleep(30);};
+  reset(o.n,o.ver);
+  return {S,get nodes(){return nodes;},reset,draw,write,read,antiEntropy,handoff,toggle,log,idle,alive,id:ID};
+}
+
+/* ---------- 2. Van 7’s load list: version numbers vs last write wins ---------- */
+function Van(L,host,o){
+  o=Object.assign({id:'v',mode:'v',speed:1,on:()=>{}},o||{});
+  const ID=o.id;
+  const C={A:{name:'Ana',seen:[],base:null},J:{name:'Joss',seen:[],base:null}};
+  let sibs=[],ctr=0,next=1,mode=o.mode,lww=null,added=[],busy=false;
+  host.insertAdjacentHTML('beforeend','<div class="van"><div class="vcl"><div class="vc A" id="'+ID+'-A"></div><div class="vc J" id="'+ID+'-J"></div></div>'+
+    '<div class="vsrv"><div class="vsh" id="'+ID+'-sh"></div><div id="'+ID+'-s" aria-live="polite"></div><div id="'+ID+'-lost"></div></div>'+
+    '<div class="cap" id="'+ID+'-cap" aria-live="polite"></div></div>');
+  const $=s=>host.querySelector(s);const alive=()=>!!$('#'+ID+'-s')&&$('#'+ID+'-s').isConnected;
+  const who=p=>added.find(a=>a.p===p).k;
+  const chips=list=>list.length?list.map(p=>'<span class="pc '+who(p)+'">'+p+'</span>').join(' '):'<span class="sm">empty</span>';
+  const sortP=a=>[...new Set(a)].sort((x,y)=>+x.slice(1)-+y.slice(1));
+  const show=list=>'['+list.join(', ')+']';
+  function drawClients(){['A','J'].forEach(k=>{const c=C[k];
+    $('#'+ID+'-'+k).innerHTML='<b>'+c.name+'</b><span class="sm">'+(mode==='v'?(c.base==null?'has not read yet':'last saw: v'+c.base):'dispatcher')+'</span><div class="lst">'+
+      (c.seen.length?c.seen.map(l=>'<div>'+chips(l)+'</div>').join(''):'<span class="sm">sees nothing yet</span>')+'</div>';});}
+  function drawServer(marks){
+    marks=marks||{};
+    $('#'+ID+'-sh').textContent=mode==='v'?'Server · van 7 load list · latest version: '+(ctr?'v'+ctr:'none'):'Server · van 7 load list · last write wins';
+    if(mode==='v')$('#'+ID+'-s').innerHTML=sibs.length?sibs.map(s=>'<div class="sib'+(marks[s.v]?' '+marks[s.v]:'')+'" data-v="'+s.v+'"><span class="vb">v'+s.v+'</span>'+chips(s.items)+
+        (marks[s.v]==='gone'?'<span class="st">overwritten</span>':marks[s.v]==='kept'?'<span class="st">kept: concurrent</span>':'')+'</div>').join(''):'<div class="sib"><span class="sm">empty list</span></div>';
+    else $('#'+ID+'-s').innerHTML='<div class="sib'+(marks.n?' new':'')+'">'+(lww?'<span class="vb">'+lww.t+'</span>'+chips(lww.items):'<span class="sm">empty list</span>')+'</div>';
+    const lost=lostList();
+    $('#'+ID+'-lost').innerHTML=mode==='lww'&&lost.length?'<div class="lost">'+L.ic('alert')+' <b>Silently dropped:</b> '+lost.join(', ')+'. Every write was told OK.</div>':'';
+  }
+  function lostList(){if(mode!=='lww')return [];const have=lww?lww.items:[];return added.map(a=>a.p).filter(p=>!have.includes(p));}
+  function cap(h){if(alive())$('#'+ID+'-cap').innerHTML=h;}
+  function draw(m){if(!alive())return;drawClients();drawServer(m);}
+  function preview(k,item){const c=C[k];const val=sortP(c.seen.flat().concat(item?[item]:[]));
+    const over=sibs.filter(s=>c.base!=null&&s.v<=c.base),keep=sibs.filter(s=>!(c.base!=null&&s.v<=c.base));return {val,over,keep,base:c.base};}
+  async function write(k,item){
+    if(busy||!alive())return null;busy=true;
+    if(item===undefined){item='P'+next++;}
+    if(item)added.push({p:item,k});
+    const c=C[k];let res;
+    if(mode==='v'){
+      const pv=preview(k,item),m={};pv.over.forEach(s=>m[s.v]='gone');pv.keep.forEach(s=>m[s.v]='kept');
+      cap('<b>'+c.name+'</b> '+(item?'adds '+item+' and ':'merges the siblings and ')+'sends '+show(pv.val)+' '+(pv.base==null?'with <b>no version</b> (they haven’t read the list).':'<b>based on v'+pv.base+'</b>.'));
+      draw(m);await L.sleep(750*o.speed);if(!alive())return null;
+      const ver=++ctr;sibs=pv.keep.concat([{v:ver,items:pv.val}]);c.seen=sibs.map(s=>s.items);c.base=ver;
+      const nm={};nm[ver]='new';draw(nm);
+      cap('Server: '+(pv.over.length?'overwrites '+pv.over.map(s=>'v'+s.v).join(' and ')+' ('+c.name+' had seen '+(pv.over.length>1?'them':'it')+')':'overwrites nothing')+(pv.keep.length?', keeps '+pv.keep.map(s=>'v'+s.v).join(' and ')+' (concurrent)':'')+', stores <b>v'+ver+'</b>.'+
+        (sibs.length>1?' Now <b>'+sibs.length+' siblings</b>; '+c.name+' gets all of them back.':' One value, nothing lost.'));
+      res={mode,sibs:sibs.length,over:pv.over.length};
+    }else{
+      const before=lostList().length;
+      const val=sortP(c.seen.flat().concat(item?[item]:[]));
+      cap('<b>'+c.name+'</b> adds '+item+' and sends '+show(val)+'.');draw();await L.sleep(650*o.speed);if(!alive())return null;
+      const t='09:'+String(30+ctr).padStart(2,'0')+':0'+(ctr%10);ctr++;
+      lww={items:val,t};c.seen=[val];draw({n:1});
+      const lost=lostList();
+      cap('Last write wins: the server keeps only the newest list (timestamp '+t+'). '+c.name+' is told <b>OK</b>.'+(lost.length>before?' <span class="no-t">'+lost.slice(before).join(', ')+' just vanished.</span>':''));
+      res={mode,lost:lost.length};
+    }
+    busy=false;o.on(res);return res;
+  }
+  function reset(m){mode=m||mode;C.A.seen=[];C.A.base=null;C.J.seen=[];C.J.base=null;sibs=[];ctr=0;next=1;lww=null;added=[];busy=false;draw();cap('Press a button to have a dispatcher add a parcel.');}
+  const idle=async()=>{for(let i=0;i<200&&busy;i++)await L.sleep(30);};
+  reset(mode);
+  return {write,reset,preview,cap,draw,idle,get busy(){return busy;},get sibs(){return sibs;},get next(){return next;},get mode(){return mode;},alive};
+}
+
+/* small helpers for this lesson */
+const goals=(id,list)=>'<ul class="tasks" id="'+id+'">'+list.map((g,j)=>'<li id="'+id+j+'"><span class="bx"></span><span>'+g+'</span></li>').join('')+'</ul>';
+function tick(L,id,j){const li=L.$('#'+id+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const allTicked=(L,id)=>[...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));
+const rng=(id,label,min,max,val)=>'<label class="rng" for="'+id+'"><span>'+label+'</span><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="1" value="'+val+'"><b id="'+id+'-v">'+val+'</b></label>';
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+const quorumRead=(n,w,r)=>{const ov=w+r>n;return '<div><b>w + r = '+(w+r)+(ov?' &gt; ':' ≤ ')+n+'</b>: '+(ov?'<span class="ok-t">every read overlaps the latest successful write</span>':'<span class="no-t">a read can miss every replica with the latest write</span>')+'</div>'+
+  '<div>Writes still work with up to <b>'+(n-w)+'</b> replica'+(n-w===1?'':'s')+' down. Reads with up to <b>'+(n-r)+'</b>.</div>';};
+
 Course.lesson({
-  id:'0012', title:'Leaderless replication and quorums', minutes:22, icon:'people',
+  id:'0012', title:'Leaderless replication and quorums', minutes:24, icon:'people',
   goals:['Explain how a leaderless store keeps working when a node is down','Choose quorum settings n, w and r, and know where they stop protecting you','Tell concurrent writes from ordered ones, and merge them without losing data'],
-  parts:['No leader','Quorums','Limits and sloppy quorums','Concurrent writes'],
+  parts:['No leader','Quorums','Limits','Concurrent writes'],
   read:'Read “Leaderless Replication” and the Summary of chapter 5, especially the shopping-cart walk-through in “Capturing the happens-before relationship.”',
   glossary:{
     'leaderless':'Leaderless (Dynamo-style) replication: there is no leader. Clients, or a coordinator acting for them, send each write to several replicas and read from several replicas.',
@@ -33,11 +306,11 @@ Course.lesson({
   },
   cheatsheet:[
     '<b>Leaderless</b> (Dynamo-style): send each write and each read to several replicas. No leader, so no failover.',
-    'Copies catch up through <b>read repair</b> (on read) and <b>anti-entropy</b> (in the background).',
+    'Copies catch up through <b>read repair</b> (on read) and <b>anti-entropy</b> (in the background). Without anti-entropy, rarely read values can stay missing.',
     '<b>Quorum:</b> n replicas, wait for w writes and r reads. If <b>w + r &gt; n</b>, the sets overlap. Writes survive n − w nodes down; reads survive n − r.',
-    'Quorums aren’t absolute: sloppy quorums, concurrent writes, failed writes that aren’t rolled back and restored nodes can all return stale data. Monitor staleness.',
+    'Quorums aren’t absolute: sloppy quorums, concurrent writes, a write during a read, failed writes that aren’t rolled back and restored nodes can all return stale data. Monitor staleness.',
     '<b>Sloppy quorum + hinted handoff:</b> borrow other nodes when home nodes are unreachable, then hand the writes back. More write availability, no read guarantee.',
-    '<b>Last write wins</b> converges by dropping data. Safe only when each key is written once.',
+    '<b>Last write wins</b> converges by silently dropping data. Safe only when each key is written once.',
     'A <b>happens before</b> B if B knew about or built on A. If neither knew of the other, they’re <b>concurrent</b>, whatever the clock says.',
     'Version numbers (or <b>version vectors</b> with several replicas) keep concurrent values as <b>siblings</b>; merge them, using <b>tombstones</b> for removals.'
   ],
@@ -50,22 +323,25 @@ Course.lesson({
    'Waiting for all three would mean one rebooting copy blocks every ping. Two out of three is enough; the third catches up later. That’s the idea behind quorums.');}},
 {part:0,src:'Chapter 5 · Leaderless Replication',run(L){
   L.h(L.kick('learn','No leader at all')+'<h1 class="q">Any replica can take a write</h1>'+
-   L.prose('With one leader or several, a client writes to one leader, and the database copies the write in an order the leader decides. Some databases drop the leader idea: <b>any replica accepts writes directly from clients</b>.')+
-   L.prose('Some of the earliest replicated systems were leaderless. The idea came back after Amazon built its in-house Dynamo system. Riak, Cassandra and Voldemort copied it, so this style is called '+L.g('leaderless','Dynamo-style')+'. (Amazon’s DynamoDB is a different product, based on single-leader replication.)')+
+   L.prose('With one leader or several, a client writes to a leader, and the leader decides the order everyone applies writes in. Some databases drop the leader: <b>any replica accepts writes straight from clients</b>.')+
    L.flow([['person','Client','Sends each write to several replicas, or a coordinator does it for the client.','',1],['layers','Replicas','Each one accepts the write on its own.','',2],['alert','No fixed order','Even a coordinator doesn’t decide the order of writes.','',4]])+
-   L.note('Otterpost’s new <b>courier location store</b>, which holds the live position of every courier, is leaderless.','map'));
+   L.prose('Some of the earliest replicated systems were leaderless. The idea came back after Amazon built its in-house Dynamo system, and Riak, Cassandra and Voldemort copied it, so this style is called '+L.g('leaderless','Dynamo-style')+'. (Amazon’s DynamoDB is a different product, based on single-leader replication.)')+
+   L.note('Otterpost’s new <b>courier location store</b>, which holds the live position of every courier, is leaderless. You’ll run it yourself next.','map'));
   L.done();}},
-{part:0,src:'Chapter 5 · Writing to the Database When a Node Is Down',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">A node goes down, and nothing fails over</h1>');
-  L.beats(L.card,[
-   ['The write','Ravi’s phone sends a new position to all three replicas of the location store. Replica 3 is rebooting for a system update. Replicas 1 and 2 answer OK. Two OKs are enough, so the write counts as done. No failover needed.'],
-   ['The gap','Replica 3 comes back, but it missed that write. It still holds Ravi’s older position, version 6. Replicas 1 and 2 have version 7.'],
-   ['The read','The dispatch map doesn’t ask just one replica; it asks several in parallel. It gets version 7 from replicas 1 and 2 and version 6 from replica 3. The version numbers show which is newer.'],
-   ['The repair','The dispatch map sees replica 3 is behind and writes version 7 back to it. That’s '+L.g('read-repair','read repair')+'.']],
-   'Leaderless writes and reads go to several replicas, so one missing node doesn’t block anything, and stale copies can be spotted and fixed.');}},
+{part:0,src:'Chapter 5 · Writing to the Database When a Node Is Down',
+ solve:async L=>{const s=L.sim;L.$('#a3-n2').click();L.$('#a3-bw').click();await s.idle();L.$('#a3-n2').click();L.$('#a3-br').click();await s.idle();},
+ run(L){
+  let got=false;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">The location store keeps 3 copies of Ravi’s position. Crash R3, send a new position, restart R3, then read.</h1><div id="c3"></div>'+
+   '<p class="small">Green = holds the newest version. Amber = behind. The reader hears from the most out-of-date replicas first: the worst case.</p>'+CSS);
+  L.sim=Sim(L,L.$('#c3'),{id:'a3',on:e=>{
+    if(e.type==='write'&&e.ok&&e.acks<3&&!got)L.sim.log('The write succeeded with '+e.acks+' OKs. No failover, no waiting for the missing replica. Now restart it and read.','ok');
+    if(e.type==='read'&&e.repaired&&e.repaired.length&&!got){got=true;
+      L.sheet('info','You just saw read repair','The read went to all replicas in parallel. Their <b>version numbers</b> showed which reply was newer, so the reader used the newest one and wrote it back to the replica that was behind. That’s '+L.g('read-repair','read repair')+'. One replica missing a write blocked nothing.');L.done();}}});
+  L.sim.log('Start by tapping <b>R3</b> to crash it.','info');}},
 {part:0,src:'Chapter 5 · Writing to the Database When a Node Is Down',run(L){
   L.h(L.kick('learn','How copies catch up')+'<h1 class="q">Two ways a replica gets the writes it missed</h1>'+
-   L.lanes([['eye','Read repair','When a client reads from several nodes, it spots stale replies and writes the newer value back. Works well for values that are read often.',2],
+   L.lanes([['eye','Read repair','A client reading from several nodes spots stale replies and writes the newer value back. Works well for values that are read often.',2],
             ['cycle','Anti-entropy','A background process keeps comparing replicas and copies over missing data. Unlike a leader’s log, it copies in no particular order, and there may be a long delay.',3]])+
    L.prose('Not every database has both. Voldemort, for example, had no '+L.g('anti-entropy','anti-entropy')+' process. Without one, a value that’s rarely read may stay missing on some replicas, so it is less durable.'));
   L.done();}},
@@ -77,89 +353,160 @@ Course.lesson({
 
 /* ---------- PART 2: QUORUMS ---------- */
 {part:1,src:'Chapter 5 · Quorums for reading and writing',run(L){
+  const nd=[0,1,2,3,4].map(j=>{const x=34+j*63,both=j===2;return '<circle cx="'+x+'" cy="62" r="20" style="fill:'+(both?'var(--ok-bg)':'var(--soft)')+';stroke:'+(both?'var(--ok-line)':'var(--line2)')+';stroke-width:2"/><text x="'+x+'" y="67" style="font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)">R'+(j+1)+'</text>';}).join('');
   L.h(L.kick('learn','Quorums')+'<h1 class="q">n, w and r</h1>'+
    L.list([['n','The number of replicas that store each value.'],['w','How many replicas must confirm a write for it to count.'],['r','How many replicas you must hear from on each read.']],1)+
-   L.prose('If <b>w + r &gt; n</b>, the replicas you wrote to and the replicas you read from must overlap in at least one node, so at least one reply should be up to date. Think of w and r as the votes needed for a valid write or read. That’s a '+L.g('quorum','quorum')+'.')+
-   L.prose('Reads and writes still go to all n replicas; w and r just say how many replies to wait for. Writes keep working with up to <b>n − w</b> nodes down, reads with <b>n − r</b>. Fewer than w or r replies means an error, whatever the reason: crash, full disk or network.')+
-   L.note('Common choice: n odd (3 or 5) and w = r = a majority. A read-heavy system might pick w = n, r = 1: fast reads, but one dead node fails every write. You can even pick w + r ≤ n: lower latency and more availability, but stale reads become more likely.','scale'));
+   '<svg viewBox="0 0 320 124" style="width:100%;display:block;margin:6px 0" role="img" aria-label="Five replicas. The write reached R1 to R3, the read asked R3 to R5. They share R3.">'+
+   '<path d="M14 30 v-8 h166 v8" style="fill:none;stroke:var(--h1);stroke-width:2.5"/><text x="97" y="15" style="font-size:12.5px;font-weight:700;fill:var(--h1);text-anchor:middle">write confirmed by w = 3</text>'+
+   '<path d="M140 94 v8 h166 v-8" style="fill:none;stroke:var(--h2);stroke-width:2.5"/><text x="223" y="120" style="font-size:12.5px;font-weight:700;fill:var(--h2);text-anchor:middle">read hears r = 3</text>'+nd+'</svg>'+
+   L.prose('If <b>w + r &gt; n</b>, the replicas that took the write and the replicas you read from must share at least one node, so at least one reply is up to date. Think of w and r as the votes a write or read needs: a '+L.g('quorum','quorum')+'.')+
+   L.note('Reads and writes still go to all n replicas; w and r only say how many replies to wait for. Fewer than w or r replies means an error, whatever the cause: crash, full disk or network.','scale'));
   L.done();}},
-{part:1,src:'Chapter 5 · Quorums for reading and writing',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The location store uses n = 3, w = 2, r = 2. How many unavailable replicas can it tolerate and still both read and write?</h1>');
-  L.mc(L.card,['None','One','Two'],1,
-   'Writes need 2 of 3 and reads need 2 of 3, so one replica can be down. 2 + 2 > 3, so the sets still overlap.',
-   'n − w = 1 and n − r = 1. With two replicas down, only one is left, fewer than the 2 that reads and writes need. With none down it obviously works, but it can lose one.');}},
 {part:1,src:'Chapter 5 · Quorums for reading and writing',pts:1,
- solve:async L=>{L.$('#w3').click();L.$('#r3').click();L.$('#qchk').click();},
+ solve:async L=>{L.$('#p7').children[1].click();await L.sleep(50);for(let i=0;i<120&&!L.$('#p7rp');i++)await L.sleep(30);L.$('#p7rp').click();for(let i=0;i<150&&!L.$('#p7d');i++)await L.sleep(30);},
  run(L){
-  const n=5;let w=1,r=1,first=true;
-  L.h(L.kick('pr','Tune the quorum')+'<h1 class="q">For Peak Week, Kwame moves the location store to n = 5. Kwame wants every read to overlap the latest write, and reads <i>and</i> writes to keep working with two nodes down. Set w and r.</h1>'+
-   '<div class="small" style="margin-top:4px">Write quorum w</div><div id="wc"></div><div class="small">Read quorum r</div><div id="rc"></div>'+
-   '<div id="nodes" style="display:flex;gap:6px;margin:12px 0 8px"></div><div id="qs" style="font-size:14.5px;line-height:1.6"></div>'+
-   '<button class="btn pri" id="qchk" style="margin-top:12px">'+L.ic('check')+'Check</button><div id="qf"></div>');
-  const chips=(host,pre,get,set)=>{for(let k=1;k<=n;k++){const b=document.createElement('button');b.className='chip';b.id=pre+k;b.textContent=k;b.onclick=()=>{if(L.$('#qchk').disabled)return;set(k);draw();};L.$(host).appendChild(b);}};
-  chips('#wc','w',()=>w,k=>w=k);chips('#rc','r',()=>r,k=>r=k);
-  function draw(){
-    for(let k=1;k<=n;k++){L.$('#w'+k).classList.toggle('sel',k===w);L.$('#r'+k).classList.toggle('sel',k===r);}
-    let h='';for(let j=0;j<n;j++){const iw=j<w,ir=j>=n-r,both=iw&&ir;
-      h+='<div style="flex:1;min-width:0;text-align:center;border-radius:12px;padding:10px 0;font-weight:700;font-size:13px;border:2px solid '+(both?'var(--ok-line)':'var(--line)')+';background:'+(both?'var(--ok-bg)':iw?'var(--h1-bg)':ir?'var(--h3-bg)':'var(--soft)')+';color:'+(both?'var(--ok)':iw?'var(--h1)':ir?'var(--h3)':'var(--muted)')+'">'+(both?'W+R':iw?'W':ir?'R':'·')+'</div>';}
-    L.$('#nodes').innerHTML=h;
-    const ov=w+r>n;
-    L.$('#qs').innerHTML='<div>w + r = '+(w+r)+(ov?' &gt; ':' ≤ ')+n+': '+(ov?'<b style="color:var(--ok)">reads always overlap the latest write</b>':'<b style="color:var(--no)">a read can miss every node with the latest write</b>')+'</div>'+
-      '<div>Writes keep working with up to <b>'+(n-w)+'</b> node'+(n-w===1?'':'s')+' down</div><div>Reads keep working with up to <b>'+(n-r)+'</b> node'+(n-r===1?'':'s')+' down</div>'+
-      '<div class="small">Worst case shown: writes landed on the left nodes, the read asked the right ones.</div>';}
-  draw();
-  L.$('#qchk').onclick=()=>{L.$('#qf').innerHTML='';
-    if(w===3&&r===3){if(first)L.award(true);L.$('#qchk').disabled=true;
-      L.sheet('ok',first?'Spot on!':'Got it','w = 3 and r = 3: 3 + 3 &gt; 5, so reads overlap writes, and each can lose 2 nodes. It’s the only pair that does both: a majority for each.');L.done();}
-    else{if(first){L.award(false);first=false;}
-      L.fb(L.$('#qf'),w+r<=n?'<b>No overlap.</b> With w + r ≤ 5, a read can miss every node holding the newest value.':(n-w<2?'<b>Writes too fragile.</b> With w = '+w+', only '+(n-w)+' node'+(n-w===1?'':'s')+' can be down for writes.':'<b>Reads too fragile.</b> With r = '+r+', only '+(n-r)+' node'+(n-r===1?'':'s')+' can be down for reads.'),'no');}};}},
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">To make the store faster, Kwame sets <b>w = 1, r = 1</b>. R3 is down while Ravi’s phone sends a new position. R3 restarts, and the tracking page’s read hears from R3 first. What does the page show?</h1>'+
+   '<div id="p7"></div><div id="c7"></div><div id="p7x"></div>'+CSS);
+  const s=L.sim=Sim(L,L.$('#c7'),{id:'a7',w:1,r:1,tap:false,acts:[]});
+  s.log('Pick your prediction to run it.','info');
+  async function play(){
+    s.log('1 · R3 goes down for an update.','info');s.toggle(2);await L.sleep(500);if(!s.alive())return;
+    await s.write();await L.sleep(500);if(!s.alive())return;
+    s.toggle(2);s.log('3 · R3 restarts. It missed the write.','info');await L.sleep(600);if(!s.alive())return;
+    return s.read({from:[2,0,1]});}
+  ['Ravi’s new position','Ravi’s old position','An error: too few replies'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');const r=await play();if(!r)return;
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: stale':'It showed the old position','With w = 1 the write counted after one OK, and with r = 1 the read stopped after one reply. R3’s reply was all the page waited for, and R3 had missed the write. 1 + 1 is not more than 3, so nothing forces the two sets to overlap.');
+      L.$('#p7x').innerHTML='<button class="btn pri" id="p7rp" style="margin-top:10px">'+L.ic('play')+'Replay with w = 2, r = 2</button>';
+      L.$('#p7rp').onclick=async function(){this.remove();s.reset(3,7);s.S.w=2;s.S.r=2;s.draw();const r2=await play();if(!r2)return;
+        L.$('#p7x').innerHTML='<div id="p7d" class="fb ok">Same crash, same order of replies. With r = 2 the page also waits for R1, which has the new position, so it shows the newest one and repairs R3. 2 + 2 &gt; 3: the sets must overlap.</div>';L.done();};};
+    L.$('#p7').appendChild(b);});}},
+{part:1,src:'Chapter 5 · Quorums for reading and writing',
+ solve:async L=>{const s=L.sim;setRange(L,'q8w',1);setRange(L,'q8r',1);L.$('#a8-n2').click();L.$('#a8-bw').click();await s.idle();L.$('#a8-n2').click();L.$('#a8-br').click();await s.idle();
+   L.$('#a8-n0').click();L.$('#a8-n1').click();L.$('#a8-n2').click();L.$('#a8-br').click();await s.idle();},
+ run(L){
+  L.h(L.kick('pr','Free play')+'<h1 class="q">Your turn to set w and r. Break the store two different ways.</h1>'+
+   goals('g8',['Get a <b>stale read</b>: the page shows an old position','Get an <b>error</b>: too few replicas answer'])+
+   '<div class="simrow" id="q8n" style="margin-top:10px"></div>'+rng('q8w','Write w',1,3,2)+rng('q8r','Read r',1,3,2)+'<div class="qread" id="q8q"></div><div id="c8"></div>'+CSS);
+  let n=3;
+  const s=L.sim=Sim(L,L.$('#c8'),{id:'a8',acts:['w','r','ae'],on:e=>{
+    if(e.type==='read'&&e.ok&&e.stale)tick(L,'g8',0);
+    if((e.type==='read'&&!e.ok)||(e.type==='write'&&e.ok===false))tick(L,'g8',1);
+    if(allTicked(L,'g8')&&!L.$('#q8done')){L.$('#g8').insertAdjacentHTML('afterend','<span id="q8done"></span>');
+      L.sheet('info','Two different failures','A <b>stale read</b> is the price of w + r ≤ n: the read can miss every replica with the new value. An <b>error</b> is the price of a large w or r: with too many replicas down, the store refuses rather than answer. Bigger w and r buy consistency and cost availability; smaller ones give lower latency and keep working through more failures, with more stale reads. Quorums don’t have to be majorities: only the overlap matters.');L.done();}}});
+  function upd(){const w=+L.$('#q8w').value,r=+L.$('#q8r').value;L.$('#q8w-v').textContent=w;L.$('#q8r-v').textContent=r;s.S.w=w;s.S.r=r;s.draw();L.$('#q8q').innerHTML=quorumRead(n,w,r);}
+  L.$('#q8w').oninput=upd;L.$('#q8r').oninput=upd;
+  [3,5].forEach(k=>{const b=document.createElement('button');b.className='chip'+(k===3?' sel':'');b.textContent='n = '+k;b.onclick=()=>{if(s.S.busy)return;n=k;[...L.$('#q8n').children].forEach(x=>x.classList.toggle('sel',x===b));
+    ['q8w','q8r'].forEach(id=>{const e=L.$('#'+id);e.max=k;e.value=Math.min(+e.value,k);});s.reset(k,7);upd();};L.$('#q8n').appendChild(b);});
+  upd();s.log('Tip: with w = 1 and r = 1, crash a replica, write, restart it, then read.','info');}},
 {part:1,src:'Chapter 5 · Quorums for reading and writing',pts:3,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which setting fits? (n = 3)',['w = 3, r = 1','w = 1, r = 3','w = 2, r = 2'],[
    ['The location store must keep reading and writing with any one replica down.',2,'Each side can lose one node (3 − 2 = 1), and 2 + 2 > 3 keeps the overlap.'],
-   ['A courier-profile store is read thousands of times per write. Kwame accepts that one dead replica blocks all writes.',0,'Fast reads from a single replica; the price is that writes need every replica. This is the book’s read-heavy example.'],
+   ['A courier-profile store is read thousands of times per write. Kwame accepts that one dead replica blocks all writes.',0,'Fast reads from a single replica; the price is that writes need every replica. This is the book’s example for few writes and many reads.'],
    ['Pings must be accepted even with two replicas down. Reads may wait for all three.',1,'With w = 1, writes survive two nodes down. r = 3 keeps w + r > n, but every read needs all three replicas.']]);}},
+{part:1,src:'Chapter 5 · Quorums for reading and writing',pts:1,
+ solve:async L=>{setRange(L,'q10w',3);setRange(L,'q10r',3);L.$('#q10go').click();for(let i=0;i<200&&!L.$('#q10ok');i++)await L.sleep(30);},
+ run(L){
+  let first=true,running=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">For Peak Week, Kwame moves the location store to n = 5. Every read must overlap the latest write, and reads <i>and</i> writes must keep working with two replicas down. Set w and r, then run the drill.</h1>'+
+   rng('q10w','Write w',1,5,1)+rng('q10r','Read r',1,5,1)+'<div class="qread" id="q10q"></div>'+
+   '<button class="btn pri" id="q10go">'+L.ic('play')+'Run the Peak Week drill</button><div id="c10" style="margin-top:10px"></div><div id="q10res"></div>'+CSS);
+  const s=L.sim=Sim(L,L.$('#c10'),{id:'a10',n:5,w:1,r:1,tap:false,acts:[],speed:.55});
+  function upd(){const w=+L.$('#q10w').value,r=+L.$('#q10r').value;L.$('#q10w-v').textContent=w;L.$('#q10r-v').textContent=r;s.S.w=w;s.S.r=r;s.draw();L.$('#q10q').innerHTML=quorumRead(5,w,r);}
+  L.$('#q10w').oninput=upd;L.$('#q10r').oninput=upd;upd();
+  s.log('The drill takes two replicas down for writes, then two for reads, then plays the worst case for overlap.','info');
+  L.$('#q10go').onclick=async()=>{
+    if(running)return;running=true;L.$('#q10go').disabled=true;L.$('#q10res').innerHTML='';
+    const w=s.S.w,r=s.S.r;s.reset(5,7);s.S.w=w;s.S.r=r;
+    s.toggle(3);s.toggle(4);const a=await s.write();if(!a)return;s.toggle(3);s.toggle(4);await L.sleep(250);
+    s.toggle(0);s.toggle(1);const b=await s.read();if(!b)return;s.toggle(0);s.toggle(1);await L.sleep(250);
+    s.reset(5,7);s.S.w=w;s.S.r=r;for(let k=w;k<5;k++)s.toggle(k);const c1=await s.write();if(!c1)return;for(let k=w;k<5;k++)s.toggle(k);
+    const c=await s.read();if(!c)return;
+    const rows=[['Writes with 2 replicas down',a.ok],['Reads with 2 replicas down',b.ok],['Worst-case read sees the latest write',c.ok&&!c.stale]];
+    L.$('#q10res').innerHTML='<div class="qread">'+rows.map(x=>'<div>'+(x[1]?'<span class="ok-t">✓</span> ':'<span class="no-t">✗</span> ')+x[0]+'</div>').join('')+'</div>';
+    const pass=rows.every(x=>x[1]);
+    if(first){L.award(pass);first=false;}
+    running=false;L.$('#q10go').disabled=false;
+    if(pass){L.$('#q10go').disabled=true;L.$('#q10res').insertAdjacentHTML('beforeend','<span id="q10ok"></span>');
+      L.sheet('ok','Drill passed','w = 3 and r = 3: 3 + 3 &gt; 5, so every read overlaps the latest write, and each side can lose 5 − 3 = 2 replicas. It’s the only pair that does all three: a majority for each. The common choice is an odd n (3 or 5) with w = r = a majority.');L.done();}
+    else L.sheet('no','Drill failed','Look at the red line. Writes survive n − w replicas down and reads survive n − r, so neither can be above 3. Overlap needs w + r &gt; 5. Change w or r and run it again.');};}},
 
-/* ---------- PART 3: LIMITS AND SLOPPY QUORUMS ---------- */
-{part:2,src:'Chapter 5 · Limitations of Quorum Consistency',run(L){
-  L.h(L.kick('learn','Where quorums stop protecting you')+'<h1 class="q">Even with w + r &gt; n, stale reads can happen. Tap each card.</h1>');
-  L.flips(L.card,[
-   ['Sloppy quorums','Writes may land on stand-in nodes, so the w written nodes and the r read nodes may not overlap at all. (More in a moment.)'],
-   ['Concurrent writes','If two writes happen at once, it isn’t clear which came first. Picking a winner by timestamp can lose writes when clocks disagree.'],
-   ['A write during a read','If a write is still reaching replicas while you read, you may get the old value or the new one.'],
-   ['A failed write that stays','A write that reached fewer than w replicas is reported as failed, but isn’t undone on the replicas that took it. Later reads may or may not return it.'],
-   ['A node restored from an old copy','If a node holding the new value fails and is rebuilt from a stale replica, fewer than w nodes may hold the new value.'],
-   ['Unlucky timing','Even when everything works, some timing edge cases return stale values (chapter 9 explains them).']],
-   'Quorums don’t need to be majorities; what matters is that read and write sets overlap. But w and r only shift the odds of stale reads. Dynamo-style stores suit apps that tolerate eventual consistency, and usually don’t give read-your-writes, monotonic reads or consistent prefix reads.');}},
-{part:2,src:'Chapter 5 · Limitations of Quorum Consistency',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">With w = 2, a new position for courier Ravi reaches only replica 1, then replica 2’s disk turns out to be full. The write is reported as failed. Tobias says “then it’s gone.” What can later reads return?</h1>');
-  L.mc(L.card,['Never the new position: failed writes are undone','The new position or the old one, depending on which replicas answer','Only an error until an operator fixes it'],1,
-   'Right. Replica 1 still holds the “failed” write, because it isn’t rolled back. A read that hears from replica 1 may return it.',
-   'Leaderless stores don’t roll back a write that missed its quorum. Replica 1 keeps it, so some reads may return the new position and some the old one.');}},
+/* ---------- PART 3: LIMITS ---------- */
+{part:2,src:'Chapter 5 · Limitations of Quorum Consistency',
+ solve:async L=>{for(let p=0;p<3;p++){L.$('#e11p'+p).click();await L.sleep(30);while(L.$('#e11nx')){L.$('#e11nx').click();await L.sim.idle();await L.sleep(20);}}},
+ run(L){
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">w = 2, r = 2, n = 3, so w + r &gt; n. Can a read still be stale? Run each case.</h1><div class="simrow" id="e11"></div><div class="cap" id="e11cap"></div><div id="e11btn" style="margin-bottom:10px"></div><div id="c11"></div>'+CSS);
+  const s=L.sim=Sim(L,L.$('#c11'),{id:'a11',tap:false,acts:[]});
+  const N=()=>s.nodes;
+  const P=[
+   ['A failed write',[
+    ['R2’s disk is full and R3 is down.',async()=>{N()[1].full=true;N()[2].up=false;s.draw();}],
+    ['Ravi’s phone sends v8. Only R1 can store it: 1 OK, but w = 2. The phone is told the write failed.',async()=>{await s.write();}],
+    ['Nothing is rolled back: R1 keeps v8. R2’s disk is cleared and R3 restarts.',async()=>{N()[1].full=false;N()[2].up=true;s.draw();}],
+    ['Read A happens to hear from R2 and R3 first.',async()=>{await s.read({from:[1,2]});}],
+    ['Read B hears from R1 and R2. It returns the write that “failed,” and read repair even spreads it.',async()=>{await s.read({from:[0,1]});}]],
+    'A write reported as failed may or may not show up in later reads.'],
+   ['A restored node',[
+    ['R3 is down while Ravi’s phone sends v8. R1 and R2 store it: 2 OKs, success.',async()=>{N()[2].up=false;s.draw();await s.write();}],
+    ['R3 restarts, still on v7. Nobody has read Ravi’s position yet, so no read repair.',async()=>{N()[2].up=true;s.draw();}],
+    ['R1’s disk dies. Kwame rebuilds R1 from a copy of R3: the stale one.',async()=>{Object.assign(N()[0],{ver:7,val:street(7),tag:'restored copy'});s.draw();}],
+    ['Only R2 still has v8: fewer than w. A read that hears R1 and R3 gets v7, though v8 succeeded.',async()=>{s.S.rr=false;await s.read({from:[0,2]});s.S.rr=true;s.draw();}]],
+    'Restoring from a stale copy can push the number of replicas with the new value below w.'],
+   ['A write during a read',[
+    ['Ravi’s phone sends v8. So far it has reached only R1; it is still on its way to R2 and R3.',async()=>{await s.write({to:[0],pending:true});s.log('v8 has reached R1 only.','info');}],
+    ['Right now, read A hears from R2 and R3.',async()=>{s.S.rr=false;await s.read({from:[1,2]});}],
+    ['At the same moment, read B hears from R1 and R2.',async()=>{await s.read({from:[0,1]});s.S.rr=true;s.draw();}],
+    ['The write then reaches R2 and R3 and succeeds. Old or new, during the write it was luck.',async()=>{await s.write({to:[1,2],same:true});}]],
+    'A read that overlaps a write may return the old value or the new one.']];
+  const seen=new Set();
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e11p'+j;b.textContent=p[0];b.onclick=()=>{if(s.S.busy)return;run(j,b);};L.$('#e11').appendChild(b);});
+  L.$('#e11cap').innerHTML='<span class="stp">Pick a case</span>Each one starts with all three replicas on v7.';
+  function run(j,b){[...L.$('#e11').children].forEach(x=>x.classList.toggle('sel',x===b));s.reset(3,7);let k=0;const st=P[j][1];
+    const nx=()=>{L.$('#e11cap').innerHTML='<span class="stp">'+P[j][0]+' · step '+(k+1)+' of '+st.length+'</span>'+st[k][0];
+      L.$('#e11btn').innerHTML='<button class="btn pri" id="e11nx">'+L.ic('play')+(k===0?'Play step':'Next step')+'</button>';
+      L.$('#e11nx').onclick=async function(){if(s.S.busy)return;this.disabled=true;await st[k][1]();if(!s.alive())return;k++;
+        if(k<st.length)nx();else{L.$('#e11btn').innerHTML='';L.$('#e11cap').innerHTML='<span class="stp">'+P[j][0]+' · done</span><b>'+P[j][2]+'</b>';b.classList.add('ok');seen.add(j);
+          if(seen.size===3)L.sheet('info','Quorums shift the odds; they don’t promise','The book lists more cases: with <b>sloppy quorums</b> the write and read sets may not overlap at all (next screens); <b>concurrent writes</b> need merging, and picking a winner by timestamp can lose writes (part 4); and some <b>unlucky timing</b> returns stale values even when everything works (chapter 9). Dynamo-style stores suit apps that tolerate eventual consistency, and usually don’t give read-your-writes, monotonic reads or consistent prefix reads.');
+          if(seen.size===3)L.done();}};};
+    nx();}}},
 {part:2,src:'Chapter 5 · Monitoring staleness',run(L){
   L.h(L.kick('learn','Monitoring staleness')+'<h1 class="q">Measure how “eventual” eventual is</h1>'+
    L.prose('Even if your app can live with stale reads, you need to know how far behind replicas are, and get an alert when it grows, so you can find the cause (a network problem, an overloaded node).')+
    L.lanes([['list','Leader-based','Writes are applied in the same order everywhere, and each node has a position in the log. Leader position minus follower position = the lag. Easy to chart.',2],
             ['alert','Leaderless','There’s no fixed order of writes, so there’s no simple position to subtract. With read repair only, a rarely read value on a stale replica can be ancient.',4]])+
-   L.prose('Research exists on predicting the share of stale reads from n, w and r, but it wasn’t common practice. The book argues staleness should be a standard metric: “eventual” is vague, and operators need to put a number on it.'));
+   L.prose('Research exists on predicting the share of stale reads from n, w and r, but it wasn’t common practice. The book argues staleness belongs in the standard metrics: “eventual” is vague, and operators need to put a number on it.'));
   L.done();}},
 {part:2,src:'Chapter 5 · Sloppy Quorums and Hinted Handoff',run(L){
   L.h(L.kick('learn','Sloppy quorums')+'<h1 class="q">Locked out of your house? Sleep on the neighbour’s couch.</h1>'+
-   L.prose('In a big cluster, each value lives on n “home” nodes. A network fault can cut a client off from those nodes while it can still reach others. The designers must choose: return errors, or accept the write on nodes that are reachable but aren’t home?')+
+   L.prose('In a big cluster, each value lives on n “home” nodes. A network fault can cut a client off from those nodes while it can still reach others. Return errors, or accept the write on nodes that are reachable but aren’t home?')+
    L.list([['home','Sloppy quorum','Still need w and r replies, but they may come from nodes outside the home n. Like asking a neighbour if you can sleep on their couch.'],
      ['arrow','Hinted handoff','When the network is fixed, the stand-in nodes send those writes on to the home nodes. The neighbour asks you to go home.']],3)+
    L.quote('A sloppy quorum actually isn’t a quorum at all in the traditional sense.','Martin Kleppmann, chapter 5')+
-   L.prose('It boosts write availability: any w reachable nodes will do. But it only promises the data is stored on w nodes <i>somewhere</i>. A read of r home nodes may miss it until '+L.g('hinted','hinted handoff')+' finishes. Riak turns '+L.g('sloppy','sloppy quorums')+' on by default; Cassandra and Voldemort turn them off.')+
-   '<p class="small">Across datacenters: Cassandra and Voldemort count replicas in all datacenters in n but usually wait only for a quorum in the local one. Riak keeps n inside one datacenter and copies between datacenters in the background, much like multi-leader replication.</p>');
+   L.prose('It only promises the data is stored on w nodes <i>somewhere</i>. Riak turns '+L.g('sloppy','sloppy quorums')+' on by default; Cassandra and Voldemort turn them off.')+
+   '<p class="small">Across datacenters: Cassandra and Voldemort count replicas in all datacenters in n, but a client usually waits only for a quorum in its local one. Riak keeps n inside one datacenter and copies between datacenters in the background, much like multi-leader replication.</p>');
   L.done();}},
-{part:2,src:'Chapter 5 · Sloppy Quorums and Hinted Handoff',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">A broken switch in Eastvale</h1>');
-  L.beats(L.card,[
-   ['The fault','The Eastvale location-store cluster has 12 nodes. Ravi’s position lives on 3 home nodes. A switch fails, and the courier-app servers can’t reach those 3 nodes, though they can reach the other 9.'],
-   ['Sloppy quorum','The store is set to allow sloppy quorums. Ravi’s new positions are written to 3 reachable stand-in nodes, each tagged with a hint: “this belongs to the home nodes.” Couriers’ pings never fail.'],
-   ['Stale reads','The tracking-page servers can still reach the home nodes. They read Ravi’s position there and show where Ravi was 20 minutes ago. Every read had r replies, yet missed the latest write.'],
-   ['Handoff','The switch is replaced. The stand-in nodes send the hinted writes home, and the tracking page catches up.']],
-   'Sloppy quorums kept every write flowing, but during the fault w + r > n promised nothing about reads.');}},
+{part:2,src:'Chapter 5 · Sloppy Quorums and Hinted Handoff',
+ solve:async L=>{const s=L.sim;L.$('#s14cut').click();L.$('#a14-bw').click();await s.idle();L.$('#s14sl').click();L.$('#a14-bw').click();await s.idle();L.$('#a14-br').click();await s.idle();L.$('#s14cut').click();await s.idle();for(let i=0;i<60&&!allTicked(L,'g14');i++)await L.sleep(30);},
+ run(L){
+  let cut=false;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">A switch fails in Eastvale. Ravi’s phone can’t reach Ravi’s 3 home nodes, but can reach other nodes. The tracking page still reaches the home nodes.</h1>'+
+   goals('g14',['Send a position with sloppy quorums <b>off</b>','Send one with sloppy quorums <b>on</b>','Read during the fault','Replace the switch'])+
+   '<div class="simrow" style="margin-top:10px"><button class="chip" id="s14sl">Sloppy quorums: off</button><button class="btn" id="s14cut">'+L.ic('alert')+'Break the switch</button></div><div id="c14"></div>'+
+   '<p class="small">The cluster has 12 nodes; you see Ravi’s 3 home nodes (R1–R3) and 2 others (N4, N5).</p>'+CSS);
+  const s=L.sim=Sim(L,L.$('#c14'),{id:'a14',stand:2,tap:false,acts:['w','r'],on:e=>{
+    if(e.type==='write'&&cut)tick(L,'g14',s.S.sloppy?1:0);
+    if(e.type==='read'&&cut)tick(L,'g14',2);}});
+  L.$('#s14sl').onclick=function(){if(s.S.busy)return;s.S.sloppy=!s.S.sloppy;this.textContent='Sloppy quorums: '+(s.S.sloppy?'on':'off');this.classList.toggle('sel',s.S.sloppy);s.draw();};
+  L.$('#s14cut').onclick=async function(){if(s.S.busy)return;cut=!cut;
+    if(cut){[0,1,2].forEach(k=>s.S.cutW.add(k));this.innerHTML=L.ic('check')+'Replace the switch';s.draw();s.log('The phone’s links to R1–R3 are cut (✕). Now send a position.','no');}
+    else{s.S.cutW.clear();this.innerHTML=L.ic('alert')+'Break the switch';s.draw();const c=await s.handoff();if(!s.alive())return;
+      s.log(c?'<b>Hinted handoff:</b> N4 and N5 sent the borrowed writes home to R1 and R2, then dropped their copies. Reads of the home nodes see the newest position again.':'Switch replaced. No stand-in held any writes, so there was nothing to hand off.',c?'ok':'info');
+      if(L.$('#g140').classList.contains('done')&&L.$('#g141').classList.contains('done')&&L.$('#g142').classList.contains('done'))tick(L,'g14',3);
+      if(allTicked(L,'g14')){L.sheet('info','More writes accepted, no read guarantee','With sloppy quorums off, the phone couldn’t reach w home nodes and got an error. With them on, any w reachable nodes would do, so pings kept flowing. But the reads asked r home nodes and missed the new value until '+L.g('hinted','hinted handoff')+' finished: w + r &gt; n promised nothing during the fault.');L.done();}}};
+  s.log('Break the switch first.','info');}},
 {part:2,src:'Chapter 5 · Leaderless Replication',pts:4,run(L){
   L.h(L.kick('pr','Name the mechanism')+'<h1 class="q">Which mechanism is at work in each case?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Read repair','Anti-entropy','Sloppy quorum','Hinted handoff'],[
@@ -170,13 +517,37 @@ Course.lesson({
    'Read repair and anti-entropy fill gaps; sloppy quorums and hinted handoff keep writes flowing when home nodes are unreachable.');}},
 
 /* ---------- PART 4: CONCURRENT WRITES ---------- */
-{part:3,src:'Chapter 5 · Detecting Concurrent Writes',run(L){
-  L.h(L.kick('learn','Concurrent writes')+'<h1 class="q">Writes arrive in different orders at different nodes</h1>'+
-   L.prose('Clients A and B write the same key at once to three nodes. Node 1 never gets B’s write; node 2 gets A then B; node 3 gets B then A. If each node just overwrote the value, nodes would disagree forever. Conflicts can also arise during read repair or hinted handoff.')+
-   L.prose('<b>Last write wins</b> forces an order: attach a timestamp to each write, keep the biggest, drop the rest. It’s the only method in Cassandra and optional in Riak. Copies do converge, but at a price:')+
-   L.note('With several concurrent writes to a key, all reported as successful, only one survives. The others are <b>silently discarded</b>. '+L.g('lww','LWW')+' can even drop writes that weren’t concurrent, because clocks drift.','alert')+
-   L.prose('That may be fine for a cache. Otherwise, the only safe way to use LWW is to write each key once and never change it, for example by using a fresh unique ID (UUID) as the key of every write.'));
-  L.done();}},
+{part:3,src:'Chapter 5 · Detecting Concurrent Writes',
+ solve:async L=>{L.$('#o16a').click();for(let i=0;i<150&&!L.$('#o16a').classList.contains('ok');i++)await L.sleep(30);L.$('#o16b').click();for(let i=0;i<200&&!L.$('#o16b').classList.contains('ok');i++)await L.sleep(30);},
+ run(L){
+  const seen=new Set();let busy=false;
+  const W={A:{n:'Ana',v:'Ravi',t:'09:15:02.41',c:'h1'},J:{n:'Joss',v:'Mia',t:'09:15:02.44',c:'h2'}};
+  const EV=[['A',0],['A',1],['J',2],['J',1],['A',2],['J',0,true]];
+  L.h(L.kick('ex','See it happen')+'<h1 class="q">Ana and Joss set who drives van 7, at the same moment. Their writes reach the 3 replicas in different orders. Play it both ways.</h1>'+
+   '<div class="simrow"><button class="btn pri" id="o16a">'+L.ic('play')+'Each node just overwrites</button><button class="btn" id="o16b">'+L.ic('play')+'Last write wins</button></div>'+
+   '<svg id="o16" viewBox="0 0 320 156" style="width:100%;display:block" role="img" aria-label="Ana and Joss on the left, three replicas on the right"></svg><div class="cap" id="o16c">Ana writes “Ravi” (timestamp '+W.A.t+'). Joss writes “Mia” ('+W.J.t+'). Neither knows about the other.</div>'+CSS);
+  const svg=L.$('#o16');const fxg=()=>L.$('#o16fx');
+  const cy=k=>18+k*48+20,yA=42,yJ=114;
+  function draw(st){let s='';
+    [0,1,2].forEach(k=>{s+='<line x1="88" y1="'+yA+'" x2="146" y2="'+cy(k)+'" style="stroke:var(--line2);stroke-width:1.2"/><line x1="88" y1="'+yJ+'" x2="146" y2="'+cy(k)+'" style="stroke:var(--line2);stroke-width:1.2"/>';});
+    [['A',yA],['J',yJ]].forEach(([k,y])=>{s+='<rect x="2" y="'+(y-27)+'" width="86" height="54" rx="12" style="fill:var(--'+W[k].c+'-bg)"/><text x="45" y="'+(y-4)+'" style="font-size:13px;font-weight:700;text-anchor:middle;fill:var(--'+W[k].c+')">'+W[k].n+'</text><text x="45" y="'+(y+13)+'" style="font-size:12px;text-anchor:middle;fill:var(--'+W[k].c+')">“'+W[k].v+'”</text>';});
+    [0,1,2].forEach(k=>{const v=st[k].v,y=cy(k);s+='<rect x="146" y="'+(y-20)+'" width="172" height="40" rx="10" style="fill:'+(v?'var(--'+W[v].c+'-bg)':'var(--soft)')+';stroke:'+(v?'var(--'+W[v].c+')':'var(--line2)')+';stroke-width:1.6"/>'+
+      '<text x="155" y="'+(y-2)+'" style="font-size:12.5px;font-weight:700;fill:var(--ink)">R'+(k+1)+'</text><text x="184" y="'+(y-2)+'" style="font-size:12.5px;font-weight:700;fill:'+(v?'var(--'+W[v].c+')':'var(--muted)')+'">'+(v?W[v].v:'empty')+'</text>'+
+      '<text x="155" y="'+(y+13)+'" style="font-size:11px;fill:var(--muted)">got: '+(st[k].got.length?st[k].got.map(g=>W[g].n).join(' → '):'nothing yet')+'</text>';});
+    svg.innerHTML=s+'<g id="o16fx"></g>';}
+  const blank=()=>[0,1,2].map(()=>({v:null,got:[]}));
+  draw(blank());
+  async function play(lw,btn){if(busy)return;busy=true;const st=blank();draw(st);
+    L.$('#o16c').innerHTML=lw?'Each replica keeps the write with the <b>later timestamp</b>.':'Each replica simply overwrites with whatever arrives.';
+    for(const [w,k,lost] of EV){await fly(fxg(),88,w==='A'?yA:yJ,146,cy(k),'var(--'+W[w].c+')',lost?.55:1,330);if(!svg.isConnected)return;
+      if(!lost){st[k].got.push(w);if(!lw||!st[k].v||W[w].t>W[st[k].v].t)st[k].v=w;}draw(st);}
+    if(lw){L.$('#o16c').innerHTML='R1 never got Joss’s write (a brief outage). Later, anti-entropy copies it over…';await L.sleep(500);if(!svg.isConnected)return;
+      await fly(fxg(),140,cy(1),140,cy(0),'var(--h2)',1,380);if(!svg.isConnected)return;st[0].got.push('J');st[0].v='J';draw(st);
+      L.$('#o16c').innerHTML='<b>All three agree on “Mia.”</b> But Ana’s write was confirmed to Ana, then <span class="no-t">silently thrown away</span>. Its timestamp was 0.03 s earlier, and that alone decided it.';}
+    else L.$('#o16c').innerHTML='<b>R2 says Mia; R1 and R3 say Ravi.</b> <span class="no-t">The replicas disagree, and nothing will ever fix it.</span> To converge, they need a rule for conflicts.';
+    btn.classList.add('ok');seen.add(lw);busy=false;
+    if(seen.size===2){L.sheet('info','Converging by dropping data',L.g('lww','Last write wins')+' gives every write a timestamp and keeps the biggest. It’s the only method in Cassandra and optional in Riak. Replicas do converge, but concurrent writes that were all reported successful are silently lost, and clock drift can even drop writes that weren’t concurrent. Fine for a cache. Otherwise, the only safe use is to write each key once, for example under a fresh unique ID (UUID).');L.done();}}
+  L.$('#o16a').onclick=function(){play(false,this);};L.$('#o16b').onclick=function(){play(true,this);};}},
 {part:3,src:'Chapter 5 · Last write wins (discarding concurrent writes)',pts:4,run(L){
   L.h(L.kick('pr','Is LWW safe here?')+'<h1 class="q">Zainab reviews which data could use last write wins. Sort each one.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['LWW is fine','LWW risks real loss'],[
@@ -198,36 +569,72 @@ Course.lesson({
    ['Hub scanners in Westport and Eastvale each update the same parcel. Neither had seen the other’s update.',1,'Neither knew about the other: concurrent.'],
    ['Joss writes 10 minutes after Ana, but a network outage meant Joss’s client never saw Ana’s write.',1,'Ten minutes apart, yet neither knew of the other. Clock time doesn’t matter.'],
    ['Ravi’s app records “picked up”, then later “delivered” for the same parcel, building on its own last state.',0,'The later write knows about the earlier one, so there’s a clear order.']]);}},
-{part:3,src:'Chapter 5 · Capturing the happens-before relationship',run(L){
-  L.h(L.kick('ex','A worked example')+'<h1 class="q">Two dispatchers fill van 7, and no write is lost</h1>');
-  L.beats(L.card,[
-   ['Version 1','Dispatcher Ana adds parcel P1. The server stores [P1] as version 1 and sends back the value and its version.'],
-   ['Version 2','Dispatcher Joss, unaware of Ana, adds P2. Joss’s write isn’t based on any version Joss had seen, so the server keeps <b>both</b> [P1] and [P2], calls this version 2, and returns both.'],
-   ['Version 3','Ana adds P3 and sends [P1, P3] “based on version 1.” The server overwrites [P1], which Ana had seen, but keeps [P2], which Ana hadn’t. Now: [P1, P3] and [P2].'],
-   ['Version 4','Joss merges what they got back, [P1] and [P2], adds P4, and sends [P1, P2, P4] “based on version 2.” The server overwrites [P2] but keeps [P1, P3]. Two '+L.g('siblings','siblings')+' remain.'],
-   ['The merge','Whoever writes next merges the siblings, here by taking the union: [P1, P2, P3, P4]. Nothing either dispatcher added was lost.']],
-   'The book tells this with two clients filling a shopping cart. The server never looks inside the values; the version numbers alone tell it what to overwrite and what to keep.');}},
+{part:3,src:'Chapter 5 · Capturing the happens-before relationship',pts:1,
+ solve:async L=>{for(let i=0;i<40;i++){if(L.$('#v20done'))break;if(L.$('#v20pk')){[...L.$$('#v20pk .chip')].forEach(b=>{if(b.dataset.v==='2')b.click();});L.$('#v20chk').click();await L.sleep(30);continue;}
+   const b=L.$('#v20nx');if(b&&!b.disabled){b.click();await L.vn.idle();}await L.sleep(30);}},
+ run(L){
+  L.h(L.kick('pr','Watch, then predict')+'<h1 class="q">Dispatchers Ana and Joss fill van 7’s load list at the same time, each unaware of the other. One replica, version numbers, five writes.</h1><div id="c20"></div><div id="v20q"></div><div id="v20b"></div>'+CSS);
+  const v=L.vn=Van(L,L.$('#c20'),{id:'v20'});
+  const SEQ=[['A','P1'],['J','P2'],['A','P3'],['J','P4'],['A','P5'],['A',null]];let k=0,first=true;
+  v.cap('Every write sends the version from the writer’s last read. Press <b>Next write</b>.');
+  function btn(){const lab=k<5?'Next write ('+(k+1)+' of 5)':'Merge the siblings';L.$('#v20b').innerHTML='<button class="btn pri" id="v20nx" style="margin-top:4px">'+L.ic(k<5?'play':'layers')+lab+'</button>';
+    L.$('#v20nx').onclick=async function(){this.disabled=true;
+      if(k===3&&!L.$('#v20ans')){predict();return;}
+      await v.write(SEQ[k][0],SEQ[k][1]);if(!v.alive())return;k++;
+      if(k<6)btn();else{L.$('#v20b').innerHTML='<span id="v20done"></span>';L.sheet('info','Nothing either dispatcher added was lost','The server never looked inside the lists. Version numbers alone told it what to overwrite (what the writer had seen) and what to keep (what the writer hadn’t: concurrent). The book tells this story with two clients filling a shopping cart.');L.done();}};}
+  function predict(){const pv=v.preview('J','P4');
+    L.$('#v20q').innerHTML='<div class="sub">Joss now sends '+'[P1, P2, P4] based on <b>v2</b>. Which current values will the server overwrite? Tap them, then check.</div><div id="v20pk"></div><button class="btn pri" id="v20chk">'+L.ic('check')+'Check</button>';
+    const sel=new Set();
+    v.sibs.forEach(s=>{const b=document.createElement('button');b.className='chip';b.dataset.v=s.v;b.textContent='v'+s.v+' ['+s.items.join(', ')+']';b.onclick=()=>{b.classList.toggle('sel');sel.has(s.v)?sel.delete(s.v):sel.add(s.v);};L.$('#v20pk').appendChild(b);});
+    L.$('#v20chk').onclick=()=>{const want=new Set(pv.over.map(s=>s.v));const ok=sel.size===want.size&&[...sel].every(x=>want.has(x));
+      if(first){L.award(ok);first=false;}
+      L.sheet(ok?'ok':'no',ok?'Exactly':'Not quite','Joss’s write is based on v2, so it replaces everything at v2 or below: Joss had seen [P2] (and merged it in). v3, Ana’s [P1, P3], is newer than anything Joss saw, so it is concurrent and stays as a sibling.');
+      L.$('#v20q').innerHTML='<span id="v20ans"></span>';btn();};
+    L.$('#v20b').innerHTML='';}
+  btn();}},
 {part:3,src:'Chapter 5 · Merging concurrently written values',run(L){
-  L.h(L.kick('learn','The rules, and merging')+'<h1 class="q">How the server tracks versions</h1>'+
+  L.h(L.kick('learn','The rules you just watched')+'<h1 class="q">How the server tracks versions</h1>'+
    L.list([['Version per key','The server bumps a key’s version on every write and stores it with the value.'],
      ['Read before you write','A read returns every value not yet overwritten, plus the latest version.'],
      ['Write with the version','A write sends the version from its last read and merges all values it got back.'],
      ['Overwrite or keep','The server overwrites values with that version or lower, and keeps higher ones: they’re concurrent with this write. A write with no version overwrites nothing.']],1)+
-   L.prose('Merging siblings is the application’s job, and it’s the same problem as conflict resolution between leaders. Picking one by timestamp loses data. Taking the union works for adding items, but not for removing them: an item removed in only one sibling comes back. So a removal must leave a marker with a version number, a '+L.g('tombstone','tombstone')+'. CRDTs can do this merging automatically.'));
+   L.prose('Merging '+L.g('siblings','siblings')+' is the application’s job, and it’s the same problem as conflict resolution between leaders. Picking one by timestamp loses data. Taking the union works for adding items. CRDTs are data structures that can do this merging automatically.'));
   L.done();}},
+{part:3,src:'Chapter 5 · Merging concurrently written values',
+ solve:async L=>{const v=L.vn;L.$('#v22A').click();await v.idle();L.$('#v22J').click();await v.idle();L.$('#v22J').click();await v.idle();
+   L.$('#v22m').click();await L.sleep(30);L.$('#v22A').click();await v.idle();L.$('#v22J').click();await v.idle();},
+ run(L){
+  let hadSibs=false;
+  L.h(L.kick('ex','Playground')+'<h1 class="q">Run van 7 yourself. Then flip the server to last write wins and compare.</h1>'+
+   goals('g22',['Make the server hold <b>two siblings</b>','Have a dispatcher’s write <b>merge</b> them back to one','With last write wins, <b>lose a parcel</b>'])+
+   '<div class="simlbl">Server rule</div><div class="simrow"><button class="chip sel" id="v22v">Version numbers</button><button class="chip" id="v22m">Last write wins</button></div>'+
+   '<div class="simlbl">Add a parcel to van 7</div><div class="simrow"><button class="btn pri" id="v22A">'+L.ic('box')+'Ana adds</button><button class="btn pri" id="v22J">'+L.ic('box')+'Joss adds</button><button class="btn" id="v22r">'+L.ic('cycle')+'Reset</button></div><div id="c22"></div>'+CSS);
+  const v=L.vn=Van(L,L.$('#c22'),{id:'v22',on:e=>{
+    if(e.mode==='v'){if(e.sibs>=2){hadSibs=true;tick(L,'g22',0);}else if(hadSibs&&e.over>=2)tick(L,'g22',1);}
+    else if(e.lost>0)tick(L,'g22',2);
+    if(v.next>9){L.$('#v22A').disabled=L.$('#v22J').disabled=true;}
+    if(allTicked(L,'g22')&&!L.$('#v22ok')){L.$('#g22').insertAdjacentHTML('afterend','<span id="v22ok"></span>');
+      L.sheet('info','Same clicks, different fate','With version numbers, every parcel either dispatcher added is still in some sibling, and the next informed write merges them. With last write wins, each write replaced the whole list, so a parcel the writer hadn’t seen vanished, even though every write was told OK.');L.done();}}});
+  const mode=m=>{if(v.busy)return;hadSibs=false;v.reset(m);L.$('#v22v').classList.toggle('sel',m==='v');L.$('#v22m').classList.toggle('sel',m==='lww');L.$('#v22A').disabled=L.$('#v22J').disabled=false;};
+  L.$('#v22A').onclick=()=>{if(v.next<=9)v.write('A');};L.$('#v22J').onclick=()=>{if(v.next<=9)v.write('J');};
+  L.$('#v22v').onclick=()=>mode('v');L.$('#v22m').onclick=()=>mode('lww');L.$('#v22r').onclick=()=>mode(v.mode);}},
 {part:3,src:'Chapter 5 · Merging concurrently written values',pts:1,
  solve:async L=>{const c=L.$('#mm').children;c[0].click();c[1].click();},
  run(L){
-  const M=[['Plain union','<div>P1, P2, P3, P4</div><div style="margin-top:6px"><b style="color:var(--no)">P2 is back on van 7.</b> Ana’s removal existed only as a missing item, and the union filled it back in.</div>'],
-           ['Union with tombstones','<div>P1, P3, P4 <span class="small">(P2 marked removed)</span></div><div style="margin-top:6px"><b style="color:var(--ok)">P2 stays off the van.</b> The tombstone tells the merge that P2’s absence was a removal, not a gap.</div>']];
+  const P=(p,k,t)=>'<span class="pc '+(t?'tomb':k)+'">'+p+'</span>';
+  const M=[['Plain union','<div>'+P('P1','A')+' '+P('P2','J')+' '+P('P3','A')+' '+P('P4','J')+'</div><div style="margin-top:6px"><b class="no-t">P2 is back on van 7.</b> Ana’s removal existed only as a missing item, and the union filled it back in.</div>'],
+           ['Union with tombstones','<div>'+P('P1','A')+' '+P('P2','A',1)+' '+P('P3','A')+' '+P('P4','J')+'</div><div style="margin-top:6px"><b class="ok-t">P2 stays off the van.</b> The tombstone, with its version number, tells the merge that P2’s absence was a removal, not a gap.</div>']];
   const seen=new Set();
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Ana removes P2 (it was damaged) and adds P3. Concurrently, Joss adds P4. The siblings are Ana’s [P1, P3] and Joss’s [P1, P2, P4]. Merge them both ways.</h1><div id="mm"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:100px;font-size:14.5px;line-height:1.55" id="mo"><span class="small">Choose a merge above.</span></div><div id="mq"></div>');
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Ana removes P2 (it was damaged) and adds P3. Concurrently, Joss adds P4. Merge the two siblings both ways.</h1>'+
+   '<div class="vsrv"><div class="vsh">Siblings on the server</div><div class="sib"><span class="vb">Ana</span>'+P('P1','A')+' '+P('P3','A')+'<span class="st" id="tb" style="color:var(--muted)">P2 removed</span></div><div class="sib"><span class="vb">Joss</span>'+P('P1','A')+' '+P('P2','J')+' '+P('P4','J')+'</div></div>'+
+   '<div class="simrow" id="mm" style="margin-top:10px"></div>'+
+   '<div class="cap" id="mo"><span class="small">Choose a merge above.</span></div><div id="mq"></div>'+CSS);
   M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'shield':'layers')+m[0];
-    b.onclick=()=>{[...L.$('#mm').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#mo').innerHTML=m[1];seen.add(j);
+    b.onclick=()=>{[...L.$('#mm').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#mo').innerHTML=m[1];
+      L.$('#tb').innerHTML=j?'<span class="pc tomb">P2</span> tombstone':'P2 removed (no trace)';seen.add(j);
       if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Why did the damaged parcel come back with a plain union?</h2>';
         L.mc(q,['The union saw no record that P2 was removed','Joss’s write had a newer timestamp than Ana’s','Version numbers were missing from the writes'],0,
-         'A union keeps anything that appears in either sibling. Without a tombstone, a removal looks just like “never added.” This is the shopping-cart bug from the book, where removed items reappeared.',
+         'A union keeps anything that appears in either sibling. Without a '+L.g('tombstone','tombstone')+', a removal looks just like “never added.” This is the book’s shopping-cart problem, where removed items reappear.',
          'Timestamps and version numbers weren’t the problem; the siblings were kept correctly. The union simply had no record that P2 was removed, so a tombstone is needed.');}};
     L.$('#mm').appendChild(b);});}},
 {part:3,src:'Chapter 5 · Version vectors',run(L){
@@ -250,14 +657,7 @@ Course.lesson({
             ['layers','Multi-leader','Several leaders accept writes and stream changes to each other and to followers.','Lesson 0011'],
             ['people','Leaderless','Clients write to several nodes and read from several, to detect and fix stale data.','This lesson']])+
    L.prose('Multi-leader and leaderless cope better with faulty nodes, network interruptions and latency spikes, but are harder to reason about and give only very weak consistency.'));
-  L.done();}},
-{part:3,src:'Chapter 5 · Summary',pts:4,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which replication approach?',['Single-leader','Multi-leader','Leaderless'],[
-   ['Each Otterpost region accepts bookings locally and sends its changes to the other regions.',1,'Several nodes accepting writes and forwarding to each other: multi-leader.'],
-   ['When a replica is down, writes simply go to the others, and there is no failover at all.',2,'No leader, so nothing to fail over: leaderless.'],
-   ['Easiest to reason about and never needs conflict resolution, but every write passes through one node.',0,'One leader orders every write, so there are no conflicts: single-leader.'],
-   ['Reads go to several replicas at once so stale copies can be spotted and repaired.',2,'Parallel reads with read repair are the leaderless way.']]);}}
+  L.done();}}
   ]
 });
 </script>
