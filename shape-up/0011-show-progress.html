@@ -13,210 +13,502 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-/* A small hill drawing: dots = [[x 0-100, color, label?]] */
-const HILL=(dots,opt)=>{opt=opt||{};const X=p=>12+p*3.16,Y=x=>112-88*Math.exp(-Math.pow((x-170)/62,2));
-  let pts='';for(let x=12;x<=328;x+=4)pts+=x+','+Y(x).toFixed(1)+' ';
-  const C=['var(--pri)','var(--h2)','var(--h3)','var(--h4)'];
-  return '<svg viewBox="0 0 340 150" style="width:100%;max-width:340px;display:block;margin:6px auto 0" role="img" aria-label="Hill chart">'+
-   '<polyline points="'+pts+'" style="fill:none;stroke:var(--line2);stroke-width:3"/>'+
-   '<line x1="170" y1="20" x2="170" y2="118" style="stroke:var(--line);stroke-dasharray:4 4"/>'+
-   '<text x="88" y="140" text-anchor="middle" style="font:600 11px var(--sans);fill:var(--muted)">Figuring it out</text>'+
-   '<text x="252" y="140" text-anchor="middle" style="font:600 11px var(--sans);fill:var(--muted)">Making it happen</text>'+
-   dots.map((d,j)=>{const x=X(d[0]),y=Y(x);return '<circle cx="'+x.toFixed(1)+'" cy="'+(y-1).toFixed(1)+'" r="9" style="fill:'+(d[1]||C[j%4])+';stroke:var(--card);stroke-width:2;transition:all .4s"/>'+(d[2]?'<text x="'+x.toFixed(1)+'" y="'+(y+3.5).toFixed(1)+'" text-anchor="middle" style="font:700 10px var(--sans);fill:#fff">'+d[2]+'</text>':'');}).join('')+'</svg>'+
-   (opt.legend?'<div style="display:flex;flex-wrap:wrap;gap:6px 12px;justify-content:center;margin-top:6px">'+opt.legend.map((n,j)=>'<span class="small" style="display:inline-flex;align-items:center;gap:5px"><span style="width:12px;height:12px;border-radius:50%;background:'+C[j%4]+';display:inline-block"></span>'+n+'</span>').join('')+'</div>':'');};
-const SC=['Join the waitlist','Spot opens','Notify members','Studio settings'];
+/* ===== This lesson's own hill chart (draggable dots, snapshot rings, phase readouts)
+         and Bea's receding finish-line bar ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card [hidden]{display:none!important}
+.hc{margin:8px 0 0}
+.hc svg{display:block;width:100%;max-width:340px;margin:0 auto;user-select:none;-webkit-user-select:none}
+.hc svg.drag{touch-action:none;cursor:grab}
+.hc-ax{font:600 11.5px var(--sans);fill:var(--muted)}
+.hc-th{font:600 11px var(--sans);fill:var(--muted)}
+.hc-dl{font:700 11px var(--sans);fill:var(--card);pointer-events:none}
+.hc-gt{font:600 11px var(--sans);fill:var(--muted)}
+.hc-pu{fill:none;stroke-width:3;transform-box:fill-box;transform-origin:center;animation:hcpu 1.3s ease-out infinite}
+@keyframes hcpu{0%{transform:scale(1);opacity:.85}100%{transform:scale(2.1);opacity:0}}
+.hc-leg{display:flex;flex-wrap:wrap;gap:4px 12px;justify-content:center;margin:4px 0 0;font-size:13px;color:var(--muted)}
+.hc-leg span{display:inline-flex;align-items:center;gap:5px}
+.hc-leg i{width:12px;height:12px;border-radius:50%;display:inline-block}
+.hc-rows{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.hc-row{display:flex;align-items:center;gap:8px;border:1.5px solid var(--line);border-radius:12px;padding:5px 6px 5px 8px;background:var(--card);min-height:44px}
+button.hc-row{width:100%;text-align:left;font:inherit;color:inherit;cursor:pointer}
+button.hc-row:hover{border-color:var(--line2)}
+.hc-row.ok{border-color:var(--ok-line);background:var(--ok-bg)}.hc-row.no{border-color:var(--no-line);background:var(--no-bg)}
+.hc-sw{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;font:700 11px var(--sans);color:var(--card)}
+.hc-rt{flex:1;min-width:0;font-size:13px;line-height:1.3;color:var(--muted)}
+.hc-rt b{display:block;font-size:14px;color:var(--ink);font-weight:600}
+.hc-b{width:40px;height:40px;border-radius:10px;border:1.5px solid var(--line2);background:var(--soft);font:700 19px var(--sans);color:var(--ink);flex:none;cursor:pointer}
+.hc-b:active{transform:translateY(1px)}
+.hc-tip{font-size:13.5px;color:var(--muted);margin:6px 0 0;text-align:center}
+.hc-btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.hc-btns .chip{margin:0;padding:7px 11px;font-size:14px}
+.hc-btns .btn[disabled]{opacity:.45;cursor:default}
+.hc-say{background:var(--soft);border-radius:14px;padding:10px 13px;margin:6px 0 4px;font-size:15px;line-height:1.5}
+.hc-say b{display:block;font-size:12px;letter-spacing:.3px;color:var(--muted)}
+.hc-log{margin:10px 0 0;padding:0;list-style:none;font-size:14px;line-height:1.45}
+.hc-log li{padding:6px 10px;border-left:3px solid var(--line2);margin:0 0 5px;background:var(--soft);border-radius:0 8px 8px 0;animation:hcin .3s ease}
+.hc-log li.bad{border-left-color:var(--no-strong)}.hc-log li.good{border-left-color:var(--ok-strong)}
+@keyframes hcin{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+.hc-ro{border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;margin-top:10px;font-size:14.5px;line-height:1.5;background:var(--card)}
+.hc-ro b.t{display:block;font-size:13px;color:var(--muted);letter-spacing:.2px;margin-bottom:2px}
+.fl-bar{position:relative;height:28px;margin:30px 0 6px;display:grid;grid-template-columns:repeat(8,1fr);gap:3px}
+.fl-c{border-radius:6px;background:var(--soft2);border:1.5px solid var(--line2);transition:background .3s}
+.fl-c.on{background:var(--pri);border-color:var(--pri)}
+.fl-c.road{background:transparent;border:1.5px dashed var(--line)}
+.fl-flag{position:absolute;top:-26px;bottom:-5px;width:0;border-left:3px solid var(--ink);transition:left .7s ease}
+.fl-flag span{position:absolute;top:0;font:700 11px var(--sans);background:var(--h3-bg);color:var(--h3);padding:2px 6px;border-radius:6px;white-space:nowrap;left:4px}
+.fl-flag.lf span{left:auto;right:4px}
+.fl-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.fl-tile{border:1.5px solid var(--line);border-radius:12px;padding:8px 10px;font-size:13px;color:var(--muted);line-height:1.35}
+.fl-tile b{display:block;font-size:20px;color:var(--ink);line-height:1.25}
+.fl-tile.l b{color:var(--h3)}.fl-tile.h b{color:var(--pri);font-size:15px}
+.fl-ts{display:flex;flex-direction:column;gap:5px;margin-top:8px}
+.fl-t{display:flex;align-items:center;gap:9px;width:100%;text-align:left;border:1.5px solid var(--line);border-radius:10px;padding:7px 10px;background:var(--card);font:inherit;font-size:14px;color:var(--ink);min-height:40px;cursor:pointer}
+.fl-t .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:grid;place-items:center;color:var(--pri-ink);font-size:13px;font-weight:700}
+.fl-t.on .bx{background:var(--pri);border-color:var(--pri)}
+.fl-t.on{color:var(--muted)}
+.fl-t.new{border-color:var(--h3);background:var(--h3-bg);animation:hcin .35s ease}
+.fl-t small{display:block;font-size:11.5px;color:var(--h3);font-weight:600}
+.fl-hist{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:13px}
+.fl-hist span{background:var(--soft);border-radius:8px;padding:3px 8px}
+.es-row{border:1.5px solid var(--line);border-radius:12px;padding:9px 11px;margin:8px 0;font-size:14px;line-height:1.4}
+.es-row small{display:block;color:var(--muted);font-size:12.5px}
+.es-bar{display:flex;align-items:center;gap:8px;margin-top:6px}
+.es-bar i{display:block;height:12px;border-radius:6px;background:var(--pri);width:34%}
+.es-bar em{display:block;height:12px;border-radius:6px;border:2px dashed var(--no-line);flex:1;font-style:normal}
+.es-bar b{font-size:13px;white-space:nowrap}
+.dp{border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;margin-top:8px;font-size:14.5px;line-height:1.5}
+.dp>b{display:block;color:var(--pri);font-size:13px;letter-spacing:.2px}
+.dp .kv{display:grid;grid-template-columns:96px 1fr;gap:6px;margin-top:6px;font-size:13.5px}
+.dp .kv span{color:var(--muted)}
+.ch-cards{display:flex;flex-direction:column;gap:6px;margin-top:8px}
+.ch-card{display:flex;gap:9px;align-items:flex-start;width:100%;text-align:left;border:2px solid var(--line);border-radius:12px;padding:8px 10px;background:var(--card);font:inherit;font-size:13.5px;line-height:1.4;color:var(--muted);cursor:pointer}
+.ch-card b{display:block;color:var(--ink);font-size:14.5px}
+.ch-card .n{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;font:700 13px var(--sans);border:2px dashed var(--line2);color:var(--muted)}
+.ch-card.sel{border-color:var(--pri);background:var(--pri-bg)}
+.ch-card.sel .n{border:none;background:var(--pri);color:var(--pri-ink)}
+.ch-wk{position:relative;display:grid;grid-template-columns:repeat(5,1fr);margin:10px 0 2px;border:1.5px solid var(--line2);border-radius:10px;overflow:hidden;height:30px}
+.ch-wk span{position:relative;z-index:1;display:grid;place-items:center;font:600 12px var(--sans);color:var(--muted);border-left:1px solid var(--line)}
+.ch-wk span:first-child{border-left:none}
+.ch-wk i{position:absolute;left:0;top:0;bottom:0;background:var(--pri-bg);width:0}
+.ch-wk u{position:absolute;top:0;bottom:0;left:60%;border-left:3px dashed var(--h4);z-index:2}
+.ch-st{font-size:14px;margin:6px 0 0;min-height:21px}
+.ch-res{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:14px;margin-top:8px;align-items:center}
+`;document.head.appendChild(st);})();
+
+/* geometry: p = 0..100 along the hill; the top is p = 50 */
+const hcX=p=>22+p*2.96;
+const hcY=p=>136-100*(1-Math.cos(2*Math.PI*Math.min(100,Math.max(0,p))/100))/2;
+const hcZone=p=>p<5?0:p<18?1:p<32?2:p<45?3:p<=55?4:p<94?5:6;
+const HCZ=['At the start: nothing figured out yet','First third: “I’ve thought about this”','Second third: “I’ve validated my approach”','Final third: building until no unknowns are left','The top: every step left is visible','Downhill: making it happen','Bottom right: just the clean-up left'];
+const HCZS=['Start','Thought about it','Validated','Building up to the top','Top','Downhill','Clean-up'];
+const SC={J:['Join the waitlist','var(--h2)','J'],S:['Spot opens','var(--pri)','S'],N:['Notify members','var(--h3)','N'],T:['Studio settings','var(--h4)','St']};
+const scDot=(k,p)=>({k,n:SC[k][0],c:SC[k][1],l:SC[k][2],p});
+
+/* hcHill(host, {dots:[{k,n,c,l,p}], drag, rows:'pm'|'pick'|'ro', thirds, leg, ghosts:[{p,c,t}], pulse:[k], onMove(k,p,live), onPick(k), phase(d)}) */
+function hcHill(host,o){o=o||{};
+  const st={dots:(o.dots||[]).map(d=>Object.assign({},d)),ghosts:(o.ghosts||[]).slice(),pulse:new Set(o.pulse||[]),rings:{},locked:false};
+  const H=o.thirds?178:168;
+  const el=document.createElement('div');el.className='hc';
+  el.innerHTML='<svg viewBox="0 0 340 '+H+'" role="img" aria-label="'+(o.label||'Hill chart. Left side uphill, figuring it out. Right side downhill, making it happen.')+'"'+(o.drag?' class="drag"':'')+'></svg>'+(o.leg?'<div class="hc-leg"></div>':'')+(o.rows?'<div class="hc-rows"></div>':'');
+  host.appendChild(el);
+  const svg=el.querySelector('svg'),rowsEl=el.querySelector('.hc-rows'),legEl=el.querySelector('.hc-leg');
+  let curve='';for(let p=0;p<=100;p+=2)curve+=hcX(p).toFixed(1)+','+hcY(p).toFixed(1)+' ';
+  const ay=o.thirds?172:160;
+  let base='<line x1="12" y1="137" x2="328" y2="137" stroke="var(--line)" stroke-width="1.5"/>'+
+    '<line x1="170" y1="24" x2="170" y2="137" stroke="var(--line2)" stroke-dasharray="4 4"/>'+
+    '<polyline points="'+curve+'" fill="none" stroke="var(--line2)" stroke-width="3" stroke-linejoin="round"/>'+
+    '<text x="94" y="'+ay+'" text-anchor="middle" class="hc-ax">Figuring it out</text><text x="246" y="'+ay+'" text-anchor="middle" class="hc-ax">Making it happen</text>';
+  if(o.thirds){[17,33].forEach(p=>{base+='<line x1="'+hcX(p).toFixed(1)+'" y1="'+(hcY(p)+4).toFixed(1)+'" x2="'+hcX(p).toFixed(1)+'" y2="137" stroke="var(--line2)" stroke-dasharray="2 3"/>';});
+    [[8,'thought'],[25,'validated'],[41.5,'built']].forEach(a=>{base+='<text x="'+hcX(a[0]).toFixed(1)+'" y="153" text-anchor="middle" class="hc-th">'+a[1]+'</text>';});}
+  const pos=()=>{const out={},s=st.dots.slice().sort((a,b)=>a.p-b.p);
+    const lv={};s.forEach((d,i)=>{const used=new Set();for(let j=0;j<i;j++)if(Math.abs(hcX(s[j].p)-hcX(d.p))<21)used.add(lv[s[j].k]);let n=0;while(used.has(n))n++;lv[d.k]=n;out[d.k]=[hcX(d.p),hcY(d.p)-n*25];});return out;};
+  const phase=d=>(o.phase||(x=>HCZ[hcZone(x.p)]))(d);
+  function render(){const P=pos();let s=base;
+    st.ghosts.forEach(g=>{const x=hcX(g.p),y=hcY(g.p);s+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="9" fill="var(--card)" stroke="'+g.c+'" stroke-width="2" stroke-dasharray="3 2.5"/>'+(g.t?'<text x="'+x.toFixed(1)+'" y="'+(y-15).toFixed(1)+'" text-anchor="middle" class="hc-gt">'+g.t+'</text>':'');});
+    st.dots.forEach(d=>{const q=P[d.k];
+      s+='<g transform="translate('+q[0].toFixed(1)+' '+q[1].toFixed(1)+')">'+(st.pulse.has(d.k)?'<circle r="12" class="hc-pu" style="stroke:'+d.c+'"/>':'')+
+        (st.rings[d.k]?'<circle r="17.5" fill="none" stroke="'+st.rings[d.k]+'" stroke-width="3"/>':'')+
+        '<circle r="12.5" fill="'+d.c+'" stroke="var(--card)" stroke-width="2.5"'+(d.dash?' fill-opacity=".45" stroke-dasharray="3 2"':'')+'/><text y="4" text-anchor="middle" class="hc-dl">'+d.l+'</text></g>';});
+    svg.innerHTML=s;
+    if(rowsEl)st.dots.forEach(d=>{const ph=rowsEl.querySelector('[data-ph="'+d.k+'"]');if(ph)ph.innerHTML=phase(d);});}
+  function buildRows(){
+    if(legEl)legEl.innerHTML=st.dots.map(d=>'<span><i style="background:'+d.c+'"></i>'+d.n+'</span>').join('');
+    if(!rowsEl)return;
+    rowsEl.innerHTML=st.dots.filter(d=>!d.fixed).map(d=>{const inner='<span class="hc-sw" style="background:'+d.c+'">'+d.l+'</span><span class="hc-rt"><b>'+d.n+'</b><span data-ph="'+d.k+'"></span></span>';
+      if(o.rows==='pick')return '<button class="hc-row" data-pick="'+d.k+'" aria-label="Pick '+d.n+'">'+inner+'</button>';
+      return '<div class="hc-row" data-row="'+d.k+'">'+inner+(o.rows==='pm'?'<button class="hc-b" data-k="'+d.k+'" data-d="-1" aria-label="Move '+d.n+' left">−</button><button class="hc-b" data-k="'+d.k+'" data-d="1" aria-label="Move '+d.n+' right">+</button>':'')+'</div>';}).join('');
+    rowsEl.querySelectorAll('[data-d]').forEach(b=>b.onclick=()=>{if(st.locked)return;const k=b.dataset.k;api.set(k,api.get(k)+5*(+b.dataset.d));o.onMove&&o.onMove(k,api.get(k),false);});
+    rowsEl.querySelectorAll('[data-pick]').forEach(b=>b.onclick=()=>{if(st.locked)return;o.onPick&&o.onPick(b.dataset.pick);});}
+  const toSvg=e=>{const pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;return pt.matrixTransform(svg.getScreenCTM().inverse());};
+  let drag=null;
+  svg.addEventListener('pointerdown',e=>{if(st.locked)return;const q=toSvg(e),P=pos();let best=null,bd=26;
+    st.dots.forEach(d=>{if(d.fixed&&o.drag)return;const dd=Math.hypot(P[d.k][0]-q.x,P[d.k][1]-q.y);if(dd<bd){bd=dd;best=d.k;}});if(!best)return;
+    if(o.drag){drag=best;try{svg.setPointerCapture(e.pointerId);}catch(_){}e.preventDefault();}else if(o.onPick)o.onPick(best);});
+  svg.addEventListener('pointermove',e=>{if(!drag)return;const q=toSvg(e);api.set(drag,(q.x-22)/2.96);o.onMove&&o.onMove(drag,api.get(drag),true);});
+  const end=()=>{if(drag){const k=drag;drag=null;o.onMove&&o.onMove(k,api.get(k),false);}};
+  svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
+  const api={el,st,
+    get:k=>{const d=st.dots.find(x=>x.k===k);return d?d.p:null;},
+    set(k,p){const d=st.dots.find(x=>x.k===k);if(!d)return;d.p=Math.max(0,Math.min(100,p));render();},
+    setDots(list){st.dots.forEach(d=>clearInterval(d._t));st.dots=list.map(d=>Object.assign({},d));st.rings={};buildRows();render();},
+    ghosts(g){st.ghosts=g||[];render();},
+    pulse(ks){st.pulse=new Set(ks||[]);render();},
+    ring(k,c){if(c)st.rings[k]=c;else delete st.rings[k];render();},
+    lock(v){st.locked=v;},
+    row:k=>rowsEl&&rowsEl.querySelector('[data-row="'+k+'"],[data-pick="'+k+'"]'),
+    anim(k,to,ms,cb){const d=st.dots.find(x=>x.k===k);if(!d)return;clearInterval(d._t);const from=d.p,t0=Date.now();
+      d._t=setInterval(()=>{if(!el.isConnected){clearInterval(d._t);return;}const u=Math.min(1,(Date.now()-t0)/ms),e=u<.5?2*u*u:1-Math.pow(-2*u+2,2)/2;
+        d.p=from+(to-from)*e;render();if(u>=1){clearInterval(d._t);cb&&cb();}},30);},
+    render};
+  buildRows();render();return api;}
+/* click a +/− button n times (solvers use the real controls) */
+const hcPress=(L,box,k,dir,n)=>{for(let j=0;j<n;j++)L.$(box+' [data-k="'+k+'"][data-d="'+dir+'"]').click();};
+const hcTo=(L,box,api,k,p)=>{let g=0;while(Math.abs(api.get(k)-p)>=5&&g++<40)hcPress(L,box,k,api.get(k)<p?1:-1,1);};
+const hcWait=async(L,sel,ms)=>{for(let j=0;j<(ms||4000)/30&&!L.$(sel);j++)await L.sleep(30);};
+
+/* Bea's to-do bar for "Spot opens": 8 slots, the flag marks the end of the list */
+function flBar(total,done){let s='<div class="fl-bar" aria-hidden="true">';for(let j=0;j<8;j++)s+='<div class="fl-c'+(j<done?' on':j>=total?' road':'')+'"></div>';
+  return s+'<div class="fl-flag'+(total>5?' lf':'')+'" style="left:calc('+(total/8*100).toFixed(2)+'% - 1px)"><span>end of list</span></div></div>';}
 
 Course.lesson({
-  id:'0011', title:'Show progress on the hill', minutes:19, icon:'trend',
+  id:'0011', title:'Show progress on the hill', minutes:20, icon:'trend',
   goals:['Explain why task counts and estimates hide how much is still unknown','Read a hill chart and spot a stuck or badly drawn scope','Decide which scope to push uphill first'],
   parts:['Why lists mislead','The hill','Reading the hill','Climbing in order'],
-  read:'Read chapter 13 of the book for the full dinner-party walk-through and the hill chart snapshots.',
+  read:'Read chapter 13 of the book for the full dinner-party walk-through and its own hill chart snapshots.',
   glossary:{
     'discovered-task':'Discovered task: a task the team only finds once they get into the real work, as opposed to an imagined task planned up front.',
+    'imagined-task':'Imagined task: a task someone writes down at the start, before doing the work. Real work adds discovered tasks on top.',
     uphill:'Uphill: the first phase of any piece of work, full of unknowns, while you figure out your approach.',
-    downhill:'Downhill: the second phase of a piece of work, when all unknowns are solved and only doing it is left.',
+    downhill:'Downhill: the second phase of a piece of work, when you can see everything left and only doing it remains.',
     backsliding:'Backsliding: moving a dot back down the uphill side after an unexpected unknown shows up.',
     'inverted-pyramid':'Inverted pyramid: the journalists’ habit of putting the most important facts first, so the end can be cut without losing anything essential.'
   },
   cheatsheet:[
-    'To-do lists <b>grow as work moves forward</b>: tasks get discovered, so a short list doesn’t mean almost done.',
+    'To-do lists <b>grow as work moves forward</b>: tasks get discovered, so a short or empty list doesn’t mean almost done.',
     'Estimates hide uncertainty: “4 hours” means very different things for familiar and brand-new work.',
-    'Every piece of work is a hill: <b>uphill</b> = figuring it out, <b>downhill</b> = making it happen.',
-    'Put each <b>scope</b> on the hill as a dot. Comparing snapshots shows what’s moving and what’s stuck, without asking for status.',
-    'A dot that doesn’t move is a raised hand. Ask about the work: “What can we solve to get this over the hill?”',
-    'A scope that’s half over and half not should be <b>split</b> into scopes that can move on their own.',
-    '<b>Build your way uphill</b>: thought about it → validated it → built enough that no unknowns are left.',
-    'Push the <b>riskiest, most novel</b> scopes uphill first; leave the routine work for the end.'
+    'Every piece of work is a hill: <b>uphill</b> = figuring it out, <b>downhill</b> = making it happen. Only from the top can you see every step left.',
+    'Put each <b>scope</b> on the hill as a dot. Comparing saved snapshots shows what’s moving and what’s stuck, without asking for status.',
+    'A dot that doesn’t move is a raised hand. Ask about the work: what could we solve to get it over the top?',
+    'A scope that’s partly over the hill and partly not can’t be placed honestly: <b>split</b> it into scopes that move on their own.',
+    '<b>Build your way uphill</b>: thought about it → validated it → built enough that no unknowns are left. A plan in your head is only step one.',
+    'Push the <b>riskiest, most novel</b> scopes uphill first; leave routine work for the end, where a good-enough version is quick.'
   ],
   steps:[
 /* ---------- PART 1: WHY LISTS MISLEAD ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bea’s to-do list for the waitlist shows 8 of 10 tasks checked off. Is the project 80% done?</h1>');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bea’s to-do list for the waitlist shows 8 of 10 tasks checked off. Is the project about 80% done?</h1>');
   L.mc(L.card,['Yes, the list shows it plainly','Not necessarily, more tasks may come'],1,
    'Right. The list only shows the tasks someone has written down so far. This lesson is about seeing progress in a way that doesn’t get fooled.',
    'Careful: the list only holds tasks written down so far. If the team keeps finding new ones, “8 of 10” can soon become “8 of 16”.');}},
+
+{part:0,src:'Chapter 13 · The tasks that aren’t there',
+ solve:async L=>{for(let j=0;j<3;j++)L.$('#fl-t'+j).click();L.$('#fl-go').click();await L.sleep(20);L.$('#fl-go').click();await L.sleep(20);},
+ run(L){
+  const T=[['First tap wins the spot',0],['“Spot taken” for the other member',0],['A won spot follows the late-cancel rule',0],
+    ['Spot count doesn’t refresh after a cancel',1],['A member who already holds a booking can still join the waitlist',1],
+    ['“Spot taken” shows twice on a slow phone',2],['The spot-opened notice stays up after class starts',2]];
+  const DAY=['Monday, week 2','Wednesday, week 2','Friday, week 2'],NX=['Wednesday: wire it to the real booking code','Friday: test it with Kenji'];
+  const HP=[8,27,36];let stage=0,done=new Set(),hist=[];
+  L.h(L.kick('ex','See it happen · the finish line')+'<h1 class="q">Watch the end of Bea’s list for “Spot opens”</h1>'+
+   '<p class="small" style="margin:0">Tap each task to check it off. Then keep the week going and watch two readouts: the list and the hill.</p>'+
+   '<p class="small" style="margin:10px 0 0;font-weight:600;color:var(--ink)" id="fl-day"></p><div id="fl-bar"></div><div class="fl-tiles"><div class="fl-tile l">The list says<b id="fl-pc"></b><span id="fl-n"></span></div><div class="fl-tile h">The hill says<b id="fl-ph"></b></div></div>'+
+   '<div id="fl-h"></div><div class="fl-hist" id="fl-hi"></div><div class="fl-ts" id="fl-ts"></div><div class="hc-btns"><button class="btn pri" id="fl-go" disabled>'+L.ic('arrow')+'<span></span></button></div>');
+  const hill=hcHill(L.$('#fl-h'),{dots:[scDot('S',HP[0])]});
+  const total=()=>stage===0?3:stage===1?5:7;
+  const draw=()=>{const t=total(),d=done.size;L.$('#fl-day').textContent=DAY[stage];L.$('#fl-bar').innerHTML=flBar(t,d);
+    L.$('#fl-pc').textContent=Math.round(d/t*100)+'% done';L.$('#fl-n').textContent=d+' of '+t+' tasks';
+    L.$('#fl-ph').textContent=HCZS[hcZone(hill.get('S'))];
+    L.$('#fl-ts').innerHTML=T.slice(0,t).map((x,j)=>'<button class="fl-t'+(done.has(j)?' on':'')+(x[1]&&x[1]===stage?' new':'')+'" id="fl-t'+j+'" aria-pressed="'+done.has(j)+'"><span class="bx">'+(done.has(j)?'✓':'')+'</span><span>'+x[0]+(x[1]?'<small>found '+(x[1]===1?'Wednesday, wiring it up':'Friday, testing with Kenji')+'</small>':'')+'</span></button>').join('');
+    L.$('#fl-hi').innerHTML=hist.map(h=>'<span>'+h+'</span>').join('<span aria-hidden="true">→</span>');
+    const g=L.$('#fl-go');g.hidden=stage>=2;g.disabled=stage===0&&d<3;if(stage<2)g.querySelector('span').textContent=NX[stage];
+    T.slice(0,t).forEach((x,j)=>{L.$('#fl-t'+j).onclick=()=>{if(stage>0||done.has(j))return;done.add(j);hill.anim('S',HP[0]+4*done.size,300);
+      if(done.size===3)hist.push('Mon 100%');draw();};});};
+  L.$('#fl-go').onclick=()=>{if(L.$('#fl-go').disabled||stage>=2)return;stage++;hill.anim('S',HP[stage],600,()=>{if(L.$('#fl-ph'))L.$('#fl-ph').textContent=HCZS[hcZone(hill.get('S'))];});
+    hist.push((stage===1?'Wed ':'Fri ')+Math.round(done.size/total()*100)+'%');draw();
+    if(stage===2){L.sheet('info','The list went backwards; the work went forward','On Monday the list said 100%. By Friday it said 43%, yet Bea and Kenji learned something every day. Testing <i>added</i> tasks. From outside, Noor can’t tell whether the open tasks will go down or up. The hill dot only climbed, because it tracks what’s figured out, not what’s checked off.');L.done();}};
+  draw();}},
+
 {part:0,src:'Chapter 13 · The tasks that aren’t there',run(L){
-  L.h(L.kick('learn','The tasks that aren’t there')+'<h1 class="q">A to-do list can’t tell you what nobody has found yet</h1>'+
-   L.prose('Kind managers hate asking for status. It feels like nagging, and the follow-up questions make it worse. They’d rather look it up themselves. But to-do lists are a poor place to look.')+
-   L.list([['list','An empty list is ambiguous','No open tasks could mean the work is done, or that nobody has written the next tasks yet.'],
-     ['eye','Testing adds tasks','A scope looks finished, then a round of testing fills it with new issues.'],
-     ['trend','Lists grow as you go','Most tasks are '+L.g('discovered-task','discovered')+' by doing the work, not planned up front. So the list gets longer as the team makes progress.']],1)+
-   L.prose('From outside, you can’t tell whether the number of open tasks will go down or up.'));
+  L.h(L.kick('learn','The tasks that aren’t there')+'<h1 class="q">A to-do list can’t show what nobody has found yet</h1>'+
+   L.prose('Kind managers hate asking for status. It feels like nagging, and the follow-up questions make it worse. They’d rather look it up. But a to-do list is a poor place to look.')+
+   L.list([['list','An empty list is ambiguous','No open tasks could mean done. Or it could mean a scope was named early and nobody has filled in its tasks yet.'],
+     ['eye','Testing adds tasks','All the tasks are done. Then a round of testing fills the scope with new issues.'],
+     ['trend','Lists grow as you go','We picture a list of '+L.g('imagined-task','imagined tasks')+' that gets checked off. In real life most tasks are '+L.g('discovered-task','discovered')+' by doing the work.']],1)+
+   L.note('To know whether the open tasks will go down or up, you’d need the context inside the scope. A number of checked boxes doesn’t carry it.','eye'));
   L.done();}},
-{part:0,src:'Chapter 13 · The tasks that aren’t there',run(L){
-  L.h(L.kick('ex','Pinecone, week 2 to week 3')+'<h1 class="q">Watch the “Spot opens” list for Kenji and Bea’s waitlist</h1>');
-  L.beats(L.card,[
-   ['Monday, week 2','The scope has 3 tasks. Bea checks off all 3. To Noor, glancing at the list, “Spot opens” looks finished.'],
-   ['Wednesday','Bea wires the button to the real booking code and tests a cancelled spot, finding two things nobody planned: the spot count doesn’t refresh, and a member who already holds a booking can join the waitlist too.'],
-   ['Friday','Testing with Kenji adds two more. The list now reads 3 of 7 done, even though the team moved forward all week.'],
-   ['What it means','The list went from “done” to “less than half done” while the work got <i>closer</i> to finished. Counting tasks would have misled Noor twice.']],
-   'Task counts move both ways as work is discovered. They can’t tell an outsider how far along a scope really is.');}},
+
 {part:0,src:'Chapter 13 · Estimates don’t show uncertainty',run(L){
   L.h(L.kick('learn','Estimates don’t help either')+'<h1 class="q">Two tasks, both “4 hours”. They don’t mean the same thing.</h1>'+
-   L.lanes([['check','Done it ten times','The team knows this work well. Four hours really means about four hours.',1],
-            ['alert','Never done before','Unclear links to other parts of the system. Four hours if all goes perfectly, maybe two or three days if not.',4]])+
-   L.prose('You can’t write “4 hours, or maybe 3 days” as an estimate. A number hides how much is still <b>unknown</b>.')+
-   L.note('So the book stops counting tasks and stops using number estimates. It shifts the question from “what’s done?” to <b>“what’s still unknown, and what’s solved?”</b>','bulb'));
+   '<div class="es-row"><b>Task A</b><small>The team has done this ten times.</small><div class="es-bar"><i></i><b>4 h. Really about 4 h.</b></div></div>'+
+   '<div class="es-row"><b>Task B</b><small>Never done before, unclear links to other parts of the system.</small><div class="es-bar"><i></i><em></em><b>4 h… or 2–3 days</b></div></div>'+
+   L.prose('Both get written down as “4 hours”. Nobody writes “4 hours, or maybe 3 days”, so the number hides how much is still <b>unknown</b>.')+
+   L.note('So the book stops counting tasks and stops using number estimates for status. It changes the question from “what’s done?” to <b>“what’s still unknown, and what’s solved?”</b> For that, it uses a hill.','bulb'));
   L.done();}},
-{part:0,src:'Chapter 13 · Estimates don’t show uncertainty',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two waitlist tasks are each estimated at one day. Which estimate should Noor trust less?</h1>');
-  L.mc(L.card,['Adding a “Join waitlist” button like the existing “Book” button','Making sure two members can’t grab the same opened spot'],1,
-   'Right. The booking code already slips under load and the team hasn’t solved this before, so “one day” could easily become several.',
-   'The button copies a pattern the team has built many times. The same-spot problem is new and tangled with the booking code, so its estimate hides the most uncertainty.');}},
 
 /* ---------- PART 2: THE HILL ---------- */
 {part:1,src:'Chapter 13 · Work is like a hill',run(L){
-  L.h(L.kick('learn','Work is like a hill')+'<h1 class="q">Every piece of work has two phases</h1>'+
-   HILL([[22,'var(--h4)'],[50,'var(--pri)'],[80,'var(--h2)']])+
-   L.flow([['compass','Uphill','Figuring out the approach. Full of unknowns and problem solving.','',4],['check','The top','You can now see every step that’s left.','',1],['arrow','Downhill','Doing the work. Certain, confident, no open questions.','',2]])+
-   L.prose('Uphill, “what percent done?” makes no sense, because you don’t yet know what the work is. Only from the top can you see it all, and only then is an estimate fair.'));
+  L.h(L.kick('learn','Work is like a hill')+'<h1 class="q">Every piece of work has two phases</h1><div id="wh"></div>'+
+   L.flow([['compass',L.g('uphill','Uphill'),'Figuring out the approach. Unknowns and problem solving.','',4],['eye','The top','You can see all the work that’s left.','',1],['arrow',L.g('downhill','Downhill'),'Doing it. Certain, confident, no open questions.','',2]])+
+   L.prose('Uphill, “what percent done?” makes no sense: you don’t yet know what the work is. From the top you can see every step left, so an estimate is finally fair.'));
+  hcHill(L.$('#wh'),{ghosts:[{p:20,c:'var(--h4)',t:'unsure'},{p:50,c:'var(--pri)',t:'top'},{p:78,c:'var(--h2)',t:'sure'}]});
   L.done();}},
-{part:1,src:'Chapter 13 · Work is like a hill',run(L){
-  L.h(L.kick('ex','The book’s everyday example')+'<h1 class="q">Hosting a dinner party, step by step up and down the hill</h1>');
-  L.beats(L.card,[
-   ['Bottom left','The date is set, but you have no idea what to cook or even which cuisine.'],
-   ['Halfway up','Two guests are vegetarian, so grilling is out. You lean toward Indian over Italian. Asked “how long will shopping take?”, you can’t say: no dish chosen yet.'],
-   ['The top','You pick a recipe with ingredients you can find and write a shopping list. Now you know what to do, and can even estimate: an hour to shop, half an hour to prep, 45 minutes to cook.'],
-   ['Downhill','The day before, you shop. Then you prep and cook.'],
-   ['Bottom right','After the meal, only the clean-up is left.']],
-   'Uphill feels like “I’m still not sure what I’m doing.” Downhill feels like “Now I know what to do.” The hill captures that feeling, not a task count.');}},
-{part:1,src:'Chapter 13 · Work is like a hill',pts:4,
- solve:async L=>{for(const r of [0,1,2,4]){L.$('#hp').children[r].click();L.$('#hn').click();}},
+
+{part:1,src:'Chapter 13 · Work is like a hill',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#dp-n').click();await L.sleep(30);}},
  run(L){
-  const POS=[5,27,50,74,96],NM=['Start','Halfway up','Top','Halfway down','Finished'];
-  const Q=[['Bea','“I haven’t looked at the studio settings at all yet.”',0,'Nothing figured out yet: the bottom left.'],
-   ['Kenji','“I’ve sketched two ways to show who’s waiting, but haven’t picked one.”',1,'Some figuring done, the approach not chosen: halfway up.'],
-   ['Bea','“Nothing’s built yet for emails, but I can list every remaining step.”',2,'Seeing every step left is the top of the hill, even with nothing built.'],
-   ['Kenji','“Only one last check and the deploy are left on “Join the waitlist”.”',4,'Just the clean-up left: almost at the bottom right.']];
-  let k=0,ans=false;
-  L.h(L.kick('pr','Place the dot')+'<h1 class="q">Where on the hill is each piece of waitlist work? Tap a spot.</h1><div id="hs"></div><div id="hq" style="margin:10px 0" class="prose"></div><div id="hp" style="display:flex;flex-wrap:wrap;gap:6px"></div><div id="hf"></div><button class="btn pri" id="hn" hidden style="margin-top:10px">'+L.ic('arrow')+'Next</button>');
-  const show=()=>{ans=false;L.$('#hs').innerHTML=HILL([]);L.$('#hq').innerHTML='<b>'+Q[k][0]+':</b> '+Q[k][1];L.$('#hf').innerHTML='';L.$('#hn').hidden=true;};
-  NM.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(ans)return;ans=true;const ok=j===Q[k][2];
-    L.$('#hs').innerHTML=HILL(ok?[[POS[j],'var(--ok-strong)']]:[[POS[j],'var(--no-strong)'],[POS[Q[k][2]],'var(--ok-strong)']]);L.award(ok);
-    L.fb(L.$('#hf'),(ok?'<b>Yes.</b> ':'<b>It’s “'+NM[Q[k][2]]+'”.</b> ')+Q[k][3],ok?'ok':'no');
-    if(k<Q.length-1)L.$('#hn').hidden=false;else{L.sheet('info','The hill tells the story','Each answer came from how the person <i>felt</i> about the work: still unsure, or knowing what to do. That’s what the hill shows.');L.done();}};L.$('#hp').appendChild(b);});
-  L.$('#hn').onclick=()=>{if(!ans||k>=Q.length-1)return;k++;show();};show();}},
-{part:1,src:'Chapter 13 · Scopes on the hill',run(L){
-  L.h(L.kick('learn','Scopes on the hill')+'<h1 class="q">One dot per scope gives you a picture of the whole project</h1>'+
-   L.prose('The '+L.g('scope','scopes')+' from the last lesson give the project its language. The hill gives each scope a status. Put every scope on the hill as its own coloured dot, and you have a '+L.g('hill-chart','hill chart')+'.')+
-   HILL([[70],[30],[48],[12]],{legend:SC})+
-   L.prose('Here, “Join the waitlist” is on its way down. “Studio settings” has barely started. “Spot opens” still has real unknowns. The people doing the work drag the dots themselves, because they know where things stand.')+
-   '<p class="small">The book shows a real snapshot from one of its own projects in exactly this form.</p>');
-  L.done();}},
-{part:1,src:'Chapter 13 · Work is like a hill',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Uphill or downhill?',['Uphill','Downhill'],[
-   ['“We’re still testing whether the member list loads fast enough for Ironleaf’s two rooms.”',0,'Still testing an approach means unknowns are left.'],
-   ['“The email layout is settled; I just need to fill in the three message types.”',1,'The approach is clear. What’s left is doing it.'],
-   ['“Not sure yet if the late-cancel rule should show on the waitlist or the booking.”',0,'An open design question: still figuring it out.'],
-   ['“All the screens are wired. Two copy tweaks and a deploy to go.”',1,'Only execution left, near the bottom right.'],
-   ['“I tried the waiting-members list on real data and it holds up; now I’m just building the screens.”',1,'The approach is checked and the rest is known work: downhill.']]);}},
+  const D=[[0,'Bottom left','The date is set, a couple of weeks out. No idea what to cook, not even which cuisine.','“I’m not sure what I’m doing.”','No. There’s no dish to estimate.'],
+   [25,'Halfway up','Two guests are vegetarian, so grilling is out. Indian looks more fun than Italian. Still no dish.','Some figuring done, nothing chosen.','No. Even “what percent done?” makes no sense yet.'],
+   [50,'The top','You find a recipe with ingredients you can get, and write a shopping list.','“Now I know what to do.”','Yes: about an hour to shop, half an hour of prep, 45 minutes of cooking.'],
+   [76,'Downhill','The day before, you buy the ingredients. Then you prep and cook.','Certain. Just doing it.','Yes, and what’s left keeps shrinking.'],
+   [97,'Bottom right','The meal is over. Only the clean-up is left.','Nearly finished.','A little clean-up.']];
+  let k=0;
+  L.h(L.kick('ex','The book’s everyday example')+'<h1 class="q">Host a dinner party and follow your dot over the hill</h1><div id="dp-h"></div><div class="dp" id="dp" aria-live="polite"></div><div class="hc-btns"><button class="btn pri" id="dp-n">'+L.ic('arrow')+'Next step</button></div>');
+  const hill=hcHill(L.$('#dp-h'),{dots:[{k:'D',n:'Dinner',c:'var(--pri)',l:'You',p:0}]});
+  const show=()=>{const d=D[k];L.$('#dp').innerHTML='<b>'+(k+1)+' of 5 · '+d[1]+'</b>'+d[2]+'<div class="kv"><span>Feels like</span><div>'+d[3]+'</div><span>Can you estimate?</span><div>'+d[4]+'</div></div>';};
+  L.$('#dp-n').onclick=()=>{if(k>=4)return;k++;hill.anim('D',D[k][0],350);show();
+    if(k===4){L.$('#dp-n').hidden=true;L.sheet('info','The hill shows how the work feels','Uphill is full of uncertainty and problem solving. Downhill is certainty: you see everything and know what to do. Notice that the estimate only became possible at the top.');L.done();}};
+  show();}},
+
+{part:1,src:'Chapter 13 · Work is like a hill',
+ solve:async L=>{hcPress(L,'#ex-h','S',1,6);await L.sleep(20);},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('ex','Try the hill')+'<h1 class="q">Drag the waitlist dots and read what each spot means</h1>'+
+   '<p class="small" style="margin:0">Drag a dot along the hill, or use − and +. Move one dot over the top and watch its readout change. <span id="ex-c" style="font-weight:600"></span></p><div id="ex-h"></div>');
+  const hill=hcHill(L.$('#ex-h'),{drag:true,rows:'pm',thirds:true,dots:[scDot('J',70),scDot('S',30),scDot('N',12),scDot('T',40)],
+    onMove:(k,p)=>{const z=hcZone(p);if(!seen.has(k+z)){seen.add(k+z);}draw();
+      if(!fin&&seen.size>=3&&[...seen].some(s=>+s.slice(-1)>=5)){fin=true;
+        L.sheet('info','Uphill has thirds; downhill is just doing','The uphill side splits into thirds: thought about it, validated the approach, built enough that no unknowns are left. Over the top, nothing is left to figure out. In real projects the people doing the work drag the dots, because they know where things stand.');L.done();}}});
+  const draw=()=>{L.$('#ex-c').textContent='New spots tried: '+Math.min(seen.size,3)+' of 3';};draw();}},
+
+{part:1,src:'Chapter 13 · Estimates don’t show uncertainty',pts:1,
+ solve:async L=>{hcPress(L,'#te-h','A',1,10);L.$('#te-go').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('try','Same estimate, different hill')+'<h1 class="q">Both waitlist tasks are estimated at 4 hours. Put each one where it really is on the hill.</h1>'+
+   '<div class="es-row"><b><span class="hc-sw" style="background:var(--h2);display:inline-grid;width:22px;height:22px;margin-right:6px">A</span>Add a “Join waitlist” button</b><small>Just like the existing “Book” button, which the team has built many times.</small><div class="es-bar"><i></i><b>4 h</b></div></div>'+
+   '<div class="es-row"><b><span class="hc-sw" style="background:var(--h4);display:inline-grid;width:22px;height:22px;margin-right:6px">B</span>Stop two members grabbing one spot</b><small>Never solved before, and the booking code already slips under load.</small><div class="es-bar"><i></i><b>4 h</b></div></div>'+
+   '<div id="te-h"></div><div class="hc-btns"><button class="btn pri" id="te-go">'+L.ic('check')+'Check</button></div>');
+  const hill=hcHill(L.$('#te-h'),{drag:true,rows:'pm',dots:[{k:'A',n:'A · “Join waitlist” button',c:'var(--h2)',l:'A',p:0},{k:'B',n:'B · One spot, two members',c:'var(--h4)',l:'B',p:0}]});
+  L.$('#te-go').onclick=()=>{const a=hcZone(hill.get('A')),b=hcZone(hill.get('B')),okA=a>=4,okB=b<=2,ok=okA&&okB;
+    hill.ring('A',okA?'var(--ok-strong)':'var(--no-strong)');hill.ring('B',okB?'var(--ok-strong)':'var(--no-strong)');
+    if(first){first=false;L.award(ok);}
+    if(ok)L.sheet('ok','Same number, different hill','A sits at the top or past it: the team can see every step. B sits low on the uphill side: nobody knows the approach yet. The “4 hours” looked identical; the hill shows the difference.');
+    else L.sheet('no','Look at what’s unknown','A copies a pattern the team knows, so every step is visible: the top or downhill. B is new and tangled with the booking code, so it’s still being figured out: low on the uphill side. '+(!okA?'Move A further right.':'Move B further left.'));
+    L.done();};}},
+
+{part:1,src:'Chapter 13 · Work is like a hill',pts:4,
+ solve:async L=>{for(let j=0;j<4;j++){const t=+L.$('#pd-h').dataset.t;hcPress(L,'#pd-h','X',1,Math.round(t/5));L.$('#pd-go').click();await L.sleep(20);if(j<3){L.$('#pd-nx').click();await L.sleep(20);}}},
+ run(L){
+  const Q=[['Kenji','“I’ve sketched two ways to show who’s waiting, but I haven’t tried either.”',[1],10,'Ideas, nothing tested: the first third, “I’ve thought about this”.'],
+   ['Bea','“I tried first-tap-wins on a test copy with two phones. The approach holds. The real wiring isn’t done.”',[2],25,'The approach is checked but not built out: the second third, “I’ve validated my approach”.'],
+   ['Kenji','“I built a rough version of the email and sent it to our test inbox. I can see every step that’s left.”',[4],50,'Built enough that no unknowns are left, and every step is visible: the top.'],
+   ['Bea','“On ‘Join the waitlist’, just one last check and the deploy are left.”',[6],95,'Only the clean-up is left: the bottom right.']];
+  let k=0,ans=false,hill;
+  L.h(L.kick('pr','Place the dot')+'<h1 class="q">Where on the hill is each piece of work? Move the dot, then lock it in.</h1><p class="small" style="margin:0" id="pd-k"></p><div class="hc-say" id="pd-q"></div><div id="pd-h"></div><div id="pd-f"></div><div class="hc-btns"><button class="btn pri" id="pd-go">'+L.ic('check')+'Lock it in</button><button class="btn" id="pd-nx" hidden>'+L.ic('arrow')+'Next</button></div>');
+  const show=()=>{ans=false;const q=Q[k];L.$('#pd-k').textContent='Statement '+(k+1)+' of 4';L.$('#pd-q').innerHTML='<b>'+q[0]+'</b>'+q[1];
+    L.$('#pd-h').innerHTML='';L.$('#pd-h').dataset.t=q[3];L.$('#pd-f').innerHTML='';L.$('#pd-nx').hidden=true;L.$('#pd-go').hidden=false;
+    hill=hcHill(L.$('#pd-h'),{drag:true,rows:'pm',thirds:true,dots:[{k:'X',n:'Where is it?',c:'var(--pri)',l:(k+1)+'',p:0}]});};
+  L.$('#pd-go').onclick=()=>{if(ans)return;ans=true;hill.lock(true);const q=Q[k],ok=q[2].includes(hcZone(hill.get('X')));
+    hill.ring('X',ok?'var(--ok-strong)':'var(--no-strong)');if(!ok)hill.ghosts([{p:q[3],c:'var(--ok-strong)',t:'here'}]);
+    L.award(ok);L.fb(L.$('#pd-f'),(ok?'<b>Yes.</b> ':'<b>It’s “'+HCZS[q[2][0]]+'”.</b> ')+q[4],ok?'ok':'no');L.$('#pd-go').hidden=true;
+    if(k<Q.length-1)L.$('#pd-nx').hidden=false;
+    else{L.sheet('info','You read how the work feels','Each spot came from what the person knew: only ideas, a checked approach, every step visible, or just clean-up. That’s what a dot on the hill tells everyone else.');L.done();}};
+  L.$('#pd-nx').onclick=()=>{if(!ans||k>=Q.length-1)return;k++;show();};
+  show();}},
 
 /* ---------- PART 3: READING THE HILL ---------- */
-{part:2,src:'Chapter 13 · Status without asking',run(L){
-  L.h(L.kick('learn','Status without asking')+'<h1 class="q">Compare snapshots to see how the work is <i>moving</i></h1>'+
-   L.prose('The team updates the hill chart every so often, and each update is saved. The real power for a manager is comparing past snapshots with today’s.')+
-   L.list([['eye','What’s in motion and what’s stuck','Dots that moved show progress. A dot in the same spot for days stands out.'],
-     ['clock','How the time was spent','Which problems the team chose first, and how long each spent going from unknown to known to done.'],
-     ['chat','A pointed question, not a status meeting','No need to interrupt everyone. Ask about the one piece that looks wrong.']],2)+
-   L.prose('The hill chart becomes the first place a manager looks when they feel nervous about a project.'));
+{part:2,src:'Chapter 13 · Scopes on the hill · Status without asking',run(L){
+  L.h(L.kick('learn','Scopes on the hill')+'<h1 class="q">One dot per scope, saved every update, is a hill chart</h1>'+
+   L.prose('The '+L.g('scope','scopes')+' give the project its language. The hill gives each scope a status. Put each scope on the hill as its own coloured dot and you have a '+L.g('hill-chart','hill chart')+'. The people doing the work drag the dots, and each update is saved.')+
+   '<div id="sh"></div><p class="hc-tip">Dashed rings: last week’s saved snapshot.</p>'+
+   L.list([['eye','What’s moving, what’s stuck','Comparing snapshots shows how the work moves, not just where it is.'],
+     ['clock','Where the time went','Which problems the team chose first, and how long each took from unknown to known to done.'],
+     ['chat','One pointed question','No status meeting. The manager asks about the one piece that looks wrong.']],2));
+  hcHill(L.$('#sh'),{leg:true,dots:[scDot('J',55),scDot('S',35),scDot('N',20),scDot('T',18)],
+    ghosts:[{p:30,c:SC.J[1]},{p:34,c:SC.S[1]},{p:10,c:SC.N[1]},{p:5,c:SC.T[1]}]});
   L.done();}},
-{part:2,src:'Chapter 13 · Status without asking',pts:1,
- solve:async L=>{const b=L.$('#wk').children;b[0].click();b[1].click();b[2].click();},
- run(L){
-  const W=[[[30],[24],[10],[5]],[[55],[27],[34],[20]],[[82],[27],[58],[44]]];const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Noor feels nervous about the waitlist in week 4. Step through three saved snapshots.</h1><div id="wk" style="display:flex;gap:6px;flex-wrap:wrap"></div><div id="hh">'+HILL([],{legend:SC})+'</div><div id="wq"></div>');
-  ['Week 2','Week 3','Week 4'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{[...L.$('#wk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-    L.$('#hh').innerHTML=HILL(W[j],{legend:SC});
-    if(seen.size===3&&!L.$('#wq').innerHTML){const q=L.$('#wq');q.innerHTML='<h2 class="sub">What should Noor do?</h2>';
-      L.mc(q,['Ask everyone for a daily written status update','Ask Bea what unknown holds “Spot opens” back','Tell the team they look behind and must hurry up'],1,
-       'Right. Three dots moved every week; “Spot opens” hasn’t moved since week 2. Noor can go straight to that one piece without interrupting the rest.',
-       'The snapshots already show the status, so no extra reports or pep talks are needed. Three dots move steadily; only “Spot opens” is stuck. Ask about that piece of work.');}};L.$('#wk').appendChild(b);});}},
+
 {part:2,src:'Chapter 13 · Nobody says “I don’t know”',run(L){
   L.h(L.kick('learn','Nobody says “I don’t know”')+'<h1 class="q">A stuck dot raises the hand that people won’t</h1>'+
-   L.prose('Nobody likes telling management “I don’t know how to solve this.” So teams hide uncertainty, and risk piles up quietly. Yet the moments when someone is stuck or going in circles are where the biggest risks, and chances, are.')+
+   L.prose('Nobody likes telling management “I don’t know how to solve this.” So teams hide uncertainty, and risk piles up quietly. Yet the moments when someone is stuck or going in circles are where the biggest risks and chances are.')+
    L.quote('A dot that doesn’t move is effectively a raised hand.','Ryan Singer, Shape Up, chapter 13')+
-   L.lanes([['x','About the person','“Looks like you’re stuck!”',4],['check','About the work','“What can we solve to get this over the hill?”',1]])+
+   L.lanes([['x','About the person','“Looks like you’re stuck!”',4],['check','About the work','“What could we solve to get this over the top?”',1]])+
    L.prose('Caught early, a stuck problem can get help from someone senior or a rework of the concept. Caught late, it can sink the project.'));
   L.done();}},
+
+{part:2,src:'Chapter 13 · Status without asking · Nobody says “I don’t know”',pts:2,
+ solve:async L=>{L.$('#nw-0').click();L.$('#nw-1').click();L.$('#nw-2').click();await L.sleep(20);L.$('#nw-h [data-pick="S"]').click();await hcWait(L,'#nq-1');L.$('#nq-1').click();},
+ run(L){
+  const W={J:[30,55,82],S:[34,35,35],N:[10,20,58],T:[5,18,24]},K=['J','S','N','T'];const seen=new Set();let picked=false,asked=false;
+  L.h(L.kick('pr','Noor’s week 4')+'<h1 class="q">Noor feels nervous about the waitlist. Step through the saved snapshots, then tap the dot that should worry Noor.</h1>'+
+   '<div class="hc-btns" style="margin-top:0">'+[2,3,4].map((w,j)=>'<button class="chip" id="nw-'+j+'">Week '+w+'</button>').join('')+'</div><div id="nw-h"></div><p class="hc-tip" id="nw-t">Dashed rings: earlier weeks.</p><div id="nq"></div>');
+  const hill=hcHill(L.$('#nw-h'),{rows:'pick',dots:K.map(k=>scDot(k,0)),onPick:k=>{
+    if(picked)return;if(seen.size<3){L.err('Step through all three weeks first.');return;}
+    picked=true;hill.lock(true);const ok=k==='S';L.award(ok);hill.pulse(['S']);hill.ring(k,ok?'var(--ok-strong)':'var(--no-strong)');
+    const r=hill.row(k);if(r)r.classList.add(ok?'ok':'no');
+    L.$('#nq').innerHTML='<div class="fb '+(ok?'ok':'no')+'">'+(ok?'<b>Yes.</b> ':'<b>Look at “Spot opens”.</b> ')+'Three dots moved every week. “Spot opens” has barely moved since week 3: a raised hand.</div><h2 class="sub">What should Noor say to Bea?</h2><div class="opts" id="nq-o"></div>';
+    const O=['“Bea, looks like you’re stuck. What’s going on?”','“What could we solve to get ‘Spot opens’ over the top?”','“Can everyone send me a short written status each day?”'];
+    O.forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.id='nq-'+j;b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';b.onclick=()=>{if(asked)return;asked=true;const good=j===1;
+      [...L.$('#nq-o').children].forEach((x,q)=>{x.setAttribute('aria-disabled','true');if(q!==j&&q!==1)x.classList.add('dim');});b.classList.add(good?'ok':'no');if(!good)L.$('#nq-1').classList.add('ok');
+      L.award(good);L.sheet(good?'ok':'no',good?'About the work, not the person':'Ask about the work',(good?'':j===0?'“You’re stuck” makes it about Bea, which makes people hide uncertainty next time. ':'The snapshots already give the status; daily reports only interrupt everyone. ')+'Noor can go straight to the one piece that looks wrong and ask what unknown is holding it back, without untangling it from the work that’s moving fine.');L.done();};
+      L.$('#nq-o').appendChild(b);});}});
+  [2,3,4].forEach((w,j)=>{L.$('#nw-'+j).onclick=()=>{seen.add(j);[0,1,2].forEach(q=>L.$('#nw-'+q).classList.toggle('sel',q===j));
+    K.forEach(k=>hill.set(k,W[k][j]));const g=[];for(let q=0;q<j;q++)K.forEach(k=>g.push({p:W[k][q],c:SC[k][1]}));hill.ghosts(g);
+    if(seen.size===3&&!picked)L.$('#nw-t').innerHTML='Dashed rings: earlier weeks. <b style="color:var(--ink)">Now tap the dot that should worry Noor.</b>';};});
+  L.$('#nw-0').click();
+  }},
+
 {part:2,src:'Chapter 13 · Prompts to refactor the scopes',run(L){
   L.h(L.kick('ex','A story from the book')+'<h1 class="q">The scope that looked stuck but wasn’t</h1>');
   L.beats(L.card,[
    ['The worry','On one of the book’s projects, a scope called “Notify” sat on the hill far too long.'],
    ['The check-in','The work was going fine. But “Notify” was really three things: designing an email, sending it from the back end, and showing the notice in an in-app menu.'],
-   ['The mismatch','Sending was nearly coded, the email design nearly settled, the in-app part not started. Was “Notify” over the hill? Parts were, parts weren’t. No single dot could say.'],
-   ['The fix','Split it into three smaller scopes. Now each dot shows where its piece really stands, and the team can show progress more often.']],
-   'Sometimes a stuck dot means the scope lines were drawn wrong. Break it into pieces that can move on their own.');}},
-{part:2,src:'Chapter 13 · Prompts to refactor the scopes',pts:1,run(L){
-  L.h(L.kick('pr','Your call')+'<h1 class="q">“Studio settings” has sat halfway uphill for a week. Inside it: the per-class waitlist switch (built), the waiting-members list (design nearly settled), and showing the late-cancel rule (not started). What should Kenji and Bea do?</h1>');
-  L.mc(L.card,['Leave the dot where it is and keep going','Split it into three scopes that move alone','Move the dot to the top to show progress'],1,
-   'Right. Parts are over the hill and parts haven’t started, so one dot can’t be honest. Three scopes can each show where they stand.',
-   'The dot isn’t stuck because the work is stuck. It’s stuck because one dot covers three pieces at different stages. Split the scope so each piece can move on its own.');}},
-{part:2,src:'Chapter 13 · Status without asking · Nobody says “I don’t know”',pts:4,run(L){
+   ['The mismatch','Sending was mostly coded, the email design nearly settled, the in-app part not started. Was “Notify” over the hill? Parts were, parts weren’t. No single dot could say.'],
+   ['The fix','Split it into smaller scopes that move on their own. Now each dot shows where its piece really stands, and the team can show progress more often.']],
+   'Sometimes a stuck dot means the scope lines were drawn wrong. Look inside before you push.');}},
+
+{part:2,src:'Chapter 13 · Prompts to refactor the scopes',pts:1,
+ solve:async L=>{L.$('#sp-in').click();await L.sleep(20);L.$('#sp-go').click();await L.sleep(20);const h=L.spH;hcTo(L,'#sp-h',h,'T1',70);hcTo(L,'#sp-h',h,'T2',40);hcTo(L,'#sp-h',h,'T3',5);L.$('#sp-ck').click();},
+ run(L){
+  let first=true,split=false;
+  L.h(L.kick('pr','Week 5 · a dot that won’t move')+'<h1 class="q">“Studio settings” has sat at the same spot for a week. Look inside it before anyone pushes.</h1><div id="sp-h"></div><div id="sp-in-box"></div><div class="hc-btns"><button class="btn pri" id="sp-in">'+L.ic('eye')+'Look inside “Studio settings”</button></div>');
+  const hill=hcHill(L.$('#sp-h'),{drag:true,rows:'pm',thirds:true,leg:true,dots:[scDot('J',92),scDot('S',62),scDot('N',70),scDot('T',24)].map(d=>Object.assign(d,{fixed:true})),ghosts:[{p:24,c:SC.T[1],t:'wk 4'}],pulse:['T']});
+  L.spH=hill;hill.lock(true);
+  L.$('#sp-in').onclick=()=>{L.$('#sp-in').hidden=true;
+    L.$('#sp-in-box').innerHTML='<div class="hc-ro"><b class="t">Inside “Studio settings”</b>Per-class waitlist switch: <b>built and working</b><br>Waiting-members list: <b>design nearly settled</b><br>Showing the late-cancel rule: <b>not started</b></div><p class="small">Parts are over the hill and parts haven’t started. Where should one dot go?</p><div class="hc-btns"><button class="btn pri" id="sp-go">'+L.ic('layers')+'Split into three scopes</button></div>';
+    L.$('#sp-go').onclick=()=>{if(split)return;split=true;const c=SC.T[1];
+      const fx=d=>Object.assign(d,{fixed:true});
+      hill.setDots([fx(scDot('J',92)),fx(scDot('S',62)),fx(scDot('N',70)),{k:'T1',n:'Per-class switch',c,l:'Sw',p:24},{k:'T2',n:'Waiting-members list',c,l:'Li',p:24},{k:'T3',n:'Late-cancel rule',c,l:'Ru',p:24}]);
+      hill.pulse([]);hill.ghosts([]);hill.lock(false);
+      L.$('#sp-in-box').innerHTML='<div class="hc-ro"><b class="t">Now place each new dot honestly</b>Switch: built. List: design nearly settled. Rule: not started.</div><div class="hc-btns"><button class="btn pri" id="sp-ck">'+L.ic('check')+'Check the three dots</button></div>';
+      L.$('#sp-ck').onclick=()=>{const z1=hcZone(hill.get('T1')),z2=hcZone(hill.get('T2')),z3=hcZone(hill.get('T3'));
+        const o1=z1>=5,o2=z2>=3&&z2<=4,o3=z3<=1,ok=o1&&o2&&o3;
+        hill.ring('T1',o1?'var(--ok-strong)':'var(--no-strong)');hill.ring('T2',o2?'var(--ok-strong)':'var(--no-strong)');hill.ring('T3',o3?'var(--ok-strong)':'var(--no-strong)');
+        if(first){first=false;L.award(ok);}
+        L.sheet(ok?'ok':'no',ok?'Three honest dots':'Not quite',(ok?'':'The switch is built, so it’s downhill. The list’s design is nearly settled, so it’s close to the top. The rule hasn’t started, so it’s at the bottom left. ')+'The old dot wasn’t stuck because the work was stuck. One dot covered three pieces at different stages. Split apart, each piece can move on its own, and the team can show progress more often.');L.done();};};};}},
+
+{part:2,src:'Chapter 13 · Status without asking · Prompts to refactor the scopes',pts:4,run(L){
   L.h(L.kick('pr','What does the hill tell you?')+'<h1 class="q">Sort each hill chart signal by the best next step.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Ask what’s unknown','Split the scope','All fine, no action'],[
    ['“Spot opens” hasn’t moved in six days and is all one problem.',0,'A still dot on a single problem is a raised hand. Ask what unknown is holding it back.'],
-   ['“Notify members” is stuck, but its email is done and its in-app alert not started.',1,'Parts at different stages under one dot: split it.'],
+   ['“Notify members” is stuck, but its email is done and its in-app notice not started.',1,'Parts at different stages under one dot: split it.'],
    ['“Join the waitlist” moved from the top to near the bottom right this week.',2,'Steady downhill movement is just what you hope to see.'],
-   ['A dot sits uphill and the team can’t say how done it is, its tasks are unrelated.',1,'Unrelated tasks inside one scope make “done” impossible to judge. Factor pieces out.']],
+   ['A dot sits uphill and nobody can say how far along it is, because its tasks are unrelated.',1,'Unrelated tasks inside one scope make it impossible to place honestly. Factor pieces out.']],
    'A still dot is a question about the work. A dot that can’t be placed honestly is a prompt to redraw the scopes.');}},
 
 /* ---------- PART 4: CLIMBING IN ORDER ---------- */
 {part:3,src:'Chapter 13 · Build your way uphill',run(L){
   L.h(L.kick('learn','Build your way uphill')+'<h1 class="q">Climb with your hands, not just your head</h1>'+
-   L.prose('Teams new to hill charts often slide dots <i>back</i>. They mark a scope solved, then hit a surprise and have to move it down again. Usually someone did the uphill work in their head: “I’ll just use that service,” and reality was messier.')+
-   L.tiers([['check','Final third, to the top','I’ve built enough that I don’t believe other unknowns are left.','',true,'Top'],
-            ['flask','Second third','I’ve checked my approach actually works.'],
-            ['bulb','First third','I’ve thought about this.']])+
-   L.prose('Only first-hand work gets a scope over the top. A plan on paper is just the first step.'));
+   L.prose('Teams new to hill charts often slide dots <i>back</i>. They mark a scope solved, then hit a surprise. That’s '+L.g('backsliding','backsliding')+'. Usually someone did the uphill work in their head: “I’ll just use that service,” and reality was messier.')+
+   '<div id="bu"></div>'+
+   L.list([['First third','“I’ve thought about this.”'],['Second third','“I’ve validated my approach.”'],['Final third, to the top','“I’ve built enough that I don’t believe other unknowns are left.”']],3)+
+   L.note('A plan on paper only gets you through the first third.','bulb'));
+  hcHill(L.$('#bu'),{thirds:true,ghosts:[{p:9,c:'var(--h3)',t:'think'},{p:25,c:'var(--h3)',t:'test'},{p:42,c:'var(--h3)',t:'build'}]});
   L.done();}},
+
+{part:3,src:'Chapter 13 · Build your way uphill',pts:1,
+ solve:async L=>{hcTo(L,'#hh-h',L.hhH,'N',10);L.$('#hh-go').click();await L.sleep(20);L.$('#hh-w').click();await hcWait(L,'#hh-r');L.$('#hh-r').click();await hcWait(L,'#hh-end');},
+ run(L){
+  let locked=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Monday, week 3. Bea drags “Notify members” to the top. Move it to where it honestly belongs.</h1>'+
+   '<div class="hc-say"><b>Bea</b>“For the spot-opened email, I’ll just use our mail provider’s template feature.”</div><div id="hh-h"></div><div id="hh-f"></div><ul class="hc-log" id="hh-log"></ul><div class="hc-btns" id="hh-b"><button class="btn pri" id="hh-go">'+L.ic('check')+'Lock in my guess</button></div>');
+  const hill=hcHill(L.$('#hh-h'),{drag:true,rows:'pm',thirds:true,dots:[scDot('N',50)],ghosts:[{p:50,c:SC.N[1],t:'Bea'}]});L.hhH=hill;
+  const log=(t,c)=>{if(L.$('#hh-log'))L.$('#hh-log').insertAdjacentHTML('beforeend','<li class="'+(c||'')+'">'+t+'</li>');};
+  const seq=(steps,end)=>{let j=0;const nx=()=>{if(!L.$('#hh-log'))return;if(j>=steps.length){end();return;}const s=steps[j++];log(s[1],s[2]);hill.anim('N',s[0],380,()=>setTimeout(nx,120));};nx();};
+  L.$('#hh-go').onclick=()=>{if(locked)return;locked=true;hill.lock(true);const z=hcZone(hill.get('N')),ok=z<=1;L.award(ok);
+    L.fb(L.$('#hh-f'),ok?'<b>Good call.</b> Bea has an idea, nothing tried yet: the first third.':'<b>Not yet that far.</b> Bea has only an idea. Nothing is tried or built, so it belongs in the first third.',ok?'ok':'no');
+    L.$('#hh-b').innerHTML='<button class="btn pri" id="hh-w">'+L.ic('play')+'Watch Bea’s week</button>';
+    L.$('#hh-w').onclick=()=>{L.$('#hh-b').innerHTML='';hill.set('N',50);hill.ghosts([]);
+      seq([[50,'<b>Mon.</b> The dot sits at the top. The chart says “solved”.'],[50,'<b>Wed.</b> Bea opens the template feature. It can’t put each member’s class and time into the email. <i>(illustrative)</i>','bad'],[12,'<b>Thu.</b> Bea slides the dot back down. For three days the chart was wrong.','bad']],()=>{
+        L.$('#hh-b').innerHTML='<button class="btn pri" id="hh-r">'+L.ic('cycle')+'Replay: build your way up</button>';
+        L.$('#hh-r').onclick=()=>{L.$('#hh-b').innerHTML='';L.$('#hh-log').innerHTML='';
+          seq([[12,'<b>Mon.</b> An idea: use the template feature. First third.'],[25,'<b>Tue.</b> Bea tries a rough email from a test copy and finds the gap early. A plain email the team writes itself works. Second third.','good'],[46,'<b>Thu.</b> Built with real class data. No unknowns left that Bea can see. The top, and it stays there.','good']],()=>{
+            L.$('#hh-b').innerHTML='<span id="hh-end"></span>';
+            L.sheet('info','Head versus hands','Same week, two charts. In the first, the dot jumped on a theory and slid back. In the second, each step up was earned by trying and building, so the dot never had to come down. A plan in your head is only the first third.');L.done();});};});};};}},
+
 {part:3,src:'Chapter 13 · Build your way uphill',pts:1,run(L){
-  L.h(L.kick('pr','Put in order')+'<h1 class="q">Bea is climbing “Spot opens”. Put Bea’s updates in the order they should happen, from the bottom of the hill to the top.</h1>');
-  L.order(L.card,['I have an idea: let the first tap win','I tried two taps at once on a test copy','Built and wired; no unknowns left that I can see'],
+  L.h(L.kick('pr','Put in order')+'<h1 class="q">Bea is climbing “Spot opens”. Put Bea’s updates in order, from the bottom of the hill to the top.</h1>');
+  L.order(L.card,['I have an idea: let the first tap win','I tried two taps at once on a test copy, and it held','Built and wired; no unknowns left that I can see'],
    'That’s building your way uphill: an idea, then a check that it works, then enough real work that nothing hidden is left.',['First third','Second third','Final third']);}},
-{part:3,src:'Chapter 13 · Build your way uphill',pts:1,run(L){
-  L.h(L.kick('pr','Where does it belong?')+'<h1 class="q">On Monday Bea says, “For the spot-opened email I’ll just use our mail provider’s template feature.” Then Bea drags “Notify members” to the top of the hill. Where should it be?</h1>');
-  L.mc(L.card,['At the top, since there’s a plan','Partway down, since Bea is confident','In the first third: it’s only an idea'],2,
-   'Right. Bea has a theory but hasn’t tried it. Until it’s checked and enough is built, surprises can still push the dot back.',
-   'A plan in your head is only the first step uphill. If the template feature turns out messier, the dot slides back. Keep it in the first third until Bea has tested it.');}},
+
 {part:3,src:'Chapter 13 · Solve in the right sequence',run(L){
   L.h(L.kick('learn','Solve in the right sequence')+'<h1 class="q">Push the scariest work uphill first</h1>'+
-   L.prose('All scopes start at the bottom. The team asks: <b>if we ran out of time, which of these could we throw together quickly anyway, and which might be much harder than we think?</b>')+
-   L.lanes([['alert','Do first','Something the team has never done, with novel problems (the book’s example: geocoding data). It could eat weeks.',4],
-            ['clock','Leave for later','Something routine (an email template). A good-enough version could be done in a day in the final week.',1]])+
-   L.prose('Work expands to fill the time, so starting with the easy part can swallow weeks. Like a journalist’s '+L.g('inverted-pyramid','inverted pyramid')+', put the most important unknowns first. By the end, only nice-to-haves and maybes should be left.'));
+   L.prose('All scopes start at the bottom. The team asks: <b>if we ran out of time, which of these could we whip together anyway, and which might be much harder than we think?</b>')+
+   L.lanes([['alert','Do first','Something the team has never done, with novel problems. The book’s example: geocoding data. It could eat weeks.',4],
+            ['clock','Leave for later','Something routine, like an email template. A good-enough version could be done in a day in the final week.',1]])+
+   L.prose('Work expands to fill the time, so starting with the easy part can swallow weeks of polishing. Like a journalist’s '+L.g('inverted-pyramid','inverted pyramid')+', put the most important unknowns first. Near the end, only nice-to-haves and maybes should be left.'));
   L.done();}},
-{part:3,src:'Chapter 13 · Solve in the right sequence',pts:1,run(L){
-  L.h(L.kick('pr','Plan the climb')+'<h1 class="q">Tap each piece until the sentence gives Kenji and Bea the right order for the waitlist.</h1>');
-  L.sentence(L.card,[['Push the email wording uphill first,','Push “Spot opens” uphill first,'],['because it has the newest unknowns,','because it’s the quickest win,','because it’s the most fun to build,'],['and leave the email wording for later.','and leave the hard parts for week 6.']],[1,0,0],
-   [['The email wording is routine. A good-enough version can be written in a day near the end.'],['Quick wins first is backwards: the scary, novel work should go first.','Fun isn’t the test. Ask which piece might be much harder than it looks.'],['Leaving the hard parts for the last week is how surprises sink projects.']],
-   '“Spot opens” touches the booking code that already slips, and the team has never solved first-tap-wins. Get it over the hill early; the email can wait.');}},
+
+{part:3,src:'Chapter 13 · Solve in the right sequence',pts:1,
+ solve:async L=>{L.$('#ch-S').click();L.$('#ch-T').click();L.$('#ch-N').click();L.$('#ch-run').click();await hcWait(L,'#ch-done',4000);},
+ run(L){
+  const C={S:['Spot opens','First tap wins when two members race for one spot. Tangled with booking code that already slips. Never solved before.'],
+    T:['Studio settings','The waitlist switch and the list of waiting members. A few open questions about layout.'],
+    N:['Notify members','The “a spot opened” email and in-app notice. Routine: the team has sent emails like it many times.']};
+  let order=[],first=true,running=false;
+  L.h(L.kick('pr','Challenge · plan the climb')+'<h1 class="q">Rewind to the start of week 2. In what order should Kenji and Bea push these three scopes uphill?</h1>'+
+   '<p class="small" style="margin:0">Tap the scopes in order, then run the cycle. Goal: “Spot opens” over the top by the end of week 4, and every scope over the top before the cycle ends.</p>'+
+   '<div class="ch-cards" id="ch-c"></div><div id="ch-h"></div><div class="ch-wk" aria-hidden="true"><i id="ch-f"></i>'+[2,3,4,5,6].map(w=>'<span>Wk '+w+'</span>').join('')+'<u></u></div>'+
+   '<p class="small" style="margin:0;text-align:right;color:var(--h4)">Dashed line: end of week 4</p><p class="ch-st" id="ch-st" aria-live="polite"></p><div id="ch-r"></div>'+
+   '<div class="hc-btns"><button class="btn pri" id="ch-run" disabled>'+L.ic('play')+'Run the cycle</button><button class="btn" id="ch-clr">Clear</button></div><p class="small">Weeks of work are <i>illustrative</i>: the novel scope needs 2 weeks if nothing surprises, 3 if something does. Routine email: half a week if done last, but early on it expands to 1½.</p>');
+  const hill=hcHill(L.$('#ch-h'),{dots:['S','T','N'].map(k=>scDot(k,0))});
+  const cards=()=>{L.$('#ch-c').innerHTML=Object.keys(C).map(k=>{const n=order.indexOf(k);return '<button class="ch-card'+(n>=0?' sel':'')+'" id="ch-'+k+'"><span class="n">'+(n>=0?n+1:'')+'</span><span><b><span style="color:'+SC[k][1]+'">●</span> '+C[k][0]+'</b>'+C[k][1]+'</span></button>';}).join('');
+    Object.keys(C).forEach(k=>L.$('#ch-'+k).onclick=()=>{if(running||order.includes(k))return;order.push(k);cards();L.$('#ch-run').disabled=order.length<3;});};
+  const wkLab=t=>Math.abs(t-Math.round(t))<.01?'end of week '+Math.round(t):'mid week '+Math.ceil(t);
+  L.$('#ch-clr').onclick=()=>{if(running)return;order=[];cards();L.$('#ch-run').disabled=true;['S','T','N'].forEach(k=>hill.set(k,0));hill.ghosts([]);L.$('#ch-f').style.width='0';L.$('#ch-st').textContent='';L.$('#ch-r').innerHTML='';};
+  L.$('#ch-run').onclick=()=>{if(running||order.length<3)return;running=true;L.$('#ch-r').innerHTML='';
+    let t=1;const seg={};order.forEach((k,j)=>{const d=k==='S'?3:k==='T'?1:(j===2?.5:1.5);seg[k]=[t,t+d];t+=d;});
+    const allTop=Math.max(...order.map(k=>seg[k][1]));
+    const P=(k,t)=>{const a=seg[k][0],b=seg[k][1];if(t<=a)return 0;if(t<b)return 50*(t-a)/(b-a);if(allTop<6&&t>allTop)return 50+45*(t-allTop)/(6-allTop);return 50;};
+    let now=1;const iv=setInterval(()=>{if(!L.$('#ch-h')){clearInterval(iv);return;}now=Math.min(6,now+.1);
+      ['S','T','N'].forEach(k=>hill.set(k,P(k,now)));L.$('#ch-f').style.width=((now-1)/5*100)+'%';
+      const cl=order.find(k=>now>seg[k][0]&&now<seg[k][1]);
+      let msg=cl?'Week '+Math.min(6,Math.floor(now)+1)+': climbing “'+C[cl][0]+'”':'Week '+Math.min(6,Math.floor(now)+1);
+      if(cl==='S'&&now>=seg.S[0]+2)msg='Surprise: under load the first tap doesn’t always win. One more week uphill.';
+      if(cl==='N'&&order.indexOf('N')<2)msg='Week '+(Math.floor(now)+1)+': polishing the email copy again. Work expands to fill the time.';
+      L.$('#ch-st').textContent=msg;
+      if(now>=6){clearInterval(iv);running=false;
+        const late=order.filter(k=>seg[k][1]>6.001),sOk=seg.S[1]<=4.001,ok=sOk&&!late.length;
+        late.forEach(k=>hill.ring(k,'var(--no-strong)'));
+        L.$('#ch-st').textContent='End of week 6.';
+        L.$('#ch-r').innerHTML='<div class="ch-res">'+order.map(k=>'<span style="color:'+SC[k][1]+';font-weight:700">'+C[k][0]+'</span><span>'+(seg[k][1]>6.001?'<b style="color:var(--no)">still uphill when the cycle ends</b>':'over the top '+wkLab(seg[k][1]))+'</span>').join('')+'</div><span id="ch-done"></span>';
+        if(first){first=false;L.award(ok);}
+        if(ok)L.sheet('ok','Riskiest first','“Spot opens” hit its surprise in week 4, with time left to handle it. The studio settings followed, and the routine email was whipped together at the end, good enough in half a week. Clear and try other orders to see what goes wrong.');
+        else L.sheet('no','The surprise came too late',(!sOk?'“Spot opens” only got over the top '+wkLab(seg.S[1])+' (or never). Its surprise landed late in the cycle, with no time to recover. ':'')+(order.indexOf('N')<2?'Starting with the email let it expand to fill the time. ':'')+(late.length?late.map(k=>'“'+C[k][0]+'”').join(' and ')+' never made it over the top. ':'')+'Push the novel, scary scope first and leave the routine email for the end. Clear and try again.');
+        L.done();}},45);};
+  cards();}},
+
+{part:3,src:'Chapter 13 · Status without asking · Build your way uphill · Prompts to refactor the scopes',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#lm-'+j).click();await L.sleep(20);}await L.sleep(1400);},
+ run(L){
+  const base=()=>({dots:[scDot('J',82),scDot('S',35),scDot('N',58),scDot('T',24)],ghosts:[{p:30,c:SC.J[1]},{p:55,c:SC.J[1]},{p:34,c:SC.S[1]},{p:35,c:SC.S[1]},{p:10,c:SC.N[1]},{p:20,c:SC.N[1]},{p:5,c:SC.T[1]},{p:18,c:SC.T[1]}]});
+  const PR=[['Only one snapshot','Where it stops helping: no history',()=>{const b=base();hill.setDots(b.dots);hill.ghosts([]);hill.pulse([]);},
+     'Same week 4, but without the saved snapshots. “Spot opens” now looks like any other dot. A single picture shows where work is, not how it’s moving. The comparison is what gives managers status without asking.'],
+    ['Dragged from the head','Where it stops helping: dishonest dots',()=>{const b=base();hill.setDots(b.dots);hill.ghosts([]);hill.pulse([]);hill.anim('N',50,450,()=>setTimeout(()=>{if(L.$('#lm-h'))hill.anim('N',14,600);},250));},
+     'The hill only shows what people drag. A dot moved on a theory jumps to the top, then slides back when reality bites. Until then, the chart looks better than the work is.'],
+    ['One dot, three parts','Where it stops helping: badly drawn scopes',()=>{hill.setDots([scDot('J',82),scDot('S',35),scDot('N',58),Object.assign(scDot('T',34),{dash:true})]);hill.pulse([]);hill.ghosts([{p:70,c:SC.T[1],t:'switch'},{p:5,c:SC.T[1],t:'rule'},{p:42,c:SC.T[1],t:'list'}]);},
+     'Parts of “Studio settings” are over the hill and parts haven’t started. No single spot is honest, so the dot is a guess. The fix isn’t a better guess; it’s splitting the scope.'],
+    ['Easy scopes first','Where it stops helping: the wrong order',()=>{hill.setDots([scDot('J',95),scDot('S',6),scDot('N',88),scDot('T',80)]);hill.ghosts([]);hill.pulse([]);},
+     'Week 5, and three dots are downhill, so the chart looks great. But the scary scope has barely started. The hill shows this honestly; it doesn’t choose the order for you. That’s the team’s call.'],
+    ['Nobody asks','Where it stops helping: nobody acts',()=>{const b=base();hill.setDots(b.dots);hill.ghosts([{p:35,c:SC.S[1],t:'wk 3, 4, 5'}]);hill.pulse(['S']);},
+     '“Spot opens” has raised its hand for three weeks. The hill can only say that something might be wrong. Someone still has to ask what could be solved to get it over the top, and bring help early.']];
+  const seen=new Set();let fin=false;
+  L.h(L.kick('ex','Limits')+'<h1 class="q">Where does the hill chart stop protecting you?</h1><p class="small" style="margin:0">Try each case on Pinecone’s week-4 chart. <span id="lm-c" style="font-weight:600"></span></p>'+
+   '<div class="hc-btns" style="margin-top:8px">'+PR.map((p,j)=>'<button class="chip" id="lm-'+j+'">'+p[0]+'</button>').join('')+'</div><div id="lm-h"></div><div class="hc-ro" id="lm-r" aria-live="polite"><b class="t">Pick a case</b>Each one shows a way the chart can mislead or be ignored.</div>');
+  const b0=base();const hill=hcHill(L.$('#lm-h'),{leg:true,dots:b0.dots,ghosts:b0.ghosts});
+  const cnt=()=>{L.$('#lm-c').textContent='Cases tried: '+seen.size+' of 5';};cnt();
+  PR.forEach((p,j)=>L.$('#lm-'+j).onclick=()=>{PR.forEach((_,q)=>L.$('#lm-'+q).classList.toggle('sel',q===j));p[2]();seen.add(j);cnt();
+    L.$('#lm-r').innerHTML='<b class="t">'+p[1]+'</b>'+p[3];
+    if(!fin&&seen.size>=4){fin=true;L.sheet('info','A good chart still needs good people','The hill shows unknowns that lists and estimates hide. But it’s only as honest as the dots people drag and the scope lines they draw. It flags a stuck piece; it doesn’t fix it or pick the order. People still ask, split and sequence.');L.done();}});}},
+
 {part:3,src:'Chapter 13 · Show Progress',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Mixed review',['Good practice','Trap'],[
    ['Noor judges the waitlist by how many tasks are checked off.',1,'Lists grow as work gets discovered. Task counts mislead.'],
    ['Kenji keeps a dot in the first third because they’ve chosen a design but haven’t tried it.',0,'Thinking is the first third; Kenji still needs to validate it.'],
-   ['Tomás sees a dot unmoved for a week and asks what unknown is holding it.',0,'A still dot is a raised hand. Ask about the work.'],
+   ['Tomás sees a dot unmoved for a week and asks what unknown is holding it back.',0,'A still dot is a raised hand. Ask about the work.'],
    ['The team starts with polishing the email layout because it’s easy.',1,'Easy work expands to fill the time. Novel, risky work goes first.'],
    ['Bea moves a dot to the top after only picturing the solution.',1,'Uphill work done in your head leads to backsliding. Build your way up.']]);}}
   ]

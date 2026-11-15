@@ -13,24 +13,195 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* ===== This lesson's own visuals: the risk sieve and the virtuous-circle ring ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.su-svg{display:block;width:100%;max-width:330px;margin:0 auto}
+.su-row{cursor:pointer;outline:none}
+.su-row:focus-visible .su-hit{stroke:var(--pri);stroke-width:2}
+.su-leg{display:grid;grid-template-columns:1fr 1fr;gap:3px 10px;font-size:12.5px;line-height:1.3;color:var(--muted);margin:6px 0 2px}
+.su-leg span{display:flex;align-items:center;gap:6px}
+.su-leg svg{flex:none;width:18px;height:18px}
+.su-tg{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.su-tg .chip{margin:0;min-height:38px}
+.su-tg .chip.off{color:var(--muted);text-decoration:line-through}
+.su-out{background:var(--soft);border-radius:14px;padding:9px 12px 10px;margin-top:8px}
+.su-st{font-weight:600;font-size:15px;line-height:1.4;margin:6px 0 2px}
+.su-got{font-size:13px;line-height:1.45;color:var(--muted);margin:0}
+.su-note{border-left:4px solid var(--line2);background:var(--soft);border-radius:10px;padding:8px 11px;margin:8px 0;font-size:14.5px;line-height:1.5}
+.su-note b{display:block;font-size:12px;letter-spacing:.3px;text-transform:uppercase}
+.su-pre{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px}
+.su-pre .chip{margin:0;min-height:38px}
+.su-case{background:var(--soft);border-radius:14px;padding:10px 12px;margin:0 0 6px;font-size:15px;line-height:1.5}
+.su-case small{display:block;font-size:12px;font-weight:700;letter-spacing:.3px;color:var(--muted);text-transform:uppercase}
+.su-cap{min-height:44px;font-size:14.5px;line-height:1.5;margin:6px 0 4px;text-align:center}
+.su-str{display:flex;flex-wrap:wrap;justify-content:center;gap:2px 12px;font-size:12.5px;color:var(--muted);margin:0 0 8px}
+.su-node{cursor:default}
+.su-node.pick{cursor:pointer}
+.su-acts{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
+.su-acts .chip{margin:0;min-height:38px}
+`;document.head.appendChild(st);})();
+
+const suTap=el=>el.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+
+/* ---------- The risk sieve ---------- */
+/* Three mesh layers. Each catches only its own kind of risk token. Tokens that slip through land in the cycle. */
+const SU_LAY=[
+ {k:'sh',name:'Shaping',sub:'holes solved',y:62,c:'h3',t:'q'},
+ {k:'be',name:'Betting',sub:'six-week cap',y:110,c:'h4',t:'e'},
+ {k:'bu',name:'Building',sub:'join early',y:158,c:'h1',t:'p'}];
+const SU_TOK={
+ q:{c:'h3',one:'open question',many:'open questions',lay:'sh',wk:2},
+ e:{c:'h4',one:'no-end-date risk',many:'no-end-date risks',lay:'be',wk:1},
+ p:{c:'h1',one:'part that meets at the end',many:'parts that meet at the end',lay:'bu',wk:1},
+ w:{c:'faint',one:'idea nobody wants',many:'ideas nobody wants',lay:null,wk:0}};
+const SU_SEQ=['q','e','p','q','e','p','q','e'];
+const SU_TRAY=194,SU_Y0=21;
+function suShape(t,sm){const s=sm?0.8:1;
+  if(t==='q')return '<circle r="'+9*s+'" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="2.5"/><text y="'+4.3*s+'" text-anchor="middle" font-size="'+12*s+'" font-weight="700" fill="var(--h3)">?</text>';
+  if(t==='e')return '<rect x="'+(-6.5*s)+'" y="'+(-6.5*s)+'" width="'+13*s+'" height="'+13*s+'" transform="rotate(45)" fill="var(--h4-bg)" stroke="var(--h4)" stroke-width="2.5"/>';
+  if(t==='p')return '<rect x="'+(-8.5*s)+'" y="'+(-8.5*s)+'" width="'+17*s+'" height="'+17*s+'" rx="3" fill="var(--h1-bg)" stroke="var(--h1)" stroke-width="2.5"/><path d="M'+(-3.5*s)+' '+(-5*s)+'v'+6*s+'M'+3.5*s+' '+(-1*s)+'v'+6*s+'" stroke="var(--h1)" stroke-width="2.2"/>';
+  return '<path d="M0 '+(-10*s)+'L'+10*s+' '+8*s+'L'+(-10*s)+' '+8*s+'Z" fill="var(--soft2)" stroke="var(--faint)" stroke-width="2.5" stroke-linejoin="round"/>';}
+const suIcon=t=>'<svg viewBox="-11 -11 22 22" aria-hidden="true">'+suShape(t,true)+'</svg>';
+function suOutcome(on,grey){
+  const thr={q:!on.sh,e:!on.be,p:!on.bu};
+  const n={q:3,e:3,p:2};const caught=[],thru=[];
+  ['q','e','p'].forEach(t=>{const lab=n[t]+' '+(n[t]>1?SU_TOK[t].many:SU_TOK[t].one);(thr[t]?thru:caught).push(lab);});
+  if(grey)thru.push('1 '+SU_TOK.w.one);
+  let wk,st,txt;
+  if(on.be){wk=6;if(thr.q||thr.p){st='stop';txt='Week 6, not done. The circuit breaker stops it: nothing ships, but only six weeks are lost.';}
+    else{st='ship';txt='Ships at the end of week 6. Every risk was caught before it could stall the team.';}}
+  else{wk=6+(thr.q?6:0)+(thr.p?2:0)+3;
+    if(wk<=11){st='late';txt='No cap, so the work drifts. It ships late, in week '+wk+'.';}
+    else{st='stuck';txt='Week '+wk+' and still not done. No end in sight.'+(wk===17?' That’s studio reports: about four months.':'');}}
+  return {wk,st,txt,caught,thru};}
+function suSieve(L,host,o){o=o||{};
+  const on=Object.assign({sh:true,be:true,bu:true},o.on||{});const hid=new Set(o.hidden||[]);
+  let grey=!!o.grey,gen=0;
+  const H=[];
+  H.push('<svg class="su-svg" viewBox="0 0 320 264" role="img" aria-label="Risk sieve with three layers: shaping, betting, building">');
+  H.push('<rect x="84" y="7" width="232" height="28" rx="10" fill="var(--soft)" stroke="var(--line)"/>');
+  H.push('<text x="4" y="19" font-size="13" font-weight="700" fill="var(--ink)">A project</text><text x="4" y="33" font-size="11.5" fill="var(--muted)">and its risks</text>');
+  SU_LAY.forEach((ly,j)=>{H.push('<g class="su-row" data-k="'+ly.k+'" tabindex="0" role="button">'+
+    '<rect class="su-hit" x="1" y="'+(ly.y-26)+'" width="318" height="42" rx="8" fill="transparent" stroke="none"/>'+
+    '<text class="su-nm" x="4" y="'+(ly.y-3)+'" font-size="13" font-weight="700"></text>'+
+    '<text class="su-sb" x="4" y="'+(ly.y+12)+'" font-size="11.5" fill="var(--muted)"></text>'+
+    '<line class="su-mesh" x1="86" x2="314" y1="'+ly.y+'" y2="'+ly.y+'" stroke-width="8" stroke-linecap="round"/></g>');});
+  H.push('<rect x="84" y="'+(SU_TRAY-18)+'" width="232" height="36" rx="10" fill="var(--soft)" stroke="var(--line2)" stroke-dasharray="4 4"/>');
+  H.push('<text x="4" y="'+(SU_TRAY-3)+'" font-size="13" font-weight="700" fill="var(--ink)">The cycle</text><text x="4" y="'+(SU_TRAY+11)+'" font-size="11.5" fill="var(--muted)">what slips in</text>');
+  H.push('<text x="4" y="235" font-size="13" font-weight="700" fill="var(--ink)">Time spent</text><text x="4" y="249" font-size="11.5" fill="var(--muted)">illustrative</text>'+
+   '<rect x="84" y="226" width="232" height="12" rx="6" fill="var(--soft2)"/><rect class="su-wk" x="84" y="226" width="0" height="12" rx="6" fill="var(--ok)"/>'+
+   '<line x1="161.3" x2="161.3" y1="221" y2="243" stroke="var(--ink)" stroke-width="2"/><text x="166" y="221" font-size="11" fill="var(--muted)">6-week mark</text>'+
+   '<text class="su-wt" x="84" y="258" font-size="12.5" font-weight="700" fill="var(--muted)"></text>');
+  H.push('<g class="su-toks"></g></svg>');
+  H.push('<div class="su-leg">'+['q','e','p','w'].map(t=>'<span>'+suIcon(t)+(t==='q'?'Open question':t==='e'?'No end date':t==='p'?'Parts meet late':'Nobody wants it')+'</span>').join('')+'</div>');
+  if(o.chips!==false)H.push('<div class="su-tg">'+SU_LAY.map(ly=>'<button class="chip" data-k="'+ly.k+'" aria-pressed="true"></button>').join('')+'</div>');
+  if(o.readout!==false)H.push('<div class="su-out" aria-live="polite"><div class="su-st"></div><p class="su-got"></p></div>');
+  host.insertAdjacentHTML('beforeend','<div class="su-sv">'+H.join('')+'</div>');
+  const el=host.lastElementChild,svg=el.querySelector('svg'),tg=el.querySelector('.su-toks');
+  let toks=[];
+  function build(){const seq=grey?SU_SEQ.slice(0,4).concat(['w'],SU_SEQ.slice(4)):SU_SEQ.slice();
+    const step=(300-98)/(seq.length-1);
+    toks=seq.map((t,i)=>({t,x:98+i*step,y:SU_Y0}));
+    tg.innerHTML=toks.map(k=>'<g class="su-tk" transform="translate('+k.x.toFixed(1)+' '+SU_Y0+')">'+suShape(k.t)+'</g>').join('');
+    toks.forEach((k,i)=>k.g=tg.children[i]);}
+  function target(t){const ly=SU_LAY.find(l=>l.t===t);if(ly&&on[ly.k]&&!hid.has(ly.k))return ly.y-11;return SU_TRAY;}
+  function drawLayers(){SU_LAY.forEach((ly,j)=>{const g=svg.querySelector('.su-row[data-k="'+ly.k+'"]');
+      const m=g.querySelector('.su-mesh'),nm=g.querySelector('.su-nm'),sb=g.querySelector('.su-sb');
+      if(hid.has(ly.k)){m.setAttribute('stroke','var(--line2)');m.setAttribute('stroke-dasharray','2 10');nm.textContent='Layer '+(j+1);nm.setAttribute('fill','var(--faint)');sb.textContent='tap to reveal';
+        g.setAttribute('aria-label','Layer '+(j+1)+', hidden. Tap to reveal');return;}
+      m.setAttribute('stroke',on[ly.k]?'var(--'+ly.c+')':'var(--line2)');m.setAttribute('stroke-dasharray',on[ly.k]?'13 5':'2 10');
+      nm.textContent=ly.name;nm.setAttribute('fill',on[ly.k]?'var(--'+ly.c+')':'var(--faint)');sb.textContent=on[ly.k]?ly.sub:'switched off';
+      g.setAttribute('aria-label',ly.name+' layer, '+(on[ly.k]?'on':'off')+'. Tap to switch '+(on[ly.k]?'off':'on'));});
+    el.querySelectorAll('.su-tg .chip').forEach(b=>{const k=b.dataset.k,ly=SU_LAY.find(l=>l.k===k);
+      b.className='chip'+(on[k]?' sel':' off');b.setAttribute('aria-pressed',on[k]?'true':'false');
+      b.textContent=ly.name;b.setAttribute('aria-label',ly.name+' layer '+(on[k]?'on':'off'));});}
+  function readout(){const R=suOutcome(on,grey);
+    const col={ship:'ok',stop:'no-strong',late:'h3',stuck:'no'}[R.st];
+    const wk=svg.querySelector('.su-wk');wk.setAttribute('width',(232*Math.min(R.wk,18)/18).toFixed(1));wk.setAttribute('fill','var(--'+col+')');
+    const wt=svg.querySelector('.su-wt');wt.textContent=(R.st==='ship'?'Shipped in week 6':R.st==='stop'?'Stopped at week 6 · nothing shipped':R.st==='late'?'Shipped late, in week '+R.wk:'Week '+R.wk+' · still not done');wt.setAttribute('fill','var(--'+col+')');
+    const r=el.querySelector('.su-out');if(!r)return;
+    r.querySelector('.su-st').innerHTML=R.txt;
+    r.querySelector('.su-got').innerHTML=(R.caught.length?'<b>Caught:</b> '+R.caught.join(', ')+'. ':'<b>Caught:</b> nothing. ')+(R.thru.length?'<b>Got through:</b> '+R.thru.join(', ')+'.':'<b>Got through:</b> nothing.')+
+      (grey?' The ▲ passes every layer: no layer checks whether anyone wants the thing.':'');}
+  function clearOut(){const wk=svg.querySelector('.su-wk');wk.setAttribute('width','0');const wt=svg.querySelector('.su-wt');wt.textContent='Waiting for the project to drop…';wt.setAttribute('fill','var(--muted)');
+    const r=el.querySelector('.su-out');if(!r)return;r.querySelector('.su-st').innerHTML='<span style="color:var(--muted)">Waiting…</span>';r.querySelector('.su-got').textContent='';}
+  function settle(){toks.forEach(k=>{k.y=target(k.t);k.g.setAttribute('transform','translate('+k.x.toFixed(1)+' '+k.y+')');});readout();}
+  function drop(cb){const my=++gen;clearOut();toks.forEach(k=>{k.y=SU_Y0;k.g.setAttribute('transform','translate('+k.x.toFixed(1)+' '+SU_Y0+')');});
+    const t0=performance.now();
+    const plan=toks.map((k,i)=>{const ty=target(k.t);return {k,ty,d:i*65,dur:260+(ty-SU_Y0)*2.6};});
+    const end=Math.max(...plan.map(p=>p.d+p.dur));
+    const frame=now=>{if(my!==gen||!svg.isConnected)return;const e=now-t0;
+      plan.forEach(p=>{let u=(e-p.d)/p.dur;u=Math.max(0,Math.min(1,u));const y=SU_Y0+(p.ty-SU_Y0)*u*u;p.k.y=y;p.k.g.setAttribute('transform','translate('+p.k.x.toFixed(1)+' '+y.toFixed(1)+')');});
+      if(e<end)requestAnimationFrame(frame);else{settle();if(cb)cb(suOutcome(on,grey));}};
+    requestAnimationFrame(frame);}
+  const api={on,el,hid,
+    drop,settle,outcome:()=>suOutcome(on,grey),
+    set(n,g,cb){Object.assign(on,n);if(g!==undefined&&!!g!==grey){grey=!!g;build();}drawLayers();drop(cb);},
+    toggle(k,cb){on[k]=!on[k];drawLayers();drop(cb);},
+    reveal(k){hid.delete(k);on[k]=true;drawLayers();},
+    lock(v){el.querySelectorAll('.su-tg .chip').forEach(b=>b.disabled=!!v);api.locked=!!v;}};
+  const tap=k=>{if(api.locked)return;if(o.onTap)o.onTap(k,api);else{api.toggle(k,R=>{if(o.change)o.change(k,api,R);});if(o.toggled)o.toggled(k,api);}};
+  svg.querySelectorAll('.su-row').forEach(g=>{g.addEventListener('click',()=>tap(g.dataset.k));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tap(g.dataset.k);}});});
+  el.querySelectorAll('.su-tg .chip').forEach(b=>b.onclick=()=>tap(b.dataset.k));
+  build();drawLayers();
+  if(o.start==='top')clearOut();else settle();
+  return api;}
+
+/* ---------- The virtuous-circle ring ---------- */
+const SU_NODE=[
+ {t:['Teams work','on their own'],x:160,y:32,s:'Teams'},
+ {t:['Seniors spend','less time managing'],b:['Ifeoma checks','Bea every day'],x:246,y:126,s:'Senior time'},
+ {t:['Better-shaped','projects'],x:160,y:220,s:'Shaping'},
+ {t:['Clearer','boundaries'],x:74,y:126,s:'Boundaries'}];
+const SU_ARC=['M228 32 Q270 32 270 98','M270 154 Q270 220 230 220','M90 220 Q50 220 50 154','M50 98 Q50 32 90 32'];
+function suRing(L,host,str,o){o=o||{};const S=str.slice();const broken=new Set();
+  let h='<svg class="su-svg" viewBox="0 0 320 252" role="img" aria-label="Loop of four boxes: teams work on their own, seniors spend less time managing, better-shaped projects, clearer boundaries">'+
+   '<defs><marker id="su-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="var(--muted)"/></marker></defs>';
+  SU_ARC.forEach((d,i)=>{h+='<path class="su-arc" d="'+d+'" fill="none" stroke="var(--line2)" stroke-width="2.5" marker-end="url(#su-ah)"/>';});
+  SU_NODE.forEach((n,i)=>{h+='<g class="su-node" data-n="'+i+'"><rect x="'+(n.x-66)+'" y="'+(n.y-24)+'" width="132" height="48" rx="14" stroke-width="2.5"/>'+
+    '<text class="l1" x="'+n.x+'" y="'+(n.y-4)+'" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)"></text>'+
+    '<text class="l2" x="'+n.x+'" y="'+(n.y+12)+'" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)"></text>'+
+    '<circle cx="'+(n.x+62)+'" cy="'+(n.y-22)+'" r="10.5" stroke-width="2"/><text class="bd" x="'+(n.x+62)+'" y="'+(n.y-18)+'" text-anchor="middle" font-size="12" font-weight="700"></text></g>';});
+  h+='<circle class="su-pulse" r="7" fill="var(--pri)" opacity="0"/></svg><p class="su-cap" aria-live="polite"></p><p class="su-str"></p>';
+  host.insertAdjacentHTML('beforeend','<div class="su-rg">'+h+'</div>');
+  const el=host.lastElementChild,svg=el.querySelector('svg'),pulse=svg.querySelector('.su-pulse'),arcs=[...svg.querySelectorAll('.su-arc')];
+  function draw(){SU_NODE.forEach((n,i)=>{const g=svg.querySelector('.su-node[data-n="'+i+'"]'),r=g.querySelector('rect'),c=g.querySelector('circle'),v=S[i];
+      const tx=broken.has(i)&&n.b?n.b:n.t;g.querySelector('.l1').textContent=tx[0];g.querySelector('.l2').textContent=tx[1];
+      const f=v<=0?['no-bg','no','5 4']:v===1?['soft','line2','']:v===2?['ok-bg','ok-line','']:['ok-bg','ok',''];
+      r.setAttribute('fill','var(--'+f[0]+')');r.setAttribute('stroke','var(--'+f[1]+')');r.setAttribute('stroke-dasharray',f[2]);r.setAttribute('stroke-width',v>=3?'3':'2.5');
+      c.setAttribute('fill','var(--card)');c.setAttribute('stroke','var(--'+(v<=0?'no':v>=2?'ok':'line2')+')');
+      const bd=g.querySelector('.bd');bd.textContent=v;bd.setAttribute('fill','var(--'+(v<=0?'no':v>=2?'ok':'muted')+')');});
+    el.querySelector('.su-str').innerHTML='<span>Strength out of 3:</span>'+SU_NODE.map((n,i)=>'<span>'+n.s+' <b>'+Math.max(0,S[i])+'</b></span>').join('');}
+  /* walk the pulse along arcs from node a, applying fx(nodeIndex) at each arrival; caps[] = caption per arc */
+  function run(a,count,fx,caps,cb){let k=0;const cap=el.querySelector('.su-cap');
+    const one=()=>{if(!svg.isConnected)return;if(k>=count){pulse.setAttribute('opacity','0');if(cb)cb();return;}
+      const ai=(a+k)%4,p=arcs[ai],len=p.getTotalLength(),t0=performance.now();cap.innerHTML=caps[k]||'';p.setAttribute('stroke','var(--pri)');pulse.setAttribute('opacity','1');
+      const f=now=>{if(!svg.isConnected)return;const u=Math.min(1,(now-t0)/400),pt=p.getPointAtLength(len*u);pulse.setAttribute('cx',pt.x);pulse.setAttribute('cy',pt.y);
+        if(u<1)requestAnimationFrame(f);else{p.setAttribute('stroke','var(--line2)');fx((ai+1)%4);draw();k++;one();}};
+      requestAnimationFrame(f);};
+    one();}
+  draw();
+  return {S,el,svg,draw,run,broken};}
+
 Course.lesson({
   id:'0001', title:'The Shape Up method at a glance', minutes:18, icon:'compass',
-  goals:['Name the growing pains Shape Up is built to fix','Explain six-week cycles, shaping and responsible teams in plain words','Say which risk Shape Up targets and where it cuts it down'],
+  goals:['Name the growing pains Shape Up is built to fix','Explain six-week cycles, shaping and responsible teams, and how they feed each other','Say which risk Shape Up targets, where each part cuts it, and what it doesn’t protect you from'],
   parts:['Growing pains','Three big ideas','Targeting risk','The map'],
   read:'Read chapter 1 of the book for the full story of how Basecamp grew into this way of working.',
   glossary:{
     'vertical-slice':'Vertical slice: one small piece of a feature built all the way through, with its screen and its code working together, instead of all screens first and all code later.',
     estimate:'Estimate: a guess at how long some work will take. Shape Up asks a different question first: how long do we <i>want</i> to spend?',
-    'raw-idea':'Raw idea: a request or idea as it first arrives, before anyone has narrowed the problem or set a time limit on it.'
+    'raw-idea':'Raw idea: a request or idea as it first arrives, before anyone has narrowed the problem or set a time limit on it.',
+    'virtuous-circle':'Virtuous circle: a loop where each good result makes the next one easier, so the whole loop keeps getting stronger.'
   },
   cheatsheet:[
-    '<b>Growing pains</b>: projects drag on, product people have no time to think, and features ship slower than they used to.',
-    '<b>Six-week cycles</b>: long enough to build something real, short enough to feel the deadline. No counting hours, no daily meetings.',
-    '<b>Shaping</b>: a small senior group outlines the solution before a team gets it. Concrete enough to act on, open enough to leave room.',
-    '<b>Appetite, not estimate</b>: ask “how much time is this worth?” instead of “how long will it take?”',
-    '<b>Responsible teams</b>: a small team of designers and programmers sets its own tasks and adjusts the scope.',
-    'The risk Shape Up targets is <b>not shipping on time</b>. It is cut in shaping, in betting (the circuit breaker) and in building (integrate early).',
-    'Three parts: <b>shaping</b>, <b>betting</b>, <b>building</b>.'
+    '<b>Growing pains</b>: projects go on with no end, product people have no time to think, and features ship slower than in the early days.',
+    '<b>Six-week cycles</b>: long enough to build something meaningful, short enough to feel the deadline. No counting hours, no daily meetings, no rethinking the roadmap every two weeks.',
+    '<b>Shaping</b>: a small senior group outlines the key elements before a project is bet on. Ask about <b>appetite</b> (what is it worth?), not estimates.',
+    '<b>Responsible teams</b>: a small team of designers and programmers defines its own tasks, adjusts scope and builds vertical slices. The three ideas feed a virtuous circle.',
+    'The one risk targeted: <b>not shipping on time</b>. Shaping solves open questions first, the six-week cap (the <b>circuit breaker</b>) stops runaway projects, and building one piece end to end early stops 11th-hour surprises.',
+    'Each part catches only its own kind of risk. The cap limits the loss but doesn’t make a project ship. Nothing here protects you from building the wrong thing: fix shipping first, then discovery.',
+    'Three parts, in the book and in the work: <b>shaping</b>, <b>betting</b>, <b>building</b>.'
   ],
   steps:[
 /* ---------- PART 1: GROWING PAINS ---------- */
@@ -39,58 +210,58 @@ Course.lesson({
   L.mc(L.card,['More people working on it','A clear end point and time limit','A longer list of features'],1,
    'Projects with no fixed end tend to stretch. This course is about a way of working where every project has one.',
    'Adding people or features rarely brings an end closer. What the project lacks is a point where it has to be done. This course is about building that in.');}},
+
 {part:0,src:'Chapter 1 · Growing pains',run(L){
   L.h(L.kick('learn','Meet Pinecone')+'<h1 class="q">A small company that just started to feel its size</h1>'+
-   L.prose('<b>Pinecone</b> is a made-up app that small yoga, pilates and fitness studios use to publish their classes, sell memberships and let members book. About 15 people work there, all remote. Until recently, everyone did a bit of everything.')+
-   L.prose('The book says that as software teams grow, the same three struggles show up:')+
-   L.list([['cycle','Projects never end','Team members feel work goes on and on with no end in sight.'],
-     ['clock','No time to think','Product managers can’t find time to think about where the product should go.'],
-     ['flame','Shipping slows down','Founders wonder why features no longer get out the door like in the early days.']],1)+
-   '<p class="small" style="margin-top:10px">Noor (CEO), Tomás (CTO), Ifeoma (head of product), Kenji (designer) and Bea (programmer) feel all three. They are trying Shape Up to fix them.</p>');
-  L.done();}},
+   L.prose('<b>Pinecone</b> is a made-up app that small yoga, pilates and fitness studios use to publish classes, sell memberships and let members book. About 15 people, all remote. Until recently, everyone did a bit of everything.')+
+   '<p class="small">The book says three struggles show up as software teams grow. Flip each card.</p><div id="pf"></div>');
+  L.flips(L.$('#pf'),[
+   ['Projects never end','Team members feel work goes on and on with no end in sight. Studio reports is in month four.'],
+   ['No time to think','Product managers can’t find time to think about where the product should go. Ifeoma, head of product, is buried in ticket questions.'],
+   ['Shipping slows down','Founders ask why features don’t get out the door like in the early days. Noor, the CEO, asks it every week.']],
+   'Noor (CEO), Tomás (CTO), Ifeoma (head of product), Kenji (designer) and Bea (programmer) feel all three. They’re trying Shape Up to fix them.');}},
+
 {part:0,src:'Chapter 1 · Introduction',run(L){
   L.h(L.kick('ex','Where the method came from')+'<h1 class="q">How Basecamp grew into Shape Up, step by step</h1>');
   L.beats(L.card,[
-   ['2003','Three people build the first Basecamp. The programmer can only give it <b>ten hours a week</b>. To get anywhere, they cut the work hard to fit the time. That habit of “hammering” scope starts here.'],
-   ['2009','A huge project: joining four products into one suite with one login and one bill. The author tries out early versions of the techniques in this book to manage it.'],
+   ['2003','Three people build the first Basecamp. The programmer can give it only <b>ten hours a week</b>, so they cut the work hard to fit the time. The habit of “hammering” scope starts here.'],
+   ['2009','A huge project: joining four separate products into one suite, with one login and one bill. The author tries out breadboarding and scope mapping, techniques you’ll meet later, to manage it.'],
    ['2012','They use the same techniques to rebuild Basecamp from scratch. Again a lot of work, and again it goes smoothly.'],
-   ['2015','The product team has grown four times over and works remotely. New hires can’t pick up the old instincts, so they need words and structure.'],
+   ['2015','The product team has grown four times over and works remotely. New hires can’t pick up the old instincts, so the team needs words and structure.'],
    ['The result','They switch to repeating <b>six-week cycles</b>, make pitching and betting formal, and coin the word <b>shaping</b>. The company has grown from four people to over fifty.']],
    'Shape Up grew out of real limits: little time, more people, and the need to explain the work to newcomers.');}},
-{part:0,src:'Chapter 1 · Growing pains',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ifeoma spends the whole week answering questions about open tickets and never gets to think about where Pinecone is headed. Which growing pain is this?</h1>');
-  L.mc(L.card,['Shipping has slowed down','Projects never seem to end','No time to think about the product'],2,
-   'Right. Product people buried in day-to-day questions have no time left for strategy.',
-   'Look at what Ifeoma is missing: time to think about the product’s direction. That is the “no time to think” pain.');}},
+
 {part:0,src:'Chapter 1 · Growing pains',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which growing pain?',['Projects never end','No time to think','Shipping slows down'],[
    ['Bea: “I’ve been on the booking rewrite since spring. I honestly don’t know when it’s finished.”',0,'Work with no end in sight is the first pain.'],
-   ['Noor: “Two years ago we shipped something every week. Why does everything take months now?”',2,'That is the founder’s question about shipping speed.'],
-   ['Ifeoma: “I meant to plan next quarter, but support questions ate my whole Friday.”',1,'The product lead has no room for strategy.'],
+   ['Noor: “Two years ago we shipped something every week. Why does everything take months now?”',2,'That’s the founder’s question about shipping speed.'],
+   ['Ifeoma: “I meant to plan next quarter, but support questions ate my whole Friday.”',1,'The product lead has no room left to think about direction.'],
    ['Kenji: “The studio settings redesign keeps growing. Every week someone adds a new part.”',0,'A project that keeps growing never reaches its end.']]);}},
 
 /* ---------- PART 2: THREE BIG IDEAS ---------- */
 {part:1,src:'Chapter 1 · Six-week cycles',run(L){
   L.h(L.kick('learn','Idea 1 · Six-week cycles')+'<h1 class="q">Work happens in six-week blocks</h1>'+
-   L.prose('Basecamp works in '+L.g('cycle','cycles')+' of six weeks. That is long enough to build something meaningful from start to finish, and short enough that everyone feels the deadline from day one. Most new features are built and released in a single cycle.')+
+   L.prose('Six weeks is long enough to build something meaningful from start to finish, and short enough that everyone feels the deadline from day one. Most new features are built and released in one '+L.g('cycle','cycle')+'.')+
    L.lanes([['x','What they don’t do','Count hours. Question how each day is spent. Hold daily meetings. Rethink the roadmap every two weeks.',4],
-            ['check','What they do','Ask: “If this ships after six weeks, will we be happy?” If yes, commit the six weeks and leave the team alone.',2]])+
+            ['check','What they do','Ask: will we be really happy if this ships after six weeks? If yes, commit the six weeks and leave the team alone.',2]])+
    L.note('The focus moves up a level: from managing time to moving the product forward.','target'));
   L.done();}},
+
 {part:1,src:'Chapter 1 · Shaping the work',run(L){
   L.h(L.kick('learn','Idea 2 · Shape the work first')+'<h1 class="q">Someone outlines the solution before a team gets it</h1>'+
-   L.prose('A small senior group works alongside the teams. They define the key elements of a solution before anyone calls it ready. This is '+L.g('shaping','shaping')+'.')+
-   L.prose('Shaped work sits at the right level: <b>concrete enough</b> that the team knows what to do, <b>open enough</b> that they can work out the interesting details themselves.')+
-   L.lanes([['clock','The usual question','“How long will this take?” That is an '+L.g('estimate','estimate')+'.',3],
-            ['target','The Shape Up question','“How much time do we <i>want</i> to spend? What is this idea worth?” That is the '+L.g('appetite','appetite')+'.',2]])+
-   '<p class="small" style="margin-top:10px">Shaping means narrowing the problem and outlining a solution that fits the appetite.</p>');
+   L.prose('A small senior group works in parallel to the teams. They define the key elements of a solution before a project counts as ready to bet on. This is '+L.g('shaping','shaping')+': <b>concrete enough</b> that the team knows what to do, <b>open enough</b> to leave them the interesting details.')+
+   L.lanes([['clock','The usual question','How long will this take? That’s an '+L.g('estimate','estimate')+'.',3],
+            ['target','The Shape Up question','How much time do we <i>want</i> to spend? What is the idea worth? That’s the '+L.g('appetite','appetite')+'.',2]])+
+   '<p class="small" style="margin-top:10px">Shaping = narrowing the problem and outlining a solution that fits the appetite.</p>');
   L.done();}},
+
 {part:1,src:'Chapter 1 · Shaping the work',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Studio owners keep asking for a waitlist on full classes. Which question would Ifeoma ask first?</h1>');
-  L.mc(L.card,['How much time is a waitlist worth to us?','How many weeks will a waitlist take to build?'],0,
-   'That is an appetite question. You decide what the idea is worth, then shape a solution that fits.',
-   'That is an estimate: it starts from a design and guesses the time. Shape Up flips it and asks what the idea is worth first.');}},
+  L.h(L.kick('try','Build it yourself')+'<h1 class="q">Tap each piece until the sentence describes shaping correctly.</h1>');
+  L.sentence(L.card,[['A small senior group','The build team'],['writes every task','outlines the key elements'],['after the cycle starts','before anyone bets on it']],[0,1,1],
+   [['The build team builds. Shaping is done by a small senior group working alongside them.'],['A task list is too detailed. Shaping outlines the solution and leaves the details to the team.'],['Shaping happens before a project is ready to bet on, not during the cycle.']],
+   'A small senior group outlines the key elements of a solution before anyone bets on it.');}},
+
 {part:1,src:'Chapter 1 · Making teams responsible',run(L){
   L.h(L.kick('learn','Idea 3 · Make teams responsible')+'<h1 class="q">The team owns the project, not a list of tickets</h1>'+
    L.prose('The whole project goes to a small team of designers and programmers, like Kenji and Bea. They:')+
@@ -99,28 +270,47 @@ Course.lesson({
      ['layers','Build slices','They build '+L.g('vertical-slice','vertical slices')+' of the product, one at a time.']],2)+
    L.prose('The book contrasts this with methods where managers chop up the work and programmers act like ticket-takers.'));
   L.done();}},
-{part:1,src:'Chapter 1 · Making teams responsible',pts:1,
- solve:async L=>{for(let i=0;i<4;i++)L.$('#spin').click();},
+
+{part:1,src:'Chapter 1 · Making teams responsible',
+ solve:async L=>{L.$('#rspin').click();await L.sleep(1900);L.$('#rspin').click();await L.sleep(1900);},
  run(L){
-  const S=[['people','Teams work on their own','Kenji and Bea run the project themselves.'],['clock','Seniors manage less','Ifeoma doesn’t check on them every day.'],['pencil','Better-shaped projects','Ifeoma spends that time shaping the next project well.'],['target','Clearer boundaries','The next team knows what to build and what to skip, so it can work on its own.']];let n=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">The three ideas feed each other. Press to follow the loop around.</h1><div class="ladder" id="vc"></div>'+
-   '<button class="btn pri" id="spin">'+L.ic('cycle')+'Next link</button><div id="vq"></div>');
-  const draw=()=>{L.$('#vc').innerHTML=S.slice(0,n).map((x,j)=>(j?'<div class="conn"></div>':'')+'<div class="rung'+(j===n-1?' cur':'')+'"><small>'+x[1]+'</small>'+x[2]+'</div>').join('');};
-  L.$('#spin').onclick=function(){n++;draw();if(n>=S.length){this.remove();
-    const q=L.$('#vq');q.innerHTML='<h2 class="sub">Now break it: Ifeoma has to check Bea’s work every day. What suffers next?</h2>';
-    L.mc(q,['The next project gets shaped less well','Bea’s team works more on its own'],0,
-     'Time spent managing comes out of time spent shaping. Rougher projects then need even more managing. The loop runs backwards.',
-     'Daily checking means the team works <i>less</i> on its own, and Ifeoma has less time to shape the next project. The loop runs backwards.');}};
-  draw();}},
+  L.h(L.kick('ex','Explore · the loop')+'<h1 class="q">The three ideas feed each other. Spin the loop until every box is strong.</h1>'+
+   '<p class="small">Pinecone is just starting, so each box is weak (1 of 3). Each spin sends one push around this '+L.g('virtuous-circle','virtuous circle')+'.</p><div id="rg"></div><div class="su-acts"><button class="btn pri" id="rspin">'+L.ic('cycle')+'Spin the loop</button></div>');
+  const R=suRing(L,L.$('#rg'),[1,1,1,1]);
+  R.el.querySelector('.su-cap').textContent='Press spin and follow the dot.';
+  const CAP=['<b>Teams work on their own</b>, so senior people spend less time managing them.','With <b>less time managing</b>, senior people can shape better projects.','<b>Better-shaped projects</b> give teams clearer boundaries.','With <b>clearer boundaries</b>, teams can work even more on their own.'];
+  L.$('#rspin').onclick=function(){const b=this;b.disabled=true;R.S[0]=Math.min(3,R.S[0]+1);R.draw();
+    R.run(0,4,n=>{if(n!==0)R.S[n]=Math.min(3,R.S[n]+1);},CAP,()=>{
+      if(R.S.every(v=>v>=3)){b.remove();R.el.querySelector('.su-cap').innerHTML='Every box is strong. Each one makes the next easier.';
+        L.sheet('info','That’s the virtuous circle','Autonomous teams free up senior time. That time goes into shaping. Better shaping gives clearer boundaries, and clear boundaries make teams more autonomous. No idea works as well alone.');L.done();}
+      else b.disabled=false;});};}},
+
+{part:1,src:'Chapter 1 · Making teams responsible',pts:1,
+ solve:async L=>{L.$('#rbrk').click();await L.sleep(50);L.$('#rpk [data-n="2"]').click();await L.sleep(1900);},
+ run(L){
+  L.h(L.kick('pr','Predict · break the loop')+'<h1 class="q">Ifeoma starts checking Bea’s work every day. Break that box, then predict what weakens next.</h1><div id="rg"></div>'+
+   '<div class="su-acts" id="rpa"><button class="btn pri" id="rbrk">'+L.ic('alert')+'Ifeoma checks in daily</button></div><div id="rpk"></div>');
+  const R=suRing(L,L.$('#rg'),[3,3,3,3]);let picked=false;
+  R.el.querySelector('.su-cap').textContent='The loop is running at full strength.';
+  const pick=n=>{if(picked||!R.broken.size)return;picked=true;const ok=n===2;L.award(ok);
+    L.$$('#rpk .chip').forEach(c=>{c.disabled=true;if(+c.dataset.n===n)c.classList.add('sel');});
+    R.run(1,4,m=>{if(m!==1)R.S[m]=1;},['Ifeoma’s time goes into checking, not shaping. The next projects come out rougher.','Rougher projects leave Kenji and Bea unsure what’s in and what’s out.','Unclear boundaries mean the team leans on Ifeoma for direction more often.','…which pulls Ifeoma into even more managing. The loop runs backwards.'],()=>{
+      L.sheet(ok?'ok':'no',ok?'Right: shaping suffers first':'It hits shaping first','Time spent managing comes straight out of time spent shaping. Rougher projects blur the boundaries, so the team needs more managing, and the loop runs backwards. '+(ok?'':'The box right after senior time is <b>better-shaped projects</b>.'));L.done();});};
+  L.$('#rbrk').onclick=function(){this.closest('.su-acts').remove();R.broken.add(1);R.S[1]=0;R.draw();
+    R.el.querySelector('.su-cap').innerHTML='Senior time now goes into managing. <b>Which box weakens next?</b> Tap it.';
+    L.$('#rpk').innerHTML='<div class="su-acts">'+[0,2,3].map(n=>'<button class="chip" data-n="'+n+'">'+SU_NODE[n].t.join(' ')+'</button>').join('')+'</div>';
+    L.$$('#rpk .chip').forEach(c=>c.onclick=()=>pick(+c.dataset.n));
+    R.svg.querySelectorAll('.su-node').forEach(g=>{if(+g.dataset.n!==1){g.classList.add('pick');g.onclick=()=>pick(+g.dataset.n);}});};}},
+
 {part:1,src:'Chapter 1 · Six-week cycles',pts:6,run(L){
   L.h(L.kick('pr','Shape Up or not?')+'<h1 class="q">Pinecone is trying out new habits. Sort each one.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Fits Shape Up','Doesn’t fit'],[
    ['A 15-minute stand-up every morning to check on progress',1,'The book says plainly: no daily meetings.'],
-   ['Commit six weeks to the waitlist, then leave Kenji and Bea alone',0,'That is exactly the six-week commitment.'],
+   ['Commit six weeks to the waitlist, then leave Kenji and Bea alone',0,'That’s exactly the six-week commitment.'],
    ['Bea logs every hour so Noor can see where each day went',1,'Shape Up doesn’t count hours or question single days.'],
    ['Kenji and Bea write their own task list for the project',0,'Responsible teams define their own tasks.'],
    ['Tomás reshuffles the roadmap every second Monday',1,'The book says they don’t rethink the roadmap every two weeks.'],
-   ['Ifeoma outlines the solution before the team starts',0,'That is shaping the work first.']],
+   ['Ifeoma outlines the solution before the team starts',0,'That’s shaping the work first.']],
    'Shape Up manages at a higher level: shape the work, commit six weeks, and trust the team with the details.');}},
 
 /* ---------- PART 3: TARGETING RISK ---------- */
@@ -128,78 +318,124 @@ Course.lesson({
   L.h(L.kick('learn','The one risk it targets')+'<h1 class="q">Shape Up is built against one specific danger</h1>'+
    L.quote('the risk of not shipping on time','Ryan Singer, chapter 1')+
    L.prose('That means getting stuck, dragging last quarter’s work along, losing time to surprises, and not being free to do what you want next.')+
-   L.note('The book is <b>not</b> about the risk of building the wrong thing; it points to other books for that. Its view: fix your ability to ship first, then improve how you find what to build. A great strategy is useless if you can’t act on it.','info'));
+   L.note('The book is <b>not</b> about the risk of building the wrong thing; it points to other books for that. Its view: get your ability to ship back first, then improve how you find what to build. A great strategy is useless if you can’t act on it.','info'));
   L.done();}},
-{part:2,src:'Chapter 1 · Targeting risk',run(L){
-  L.h(L.kick('learn','Three places risk gets cut')+'<h1 class="q">Each stage removes a different kind of risk</h1>'+
-   L.tiers([['pencil','In shaping','Open questions get solved before the work is given a time box. No project goes to a team with '+L.g('rabbit-hole','rabbit holes')+' or tangled dependencies still in it.','before the team starts'],
-            ['scale','In planning','Every bet is capped at six weeks. A project that runs over gets no extension by default. This is the '+L.g('circuit-breaker','circuit breaker')+'.','when choosing work'],
-            ['layers','In building','Design and code are joined early. The team builds one real piece end to end, then the next, starting with the most unknown parts.','during the cycle',true,'Watch it next']]));
-  L.done();}},
-{part:2,src:'Chapter 1 · Targeting risk',pts:1,
- solve:async L=>{L.$('#wk5').click();},
+
+{part:2,src:'Chapter 1 · Targeting risk',
+ solve:async L=>{for(const k of ['sh','be','bu']){suTap(L.$('#sb .su-row[data-k="'+k+'"]'));await L.sleep(20);}await L.sleep(1500);},
  run(L){
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Two ways to build a waitlist in six weeks. Jump to week 5 and compare.</h1>'+
-   L.lanes([['box','Parts apart','Kenji designs every screen first. Bea writes all the code separately. They plan to join it all at the end.<div class="res" id="la"></div>',4],
-            ['layers','One piece at a time','Kenji and Bea build “join the waitlist” fully working first, then the next piece.<div class="res" id="lb"></div>',2]])+
-   '<button class="btn pri" id="wk5" style="margin-top:14px">'+L.ic('play')+'Jump to week 5</button><div id="wq"></div>');
-  L.$('#wk5').onclick=function(){this.remove();
-    L.$('#la').innerHTML='<span style="color:var(--no)">They join the parts. Screens expect data the code doesn’t have. One week left to untangle it.</span>';
-    L.$('#lb').innerHTML='<span style="color:var(--ok)">Two pieces already work for real. They know what is left and what doesn’t fit.</span>';
-    const q=L.$('#wq');q.innerHTML='<h2 class="sub">Why is the second team safer?</h2>';
-    L.mc(q,['They learned early what fits and what doesn’t','They wrote more code in the first weeks'],0,
-     'Building one piece end to end surfaces problems early, while there is still time to react.',
-     'Amount of code isn’t the point. Joining design and code early shows what works while there is still time to fix it.');};}},
+  L.h(L.kick('learn','Meet the risk sieve')+'<h1 class="q">Each part of Shape Up is a layer that catches one kind of risk</h1>'+
+   '<p class="small">A project falls through three layers before it reaches the team. Tap each layer to reveal what it does.</p><div id="sb"></div><div id="sx"></div>');
+  const INFO={
+   sh:['Shaping','h3','Open questions get solved <i>before</i> the project gets a time box. No project goes to a team with '+L.g('rabbit-hole','rabbit holes')+' or tangled dependencies still in it.'],
+   be:['Betting','h4','Every bet is capped at six weeks. A project that runs over gets no extension by default. This '+L.g('circuit-breaker','circuit breaker')+' stops you sinking several times the appetite into an idea that needs rethinking.'],
+   bu:['Building','h1','Design and code are joined early. The team builds one meaningful piece end to end, then the next, from most unknown to least worrying, instead of hoping the parts fit at the 11th hour.']};
+  const seen=new Set();
+  suSieve(L,L.$('#sb'),{hidden:['sh','be','bu'],chips:false,readout:false,start:'top',onTap(k,S){if(seen.has(k))return;seen.add(k);S.reveal(k);
+    const I=INFO[k];L.$('#sx').innerHTML=('<div class="su-note" style="border-color:var(--'+I[1]+')"><b style="color:var(--'+I[1]+')">'+I[0]+'</b>'+I[2]+'</div>');
+    if(seen.size===3){S.lock(true);S.drop(()=>{L.sheet('info','All three layers on','Every risk is caught by its own layer, so the project ships in week 6. Next, you’ll switch layers off and see what slips through.');L.done();});}}});}},
+
+{part:2,src:'Chapter 1 · Targeting risk',
+ solve:async L=>{L.$('#se .su-tg [data-k="sh"]').click();await L.sleep(30);L.$('#se .su-tg [data-k="bu"]').click();await L.sleep(1500);},
+ run(L){
+  L.h(L.kick('ex','Explore · the sieve')+'<h1 class="q">Switch layers off and watch which risks reach the team</h1>'+
+   '<p class="small">Tap a layer, or its button, to switch it off or on. Try at least two different layers off.</p><div id="se"></div>');
+  const tried=new Set();let fin=false;
+  suSieve(L,L.$('#se'),{toggled(k,S){if(!S.on[k])tried.add(k);},change(k,S,R){
+    if(!fin&&tried.size>=2){fin=true;
+      L.sheet('info','Each layer has holes','A layer catches only its own kind of risk, so a strong layer can’t make up for a missing one. With Betting on, a project with holes is <b>stopped at week 6</b>. With Betting off, nothing stops the drift.');L.done();}}});}},
+
 {part:2,src:'Chapter 1 · Targeting risk',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Class packs ran past its six weeks. By default, what happens?</h1>');
   L.mc(L.card,['It gets two more weeks to finish','The team splits it into two cycles','It stops, with no automatic extension'],2,
-   'That is the circuit breaker. It stops a project from eating many times its appetite when the idea needs rethinking first.',
-   'By default there is no extension. The circuit breaker stops the project so it can’t swallow many times its original appetite.');}},
-{part:2,src:'Chapter 1 · Targeting risk',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Where is the risk cut?',['In shaping','In planning','In building'],[
-   ['Ifeoma checks the tricky payment part with Tomás before anyone commits to the waitlist.',0,'Solving open questions before the time box is shaping.'],
-   ['Noor and Tomás agree: six weeks for the waitlist, and no extension if it runs over.',1,'Capping the bet is how planning cuts risk.'],
-   ['Bea wires up Kenji’s first screen to real data in week one.',2,'Joining design and code early is a building practice.'],
-   ['Kenji and Bea start with the part nobody has built before, not the easy settings page.',2,'Working from most unknown to least worrisome happens while building.'],
-   ['A pitch with a big unsolved question is sent back before it reaches a team.',0,'No project goes to a team with rabbit holes still in it.']]);}},
+   'That’s the circuit breaker. It stops a project from eating several times its appetite when the idea needs rethinking first.',
+   'By default there is no extension. The circuit breaker stops the project so it can’t swallow several times its original appetite.');}},
+
+{part:2,src:'Chapter 1 · Targeting risk',pts:1,
+ solve:async L=>{L.$('#pp [data-i="1"]').click();await L.sleep(1500);},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Only Betting is off. Shaping and Building are on. What reaches the team?</h1><div id="pv"></div><div id="pp" class="opts"></div>');
+  const S=suSieve(L,L.$('#pv'),{on:{be:false},chips:false,start:'top'});S.lock(true);
+  const O=['Nothing. Shaping and Building catch every risk.','Only the ◆ no-end-date risks, so the work drifts past six weeks.','Everything. Without a bet, no layer works.'];
+  L.$('#pp').innerHTML=O.map((t,i)=>'<button class="opt" data-i="'+i+'">'+t+'</button>').join('');
+  let done=false;
+  L.$$('#pp .opt').forEach(b=>b.onclick=()=>{if(done)return;done=true;const i=+b.dataset.i,ok=i===1;L.award(ok);
+    b.classList.add(ok?'ok':'no');if(!ok)L.$('#pp [data-i="1"]').classList.add('ok');L.$$('#pp .opt').forEach(x=>x.setAttribute('aria-disabled','true'));
+    S.drop(()=>{L.sheet(ok?'ok':'no',ok?'Right: only ◆ gets through':'Only ◆ gets through','Shaping and Building still catch their own risks, so the work itself is sound. But with no six-week cap, nobody feels the deadline and nothing forces an end. It ships late, in week 9 here (an illustrative number). The cap is what turns a deadline into a real end.');L.done();});});}},
+
+{part:2,src:'Chapter 1 · Targeting risk',
+ solve:async L=>{for(const i of [0,1,3]){L.$('#ep [data-i="'+i+'"]').click();await L.sleep(1450);}},
+ run(L){
+  L.h(L.kick('pr','Limits · extreme cases')+'<h1 class="q">Where does the sieve stop protecting you? Try at least three extreme cases.</h1><div class="su-pre" id="ep"></div><div id="ev"></div><div id="en"></div>');
+  const P=[
+   ['All layers off',{sh:false,be:false,bu:false},false,'Every risk reaches the team and nothing caps the time. The work just keeps going, like studio reports: month four, no end in sight.'],
+   ['Only Betting on',{sh:false,be:true,bu:false},false,'The circuit breaker stops it at week 6. The loss is capped, but <b>nothing ships</b>. A cap protects your time; it doesn’t fix the holes. Shaping and building do that.'],
+   ['Only Shaping on',{sh:true,be:false,bu:false},false,'Well-shaped work can still slip when design and code meet late and no cap forces an end.'],
+   ['A wrong idea',{sh:true,be:true,bu:true},true,'It ships on time, yet the ▲ still lands in the cycle. No layer asks whether studios want the thing. That’s the risk the book leaves to other books: fix shipping first, then improve discovery.']];
+  L.$('#ep').innerHTML=P.map((p,i)=>'<button class="chip" data-i="'+i+'">'+p[0]+'</button>').join('');
+  const S=suSieve(L,L.$('#ev'),{chips:false,readout:false});S.lock(true);
+  const seen=new Set();let fin=false;
+  L.$$('#ep .chip').forEach(b=>b.onclick=()=>{const i=+b.dataset.i,p=P[i];seen.add(i);
+    L.$$('#ep .chip').forEach(c=>c.classList.toggle('sel',c===b));
+    L.$('#en').innerHTML='<div class="su-note"><b>'+p[0]+'</b>'+p[3]+'</div>';
+    S.set(p[1],p[2],()=>{if(!fin&&seen.size>=3){fin=true;
+      L.sheet('info','The limits','Each layer covers its own risk only. The circuit breaker limits the damage but doesn’t make a project ship. And none of it tells you whether you’re building the right thing.');L.done();}});});}},
+
 {part:2,src:'Chapter 1 · Targeting risk',pts:1,run(L){
   L.h(L.kick('pr','What first?')+'<h1 class="q">Pinecone keeps missing its own dates. Noor wants to start a big customer research program to make sure they build the right things. What does the book suggest?</h1>');
   L.mc(L.card,['Do the research first, then fix delivery','Fix shipping first, then improve discovery'],1,
    'The book says improving how you find what to build comes after you can ship again. A strategy you can’t act on doesn’t help.',
-   'The book puts it the other way round: regain the ability to ship, then improve discovery. Better ideas don’t help if they never ship.');}},
+   'The book puts it the other way round: get your ability to ship back, then improve discovery. Better ideas don’t help if they never ship.');}},
+
+{part:2,src:'Chapter 1 · Targeting risk',pts:3,
+ solve:async L=>{const T=['sh','bu','be'];for(let c=0;c<3;c++){L.$('#cv .su-tg [data-k="'+T[c]+'"]').click();await L.sleep(20);L.$('#chk').click();await L.sleep(20);if(c<2){document.querySelector('#go').click();await L.sleep(40);}}},
+ run(L){
+  const C=[
+   ['The waitlist reaches Kenji and Bea with a question nobody solved: what happens to a member’s card when a spot opens?','sh','Solving open questions is shaping’s job. Without it, the hole reaches the team, and the circuit breaker stops the project at week 6.'],
+   ['Kenji designs every screen and Bea writes all the code apart. The two first meet in week 6, and they don’t fit.','bu','Joining design and code early is a building practice. Without it, the parts meet at the 11th hour.'],
+   ['A small project has no fixed end. Nobody feels a deadline, and it drifts into week 9.','be','The six-week cap belongs to betting. With no fixed end, nothing stops the drift.']];
+  const NM={sh:'Shaping',be:'Betting',bu:'Building'};
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Recreate each failure: switch off the one layer that lets it happen</h1><div id="cc"></div><div id="cv"></div><div class="su-acts"><button class="btn pri" id="chk">'+L.ic('check')+'Check</button></div>');
+  const S=suSieve(L,L.$('#cv'),{readout:false});let c=0;
+  const show=()=>{L.$('#cc').innerHTML='<div class="su-case"><small>Situation '+(c+1)+' of 3</small>'+C[c][0]+'</div>';};
+  show();
+  L.$('#chk').onclick=function(){const off=['sh','be','bu'].filter(k=>!S.on[k]);const ok=off.length===1&&off[0]===C[c][1];L.award(ok);
+    this.disabled=true;S.lock(true);
+    const last=c===2;const body=(ok?'':'The missing layer here is <b>'+NM[C[c][1]]+'</b>. ')+C[c][2];
+    L.sheet(ok?'ok':'no',ok?NM[C[c][1]]+' off. That’s it.':'Not that combination',body,last?null:{label:'Next situation',fn:()=>{c++;L.clearSheet();show();S.lock(false);S.set({sh:true,be:true,bu:true});L.$('#chk').disabled=false;}});
+    if(last)L.done();};}},
 
 /* ---------- PART 4: THE MAP ---------- */
 {part:3,src:'Chapter 1 · How this book is organized',run(L){
-  L.h(L.kick('learn','The three parts')+'<h1 class="q">The book, and the method, has three parts</h1>'+
-   L.flow([['pencil','Shaping','Pre-work on an idea before it is ready to schedule','Part One',1],['scale','Betting','Choosing among pitched projects, six weeks at a time','Part Two',3],['layers','Building','How teams work out what to do and finish on time','Part Three',2]])+
-   L.prose('Shaping goes from setting the appetite on a '+L.g('raw-idea','raw idea')+', to sketching a solution, to writing a '+L.g('pitch','pitch')+'. An appendix helps you start the method at your own company.'));
+  L.h(L.kick('learn','The three parts')+'<h1 class="q">The book follows the same three layers</h1>'+
+   L.flow([['pencil','Shaping','Pre-work that gets a project ready to bet on','Part One',3],['scale','Betting','Choosing among pitched projects, six weeks at a time','Part Two',4],['layers','Building','How teams find what to do and finish on time','Part Three',1]])+
+   L.prose('Shaping runs from setting the appetite on a '+L.g('raw-idea','raw idea')+', to sketching a solution with tools like '+L.g('breadboard','breadboards')+' and '+L.g('fat-marker','fat marker sketches')+', to writing a '+L.g('pitch','pitch')+'. An appendix helps you try it at your own company.')+
+   L.note('The author calls it two books in one: basic truths about the risks of product work, and the specific process Basecamp uses at its current size.','book'));
   L.done();}},
+
 {part:3,src:'Chapter 1 · How this book is organized',run(L){
   L.h(L.kick('ex','A preview of the whole course')+'<h1 class="q">One request, followed from start to finish</h1>');
   L.beats(L.card,[
    ['A raw idea','Pinecone’s support team keeps hearing the same question from studio owners: “Can you add a waitlist?”'],
-   ['Shaping','Ifeoma sets how much time it is worth, sketches a rough solution, looks for traps with Tomás, and writes it up as a pitch.'],
-   ['Betting','At the '+L.g('betting-table','betting table')+', Noor and Tomás decide whether the waitlist gets the next six weeks.'],
+   ['Shaping','Ifeoma sets how much time it’s worth, sketches a rough solution, looks for traps with Tomás, and writes it up as a pitch.'],
+   ['Betting','At the '+L.g('betting-table','betting table')+', Noor, Tomás and Ifeoma decide whether the waitlist gets the next six weeks.'],
    ['Building','Kenji and Bea get the whole project. They plan their own tasks and build it piece by piece.'],
    ['Done','At the end of the cycle, the waitlist ships. Or, if it doesn’t, the circuit breaker stops it.']],
-   'Over the next lessons you will help Pinecone through each stage, with the waitlist as the main thread.');}},
+   'Over the next lessons you’ll help Pinecone through each stage, with the waitlist as the main thread.');}},
+
 {part:3,src:'Chapter 1 · How this book is organized',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Put the waitlist’s journey in order.</h1>');
-  L.order(L.card,['Studio owners ask for a waitlist','Ifeoma shapes it and writes a pitch','Noor and Tomás bet on it','Kenji and Bea build it in one cycle'],
+  L.order(L.card,['Studio owners ask for a waitlist','Ifeoma shapes it and writes a pitch','Noor, Tomás and Ifeoma bet on it','Kenji and Bea build it in one cycle'],
    'Shaping, then betting, then building. Nothing reaches a team until it has been shaped and bet on.');}},
-{part:3,src:'Chapter 1 · Shaping the work',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence describes shaping correctly.</h1>');
-  L.sentence(L.card,[['A small senior group','The build team'],['writes every task','outlines the key elements'],['after the cycle starts','before anyone bets on it']],[0,1,1],
-   [['The build team builds. Shaping is done by a small senior group alongside them.'],['A task list is too detailed. Shaping outlines the solution and leaves the details to the team.'],['Shaping happens before the project is ready to bet on, not during the cycle.']],
-   'A small senior group outlines the key elements of a solution before anyone bets on it.');}},
-{part:3,src:'Chapter 1 · Making teams responsible',pts:4,run(L){
+
+{part:3,src:'Chapter 1 · Making teams responsible',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Mixed review: which idea is this?',['Six-week cycles','Shaping the work','Responsible teams','The circuit breaker'],[
    ['Bea: “Don’t send me tickets. Give us the project and we’ll split it up.”',2,'Teams define their own tasks.'],
    ['Ifeoma: “Before we decide, how much is a waitlist worth to us?”',1,'Setting the appetite is part of shaping.'],
-   ['Noor: “If this ships in six weeks we’ll be happy. Let’s commit and leave them alone.”',0,'That is the cycle mindset.'],
-   ['Tomás: “Week six is over and it isn’t done. We stop and rethink it.”',3,'No extension by default.']]);}}
+   ['Noor: “If this ships in six weeks we’ll be happy. Let’s commit and leave them alone.”',0,'That’s the cycle mindset.'],
+   ['Tomás: “Week six is over and it isn’t done. We stop and rethink it.”',3,'No extension by default.'],
+   ['Tomás: “This pitch still has a big unsolved question. It isn’t ready to bet on.”',1,'Solving open questions before the bet is shaping’s job.']]);}}
   ]
 });
 </script>
