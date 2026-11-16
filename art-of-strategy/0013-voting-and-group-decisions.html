@@ -1,0 +1,719 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voting and Group Decisions</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* ===== This lesson’s own visuals: the agenda bracket under a cycle triangle (three options, the
+   head-to-head arrows that go round in a circle, the groups’ ballots, and a knockout bracket whose
+   order the learner drags; a “voters look ahead” switch and a rank-them mode), the court’s
+   question path, the average-vs-median start-time line, the two-issue plan board, the approval
+   ballot grid with a “did my ballot change it?” test, and the tie-break seats.
+   Everything lives in this file. ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card button[hidden],.card div[hidden]{display:none!important}
+.vg-svg{display:block;width:100%;max-width:330px;margin:4px auto}
+.vg-drag{touch-action:none}
+.vg-drag .vg-tok{cursor:grab}
+.vg-tap{touch-action:none;cursor:crosshair}
+.vg-hit{cursor:pointer}
+.vg-ro{font-size:14px;text-align:center;color:var(--muted);margin:6px 0;min-height:20px;line-height:1.45}
+.vg-ro b{color:var(--ink)}
+.vg-ill{font-size:12px;color:var(--muted);text-align:center;margin:2px 0 4px;font-style:italic}
+.vg-ctl{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;margin:6px 0}
+.vg-ctl .chip,.vg-ctl .btn{margin:0}
+.vg-lab{font-size:12.5px;font-weight:700;color:var(--muted);width:100%;text-align:center;letter-spacing:.2px}
+.vg-cap{font-size:15px;line-height:1.5;margin:8px 0}
+.vg-bals{margin:6px auto;max-width:330px}
+.vg-bal{display:flex;align-items:center;gap:6px;background:var(--soft);border-radius:12px;padding:4px 6px;margin-bottom:4px}
+.vg-bal b{flex:none;width:62px;font-size:12px;line-height:1.2;color:var(--ink)}
+.vg-bal b small{display:block;font-size:11px;font-weight:600;color:var(--muted)}
+.vg-rk{display:flex;align-items:center;flex-wrap:wrap;gap:3px;min-width:0}
+.vg-rk .gt{color:var(--faint);font-size:12px;font-weight:700}
+.vg-li{display:inline-flex;align-items:center;gap:3px;font-size:11.5px;font-weight:700;line-height:1.2;padding:4px 8px;border-radius:99px;border:1.5px solid transparent;white-space:nowrap}
+button.vg-li{min-height:36px;padding:4px 7px;cursor:pointer;border-bottom-width:3px}
+button.vg-li:hover{filter:brightness(.97)}
+button.vg-li em{font-style:normal;font-weight:700;opacity:.8}
+.vg-ords{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:5px;margin:6px auto;max-width:330px}
+.vg-ords div{background:var(--soft);border-radius:10px;padding:6px 4px;text-align:center;font-size:12.5px;line-height:1.4;color:var(--muted)}
+.vg-ords b{font-size:13px}
+.vg-sl{display:block;margin:6px auto 0;max-width:330px}
+.vg-sl .h{display:flex;justify-content:space-between;font-size:14px;gap:8px}
+.vg-sl input{width:100%;height:34px;margin:0;accent-color:var(--pri)}
+.vg-say{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:48px}
+.vg-say b.t{display:block;font-size:11.5px;letter-spacing:.4px;color:var(--muted);margin-bottom:2px}
+.vg-steps{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;margin:4px 0 8px}
+.vg-steps span{font-size:11px;line-height:1.25;font-weight:600;text-align:center;border-radius:10px;padding:6px 2px;background:var(--soft);color:var(--muted);border:1.5px solid transparent}
+.vg-steps span.cur{background:var(--pri-bg);color:var(--pri-deep);border-color:var(--pri)}
+.vg-steps span.dn{background:var(--ok-bg);color:var(--ok)}
+.vg-leg{font-size:12px;color:var(--muted);text-align:center;margin:0 0 4px;line-height:1.5}
+.vg-leg b{color:var(--ink)}
+.vg-in{display:block;width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:12px;padding:9px 11px;font:inherit;font-size:15px;background:var(--card);color:var(--ink);margin:4px 0 8px}
+.vg-in:focus{outline:none;border-color:var(--pri)}
+.vg-fl{font-size:12.5px;font-weight:700;color:var(--muted);letter-spacing:.2px;display:block;margin-top:6px}
+.vg-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.vg-chips .chip{margin:0}
+.vg-card{border:2.5px dashed var(--pri);border-radius:16px;background:var(--pri-bg);padding:12px 14px;margin:10px auto 4px;max-width:320px;color:var(--ink)}
+.vg-card .k{font-size:11.5px;font-weight:700;letter-spacing:.5px;color:var(--pri-deep)}
+.vg-card .i{font-size:17px;font-weight:700;margin:2px 0 6px;word-break:break-word}
+.vg-card .r{font-size:14px;line-height:1.5;border-top:1px solid var(--line);padding-top:6px}
+/* strategy-map strip */
+.mp-row{display:grid;grid-template-columns:22px 1fr;gap:2px 8px;align-items:start;border-bottom:1px solid var(--line);padding:6px 2px}
+.mp-row .n{width:20px;height:20px;border-radius:6px;background:var(--soft2);color:var(--muted);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.mp-row.hot .n{background:var(--pri);color:var(--pri-ink)}
+.mp-row b{font-size:13px;line-height:1.35;font-weight:600}
+.mp-row.hot b{color:var(--pri-deep)}
+.mp-row .t{grid-column:2;display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.mp-t{font-size:11.5px;font-weight:600;border-radius:7px;padding:2px 7px;background:var(--soft2);color:var(--ink)}
+.mp-t.cur{background:var(--pri);color:var(--pri-ink)}
+.mp-t.tbd{background:transparent;border:1.5px dashed var(--line2);color:var(--faint);padding:1px 6px}
+.mp-ar{color:var(--faint);font-size:11px}
+`;document.head.appendChild(st);})();
+
+/* ---------- small helpers ---------- */
+const r1=v=>Math.round(v*10)/10;
+function vgSet(inp,v){inp.value=v;inp.dispatchEvent(new Event('input',{bubbles:true}));}
+function vgChips(host,labels,cb,multi){labels.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=t;
+  b.onclick=()=>{if(multi)b.classList.toggle('sel');else[...host.children].forEach((x,q)=>x.classList.toggle('sel',q===j));cb(j,b);};host.appendChild(b);});}
+function vgPt(svg,e){const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());}
+function vgTag(x,y,t,col,strike){const w=t.length*7+12;return '<g pointer-events="none"><rect x="'+r1(x-w/2)+'" y="'+r1(y-9)+'" width="'+w+'" height="18" rx="9" fill="var(--card)" stroke="'+col+'" stroke-width="1.5"/><text x="'+r1(x)+'" y="'+r1(y+4)+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+col+'"'+(strike?' text-decoration="line-through"':'')+'>'+t+'</text></g>';}
+
+/* ---------- the offsite: three options, three groups (illustrative numbers, built like the book’s
+   Robespierre–Danton–Lafarge example: 75–25, 65–35, 60–40) ---------- */
+const VG_N=['City','Coast','Countryside'];
+const VG_C=['var(--h1)','var(--h2)','var(--h3)'];
+const VG_BG=['var(--h1-bg)','var(--h2-bg)','var(--h3-bg)'];
+const vgGroups=()=>[{name:'Studio',n:16,rank:[0,1,2]},{name:'Dev',n:10,rank:[1,2,0]},{name:'Accounts',n:14,rank:[2,0,1]}];
+function vgPair(G,a,b){let x=0,y=0;G.forEach(g=>{if(g.rank.indexOf(a)<g.rank.indexOf(b))x+=g.n;else y+=g.n;});return [x,y];}
+function vgBeat(G,a,b){const p=vgPair(G,a,b);return p[0]>p[1]?a:b;}
+function vgCW(G){for(let a=0;a<3;a++)if([0,1,2].every(b=>b===a||vgBeat(G,a,b)===a))return a;return -1;}
+/* order = [x, y, z]: x v y first, the winner meets z in the final. ahead = voters look ahead and reason
+   back: in the first vote each group backs whichever side leads to the final result it prefers. */
+function vgRun(G,order,ahead){const [x,y,z]=order,fx=vgBeat(G,x,z),fy=vgBeat(G,y,z),r=[0,0],sw=[];
+  G.forEach(g=>{const sin=g.rank.indexOf(x)<g.rank.indexOf(y)?x:y;let pick=sin;
+    if(ahead&&fx!==fy)pick=g.rank.indexOf(fx)<g.rank.indexOf(fy)?x:y;
+    if(pick!==sin)sw.push({g,pick,sin,fear:pick===x?fy:fx});
+    if(pick===x)r[0]+=g.n;else r[1]+=g.n;});
+  const w1=r[0]>r[1]?x:y,fin=vgPair(G,w1,z),win=fin[0]>fin[1]?w1:z;
+  return {order:order.slice(),r1:r,w1,fin,win,sw,ahead};}
+function vgSay(o,r){const N=o.names,[x,y,z]=r.order;
+  let t='<b>First vote</b> '+N[x]+' v '+N[y]+': '+N[r.w1]+' '+Math.max(...r.r1)+'–'+Math.min(...r.r1)+'<br><b>Final</b> '+N[r.w1]+' v '+N[z]+': <b style="color:'+o.cols[r.win]+'">'+N[r.win]+' wins</b> '+Math.max(...r.fin)+'–'+Math.min(...r.fin);
+  r.sw.forEach(s=>{t+='<br><span style="color:var(--h4)">'+s.g.name+' votes '+N[s.pick]+', not '+N[s.sin]+', to stop '+N[s.fear]+'.</span>';});
+  return t;}
+
+/* the cycle triangle: arrows point from the head-to-head winner to the loser */
+const VG_P=[[160,24],[62,126],[258,126]],VG_E=[[0,1],[1,2],[2,0]];
+function vgArc(cx,cy,r,ccw,col){const rad=d=>d*Math.PI/180,a0=ccw?-30:210,a1=ccw?30:150,p=d=>[r1(cx+r*Math.cos(rad(d))),r1(cy+r*Math.sin(rad(d)))];
+  const [x0,y0]=p(a0),[x1,y1]=p(a1),t=ccw?[Math.sin(rad(a1)),-Math.cos(rad(a1))]:[-Math.sin(rad(a1)),Math.cos(rad(a1))];
+  return '<path d="M'+x0+' '+y0+'A'+r+' '+r+' 0 1 '+(ccw?0:1)+' '+x1+' '+y1+'" fill="none" stroke="'+col+'" stroke-width="2.5"/><path d="M'+r1(x1+t[0]*7)+' '+r1(y1+t[1]*7)+'L'+r1(x1-t[1]*5)+' '+r1(y1+t[0]*5)+'L'+r1(x1+t[1]*5)+' '+r1(y1-t[0]*5)+'Z" fill="'+col+'"/>';}
+function vgTri(o){
+  const N=o.names,C=o.cols,B=o.bgs,hw=50,hh=15;
+  const clip=(a,b)=>{const dx=b[0]-a[0],dy=b[1]-a[1],t=Math.min((hw+4)/(Math.abs(dx)||1e-9),(hh+4)/(Math.abs(dy)||1e-9));return [a[0]+dx*t,a[1]+dy*t];};
+  let s='<rect width="320" height="150" rx="14" fill="var(--soft)"/>',lab='';
+  const allShown=!o.show||o.show.every(Boolean);
+  if(o.center==='cycle'&&allShown)s+=vgArc(160,84,14,vgBeat(o.G,0,1)===0,'var(--h4)')+'<text x="160" y="114" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h4)">goes round</text>';
+  VG_E.forEach(([a,b],e)=>{
+    const pr=vgPair(o.G,a,b),w=pr[0]>pr[1]?a:b,l=w===a?b:a,wv=Math.max(...pr),lv=Math.min(...pr);
+    const P1=clip(VG_P[w],VG_P[l]),P2=clip(VG_P[l],VG_P[w]);
+    const mx=(VG_P[a][0]+VG_P[b][0])/2,my=(VG_P[a][1]+VG_P[b][1])/2,ox=mx-160,oy=my-92,ol=Math.hypot(ox,oy)||1,off=e===1?13:18,lx=mx+ox/ol*off,ly=my+oy/ol*off;
+    const show=!o.show||o.show[e],cut=o.cut===e;
+    if(o.hit)s+='<line class="vg-hit" data-e="'+e+'" x1="'+r1(P1[0])+'" y1="'+r1(P1[1])+'" x2="'+r1(P2[0])+'" y2="'+r1(P2[1])+'" stroke="transparent" stroke-width="28" stroke-linecap="round"/>';
+    if(!show){s+='<line x1="'+r1(P1[0])+'" y1="'+r1(P1[1])+'" x2="'+r1(P2[0])+'" y2="'+r1(P2[1])+'" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 4" pointer-events="none"/>';lab+=vgTag(lx,ly,'?','var(--muted)');return;}
+    const col=cut?'var(--faint)':C[w],dx=P2[0]-P1[0],dy=P2[1]-P1[1],dl=Math.hypot(dx,dy),ux=dx/dl,uy=dy/dl,bx=P2[0]-ux*11,by=P2[1]-uy*11;
+    s+='<line x1="'+r1(P1[0])+'" y1="'+r1(P1[1])+'" x2="'+r1(bx)+'" y2="'+r1(by)+'" stroke="'+col+'" stroke-width="3"'+(cut?' stroke-dasharray="5 4"':'')+' pointer-events="none"/>';
+    s+='<path d="M'+r1(P2[0])+' '+r1(P2[1])+'L'+r1(bx-uy*6)+' '+r1(by+ux*6)+'L'+r1(bx+uy*6)+' '+r1(by-ux*6)+'Z" fill="'+col+'" pointer-events="none"/>';
+    lab+=vgTag(lx,ly,wv+'–'+lv,col,cut);});
+  VG_P.forEach((p,i)=>{const st=o.star===i,rg=o.ring===i;
+    s+='<rect x="'+(p[0]-hw)+'" y="'+(p[1]-hh)+'" width="100" height="30" rx="15" fill="'+B[i]+'" stroke="'+C[i]+'" stroke-width="'+(st||rg?4:2)+'"/>'+
+      '<text x="'+p[0]+'" y="'+(p[1]+4.5)+'" text-anchor="middle" font-size="12.5" font-weight="700" fill="'+C[i]+'">'+N[i]+'</text>';
+    if(st)s+='<circle cx="'+(p[0]+hw-4)+'" cy="'+(p[1]-hh+1)+'" r="10" fill="var(--ok-strong)"/><text x="'+(p[0]+hw-4)+'" y="'+(p[1]-hh+5.5)+'" text-anchor="middle" font-size="12" fill="var(--card)">★</text>';});
+  return s+lab;}
+function vgBalHtml(o,edit){return '<div class="vg-bals">'+o.G.map((g,gi)=>'<div class="vg-bal"><b>'+g.name+(g.n>1?'<small>'+g.n+' people</small>':'')+'</b><span class="vg-rk">'+g.rank.map((c,k)=>{
+  const st=' style="background:'+o.bgs[c]+';color:'+o.cols[c]+';border-color:'+o.cols[c]+'"',sep=k?'<span class="gt" aria-hidden="true">›</span>':'';
+  return sep+(edit&&k>0?'<button class="vg-li" data-g="'+gi+'" data-k="'+k+'"'+st+' aria-label="Move '+o.names[c]+' up on the '+g.name+' ballot"><em>‹</em>'+o.names[c]+'</button>':'<span class="vg-li"'+st+'>'+o.names[c]+'</span>');}).join('')+'</span></div>').join('')+'</div>';}
+
+/* the knockout bracket under the triangle */
+const VG_SY=[32,68,122];
+function vgBrSvg(o,res,ph,sel){
+  const N=o.names,C=o.cols,B=o.bgs,od=o.order;
+  let s='<rect width="320" height="146" rx="14" fill="var(--soft)"/>'+
+   '<text x="56" y="12" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">FIRST VOTE</text>'+
+   '<text x="8" y="104" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">WAITS FOR FINAL</text>'+
+   '<text x="169" y="29" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">1ST-VOTE WINNER</text>'+
+   '<text x="274" y="63" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">WINNER</text>';
+  const ln=(d,on)=>'<path d="'+d+'" stroke="'+(on?'var(--ink)':'var(--line2)')+'" stroke-width="'+(on?3:2)+'" fill="none" stroke-linejoin="round"/>';
+  const a0=ph>=1&&res.w1===od[0],a1=ph>=1&&res.w1===od[1],f1=ph>=2&&res.win===res.w1,f2=ph>=2&&res.win===od[2];
+  s+=ln('M110 32H117V50',a0)+ln('M110 68H117V50',a1)+ln('M117 50H124',ph>=1)+ln('M214 50H224V86',f1)+ln('M110 122H224V86',f2)+ln('M224 86H232',ph>=2);
+  const box=(x,y,w,h,c)=>c<0?'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+h/2+'" fill="var(--card)" stroke="var(--line2)" stroke-width="1.5" stroke-dasharray="4 3"/><text x="'+(x+w/2)+'" y="'+(y+h/2+4.5)+'" text-anchor="middle" font-size="13" font-weight="700" fill="var(--faint)">?</text>':
+    '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+h/2+'" fill="'+B[c]+'" stroke="'+C[c]+'" stroke-width="3"/><text x="'+(x+w/2)+'" y="'+(y+h/2+4.5)+'" text-anchor="middle" font-size="12.5" font-weight="700" fill="'+C[c]+'">'+N[c]+'</text>';
+  s+=box(124,36,90,28,ph>=1?res.w1:-1)+box(232,70,84,32,ph>=2?res.win:-1);
+  if(ph>=1)s+='<text x="169" y="80" text-anchor="middle" font-size="12" font-weight="700" fill="'+C[res.w1]+'">'+Math.max(...res.r1)+'–'+Math.min(...res.r1)+'</text>';
+  if(ph>=1&&res.sw.length)s+='<text x="169" y="93" text-anchor="middle" font-size="11" font-weight="700" fill="var(--h4)">'+res.sw.map(x=>x.g.name).join(' + ')+' switched</text>';
+  if(ph>=2)s+='<text x="274" y="118" text-anchor="middle" font-size="12" font-weight="700" fill="'+C[res.win]+'">'+Math.max(...res.fin)+'–'+Math.min(...res.fin)+'</text>';
+  od.forEach((c,k)=>{const y=VG_SY[k]-14,dim=ph>=1&&k<2&&res.w1!==c,sl=sel===k;
+    s+='<g class="vg-tok" data-s="'+k+'" opacity="'+(dim?.4:1)+'"><rect x="6" y="'+y+'" width="104" height="28" rx="14" fill="'+B[c]+'" stroke="'+(sl?'var(--ink)':C[c])+'" stroke-width="'+(sl?3.5:2)+'"/>'+
+      '<path d="M13 '+(y+10)+'h7M13 '+(y+14)+'h7M13 '+(y+18)+'h7" stroke="'+C[c]+'" stroke-width="1.6" stroke-linecap="round"/>'+
+      '<text x="63" y="'+(y+18.5)+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+C[c]+'">'+N[c]+'</text></g>';});
+  return s;}
+
+let vgSeq=0;
+function vgBoard(L,host,o){
+  o=Object.assign({names:VG_N,cols:VG_C,bgs:VG_BG,G:vgGroups(),order:[0,1,2],ahead:false,aheadCtl:false,edit:false,tri:true,br:true,bals:true,waitCtl:true,runCtl:true,
+    allOrders:false,tag:'Illustrative numbers · Plover’s 40 staff in three groups',onRun:null,onChange:null},o||{});
+  const id='vb'+(++vgSeq),q=s=>document.getElementById(id+s);
+  let ph=0,res=null,busy=false,sel=-1,drag=null,tm=null;
+  host.insertAdjacentHTML('beforeend',
+    (o.tri?'<svg class="vg-svg" id="'+id+'t" viewBox="0 0 320 150" role="img" aria-label="Head-to-head results: each arrow points from the winner of that pair to the loser"></svg>':'')+
+    (o.bals?'<div id="'+id+'b"></div>':'')+(o.tag?'<p class="vg-ill">'+o.tag+'</p>':'')+
+    (o.br?'<svg class="vg-svg vg-drag" id="'+id+'r" viewBox="0 0 320 146" role="img" aria-label="Voting order: two options face each other first; the winner meets the third in the final. Drag an option to another slot to change the order."></svg>':'')+
+    (o.allOrders?'<div id="'+id+'a"></div>':'')+
+    (o.br&&o.waitCtl?'<div class="vg-ctl" id="'+id+'w"><span class="vg-lab">WHICH OPTION WAITS? (OR DRAG IT)</span></div>':'')+
+    (o.br&&(o.aheadCtl||o.runCtl)?'<div class="vg-ctl">'+(o.aheadCtl?'<button class="chip" id="'+id+'h" aria-pressed="false">'+L.ic('eye')+'Voters look ahead</button>':'')+(o.runCtl?'<button class="btn pri" id="'+id+'g">'+L.ic('play')+'Run the votes</button>':'')+'</div>':'')+
+    '<div class="vg-ro" id="'+id+'o" aria-live="polite"></div>');
+  const tri=q('t'),bals=q('b'),br=q('r'),ro=q('o');
+  function drawTri(){if(!tri)return;const cw=vgCW(o.G);tri.innerHTML=vgTri({names:o.names,cols:o.cols,bgs:o.bgs,G:o.G,star:cw,ring:ph>=2&&res?res.win:-1,center:cw<0?'cycle':''});}
+  function drawBals(){if(!bals)return;bals.innerHTML=vgBalHtml(o,o.edit);
+    if(o.edit)bals.querySelectorAll('button.vg-li').forEach(b=>b.onclick=()=>{if(busy)return;const g=o.G[+b.dataset.g],k=+b.dataset.k;[g.rank[k-1],g.rank[k]]=[g.rank[k],g.rank[k-1]];reset();if(o.onChange)o.onChange(api);});}
+  function drawBr(){if(br)br.innerHTML=vgBrSvg(o,res,ph,sel);}
+  function drawOrd(){const a=q('a');if(!a)return;a.innerHTML='<div class="vg-ords">'+[0,1,2].map(z=>{const od=[0,1,2].filter(x=>x!==z).concat(z),r=vgRun(o.G,od,o.ahead);
+    return '<div>'+o.names[z]+' waits<br>→ <b style="color:'+o.cols[r.win]+'">'+o.names[r.win]+'</b></div>';}).join('')+'</div>';}
+  function idle(){if(!o.br){ro.innerHTML='';return;}const [x,y,z]=o.order;ro.innerHTML='First vote: <b>'+o.names[x]+' v '+o.names[y]+'</b>. <b>'+o.names[z]+'</b> waits for the final.<br>'+(o.ahead?'Voters look ahead.':'Everyone votes for their favourite of each pair.');}
+  function sync(){const w=q('w');if(w)[...w.querySelectorAll('.chip')].forEach((c,j)=>c.classList.toggle('sel',o.order[2]===j));
+    const h=q('h');if(h){h.classList.toggle('sel',o.ahead);h.setAttribute('aria-pressed',String(o.ahead));}}
+  function reset(){clearTimeout(tm);busy=false;ph=0;res=null;sel=-1;drawTri();drawBals();drawBr();drawOrd();sync();idle();}
+  function wait(j){if(busy)return;o.order=[0,1,2].filter(x=>x!==j).concat(j);reset();if(o.onChange)o.onChange(api);}
+  function swap(a,b){[o.order[a],o.order[b]]=[o.order[b],o.order[a]];reset();if(o.onChange)o.onChange(api);}
+  function run(cb){if(busy||!o.br)return;busy=true;sel=-1;res=vgRun(o.G,o.order,o.ahead);ph=1;drawBr();
+    ro.innerHTML='<b>First vote</b> '+o.names[o.order[0]]+' v '+o.names[o.order[1]]+'…';
+    tm=setTimeout(()=>{if(!ro.isConnected)return;ph=2;drawBr();drawTri();ro.innerHTML=vgSay(o,res);busy=false;if(o.onRun)o.onRun(res,api);if(cb)cb(res);},650);}
+  if(q('w'))o.names.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>wait(j);q('w').appendChild(b);});
+  if(q('h'))q('h').onclick=()=>{if(busy)return;o.ahead=!o.ahead;reset();if(o.onChange)o.onChange(api);};
+  if(q('g'))q('g').onclick=()=>run();
+  if(br){
+    br.addEventListener('pointerdown',e=>{const t=e.target.closest('.vg-tok');if(!t||busy)return;const p=vgPt(br,e);drag={k:+t.dataset.s,x0:p.x,y0:p.y,dx:0,dy:0,el:t};
+      try{br.setPointerCapture(e.pointerId);}catch(err){}e.preventDefault();});
+    br.addEventListener('pointermove',e=>{if(!drag)return;const p=vgPt(br,e);drag.dx=p.x-drag.x0;drag.dy=p.y-drag.y0;drag.el.setAttribute('transform','translate('+r1(drag.dx)+' '+r1(drag.dy)+')');});
+    br.addEventListener('pointerup',()=>{if(!drag)return;const d=drag;drag=null;
+      if(Math.hypot(d.dx,d.dy)<6){if(sel<0){sel=d.k;drawBr();}else if(sel===d.k){sel=-1;drawBr();}else swap(sel,d.k);return;}
+      const cy=VG_SY[d.k]+d.dy,tg=VG_SY.map((y,j)=>[Math.abs(y-cy),j]).sort((a,b)=>a[0]-b[0])[0][1];if(tg!==d.k)swap(d.k,tg);else drawBr();});
+    br.addEventListener('pointercancel',()=>{drag=null;drawBr();});}
+  const api={o,run,wait,reset,set(p){Object.assign(o,p);reset();},get res(){return res;},get busy(){return busy;},el:q};
+  reset();return api;}
+
+/* simple horizontal bars: rows [label, n, colour, state('win'|'out'|'')] */
+/* the book’s 64% result (Why the Constitution Works): voters spread evenly over a triangle of two issues,
+   the plan P at the average point, a challenger Q coming from straight below. Q takes the bottom five of nine
+   small triangles (56%); over any such shape Q never tops 64%. A ruler shows Q’s share against the 50% and 67% bars. */
+function vg64(){const X=p=>r1(20+(p-30)*5.6),pt=a=>a.map(q=>q.join(',')).join(' ');
+  let s='<polygon points="'+pt([[88,22],[41.3,102],[134.7,102]])+'" fill="var(--h1-bg)"/><polygon points="'+pt([[41.3,102],[18,142],[158,142],[134.7,102]])+'" fill="var(--h4-bg)"/>'+
+    '<path d="M64.7 62H111.3M111.3 62L64.7 142M134.7 102L111.3 142M64.7 62L111.3 142M41.3 102L64.7 142" stroke="var(--line2)" stroke-width="1.2" fill="none"/>'+
+    '<polygon points="'+pt([[88,22],[18,142],[158,142]])+'" fill="none" stroke="var(--ink)" stroke-width="1.5"/>'+
+    '<path d="M41.3 102H134.7" stroke="var(--h4)" stroke-width="2.5" stroke-dasharray="5 3"/>'+
+    '<rect x="79" y="84" width="18" height="18" rx="3" fill="var(--ink)"/><text x="88" y="97" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)">P</text>'+
+    '<path d="M88 112L99 124L88 136L77 124Z" fill="var(--h4)"/><text x="88" y="128" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)">Q</text>'+
+    '<text x="172" y="32" font-size="11.5" font-weight="700" fill="var(--ink)">P = the average spot</text><text x="172" y="46" font-size="11" fill="var(--muted)">voters spread evenly</text>'+
+    '<rect x="172" y="62" width="14" height="14" rx="3" fill="var(--h1-bg)" stroke="var(--h1)" stroke-width="1.5"/><text x="192" y="73" font-size="11.5" font-weight="700" fill="var(--ink)">Stay with P</text><text x="192" y="87" font-size="11" fill="var(--muted)">4 of 9 ≈ 44%</text>'+
+    '<rect x="172" y="100" width="14" height="14" rx="3" fill="var(--h4-bg)" stroke="var(--h4)" stroke-width="1.5"/><text x="192" y="111" font-size="11.5" font-weight="700" fill="var(--ink)">Go to Q</text><text x="192" y="125" font-size="11" fill="var(--muted)">5 of 9 ≈ 56%</text>'+
+    '<text x="16" y="164" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">Q’S BEST SHARE · RULE TO REPLACE P</text>'+
+    '<path d="M20 196H300" stroke="var(--line2)" stroke-width="3" stroke-linecap="round"/>';
+  [[50,'majority 50%'],[67,'two-thirds 67%']].forEach(([p,t])=>{s+='<path d="M'+X(p)+' 182V206" stroke="var(--ink)" stroke-width="2"/><text x="'+X(p)+'" y="178" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">'+t+'</text>';});
+  s+='<circle cx="'+X(56)+'" cy="196" r="5.5" fill="var(--h4)"/><text x="'+(X(56)+4)+'" y="220" text-anchor="end" font-size="11" fill="var(--h4)">this triangle 56%</text>'+
+    '<circle cx="'+X(64)+'" cy="196" r="5.5" fill="var(--card)" stroke="var(--h4)" stroke-width="2.5"/><text x="'+(X(64)-4)+'" y="220" font-size="11" fill="var(--h4)">64% worst case</text>';
+  return s;}
+function vgBars(rows,max,y0,lw){lw=lw||92;const W=300-lw-34;let s='';rows.forEach((r,j)=>{const y=y0+j*26,w=Math.max(3,r[1]/max*W);
+  s+='<text x="'+(lw-6)+'" y="'+(y+13)+'" text-anchor="end" font-size="12" font-weight="600" fill="var(--ink)"'+(r[3]==='out'?' text-decoration="line-through" opacity=".6"':'')+'>'+r[0]+'</text>'+
+   '<rect x="'+lw+'" y="'+y+'" width="'+W+'" height="18" rx="6" fill="var(--card)"/><rect x="'+lw+'" y="'+y+'" width="'+r1(w)+'" height="18" rx="6" fill="'+r[2]+'" opacity="'+(r[3]==='out'?.3:1)+'"/>'+
+   '<text x="'+r1(lw+w+6)+'" y="'+(y+13.5)+'" font-size="12.5" font-weight="700" fill="'+(r[3]==='win'?'var(--ok)':r[3]==='out'?'var(--no)':'var(--ink)')+'">'+(r[4]!=null?r[4]:r[1])+(r[3]==='win'?' ★':r[3]==='out'?' out':'')+'</text>';});return s;}
+
+/* ---------- the start-time line (illustrative): seven preferred start times ---------- */
+const VM=[{k:'G',t:480},{k:'T',t:510,me:1},{k:'C',t:525},{k:'L',t:540},{k:'D',t:570},{k:'A',t:570},{k:'J',t:600}];
+const vmX=t=>24+(t-450)*272/150;
+const vmFmt=t=>{t=Math.round(t);return Math.floor(t/60)+':'+String(t%60).padStart(2,'0');};
+function vmRes(rep,rule){const ts=VM.map(v=>v.me?rep:v.t);return rule==='avg'?ts.reduce((a,b)=>a+b,0)/7:ts.slice().sort((a,b)=>a-b)[3];}
+function vmSvg(rep,rule){const res=vmRes(rep,rule),rx=r1(vmX(res));
+  let s='<rect width="320" height="128" rx="14" fill="var(--soft)"/>';
+  s+='<path d="M'+rx+' 26V86" stroke="var(--h4)" stroke-width="3"/><rect x="'+r1(Math.min(Math.max(rx-40,4),236))+'" y="6" width="80" height="20" rx="10" fill="var(--h4-bg)" stroke="var(--h4)" stroke-width="1.5"/>'+
+    '<text x="'+r1(Math.min(Math.max(rx,44),276))+'" y="20" text-anchor="middle" font-size="12" font-weight="700" fill="var(--h4)">start '+vmFmt(res)+'</text>';
+  s+='<path d="M16 88H304" stroke="var(--ink)" stroke-width="2"/>';
+  [450,480,510,540,570,600].forEach(t=>{const x=r1(vmX(t));s+='<path d="M'+x+' 84V92" stroke="var(--ink)" stroke-width="2"/><text x="'+x+'" y="106" text-anchor="middle" font-size="11" fill="var(--muted)">'+vmFmt(t)+'</text>';});
+  if(rep!==510)s+='<circle cx="'+r1(vmX(510))+'" cy="72" r="10" fill="none" stroke="var(--pri)" stroke-width="2" stroke-dasharray="3 3"/><text x="'+r1(vmX(510))+'" y="122" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri-deep)">Tali wants</text>';
+  const used={};VM.map(v=>({k:v.k,me:v.me,t:v.me?rep:v.t})).sort((a,b)=>(a.me?1:0)-(b.me?1:0)).forEach(v=>{const key=Math.round(vmX(v.t)/8);
+    let lvl=0;for(const k2 of [key-1,key,key+1])lvl=Math.max(lvl,used[k2]||0);used[key]=lvl+1;const y=72-lvl*22,x=r1(vmX(v.t));
+    s+='<g'+(v.me?' class="vm-me"':'')+'><circle cx="'+x+'" cy="'+y+'" r="10.5" fill="'+(v.me?'var(--pri)':'var(--card)')+'" stroke="'+(v.me?'var(--pri-deep)':'var(--line2)')+'" stroke-width="2"/>'+
+      '<text x="'+x+'" y="'+(y+4)+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+(v.me?'var(--pri-ink)':'var(--ink)')+'">'+v.k+'</text></g>';});
+  return s;}
+const VM_LEG='<p class="vg-leg"><b>G</b> Greer · <b style="color:var(--pri-deep)">T</b> Tali · <b>C</b> copywriter · <b>L</b> Linus · <b>D</b> developer · <b>A</b> account manager · <b>J</b> junior designer</p>';
+
+/* ---------- the two-issue plan board: start time across, office days up (illustrative) ---------- */
+const V2=[{k:'T',x:.4,y:.5,me:1},{k:'L',x:.6,y:1},{k:'G',x:.2,y:.75},{k:'C',x:.9,y:.25},{k:'D',x:.8,y:.5}];
+const v2x=u=>44+u*258,v2y=u=>162-u*140;
+const v2T=u=>vmFmt(450+Math.round(u*150/5)*5),v2D=u=>{const d=Math.round((1+u*4)*2)/2;return (d%1?Math.floor(d)+'½':d)+' day'+(d===1?'':'s');};
+function v2Chal(P){const dd=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);let best=null;
+  const test=Q=>{if(Q.x<0||Q.x>1||Q.y<0||Q.y>1)return;const g=V2.map(v=>dd(v,P)-dd(v,Q)).sort((a,b)=>b-a);if(g[2]>1e-6&&(!best||g[2]>best.m))best={Q,m:g[2]};};
+  for(let i=0;i<=40;i++)for(let j=0;j<=40;j++)test({x:i/40,y:j/40});
+  for(let r=.01;r<.4;r+=.01)for(let a=0;a<72;a++)test({x:P.x+r*Math.cos(a*Math.PI/36),y:P.y+r*Math.sin(a*Math.PI/36)});
+  if(!best)return null;const Q=best.Q;return {Q,sup:V2.filter(v=>dd(v,Q)<dd(v,P)-1e-9)};}
+function v2Svg(P,ch){let s='<rect width="320" height="190" rx="14" fill="var(--soft)"/><rect x="44" y="22" width="258" height="140" fill="var(--card)" rx="4"/>';
+  [[0,'7:30'],[.4,'8:30'],[.8,'9:30']].forEach(([u,t])=>{s+='<path d="M'+r1(v2x(u))+' 22V162" stroke="var(--line)" stroke-width="1"/><text x="'+r1(v2x(u))+'" y="177" text-anchor="middle" font-size="11" fill="var(--muted)">'+t+'</text>';});
+  [[0,'1'],[.5,'3'],[1,'5']].forEach(([u,t])=>{s+='<path d="M44 '+r1(v2y(u))+'H302" stroke="var(--line)" stroke-width="1"/><text x="36" y="'+r1(v2y(u)+4)+'" text-anchor="end" font-size="11" fill="var(--muted)">'+t+'</text>';});
+  s+='<text x="173" y="14" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".3">START TIME → · OFFICE DAYS ↑</text>';
+  if(ch){ch.sup.forEach(v=>{s+='<path d="M'+r1(v2x(v.x))+' '+r1(v2y(v.y))+'L'+r1(v2x(ch.Q.x))+' '+r1(v2y(ch.Q.y))+'" stroke="var(--h4)" stroke-width="2" stroke-dasharray="4 3"/>';});}
+  V2.forEach(v=>{const x=r1(v2x(v.x)),y=r1(v2y(v.y)),sup=ch&&ch.sup.includes(v);
+    s+='<circle cx="'+x+'" cy="'+y+'" r="11" fill="'+(v.me?'var(--pri)':'var(--card)')+'" stroke="'+(sup?'var(--h4)':v.me?'var(--pri-deep)':'var(--line2)')+'" stroke-width="'+(sup?3:2)+'"/><text x="'+x+'" y="'+(r1(y+4))+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+(v.me?'var(--pri-ink)':'var(--ink)')+'">'+v.k+'</text>';});
+  if(P){const x=r1(v2x(P.x)),y=r1(v2y(P.y));s+='<rect x="'+(x-9)+'" y="'+(y-9)+'" width="18" height="18" rx="3" fill="var(--ink)"/><text x="'+x+'" y="'+(y+4)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)">P</text>';}
+  if(ch){const x=r1(v2x(ch.Q.x)),y=r1(v2y(ch.Q.y));s+='<path d="M'+x+' '+(y-12)+'L'+(x+12)+' '+y+'L'+x+' '+(y+12)+'L'+(x-12)+' '+y+'Z" fill="var(--h4)"/><text x="'+x+'" y="'+(y+4)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)">Q</text>';}
+  return s;}
+
+/* ---------- the five-a-side approval grid (illustrative) ---------- */
+const VA_O=['Curry night','Bowling','Barbecue','Go-karts'],VA_C=['var(--h4)','var(--h1)','var(--h3)','var(--h2)'];
+const VA_FAV=[3,3,3,3,2,2,1,1,0],VA_OK=[[3],[3,0],[3,1],[3,2],[2,1],[2,1,0],[1,2],[1,2],[0,2,1]];
+function vaTot(mode,tali){const t=[0,0,0,0];for(let p=0;p<9;p++){if(mode==='one')t[VA_FAV[p]]++;else VA_OK[p].forEach(c=>t[c]++);}
+  const w=t.slice();if(mode==='one'){if(tali.length)w[tali[0]]++;}else tali.forEach(c=>w[c]++);return {wo:t,w};}
+function vaWin(t){const m=Math.max(...t),ix=t.map((v,j)=>v===m?j:-1).filter(j=>j>=0);return ix.length>1?'tie: '+ix.map(j=>VA_O[j]).join(' and '):VA_O[ix[0]];}
+function vaSvg(mode,tali,tot){let s='<rect width="320" height="150" rx="14" fill="var(--soft)"/><rect x="273" y="4" width="22" height="142" rx="8" fill="var(--pri-bg)"/>';
+  for(let p=0;p<10;p++)s+='<text x="'+(104+p*19)+'" y="17" text-anchor="middle" font-size="11" font-weight="700" fill="'+(p===9?'var(--pri-deep)':'var(--muted)')+'">'+(p===9?'T':p+1)+'</text>';
+  s+='<text x="306" y="17" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">Σ</text>';
+  const m=Math.max(...tot.w);
+  VA_O.forEach((o,r)=>{const y=40+r*30,win=tot.w[r]===m;
+    if(win)s+='<rect x="4" y="'+(y-13)+'" width="312" height="26" rx="8" fill="none" stroke="var(--ok-strong)" stroke-width="2"/>';
+    s+='<text x="10" y="'+(y+4)+'" font-size="12" font-weight="600" fill="var(--ink)">'+o+'</text>';
+    for(let p=0;p<10;p++){const on=p<9?(mode==='one'?VA_FAV[p]===r:VA_OK[p].includes(r)):tali.includes(r);
+      s+='<circle cx="'+(104+p*19)+'" cy="'+y+'" r="6.5" fill="'+(on?VA_C[r]:'none')+'" stroke="'+(on?VA_C[r]:'var(--line2)')+'" stroke-width="1.5"/>';}
+    s+='<text x="306" y="'+(y+4.5)+'" text-anchor="middle" font-size="13" font-weight="700" fill="'+(win?'var(--ok)':'var(--ink)')+'">'+tot.w[r]+'</text>';});
+  return s;}
+
+/* ---------- strategy-map strip (shared fixture) ---------- */
+const MP_T={look:['Look ahead',2],pd:['Dilemma',3],shoes:['Their shoes',5],mix:['Mix',6],commit:['Commit',7],cred:['Credible',8],sig:['Signals',9],coord:['Coordinate',10],bid:['Bid smart',11],batna:['BATNA',12],vote:['Vote',13],inc:['Incentives',14]};
+const MP_ROWS=[['Taking turns: you move, then they respond',['look','cred','commit']],['You both choose at once, without seeing the other',['shoes','pd','mix']],['Everyone’s tempted to grab or slack',['pd','coord','inc']],['You need everyone to land on the same choice',['shoes','coord','commit']],['Your pattern is being read, or you’re checking',['mix']],['You want to change someone’s behaviour',['commit','cred','look']],['They know something you don’t',['sig','shoes','bid']],['Splitting something or agreeing a price',['batna','cred','sig']],['Competing with several others for one prize',['bid','sig','pd']],['A group decides together',['vote','coord','batna']],['Getting good work you can’t watch',['inc','sig','cred']]];
+
+Course.lesson({
+  id:'0013', title:'Voting and group decisions', minutes:20, icon:'list',
+  goals:['See why a group with three or more options can go round in a circle, and how the voting order can pick the winner',
+         'Run “Vote and set the agenda”: ask for rankings, look for the option that beats every other, and agree the order first',
+         'Take the median on a single scale, use approval voting for many options, and know where each one stops working'],
+  parts:['Three options, one circle','The order decides','One line, one middle','Your group decisions'],
+  read:'Read chapter 12 of the book, “Voting”, for the 2000 and 2002 election examples, Condorcet’s paradox and his rule, the three judges, the median voter, why, in the book’s model, needing more than 64% to change things (as the US Constitution’s two-thirds does) keeps a central plan stable, approval voting, the two foundations and the vice president’s tie-breaking vote.',
+  glossary:{
+   'strategic-voting':'Strategic voting: voting for something other than your true favourite, because of how others will vote or how the count works, to avoid a result you like even less.',
+   runoff:'Runoff voting: if nobody wins a majority in the first round, the top two face each other in a second round.',
+   'median-voter':'Median: the middle choice when everyone’s preferred point on one scale is lined up, so as many people want more as want less.',
+   approval:'Approval voting: you tick every option you find acceptable; the option with the most ticks wins (or every option above a set share).',
+   pivotal:'Pivotal vote: a vote that changes the result because it creates or breaks a tie. Most votes aren’t pivotal.'
+  },
+  cheatsheet:[
+   '<b>Two options:</b> vote your true preference. There’s nothing to gain from tactics.',
+   '<b>Three or more:</b> majorities can go round in a circle (Condorcet’s paradox), so “what the group wants” can depend on the method.',
+   '<b>The order decides:</b> whoever sets the agenda can pick the winner, and voters who look ahead change their votes. Agree the order before anyone knows how it falls.',
+   '<b>Rank them:</b> ranked ballots run every head-to-head. An option that beats all the others is the Condorcet winner; if they still circle, use a tie-break agreed in advance (Condorcet’s: the narrowest majority gives way).',
+   '<b>One scale</b> (what time, how much): take the median. With an average, everyone gains by exaggerating.',
+   '<b>Many options:</b> approval voting (tick all you accept), so nobody wastes a vote on a long shot.',
+   '<b>Limits:</b> no voting system is perfect; the median works only on one line; your vote changes the result only when it breaks a tie.'],
+  steps:[
+
+/* ================= PART 0 · Three options, one circle ================= */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Plover’s 40 staff vote on the offsite, one vote each. Greer reads out the count: “City wins. The team has spoken.” Has it?</h1>'+
+   '<svg class="vg-svg" viewBox="0 0 320 86" role="img" aria-label="First-choice votes: City 16, Countryside 14, Coast 10"><rect width="320" height="86" rx="14" fill="var(--soft)"/>'+vgBars([['City',16,VG_C[0],''],['Countryside',14,VG_C[2],''],['Coast',10,VG_C[1],'']],40,8)+'</svg><p class="vg-ill">Illustrative numbers · first choices only</p>');
+  L.mc(L.card,['Yes: City got the most votes, so City is what most people want','Not yet clear: 24 people put something else first, and we don’t know where they rank City','No: Coast should win, because it got the fewest first choices','Yes, as long as nobody changed their vote on the day'],1,
+   'Right. City is the first choice of only 16 of 40. If the other 24 mostly rank City last, a majority would rather have something else. One count of first choices can’t show that.',
+   'A first-choice count shows only the top line of each ballot. 24 of 40 people put something else first; if they rank City low, most of the team prefers another option. You need to see more of each ballot.');}},
+
+{part:0,src:'Chapter 12 · opening',
+ solve:async L=>{L.$('#spb').click();},
+ run(L){
+  let three=false,tried=false;
+  L.h(L.kick('learn','Two options, or three?')+'<h1 class="q">The studio votes on a lunch place. Add a third option and watch the bars.</h1>'+
+   '<svg class="vg-svg" id="spv" viewBox="0 0 320 96" role="img" aria-label="Votes for the lunch places"></svg><p class="vg-ill">Illustrative numbers · 40 people</p>'+
+   '<div class="vg-ctl"><button class="btn pri" id="spb">'+L.ic('arrow')+'Add a third option: Ramen place</button></div>'+
+   '<p class="vg-cap" id="spt">Two options: just vote for the one you prefer. There’s nothing to gain from tactics.</p>');
+  const draw=()=>{L.$('#spv').innerHTML='<rect width="320" height="96" rx="14" fill="var(--soft)"/>'+(three?
+     vgBars([['Noodle bar',16,'var(--h2)',''],['Ramen place',6,'var(--h1)',''],['Deli',18,'var(--h3)','win']],40,10):
+     vgBars([['Noodle bar',22,'var(--h2)','win'],['Deli',18,'var(--h3)','']],40,22));};
+  draw();
+  L.$('#spb').onclick=()=>{three=!three;draw();L.$('#spb').innerHTML=L.ic('arrow')+(three?'Back to two options':'Add a third option: Ramen place');
+    L.$('#spt').innerHTML=three?'22 people prefer noodles to the deli, yet the deli wins. The 6 ramen fans now face a choice: vote with their heart, or '+L.g('strategic-voting','vote strategically')+' for the noodle bar to keep the deli out.':'Two options: just vote for the one you prefer. There’s nothing to gain from tactics.';
+    if(three&&!tried){tried=true;L.sheet('info','A third option can flip the result','The book’s cases: in the 2000 US election, a third candidate drew about 97,000 votes in Florida, a state decided by 537; and in France in 2002, many voters backed small parties in round one, expecting their main candidate to reach the runoff. He didn’t.');L.done();}};}},
+
+{part:0,src:'Chapter 12 · Naïve Voting',
+ solve:async L=>{for(const b of L.$$('#hhc .chip')){b.click();await L.sleep(5);}},
+ run(L){
+  const show=[false,false,false];let fin=false;
+  L.h(L.kick('learn','Head to head')+'<h1 class="q">Plover’s three groups rank the offsite options. Tap each pair to count a one-on-one vote.</h1>'+
+   '<svg class="vg-svg" id="hhv" viewBox="0 0 320 150" role="img" aria-label="Triangle of the three options; each tallied pair gets an arrow from winner to loser"></svg>'+
+   '<div id="hhb"></div><p class="vg-ill">Illustrative numbers · Plover’s 40 staff in three groups</p>'+
+   '<div class="vg-ctl" id="hhc"></div><div class="vg-ro" id="hho" aria-live="polite">Each group’s ballot lists its options from favourite down.</div>');
+  const G=vgGroups(),o={names:VG_N,cols:VG_C,bgs:VG_BG,G};
+  L.$('#hhb').innerHTML=vgBalHtml(o,false);
+  const draw=()=>{L.$('#hhv').innerHTML=vgTri(Object.assign({show,center:'cycle',star:-1},o));};draw();
+  const PAIRS=[[0,1],[1,2],[2,0]];
+  vgChips(L.$('#hhc'),PAIRS.map(([a,b])=>VG_N[a]+' v '+VG_N[b]),j=>{show[j]=true;draw();const [a,b]=PAIRS[j];
+    const fa=G.filter(g=>g.rank.indexOf(a)<g.rank.indexOf(b)),fb=G.filter(g=>g.rank.indexOf(b)<g.rank.indexOf(a)),sum=x=>x.reduce((s,g)=>s+g.n,0);
+    L.$('#hho').innerHTML=VG_N[a]+' over '+VG_N[b]+': '+fa.map(g=>g.name+' '+g.n).join(' + ')+' = <b>'+sum(fa)+'</b><br>'+VG_N[b]+' over '+VG_N[a]+': '+fb.map(g=>g.name+' '+g.n).join(' + ')+' = <b>'+sum(fb)+'</b>';
+    if(show.every(Boolean)&&!fin){fin=true;L.sheet('info','The majority goes round in a circle','City beats Coast, Coast beats Countryside, and Countryside beats City. Whatever the team picks, a majority would rather have something else. This is '+L.g('condorcet','Condorcet’s')+' paradox: there may be no “will of the group” at all.');L.done();}});}},
+
+{part:0,src:'Chapter 12 · Naïve Voting',
+ solve:async L=>{L.$('#bkb').click();},
+ run(L){
+  let fixed=false;
+  L.h(L.kick('ex','The book’s version')+'<h1 class="q">Condorcet’s own puzzle, in revolutionary France: three candidates, 100 voters, the same circle. Then his fix.</h1>'+
+   '<svg class="vg-svg" id="bkv" viewBox="0 0 320 150" role="img" aria-label="Robespierre beats Danton 75 to 25, Danton beats Lafarge 65 to 35, Lafarge beats Robespierre 60 to 40"></svg><div id="bkg"></div>'+
+   '<p class="vg-ill">The book’s example · left 40, middle 25, right 35</p>'+
+   '<div class="vg-ctl"><button class="btn pri" id="bkb">'+L.ic('scale')+'Condorcet’s fix: trust the bigger majorities</button></div><p class="vg-cap" id="bkt">Every candidate loses to someone. So who should win?</p>');
+  const o={names:['Robespierre','Danton','Lafarge'],cols:['var(--h4)','var(--h2)','var(--h3)'],bgs:['var(--h4-bg)','var(--h2-bg)','var(--h3-bg)'],
+    G:[{name:'Left',n:40,rank:[0,1,2]},{name:'Middle',n:25,rank:[1,2,0]},{name:'Right',n:35,rank:[2,0,1]}]};
+  L.$('#bkg').innerHTML=vgBalHtml(o,false);
+  const draw=()=>{L.$('#bkv').innerHTML=vgTri(Object.assign({center:fixed?'':'cycle',cut:fixed?2:-1,star:fixed?0:-1},o));};draw();
+  L.$('#bkb').onclick=()=>{if(fixed)return;fixed=true;draw();L.$('#bkb').disabled=true;
+    L.$('#bkt').innerHTML='Condorcet assumed a small majority is more likely to be a mistake. So the 60–40 result gives way. Robespierre’s worst defeat is 40–60; the others lose 25–75 and 35–65. <b>Robespierre wins.</b>';
+    L.sheet('info','The smallest maximum vote against','Condorcet’s rule picks the option whose worst defeat is the mildest. Plover’s circle has the same shape: same arrows, same kind of numbers. Next, use the rule on it.');L.done();};}},
+
+{part:0,src:'Chapter 12 · Naïve Voting',pts:1,
+ solve:async L=>{L.$('#ctc').children[2].click();},
+ run(L){
+  let done=false;
+  L.h(L.kick('try','Cut the weakest arrow')+'<h1 class="q">Use Condorcet’s rule on Plover’s circle. Tap the arrow with the narrowest majority.</h1>'+
+   '<svg class="vg-svg" id="ctv" viewBox="0 0 320 150" role="img" aria-label="Plover’s head-to-head arrows; tap one to set it aside"></svg>'+
+   '<div class="vg-ctl" id="ctc"></div>');
+  const o={names:VG_N,cols:VG_C,bgs:VG_BG,G:vgGroups()};
+  const draw=(cut,star)=>{L.$('#ctv').innerHTML=vgTri(Object.assign({hit:!done,center:cut>=0?'':'cycle',cut,star},o));};draw(-1,-1);
+  const pick=e=>{if(done)return;done=true;const ok=e===2;L.award(ok);draw(e,ok?0:-1);[...L.$('#ctc').children].forEach((c,j)=>c.classList.add(j===2?'ok':j===e?'no':'static'));
+    L.sheet(ok?'ok':'no',ok?'City wins on Condorcet’s rule':'The narrowest is Countryside over City, 24–16',
+     'Countryside beat City by 24–16 (60%), the slimmest of the three. Set it aside and City’s worst defeat, 16–24, is the mildest: Coast loses 10–30 and Countryside 14–26. So City wins.');L.done();};
+  vgChips(L.$('#ctc'),['City over Coast 30–10','Coast over Countryside 26–14','Countryside over City 24–16'],j=>pick(j));
+  L.$('#ctv').addEventListener('click',e=>{const t=e.target.closest('.vg-hit');if(t)pick(+t.dataset.e);});}},
+
+{part:0,src:'Chapter 12 · Naïve Voting',
+ solve:async L=>{L.$('#rob').click();},
+ run(L){
+  let ahead=false,saw=false;
+  L.h(L.kick('learn','Runoff: the rules pick the winner')+'<h1 class="q">Now the French way: one vote each, then a '+L.g('runoff','runoff')+' between the top two. Same 40 people.</h1>'+
+   '<svg class="vg-svg" id="rov" viewBox="0 0 320 172" role="img" aria-label="Round one and runoff vote counts"></svg>'+
+   '<div class="vg-ctl"><button class="chip" id="rob" aria-pressed="false">'+L.ic('eye')+'Studio looks ahead</button></div>'+
+   '<p class="vg-cap" id="rot">Coast is knocked out first. Dev’s 10 then back Countryside, which wins the runoff 24–16.</p>');
+  const draw=()=>{let s='<rect width="320" height="172" rx="14" fill="var(--soft)"/><text x="16" y="18" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">ROUND 1 · ONE VOTE EACH</text>';
+    s+=ahead?vgBars([['Coast',26,VG_C[1],'win'],['Countryside',14,VG_C[2],''],['City',0,VG_C[0],'out']],40,26):vgBars([['City',16,VG_C[0],''],['Countryside',14,VG_C[2],''],['Coast',10,VG_C[1],'out']],40,26);
+    s+='<text x="16" y="120" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">RUNOFF · TOP TWO</text>';
+    s+=ahead?'<text x="160" y="150" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ok)">Not needed: Coast has 26 of 40</text>':vgBars([['Countryside',24,VG_C[2],'win'],['City',16,VG_C[0],'']],40,128);
+    L.$('#rov').innerHTML=s;};draw();
+  L.$('#rob').onclick=()=>{ahead=!ahead;draw();L.$('#rob').classList.toggle('sel',ahead);L.$('#rob').setAttribute('aria-pressed',String(ahead));
+    L.$('#rot').innerHTML=ahead?'Studio sees City would lose the runoff to Countryside, their last choice. So all 16 vote Coast in round 1, and Coast wins outright, 26 of 40.':'Coast is knocked out first. Dev’s 10 then back Countryside, which wins the runoff 24–16.';
+    if(ahead&&!saw){saw=true;L.sheet('info','Same voters, three methods, three winners','Condorcet’s rule: City. Runoff, voting for favourites: Countryside. Runoff, with Studio looking ahead: Coast. The book’s point: the result depends on the rules as much as on what people want. (Its own runoff numbers match: 40, 35, 25.)');L.done();}};}},
+
+/* ================= PART 1 · The order decides ================= */
+{part:1,src:'Chapter 12 · Order in the Court',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#exv').querySelectorAll('.vg-ctl .chip')[j].click();await L.sleep(5);L.$('#exv').querySelector('.btn.pri').click();await L.sleep(760);}},
+ run(L){
+  const won=new Set();let fin=false;
+  L.h(L.kick('learn','Explore · the agenda board')+'<h1 class="q">Votes go in pairs: two options first, the winner meets the third. Change which option waits, then run the votes.</h1><div id="exv"></div>');
+  vgBoard(L,L.$('#exv'),{bals:false,onRun:r=>{won.add(r.win);
+    if(won.size===3&&!fin){fin=true;L.sheet('info','Each option can win','Same people, same ballots, and each option won once. Only the order changed. When everyone votes for their favourite of each pair, the option that waits for the final wins: it only has to beat one rival.');L.done();}}});}},
+
+{part:1,src:'Chapter 12 · Order in the Court',pts:1,
+ solve:async L=>{L.$('#pdc').children[1].click();await L.sleep(800);},
+ run(L){
+  let done=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Greer would love the coast. Which first vote makes Coast win, if everyone votes for their favourite of each pair?</h1>'+
+   '<div class="vg-ctl" id="pdc"></div><div id="pdv"></div>');
+  const bd=vgBoard(L,L.$('#pdv'),{bals:false,waitCtl:false,runCtl:false,order:[0,1,2]});
+  const OD=[[0,1,2],[0,2,1],[1,2,0]];
+  vgChips(L.$('#pdc'),['City v Coast first','City v Countryside first','Coast v Countryside first'],j=>{if(done)return;done=true;const ok=j===1;L.award(ok);
+    [...L.$('#pdc').children].forEach((c,q)=>c.classList.add(q===1?'ok':q===j?'no':'static'));bd.set({order:OD[j].slice()});
+    bd.run(r=>{L.sheet(ok?'ok':'no',ok?'Coast waits, and Coast wins':'That order makes '+VG_N[r.win]+' win',
+     'City v Countryside first: Countryside wins 24–16. Then Countryside meets the waiting Coast and loses 14–26. The option that sits out the first vote only has to beat one rival.');L.done();});});}},
+
+{part:1,src:'Chapter 12 · Naïve Voting · Order in the Court',
+ solve:async L=>{L.$('#lav').querySelector('.chip[aria-pressed]').click();await L.sleep(5);L.$('#lav').querySelector('.btn.pri').click();await L.sleep(760);},
+ run(L){
+  let fin=false;
+  L.h(L.kick('learn','Voters look ahead')+'<h1 class="q">City v Coast first, Countryside waits. Run it once as it is. Then switch on “voters look ahead” and run it again.</h1><div id="lav"></div>');
+  vgBoard(L,L.$('#lav'),{aheadCtl:true,waitCtl:false,bals:false,onRun:r=>{
+    if(r.ahead&&!fin){fin=true;L.sheet('info','Look ahead and reason back, on a ballot','Studio can see that if City wins the first vote, Countryside wins the final: their last choice. So Studio votes Coast instead, and Coast wins. Voting against your favourite to avoid your worst result is '+L.g('strategic-voting','strategic voting')+'.');L.done();}}});}},
+
+{part:1,src:'Chapter 12 · Order in the Court',
+ solve:async L=>{for(const b of L.$$('#ctp .chip')){b.click();await L.sleep(700);}},
+ run(L){
+  const seen=new Set();let fin=false,tm=null;
+  L.h(L.kick('ex','Order in the court')+'<h1 class="q">The book’s three judges must reach a verdict by majority, and all three look ahead. Try each order of questions.</h1>'+
+   '<svg class="vg-svg" id="ctt" viewBox="0 0 320 150" role="img" aria-label="Death penalty beats life 2 to 1, life beats acquittal 2 to 1, acquittal beats death penalty 2 to 1"></svg><div id="ctb"></div>'+
+   '<div class="vg-ctl" id="ctp"></div><svg class="vg-svg" id="ctq" viewBox="0 0 320 140" role="img" aria-label="The two questions in order, and the verdict"></svg><p class="vg-cap" id="ctx">Pick an order of questions.</p>');
+  const o={names:['Death penalty','Life sentence','Acquittal'],cols:['var(--h4)','var(--h3)','var(--h2)'],bgs:['var(--h4-bg)','var(--h3-bg)','var(--h2-bg)'],
+    G:[{name:'Judge A',n:1,rank:[0,1,2]},{name:'Judge B',n:1,rank:[1,2,0]},{name:'Judge C',n:1,rank:[2,0,1]}]};
+  L.$('#ctb').innerHTML=vgBalHtml(o,false);
+  const tri=v=>{L.$('#ctt').innerHTML=vgTri(Object.assign({center:v<0?'cycle':'',ring:v},o));};tri(-1);
+  const PR=[{lab:'Guilt first',q1:['Guilty or not?'],q2:['If guilty:','death or life?'],fa:'they foresee: death (A, C)',real:'Q1 is really: acquittal or death?',v:2,by:'B, C',note:'Today’s US order. Everyone knows a guilty verdict means death, so judge B votes to acquit.'},
+    {lab:'Most serious first',q1:['Death penalty?'],q2:['If not: life,','or acquit?'],fa:'they foresee: life (A, B)',real:'Q1 is really: death or life?',v:0,by:'A, C',note:'The Roman tradition: start at the top of the list. Rejecting death means life, so judge C votes for death.'},
+    {lab:'Sentence first',q1:['Set the sentence:','death or life?'],q2:['Then: convict,','or acquit?'],fa:'death → acquit · life → convict',real:'Q1 is really: acquittal or life?',v:1,by:'A, B',note:'Mandatory sentencing: fix the penalty, then judge guilt. A death sentence would mean acquittal, so the choice is really life or acquittal.'}];
+  const tx=(x,y,lines,fs,col,w)=>lines.map((t,j)=>'<text x="'+x+'" y="'+(y+j*15)+'" text-anchor="middle" font-size="'+fs+'" font-weight="'+(w||600)+'" fill="'+col+'">'+t+'</text>').join('');
+  const path=(p,ph)=>{let s='<rect width="320" height="140" rx="14" fill="var(--soft)"/>'+
+     '<text x="81" y="14" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">QUESTION 1</text><text x="239" y="14" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">QUESTION 2</text>'+
+     '<rect x="8" y="20" width="146" height="40" rx="10" fill="var(--card)" stroke="var(--ink)" stroke-width="1.5"/><rect x="166" y="20" width="146" height="40" rx="10" fill="var(--card)" stroke="'+(ph>=1?'var(--h4)':'var(--ink)')+'" stroke-width="1.5"/>'+
+     '<path d="M154 40H164" stroke="var(--ink)" stroke-width="2"/>'+tx(81,p.q1.length>1?37:44,p.q1,12,'var(--ink)')+tx(239,p.q2.length>1?37:44,p.q2,12,'var(--ink)');
+    if(ph>=1)s+=tx(239,76,[p.fa],11.5,'var(--h4)',700)+'<path d="M200 82Q160 94 120 66" stroke="var(--h4)" stroke-width="1.5" fill="none" stroke-dasharray="3 3"/>';
+    if(ph>=2)s+='<rect x="8" y="96" width="304" height="38" rx="10" fill="'+o.bgs[p.v]+'" stroke="'+o.cols[p.v]+'" stroke-width="2.5"/>'+tx(160,111,[p.real],11.5,'var(--ink)')+tx(160,127,['Verdict: '+o.names[p.v]+' (judges '+p.by+')'],12.5,o.cols[p.v],700);
+    L.$('#ctq').innerHTML=s;};
+  path({q1:['?'],q2:['?']},0);
+  vgChips(L.$('#ctp'),PR.map(p=>p.lab),j=>{clearTimeout(tm);const p=PR[j];tri(-1);path(p,0);L.$('#ctx').textContent='Looking ahead from question 2…';
+    tm=setTimeout(()=>{if(!L.$('#ctq'))return;path(p,1);tm=setTimeout(()=>{if(!L.$('#ctq'))return;path(p,2);tri(p.v);L.$('#ctx').textContent=p.note;seen.add(j);
+      if(seen.size===3&&!fin){fin=true;L.sheet('info','Three orders, three verdicts','Nothing changed but the order of the questions. The book’s warning: then people choose a procedure for the outcome it gives, not for its principles. Lawmakers voting on many bills face the same problem.');L.done();}},320);},320);});}},
+
+{part:1,src:'Chapter 12 · Order in the Court',pts:1,
+ solve:async L=>{L.$('#chv').querySelectorAll('.vg-ctl .chip')[0].click();await L.sleep(5);L.$('#chl').click();await L.sleep(760);},
+ run(L){
+  let done=false;
+  L.h(L.kick('pr','Challenge · set the agenda')+'<h1 class="q">Greer lets Linus set the order. Linus wants Countryside, and everyone will look ahead. Test orders, then lock in the one that gives Countryside.</h1>'+
+   '<div id="chv"></div><div class="vg-ctl"><button class="btn" id="chl">'+L.ic('lock')+'Lock in this order</button></div>');
+  const bd=vgBoard(L,L.$('#chv'),{ahead:true,bals:false});
+  L.$('#chl').onclick=()=>{if(done||bd.busy)return;done=true;L.$('#chl').disabled=true;const r=vgRun(bd.o.G,bd.o.order,true),ok=r.win===2;L.award(ok);
+    bd.run(()=>{L.sheet(ok?'ok':'no',ok?'Countryside, as Linus wanted':'That order gives '+VG_N[r.win],
+     'With City waiting, the first vote is Coast v Countryside. Everyone can see Coast would lose the final to City, while Countryside would beat it. So Dev, who rank City last, vote Countryside instead of Coast: Countryside wins 24–16, then beats City. Whoever sets the order can pick the winner.');L.done();});};}},
+
+{part:1,src:'Chapter 12 · Condorcet Rules',
+ solve:async L=>{L.$('#rkv').querySelector('button.vg-li[data-g="1"][data-k="2"]').click();},
+ run(L){
+  let fin=false;
+  L.h(L.kick('learn','Rank them')+'<h1 class="q">Ranked ballots count every head-to-head at once. Tap an option on a ballot to move it up, until one option beats both others.</h1><div id="rkv"></div>'+
+   L.note('The book’s case: Yale’s teaching prize had about 50 candidates, so on one vote each a professor could in theory win with just over 2%. Now students rank them, and the winners fit what students want better.','book'));
+  vgBoard(L,L.$('#rkv'),{br:false,edit:true,allOrders:true,onChange:a=>{const cw=vgCW(a.o.G);
+    if(cw>=0&&!fin){fin=true;L.sheet('info',VG_N[cw]+' beats both: a Condorcet winner','Now every order of votes gives '+VG_N[cw]+': the boxes agree. When one option beats every other head to head, the order stops mattering. If they still go round in a circle, rankings show it, and you need a tie-break agreed in advance.');L.done();}}});}},
+
+/* ================= PART 2 · One line, one middle ================= */
+{part:2,src:'Chapter 12 · The Median Voter',
+ solve:async L=>{vgSet(L.$('#mls'),450);await L.sleep(5);L.$('#mlc').children[1].click();await L.sleep(5);vgSet(L.$('#mls'),470);},
+ run(L){
+  let rule='avg',rep=510,sA=false,sM=false,fin=false,drag=false;
+  L.h(L.kick('learn','Average or middle?')+'<h1 class="q">The team picks one start time from everyone’s answer. Tali wants 8:30. Drag Tali’s dot to exaggerate, under each rule.</h1>'+
+   '<svg class="vg-svg vg-tap" id="mlv" viewBox="0 0 320 128" role="img" aria-label="Seven preferred start times on a line from 7:30 to 10:00, with the team’s start time marked"></svg>'+VM_LEG+
+   '<div class="vg-ctl" id="mlc"></div><label class="vg-sl"><span class="h"><span>Tali says they want</span><b id="mln">8:30</b></span><input type="range" id="mls" min="450" max="600" step="5" value="510"></label>'+
+   '<div class="vg-ro" id="mlo" aria-live="polite"></div><p class="vg-ill">Illustrative numbers</p>');
+  const draw=()=>{L.$('#mlv').innerHTML=vmSvg(rep,rule);L.$('#mln').textContent=vmFmt(rep);const r=vmRes(rep,rule),h=vmRes(510,rule);
+    L.$('#mlo').innerHTML=(rule==='avg'?'Average':'Median: the 4th of 7')+' → start <b>'+vmFmt(r)+'</b>'+(rep!==510?' · if Tali told the truth: '+vmFmt(h)+(Math.round(r)!==Math.round(h)?' · <b style="color:var(--h4)">'+Math.abs(Math.round(h-r))+' min '+(r<h?'earlier':'later')+'</b>':' · <b>no change</b>'):'');
+    if(rep!==510){if(rule==='avg')sA=true;else sM=true;}
+    if(sA&&sM&&!fin){fin=true;L.sheet('info','The average rewards exaggeration','Under the average, every minute Tali exaggerates pulls the start time their way, so everyone has a reason to name an extreme. Under the '+L.g('median-voter','median')+', Tali’s exaggeration changes nothing: only the middle person counts. The book’s numbers: one voter of 100 who exaggerates has six times the pull under an average.');L.done();}};
+  vgChips(L.$('#mlc'),['Average of everyone','Middle answer (median)'],j=>{rule=j?'med':'avg';draw();});L.$('#mlc').children[0].classList.add('sel');
+  L.$('#mls').addEventListener('input',()=>{rep=+L.$('#mls').value;draw();});
+  const sv=L.$('#mlv'),toT=e=>{const p=vgPt(sv,e);return Math.max(450,Math.min(600,Math.round((450+(p.x-24)*150/272)/5)*5));};
+  sv.addEventListener('pointerdown',e=>{drag=true;try{sv.setPointerCapture(e.pointerId);}catch(err){}vgSet(L.$('#mls'),toT(e));});
+  sv.addEventListener('pointermove',e=>{if(drag)vgSet(L.$('#mls'),toT(e));});
+  sv.addEventListener('pointerup',()=>{drag=false;});sv.addEventListener('pointercancel',()=>{drag=false;});
+  draw();}},
+
+{part:2,src:'Chapter 12 · The Median Voter',pts:1,
+ solve:async L=>{L.$('#mpc').children[1].click();await L.sleep(1000);},
+ run(L){
+  let done=false,tm=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Median rule. Tali wants 8:30; the middle answer is Linus’s 9:00. If Tali says “7:30”, the start time will…</h1>'+
+   '<svg class="vg-svg" id="mpv" viewBox="0 0 320 128" role="img" aria-label="The start-time line under the median rule"></svg>'+VM_LEG+
+   '<div class="vg-ctl" id="mpc"></div><div class="vg-ro" id="mpo" aria-live="polite"></div>');
+  let rep=510;const draw=()=>{L.$('#mpv').innerHTML=vmSvg(rep,'med');L.$('#mpo').innerHTML='Tali says <b>'+vmFmt(rep)+'</b> · start <b>'+vmFmt(vmRes(rep,'med'))+'</b>';};draw();
+  vgChips(L.$('#mpc'),['move earlier, towards Tali','stay at 9:00','move later'],j=>{if(done)return;done=true;const ok=j===1;L.award(ok);
+    [...L.$('#mpc').children].forEach((c,q)=>c.classList.add(q===1?'ok':q===j?'no':'static'));
+    const step=()=>{if(!L.$('#mpv'))return;rep-=10;draw();if(rep>450)tm=setTimeout(step,90);else
+      L.sheet(ok?'ok':'no',ok?'It stays at 9:00':'It stays at 9:00',
+       'Tali is left of the middle. Saying “even earlier” keeps Tali left of the middle, so the median doesn’t move. The only way Tali could move it is to say a time later than 9:00, which pulls it the wrong way. The same holds for everyone, so telling the truth is each person’s best move.');
+      if(rep<=450)L.done();};tm=setTimeout(step,90);});}},
+
+{part:2,src:'Chapter 12 · The Median Voter',pts:1,run(L){
+  L.h(L.kick('try','Build the rule')+'<h1 class="q">Juno’s building must pick one time for the bins to go out. Build the advice. Tap each piece to change it.</h1>'+
+   '<svg class="vg-svg" viewBox="0 0 320 54" role="img" aria-label="Five answers on a line from 6 pm to 10 pm, with the middle one marked"><rect width="320" height="54" rx="14" fill="var(--soft)"/><path d="M20 36H300" stroke="var(--ink)" stroke-width="2"/>'+
+   [[6,'6pm'],[7.5,''],[8,'8pm'],[9,''],[10,'10pm']].map(([h,t],j)=>{const x=r1(20+(h-6)*70);return '<circle cx="'+x+'" cy="36" r="8" fill="'+(j===2?'var(--h4)':'var(--card)')+'" stroke="'+(j===2?'var(--h4)':'var(--line2)')+'" stroke-width="2"/>'+(t?'<text x="'+x+'" y="18" text-anchor="middle" font-size="11" fill="var(--muted)">'+t+'</text>':'');}).join('')+'</svg>');
+  L.sentence(L.card,[['Take the average answer','Take the middle answer','Take the loudest answer'],['because nobody can pull it their way by exaggerating','because it suits most people’s evenings','because it’s quickest to work out'],['so everyone can simply tell the truth.','so extremes cancel out.','so nobody needs to vote.']],[1,0,0],
+   [['An average invites exaggeration: anyone who names an extreme time drags it their way.','The loudest voice isn’t a rule anyone can trust.'],['Maybe, but the reason the book gives is about honesty, not convenience.','Speed isn’t the point; the incentive to tell the truth is.'],['Extremes don’t cancel out under an average; they compete, and everyone ends up naming one.','People still vote: the rule just removes the reason to lie.']],
+   'Right. On a single scale, the median removes the reason to exaggerate, so telling the truth is everyone’s best move.');}},
+
+{part:2,src:'Chapter 12 · The Median Voter · Why the Constitution Works',
+ solve:async L=>{L.$('#tib').children[1].click();await L.sleep(5);L.$('#tib').children[2].click();},
+ run(L){
+  let P={x:.6,y:.5},n=0,fin=false,drag=false;const tried=new Set();
+  L.h(L.kick('learn','Two issues, no middle')+'<h1 class="q">Now the team also picks how many office days a week. Tap the board to place the plan (P). Can you find a spot no majority wants to move from?</h1>'+
+   '<svg class="vg-svg vg-tap" id="tiv" viewBox="0 0 320 190" role="img" aria-label="Five colleagues’ preferred start time and office days; the plan P and a challenger Q that a majority prefers"></svg>'+
+   '<p class="vg-leg"><b style="color:var(--pri-deep)">T</b> Tali · <b>L</b> Linus · <b>G</b> Greer · <b>C</b> copywriter · <b>D</b> developer · each prefers the point nearest them</p>'+
+   '<div class="vg-ctl" id="tib"></div><div class="vg-ro" id="tio" aria-live="polite"></div><p class="vg-ill">Illustrative numbers</p>');
+  const draw=()=>{const ch=v2Chal(P);L.$('#tiv').innerHTML=v2Svg(P,ch);
+    L.$('#tio').innerHTML='Plan: <b>'+v2T(P.x)+', '+v2D(P.y)+'</b>'+(ch?'<br><span style="color:var(--h4)">Q: '+v2T(ch.Q.x)+', '+v2D(ch.Q.y)+' is closer for <b>'+ch.sup.length+' of 5</b> ('+ch.sup.map(v=>v.k).join(', ')+')</span>':'');
+    tried.add(Math.round(P.x*10)+','+Math.round(P.y*10));
+    if(tried.size>=3&&!fin){fin=true;L.sheet('info','On two issues, there is no middle','Wherever the plan sits, some majority prefers another point, so it can be beaten again and again. The median trick needs everything on one line. The book adds a hard result: in its model, if change needs more than 64% of the vote, a plan at the average voter’s spot can’t be beaten.');L.done();}};
+  vgChips(L.$('#tib'),['Middle of each issue','Average point','Tali’s favourite'],j=>{P=[{x:.6,y:.5},{x:.58,y:.6},{x:.4,y:.5}][j];draw();});
+  const sv=L.$('#tiv'),put=e=>{const p=vgPt(sv,e);P={x:Math.max(0,Math.min(1,(p.x-44)/258)),y:Math.max(0,Math.min(1,(162-p.y)/140))};draw();};
+  sv.addEventListener('pointerdown',e=>{put(e);});
+  draw();}},
+
+/* ================= PART 3 · Your group decisions ================= */
+{part:3,src:'Chapter 12 · All-Time Greats · Case Study: The Tie of Power',
+ solve:async L=>{L.$('#apo').children[2].click();await L.sleep(5);L.$('#apm').children[1].click();await L.sleep(5);L.$('#apo').children[2].click();},
+ run(L){
+  let mode='one',tali=[],oneTry=false,piv=false,fin=false;
+  L.h(L.kick('learn','Tick all you accept')+'<h1 class="q">The five-a-side team picks its end-of-season do. You are Tali, in column T. Vote, then switch rules and vote again.</h1>'+
+   '<div class="vg-ctl" id="apm"></div><svg class="vg-svg" id="apv" viewBox="0 0 320 150" role="img" aria-label="Each player’s votes for four options, with totals"></svg><p class="vg-ill">Illustrative numbers · 9 teammates plus Tali</p>'+
+   '<span class="vg-lab" id="apl" style="display:block">TALI’S BALLOT: PICK ONE</span><div class="vg-ctl" id="apo"></div><div class="vg-say" id="apt" aria-live="polite"></div>');
+  const draw=()=>{const t=vaTot(mode,tali);L.$('#apv').innerHTML=vaSvg(mode,tali,t);[...L.$('#apo').children].forEach((c,j)=>c.classList.toggle('sel',tali.includes(j)));
+    L.$('#apl').textContent=mode==='one'?'TALI’S BALLOT: PICK ONE':'TALI’S BALLOT: TICK ALL TALI ACCEPTS';
+    const a=vaWin(t.wo),b=vaWin(t.w),ch=a!==b;
+    L.$('#apt').innerHTML='<b class="t">DID TALI’S BALLOT CHANGE THE RESULT?</b>Without Tali: '+a+' · With Tali: <b>'+b+'</b><br>'+(tali.length?(ch?'<b style="color:var(--ok)">Yes</b>: it broke (or made) a tie.':'<b>No</b>: the result is the same either way.'):'Tali hasn’t voted yet.');
+    if(mode==='one'&&tali.length)oneTry=true;if(mode==='appr'&&ch&&tali.length)piv=true;
+    if(oneTry&&piv&&!fin){fin=true;L.sheet('info','No wasted votes, and when a vote counts',L.g('approval','Approval voting')+' (proposed by Brams and Fishburn): with one vote each, Go-karts wins on 4 of 10, while 6 never wanted it. Ticking everything you accept, nobody wastes a vote on a long shot. And Tali’s ballot changed the result only when it broke a tie: that’s when a vote is '+L.g('pivotal','pivotal')+'.');L.done();}};
+  vgChips(L.$('#apm'),['One vote each','Tick all you accept'],j=>{mode=j?'appr':'one';tali=[];draw();});L.$('#apm').children[0].classList.add('sel');
+  VA_O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(mode==='one')tali=tali[0]===j?[]:[j];else tali=tali.includes(j)?tali.filter(x=>x!==j):tali.concat(j);draw();};L.$('#apo').appendChild(b);});
+  draw();}},
+
+{part:3,src:'Chapter 12 · Case Study: The Tie of Power',
+ solve:async L=>{vgSet(L.$('#tps'),50);await L.sleep(5);L.$('#tpb').click();await L.sleep(5);vgSet(L.$('#tps'),53);},
+ run(L){
+  let yes=55,vp=false,s50=false,sT=false,fin=false;
+  L.h(L.kick('ex','Case study · the tie of power')+'<h1 class="q">A 100-seat senate. The vice president votes only to break a tie. Slide the split. When does that one vote matter?</h1>'+
+   '<svg class="vg-svg" id="tpv" viewBox="0 0 320 150" role="img" aria-label="One hundred seats coloured yes or no, and the vice president’s seat"></svg>'+
+   '<label class="vg-sl"><span class="h"><span>Senators voting yes</span><b id="tpn">55</b></span><input type="range" id="tps" min="40" max="60" step="1" value="55"></label>'+
+   '<div class="vg-ctl"><button class="chip" id="tpb" aria-pressed="false">Give the VP a regular 101st vote</button></div><div class="vg-ro" id="tpo" aria-live="polite"></div>');
+  const draw=()=>{let s='<rect width="320" height="150" rx="14" fill="var(--soft)"/>';
+    for(let k=0;k<100;k++){const c=k%10,r=Math.floor(k/10),on=k<yes;s+='<circle cx="'+(22+c*13)+'" cy="'+(16+r*13)+'" r="5.2" fill="'+(on?'var(--h2)':'var(--h3)')+'"/>';}
+    const tie=yes===50,dec=tie;
+    s+='<rect x="168" y="30" width="140" height="64" rx="12" fill="'+(dec?'var(--h4-bg)':'var(--card)')+'" stroke="'+(dec?'var(--h4)':'var(--line2)')+'" stroke-width="'+(dec?3:1.5)+'"/>'+
+      '<text x="238" y="52" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">VICE PRESIDENT</text>'+
+      '<text x="238" y="74" text-anchor="middle" font-size="12.5" font-weight="700" fill="'+(dec?'var(--h4)':'var(--muted)')+'">'+(dec?'decides it':vp?'votes: no effect':'sits this out')+'</text>'+
+      '<text x="238" y="118" text-anchor="middle" font-size="12" font-weight="700" fill="var(--h2)">yes '+yes+'</text><text x="238" y="136" text-anchor="middle" font-size="12" font-weight="700" fill="var(--h3)">no '+(100-yes)+'</text>';
+    L.$('#tpv').innerHTML=s;L.$('#tpn').textContent=yes;
+    L.$('#tpo').innerHTML=tie?'<b>50–50:</b> the vice president’s vote decides.':'<b>'+Math.max(yes,100-yes)+'–'+Math.min(yes,100-yes)+':</b> decided without the vice president'+(vp?', even with a 101st vote.':'.');
+    if(tie)s50=true;if(s50&&sT&&!fin){fin=true;L.sheet('info','A vote counts only when it creates or breaks a tie','Give the VP a regular vote and it still decides only at 50–50. So the tie-breaker is worth about as much as any senator’s vote, and it tends to decide the most divisive issues. In John Adams’s Senate of just 20 members, ties came often: he cast 29 tie-breaking votes in eight years.');L.done();}};
+  L.$('#tps').addEventListener('input',()=>{yes=+L.$('#tps').value;draw();});
+  L.$('#tpb').onclick=()=>{vp=!vp;sT=true;L.$('#tpb').classList.toggle('sel',vp);L.$('#tpb').setAttribute('aria-pressed',String(vp));draw();};
+  draw();
+  L.card.insertAdjacentHTML('beforeend',L.quote('it is only okay to speak the truth when it doesn’t matter','Dixit and Nalebuff, on voting with your heart'));}},
+
+{part:3,src:'Course application · built on Chapter 12',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){L.$('#omb').click();await L.sleep(10);}L.$('#omc').children[1].click();L.$('#omg').click();},
+ run(L){
+  let s=-1,pick=null,done=false;
+  L.h(L.kick('pr','One-minute move')+'<h1 class="q">Greer asks Tali to run the offsite decision. Run “Vote and set the agenda” in about a minute.</h1>'+
+   L.note('How this course applies the book: a one-minute routine built only from the book’s advice on voting.','compass')+
+   '<div class="vg-steps" id="oms"><span>1 · How many?</span><span>2 · Rank</span><span>3 · Order</span><span>4 · One line?</span><span>5 · Approval?</span></div>'+
+   '<div class="vg-say" id="omt" aria-live="polite"><b class="t">THE OFFSITE</b>Five steps, about a minute.</div>'+
+   '<div class="vg-ctl"><button class="btn pri" id="omb">'+L.ic('arrow')+'Start</button></div>'+
+   '<div id="omf" hidden><span class="vg-lab" style="display:block">TALI PROPOSES</span><div class="vg-chips" id="omc"></div><div class="vg-ctl"><button class="btn pri" id="omg" disabled>'+L.ic('check')+'Propose it</button></div></div><div id="omv"></div>');
+  const bd=vgBoard(L,L.$('#omv'),{br:false,allOrders:true,bals:true});
+  const tri=bd.el('t'),ords=bd.el('a');tri.style.display='none';ords.style.display='none';
+  const ST=[['STEP 1 · HOW MANY OPTIONS?','Three: City, Coast, Countryside. With two, everyone could just vote for their preference. With three, one count of first choices can mislead.',()=>{}],
+    ['STEP 2 · RANK THEM','Everyone ranks all three, and every head-to-head follows. Here they go round in a circle: no option beats both others.',()=>{tri.style.display='';}],
+    ['STEP 3 · WATCH THE ORDER','Linus offers to set the order of votes. The boxes show each order gives a different winner. So the order, or a tie-break, must be agreed before anyone votes.',()=>{ords.style.display='';}],
+    ['STEP 4 · ONE LINE?','Places aren’t points on one scale, like a time or an amount, so there’s no middle answer to take.',()=>{}],
+    ['STEP 5 · APPROVAL?','Ticking all you accept helps when there are many options. Whatever the method, agree it before the votes are counted.',()=>{}]];
+  function go(n){s=n;L.$$('#oms span').forEach((p,j)=>p.className=j<n?'dn':j===n?'cur':'');L.$('#omt').innerHTML='<b class="t">'+ST[n][0]+'</b>'+ST[n][1];ST[n][2]();L.$('#omb').innerHTML=L.ic('arrow')+(n<4?'Next step':'Choose the proposal');}
+  vgChips(L.$('#omc'),['Let Linus set the order of votes, to save time','Ranked ballots; if they circle, the narrowest majority gives way. Agreed before voting.','One vote each; the most votes wins'],j=>{pick=j;L.$('#omg').disabled=false;});
+  L.$('#omb').onclick=()=>{if(s<4){go(s+1);return;}L.$('#omb').hidden=true;L.$$('#oms span').forEach(p=>p.className='dn');L.$('#omf').hidden=false;L.$('#omt').innerHTML='<b class="t">TALI’S PROPOSAL</b>Which procedure does Tali put to the team?';};
+  L.$('#omg').onclick=()=>{if(done||pick===null)return;done=true;const ok=pick===1;L.award(ok);L.$('#omg').disabled=true;
+    [...L.$('#omc').children].forEach((c,q)=>c.classList.add(q===1?'ok':q===pick?'no':'static'));
+    L.sheet(ok?'ok':'no',ok?'A fair rule, fixed in advance':'The move: rank, with a tie-break agreed first',
+     (pick===0?'Whoever sets the order can pick the winner, and Linus wants Countryside. ':pick===2?'One vote each gives City on 16 of 40, and hides the circle. ':'')+
+     'Ranked ballots show the circle; Condorcet’s tie-break (the narrowest majority gives way) then picks City. Because the rule was agreed before the count, nobody can say it was chosen to suit one group.');L.done();};}},
+
+{part:3,src:'Chapter 12 · opening · Why the Constitution Works · All-Time Greats · Love a Loath’d Enemy',
+ solve:async L=>{for(const b of L.$$('#lmc .chip')){b.click();await L.sleep(5);}},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('ex','Edge cases and limits')+'<h1 class="q">Where does “Vote and set the agenda” stop protecting you? Try each case.</h1><div class="vg-ctl" id="lmc"></div><div id="lmv"></div><div id="lmf"></div>');
+  const sv=(h,a,inner)=>'<svg class="vg-svg" viewBox="0 0 320 '+h+'" role="img" aria-label="'+a+'"><rect width="320" height="'+h+'" rx="14" fill="var(--soft)"/>'+inner+'</svg>';
+  const o={names:VG_N,cols:VG_C,bgs:VG_BG,G:vgGroups()};
+  const ordRow=(ahead)=>'<div class="vg-ords">'+[0,1,2].map(z=>{const od=[0,1,2].filter(x=>x!==z).concat(z),r=vgRun(o.G,od,ahead);return '<div>'+VG_N[z]+' waits<br>→ <b style="color:'+VG_C[r.win]+'">'+VG_N[r.win]+'</b></div>';}).join('')+'</div>';
+  const PR=[['No option beats all',()=>sv(150,'Plover’s three options going round in a circle',vgTri(Object.assign({center:'cycle'},o))),
+      'Rankings reveal the circle but can’t break it. No method turns it into a clear “will of the group”. You still need a tie-break agreed in advance, such as Condorcet’s.'],
+    ['Strategic voters',()=>'<p class="vg-lab">VOTING FOR FAVOURITES</p>'+ordRow(false)+'<p class="vg-lab">VOTERS LOOKING AHEAD</p>'+ordRow(true),
+      'Same orders, different winners once people vote tactically. The book cites Kenneth Arrow: no way of adding up votes is perfect, so someone can always gain by not voting their true ranking. Even ranked ballots can be gamed, though working out how is hard.'],
+    ['Two issues',()=>sv(190,'Two issues: the plan P and a challenger Q that a majority prefers',v2Svg({x:.6,y:.5},v2Chal({x:.6,y:.5})).replace(/^<rect[^>]*>/,'')),
+      'The median trick works only when everything sits on one line. With two issues there’s no middle, and a majority can always find something it prefers.'],
+    ['Love a loath’d enemy',()=>sv(204,'Two budgets of 250 pounds: split the shared top priority, or Linus spends first and Tali is left to fund it',
+       '<text x="16" y="19" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">SPLIT THE TOP PRIORITY</text>'+vgBars([['Junior’s course',200,'var(--h2)','','£200'],['Tali: software',150,'var(--h1)','','£150'],['Linus: lunch',150,'var(--h3)','','£150']],330,26,100)+
+       '<text x="16" y="121" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">LINUS SPENDS FIRST</text>'+vgBars([['Junior’s course',200,'var(--h2)','','£200 (Tali)'],['Tali: software',50,'var(--h1)','','£50'],['Linus: lunch',250,'var(--h3)','','£250']],330,128,100)),
+      'Illustrative numbers, built like the book’s two foundations. Tali and Linus each hold £250; both agree £200 for a junior’s course comes first. Linus spends all £250 on the team lunch, knowing Tali will rescue the course. £100 moves from Tali’s software to Linus’s lunch. The book’s fix: agree the totals first, as Congress now does with budgets.'],
+    ['A quota of two',()=>sv(110,'A star player gets no votes because everyone assumes the star is safe',vgBars([['The star',0,'var(--h2)','out','0%'],['Player B',50,'var(--h3)','win','50%'],['Player C',50,'var(--h1)','win','50%']],100,14)+'<text x="160" y="100" text-anchor="middle" font-size="11.5" fill="var(--muted)">share of votes · two places · two votes each</text>'),
+      'The book’s hall-of-fame example: everyone rates the star top, so everyone gives both votes to their favourite of the other two. The star gets none. Rules that make options compete for a fixed number of places invite tactics; plain approval rarely does.'],
+    ['64% rule (hard)',()=>sv(230,'Voters spread over a triangle of two issues. The plan P sits at the average spot; a challenger Q from below takes 5 of 9 parts, 56 percent. In the book’s model no challenger tops 64 percent, so a rule needing more than 64 percent keeps P.',vg64()),
+      'The book flags this section as hard; it’s optional here. In the book’s model, a plan at the average voter’s spot keeps at least 36%, so a challenger wins at most 64%. Simple majority lets Q win; needing more than 64% (the Constitution’s two-thirds) keeps P. Unanimity freezes everything.']];
+  PR.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#lmc').children].forEach((x,q)=>x.classList.toggle('sel',q===j));L.$('#lmv').innerHTML=p[1]();L.$('#lmf').innerHTML='';L.fb(L.$('#lmf'),p[2],'info');seen.add(j);
+      if(seen.size===PR.length&&!fin){fin=true;L.sheet('info','Know where the tool stops','Voting can go in circles, every method can be gamed, the median needs one line, and whoever moves first can exploit the rest. Agree the rule, the order and the totals first.');L.done();}};
+    L.$('#lmc').appendChild(b);});}},
+
+{part:3,src:'Course application · built on Chapter 12 · Order in the Court · Love a Loath’d Enemy',
+ solve:async L=>{L.$('#cpc').children[0].click();await L.sleep(5);L.$('#cpc').children[1].click();},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('learn','Where cooperation wins')+'<h1 class="q">Plover’s groups must pick a voting rule. Compare picking it after the options are known with agreeing it first.</h1>'+
+   L.note('How this course applies the book: built on the book’s warning that people pick procedures by the outcome they want.','compass')+
+   '<div class="vg-ctl" id="cpc"></div><svg class="vg-svg" id="cpv" viewBox="0 0 320 182" role="img" aria-label="The three groups and the voting rule"></svg><p class="vg-cap" id="cpt">Pick a moment.</p>');
+  const GX=[54,160,266],GN=['Studio','Dev','Accounts'];
+  const fig=(x,col)=>'<circle cx="'+x+'" cy="128" r="9" fill="'+col+'"/><rect x="'+(x-11)+'" y="139" width="22" height="22" rx="8" fill="'+col+'"/>';
+  const draw=k=>{let s='<rect width="320" height="182" rx="14" fill="var(--soft)"/>';
+    if(k===0){GX.forEach((x,j)=>{s+='<rect x="'+(x-49)+'" y="8" width="98" height="56" rx="10" fill="var(--card)" stroke="'+VG_C[j]+'" stroke-width="2"/><text x="'+x+'" y="25" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+VG_C[j]+'">'+VG_N[j]+'</text><text x="'+x+'" y="40" text-anchor="middle" font-size="11" fill="var(--muted)">waits for final</text><text x="'+x+'" y="56" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+VG_C[j]+'">so it wins</text>'+
+       '<path d="M'+x+' 106V76" stroke="var(--h4)" stroke-width="3"/><path d="M'+x+' 68l-6 9h12z" fill="var(--h4)"/>'+fig(x,'var(--line2)')+'<text x="'+x+'" y="176" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">'+GN[j]+'</text>';});
+      }
+    else{s+='<rect x="34" y="10" width="252" height="58" rx="10" fill="var(--card)" stroke="var(--ok-strong)" stroke-width="2.5"/><text x="160" y="28" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ok)" letter-spacing=".4">OUR RULE · AGREED MONDAY</text>'+
+       '<text x="160" y="45" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Rank every option.</text><text x="160" y="61" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">Circle? Narrowest majority gives way.</text>';
+      GX.forEach((x,j)=>{s+='<path d="M'+x+' 106L'+(x<160?120:x>160?200:160)+' 72" stroke="var(--ok-strong)" stroke-width="2.5"/>'+fig(x,'var(--line2)')+'<circle cx="'+(x+14)+'" cy="118" r="8" fill="var(--ok-strong)"/><path d="M'+(x+10)+' 118l3 3 5-6" stroke="var(--card)" stroke-width="2" fill="none"/><text x="'+x+'" y="176" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">'+GN[j]+'</text>';});}
+    L.$('#cpv').innerHTML=s;
+    L.$('#cpt').innerHTML=k===0?'Once the ballots are in, each order has a known winner, so each group backs the order that suits it. The vote turns into a fight about the rules, and the losers call it rigged.':
+      'Agreed before anyone knows who it helps, the rule is judged on its merits. Whoever loses can still accept the result, and the team stays a team. The book’s budget version: vote the totals first.';
+    seen.add(k);if(seen.size===2&&!fin){fin=true;L.sheet('info','Fix the rules before the stakes are known','Every group is better off with a fair procedure it trusts than with a fight it might lose. It’s the same larger game as the rest of the course: you’ll decide things together again next month.');L.done();}};
+  vgChips(L.$('#cpc'),['Rule picked after the options','Rule agreed first'],k=>draw(k));
+  L.$('#cpv').innerHTML='<rect width="320" height="182" rx="14" fill="var(--soft)"/><text x="160" y="96" text-anchor="middle" font-size="12.5" fill="var(--muted)">Pick a moment above.</text>';}},
+
+{part:3,src:'Course application · built on Chapter 12',pts:6,run(L){
+  L.h(L.kick('pr','Practice')+'<h1 class="q">Tali’s week of group decisions. Which move fits each one?</h1>');
+  L.buckets(L.card,['Just vote','Rank them','Order first','Median','Tick all'],[
+   ['The five-a-side team votes yes or no on moving games to Tuesdays.',0,'Two options: vote your true preference. There’s nothing to gain from tactics.'],
+   ['Greer’s team must pick one of four conference venues, and opinions split every which way.',1,'Ask for rankings and look for the venue that beats every other head to head.'],
+   ['Linus offers to “tidy up” a meeting by deciding which proposals get voted on first.',2,'Whoever sets the order can pick the winner. Agree the order openly before voting.'],
+   ['Juno’s building decides what time the bins go out; answers run from 6 pm to 10 pm.',3,'One scale: take the middle answer, so nobody gains by naming an extreme time.'],
+   ['The team picks next season’s kit from six designs, and most people like several.',4,'Many options, several fine for each person: tick all you accept, so no vote is wasted.'],
+   ['Five friends set the budget for a shared birthday gift; suggestions run from £20 to £80.',3,'A single amount: the median suggestion, so nobody pads their number.']],
+   'Two options: just vote. Three or more: rank, and agree the order and tie-break first. One scale: the median. Many acceptable options: tick all you accept.');}},
+
+{part:3,src:'Course application · built on Chapter 12',
+ solve:async L=>{vgSet(L.$('#yu1'),'Where the family spends the holidays');vgSet(L.$('#yu2'),'Agree the rule, list options, then rank');L.$('#yuk').children[1].click();L.$('#yuw').children[2].click();L.$('#yub').click();},
+ run(L){
+  L.h(L.kick('pr','Your turn · ungraded')+'<h1 class="q">One group decision you’re part of. Write the card you’ll bring to it.</h1>'+
+   L.note('How this course applies the book: the one-minute move on your own situation.','compass')+
+   '<label class="vg-fl" for="yu1">THE GROUP DECISION</label><input class="vg-in" id="yu1" maxlength="70" placeholder="e.g. the team’s new tool, a family holiday, a club’s budget">'+
+   '<span class="vg-fl">WHAT KIND OF CHOICE?</span><div class="vg-chips" id="yuk"></div>'+
+   '<span class="vg-fl">WHO SETS THE ORDER OF QUESTIONS NOW?</span><div class="vg-chips" id="yuw"></div>'+
+   '<label class="vg-fl" for="yu2">THE ORDER YOU’LL PROPOSE</label><input class="vg-in" id="yu2" maxlength="90" placeholder="e.g. 1 agree the rule · 2 list options · 3 rank">'+
+   '<div class="vg-ctl"><button class="btn pri" id="yub" disabled>'+L.ic('pencil')+'Write my card</button></div><div id="yuo"></div>');
+  let kd=null,wh=null;
+  const KA=['Two options: vote your true preference. No tactics needed.','Three or more: ask everyone to rank. If one option beats every other, that’s it; if they circle, use the tie-break you agreed first. Lots of options? Tick all you accept.','One scale: collect everyone’s number and take the middle one, so nobody gains by exaggerating.'];
+  const WA=['You set the order: propose it openly, before the options are on the table.','Ask to agree the order and the tie-break before the vote, not after.','Propose the order first. It’s the fair move while nobody knows who it favours.'];
+  vgChips(L.$('#yuk'),['Two options','Three or more','A time or an amount'],j=>{kd=j;chk();});
+  vgChips(L.$('#yuw'),['Me','Someone else','Nobody yet'],j=>{wh=j;chk();});
+  const v=s=>L.$(s).value.trim();
+  function chk(){L.$('#yub').disabled=!(kd!==null&&wh!==null&&v('#yu1').length>1&&v('#yu2').length>1);}
+  ['#yu1','#yu2'].forEach(s=>L.$(s).addEventListener('input',chk));
+  L.$('#yub').onclick=()=>{L.$('#yuo').innerHTML='<div class="vg-card"><div class="k">MY GROUP-DECISION CARD</div><div class="i">'+L.esc(v('#yu1'))+'</div>'+
+    '<div class="r"><b>Order I’ll propose:</b> '+L.esc(v('#yu2'))+'<br><b>Method:</b> '+KA[kd]+'<br><b>The agenda:</b> '+WA[wh]+'<br><b>Remember:</b> your own vote counts only when it breaks a tie.</div></div>';
+    L.sheet('info','Your card is written','Bring it to the meeting and raise the rule first, before the options are argued over. A fair rule agreed early is worth more than winning one vote.');L.done();};}},
+
+{part:3,src:'Course application · built on Chapter 12',run(L){
+  L.h(L.kick('learn','Your strategy map')+'<h1 class="q">“Vote and set the agenda” fills its row of the map</h1>'+
+   L.note('How this course applies the book. The last dashed gap is filled in the next lesson.','compass')+
+   '<svg class="vg-svg" viewBox="0 0 320 100" role="img" aria-label="Tool picture: three options with arrows going round in a circle, and the same options in two orders giving two winners"><rect width="320" height="100" rx="12" fill="var(--soft)"/>'+
+   '<circle cx="66" cy="22" r="11" fill="var(--h1)"/><circle cx="34" cy="76" r="11" fill="var(--h2)"/><circle cx="98" cy="76" r="11" fill="var(--h3)"/>'+
+   '<path d="M60 33L40 64M47 76H85M92 65L72 33" stroke="var(--h4)" stroke-width="3"/><path d="M40 64l1-9 6 4zM85 76l-8-4v8zM72 33l7 6-6 3z" fill="var(--h4)"/>'+
+   [[150,'var(--h1)','var(--h2)','var(--h3)','var(--h3)'],[240,'var(--h2)','var(--h3)','var(--h1)','var(--h1)']].map(([x,a,b,c,w])=>
+     '<rect x="'+(x-22)+'" y="14" width="18" height="12" rx="6" fill="'+a+'"/><rect x="'+(x-22)+'" y="34" width="18" height="12" rx="6" fill="'+b+'"/><rect x="'+(x-22)+'" y="66" width="18" height="12" rx="6" fill="'+c+'"/>'+
+     '<path d="M'+(x-4)+' 20H'+x+'V40H'+(x-4)+'M'+x+' 30H'+(x+10)+'V50M'+(x-4)+' 72H'+(x+10)+'V50H'+(x+16)+'" stroke="var(--ink)" stroke-width="1.8" fill="none"/>'+
+     '<circle cx="'+(x+27)+'" cy="50" r="11" fill="'+w+'" stroke="var(--ink)" stroke-width="2"/>').join('')+
+   '<text x="211" y="96" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">same options, two orders, two winners</text></svg>'+
+   '<div id="mp"></div>'+
+   '<p class="small">It’s the <b>first</b> tool whenever a group decides together. Next to it: coordinate the group (focal points, tipping) and bargain across issues.</p>');
+  L.$('#mp').innerHTML='<div class="mp-row"><span class="n">0</span><b>Is it a game at all? Will the other side react?</b></div>'+MP_ROWS.map((r,j)=>{const hot=r[1].includes('vote');
+    return '<div class="mp-row'+(hot?' hot':'')+'"><span class="n">'+(j+1)+'</span><b>'+r[0]+'</b><div class="t">'+r[1].map((k,q)=>(q?'<span class="mp-ar">→</span>':'')+'<span class="mp-t'+(k==='vote'?' cur':MP_T[k][1]>13?' tbd':'')+'">'+(MP_T[k][1]>13?'?':MP_T[k][0])+'</span>').join('')+'</div></div>';}).join('');
+  L.done();}}
+  ]
+});
+</script>
+</body>
+</html>

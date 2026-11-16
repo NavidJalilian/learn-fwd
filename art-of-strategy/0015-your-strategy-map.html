@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Your Strategy Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* ===== This lesson’s own visuals: the game-board map (a Start square asking “will they react?”,
+   eleven squares round the edge, one per row of the strategy map, each with its tool badges in
+   order; a “just decide” side square and two extra squares for big situations in the middle; a
+   ring round the board for the larger game), draggable situation tokens that hop square by square,
+   and the four-box check card that stamps each box. Plus small one-off pictures: turns vs at the
+   same time, the chess look-ahead bars and the renewal-inside-the-ring picture.
+   The board, the check card and the small/big rule are this course’s application of the book.
+   Everything lives in this file. ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card button[hidden]{display:none!important}
+.gb-svg{display:block;width:100%;max-width:340px;margin:4px auto}
+.gb-cell{cursor:pointer;outline:none}
+.gb-cell:focus-visible rect.bg{stroke:var(--pri);stroke-width:3}
+.gb-tok{transition:transform .35s ease,opacity .2s}
+.gb-ro{font-size:14px;text-align:center;color:var(--muted);margin:6px 0;min-height:20px;line-height:1.45}
+.gb-ro b{color:var(--ink)}
+.gb-ill{font-size:12px;color:var(--muted);text-align:center;margin:2px 0 4px;font-style:italic}
+.gb-cap{font-size:15px;line-height:1.5;margin:8px 0}
+.gb-tray{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
+.gb-t{display:inline-flex;align-items:center;gap:7px;min-height:40px;padding:6px 12px;border-radius:999px;border:2px solid var(--pri);background:var(--pri-bg);color:var(--pri-deep);font:600 13.5px/1.25 var(--sans);touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none;text-align:left}
+.gb-t svg{width:12px;height:15px;flex:none}
+.gb-t.used{opacity:.5;border-style:dashed}
+.gb-t.on{background:var(--pri);color:var(--pri-ink)}
+.gb-ghost{position:fixed;z-index:60;pointer-events:none;transform:translate(-50%,-70%) scale(1.06);box-shadow:var(--shadow);margin:0}
+.gb-q{background:var(--soft);border-radius:14px;padding:10px 11px;margin:8px 0}
+.gb-q .qq{font-weight:700;font-size:14.5px;margin:0 0 7px;display:flex;align-items:center;gap:7px}
+.gb-q .qq svg.i{width:18px;height:18px;color:var(--h3)}
+.gb-q .qo{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.gb-q .qo button{text-align:left;border:2px solid var(--line);background:var(--card);border-radius:12px;padding:7px 9px;font:600 13px/1.3 var(--sans);color:var(--ink);min-height:44px;cursor:pointer}
+.gb-q .qo button small{display:block;font-weight:400;color:var(--muted);font-size:12px;margin-top:1px}
+.gb-q .qo button.wide{grid-column:1/-1}
+.gb-q .qo button.sel{border-color:var(--pri);background:var(--pri-bg)}
+.gb-trail{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-size:12.5px;color:var(--muted)}
+.gb-trail span{background:var(--card);border-radius:8px;padding:3px 8px;font-weight:600;color:var(--ink)}
+.gb-land{border:2px solid var(--line);border-radius:16px;padding:10px 12px;margin:8px 0;background:var(--card)}
+.gb-ph{display:flex;gap:8px;align-items:flex-start;margin-bottom:4px}
+.gb-ph .n{flex:none;width:24px;height:24px;border-radius:7px;background:var(--pri);color:var(--pri-ink);font-size:12.5px;font-weight:700;display:grid;place-items:center}
+.gb-ph b{font-size:15px;line-height:1.3}
+.gb-land p{font-size:14px;line-height:1.45;margin:4px 0}
+.gb-zr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:6px 0}
+.gb-zr>span{font-size:13px;font-weight:700;color:var(--muted)}
+.gb-size{display:inline-flex;border:2px solid var(--line);border-radius:999px;overflow:hidden}
+.gb-size button{border:0;background:transparent;padding:7px 16px;font:600 13.5px var(--sans);color:var(--muted);min-height:38px;cursor:pointer}
+.gb-size button.sel{background:var(--pri);color:var(--pri-ink)}
+.gb-tools{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:6px 0}
+.gb-tool{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:4px 10px 4px 5px;border-radius:12px;border:2px solid var(--tc);background:var(--tb);color:var(--ink);font:600 12.5px/1.2 var(--sans);text-align:left;cursor:pointer}
+.gb-tool .d{flex:none;width:26px;height:26px;border-radius:50%;background:var(--tc);display:grid;place-items:center}
+.gb-tool .d svg.i{width:15px;height:15px;color:var(--card);stroke-width:2.3}
+.gb-tool.off{border-color:var(--line);background:var(--soft);color:var(--faint)}
+.gb-tool.off .d{background:var(--line2)}
+.gb-tool.sel{outline:3px solid var(--tc);outline-offset:1px}
+.gb-ar{color:var(--faint);font-size:13px}
+.gb-xtra{display:flex;flex-wrap:wrap;gap:5px;margin:2px 0 4px}
+.gb-x{font-size:12.5px;font-weight:600;border-radius:9px;padding:4px 9px;background:var(--h3-bg);color:var(--h3)}
+.gb-x.s{background:var(--soft2);color:var(--muted)}
+.tk{--tb:color-mix(in srgb,var(--tc) 15%,var(--card))}
+.tk-ahead{--tc:var(--h2)}.tk-dilemma{--tc:var(--no-strong)}.tk-shoes{--tc:var(--h1)}.tk-mix{--tc:var(--h4)}.tk-moves{--tc:var(--h3)}
+.tk-credible{--tc:color-mix(in srgb,var(--h1) 50%,var(--h4))}.tk-signals{--tc:color-mix(in srgb,var(--h2) 45%,var(--h1))}.tk-group{--tc:var(--ok-strong)}
+.tk-bid{--tc:color-mix(in srgb,var(--no-strong) 45%,var(--h1))}.tk-batna{--tc:color-mix(in srgb,var(--ok) 45%,var(--h3))}.tk-vote{--tc:color-mix(in srgb,var(--h3) 45%,var(--h4))}.tk-incent{--tc:color-mix(in srgb,var(--ok) 50%,var(--h1))}
+.gb-tc{border-left:5px solid var(--tc);background:var(--tb);border-radius:12px;padding:8px 11px;margin:6px 0}
+.gb-tc svg.pic{display:block;width:176px;height:106px;margin:0 auto 4px}
+.gb-tc .nm{font-size:14.5px;font-weight:700}
+.gb-tc .sub{display:block;font-size:12px;color:var(--muted)}
+.gb-tc .here{display:block;font-size:13px;font-weight:600;color:var(--ink);margin-top:3px}
+.gb-tc ol{margin:6px 0 4px 20px;padding:0;font-size:13.5px;line-height:1.45}
+.gb-tc .lim{font-size:12.5px;line-height:1.45;color:var(--muted);margin:4px 0 0}
+.gb-pick{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
+.gb-pick .chip{margin:0}
+.gb-hand{display:flex;align-items:center;gap:8px;justify-content:center;flex-wrap:wrap;margin:4px 0}
+.gb-day{font-size:12px;font-weight:700;letter-spacing:.4px;border-radius:8px;padding:3px 8px;background:var(--ink);color:var(--card)}
+.gb-ctl{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;align-items:center;margin:6px 0}
+.gb-ctl .btn,.gb-ctl .chip{margin:0}
+.gb-sl{display:block;margin:6px auto 0;max-width:330px}
+.gb-sl .h{display:flex;justify-content:space-between;font-size:14px;gap:8px}
+.gb-sl input{width:100%;height:34px;margin:0;accent-color:var(--pri)}
+.gb-in{display:block;width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:12px;padding:9px 11px;font:inherit;font-size:15px;background:var(--card);color:var(--ink);margin:2px 0 6px}
+.gb-in:focus,.gb-sel:focus{outline:none;border-color:var(--pri)}
+.gb-sel{display:block;width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:12px;padding:7px 9px;font:inherit;font-size:14px;background:var(--card);color:var(--ink);min-height:42px;margin:0 0 6px}
+.gb-yt{border:2px dashed var(--line2);border-radius:14px;padding:8px 10px 4px;margin:6px 0}
+.gb-yt .hd{display:flex;align-items:center;gap:7px;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:4px}
+.gb-yt .hd .n{width:20px;height:20px;border-radius:50%;background:var(--pri);color:var(--pri-ink);display:grid;place-items:center;font-size:11.5px}
+.gb-out{border:2.5px solid var(--pri);border-radius:16px;background:var(--pri-bg);padding:10px 12px;margin:8px 0;font-size:14px;line-height:1.45}
+.gb-out .k{font-size:11.5px;font-weight:700;letter-spacing:.5px;color:var(--pri-deep);margin-bottom:4px}
+.gb-out p{margin:5px 0}
+.gb-ap{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;color:var(--h3);background:var(--h3-bg);border-radius:99px;padding:3px 10px;margin:-4px 0 8px}
+.gb-ap svg.i{width:14px;height:14px}
+.ck{border:2px solid var(--line2);border-radius:18px;background:var(--card);padding:10px 10px 8px;margin:8px 0;box-shadow:var(--shadow)}
+.ck-top{display:flex;justify-content:space-between;align-items:center;gap:6px;flex-wrap:wrap;font-size:11.5px;letter-spacing:.5px;color:var(--muted);margin-bottom:4px}
+.ck-top span{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;letter-spacing:0;color:var(--h3);background:var(--h3-bg);border-radius:99px;padding:2px 8px}
+.ck-top span svg.i{width:13px;height:13px}
+.ck-sit{font-size:14.5px;font-weight:600;line-height:1.4;margin:2px 2px 8px;padding:7px 9px;background:var(--soft);border-radius:10px}
+.ck-b{position:relative;border:2px solid var(--line);border-radius:14px;padding:8px 10px;margin:6px 0;opacity:.55;transition:opacity .2s,border-color .2s}
+.ck-b.on,.ck-b.done{opacity:1}
+.ck-b.on{border-color:var(--kc)}
+.ck-b.k1{--kc:var(--h1)}.ck-b.k2{--kc:var(--h2)}.ck-b.k3{--kc:var(--h3)}.ck-b.k4{--kc:var(--h4)}
+.ck-h{display:flex;align-items:center;gap:7px;padding-right:54px}
+.ck-h .n{flex:none;width:24px;height:24px;border-radius:50%;background:var(--kc);color:var(--card);display:grid;place-items:center;font-size:12.5px;font-weight:700}
+.ck-h b{font-size:15px}
+.ck-h .t{font-size:12px;color:var(--muted);font-weight:600}
+.ck-body{font-size:14px;line-height:1.45}
+.ck-b.done .ck-body{padding-right:48px}
+.ck-q{margin:6px 0 4px;font-weight:600}
+.ck-o{display:block;width:100%;text-align:left;border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:11px;padding:8px 10px;margin:5px 0;font:500 13.5px/1.35 var(--sans);min-height:40px;cursor:pointer}
+.ck-o.ok{border-color:var(--ok);background:var(--ok-bg)}
+.ck-o.no{border-color:var(--no-strong);background:var(--no-bg)}
+.ck-s{display:flex;gap:8px;align-items:flex-start;width:100%;text-align:left;border:2px dashed var(--line2);background:var(--card);color:var(--ink);border-radius:11px;padding:7px 9px;margin:5px 0;font:500 13.5px/1.35 var(--sans);min-height:40px;cursor:pointer}
+.ck-s .sn{flex:none;width:20px;height:20px;border-radius:6px;background:var(--soft2);display:grid;place-items:center;font-size:11.5px;font-weight:700;color:var(--muted)}
+.ck-s i{display:block;font-style:normal;color:var(--muted);font-size:13px}
+.ck-s.dn{border-style:solid;border-color:var(--kc)}
+.ck-s.dn .sn{background:var(--kc);color:var(--card)}
+.ck-s.dn i{color:var(--ink)}
+.ck-why{margin:4px 0 0;font-size:13.5px;color:var(--muted)}
+.ck-why:empty{display:none}
+.ck-a{margin:6px 0 2px;font-weight:600}
+.ck-a.no{color:var(--no-strong)}
+.ck-stamp{position:absolute;right:6px;top:2px;width:58px;height:58px;color:var(--kc);opacity:0;transform:rotate(-14deg) scale(1.7);pointer-events:none}
+.ck-b.done .ck-stamp{opacity:.85;transform:rotate(-14deg) scale(1);transition:opacity .25s,transform .25s}
+.ck-foot{font-size:12.5px;color:var(--muted);text-align:center;margin:6px 0 0}
+`;document.head.appendChild(st);})();
+
+/* ---------- small helpers ---------- */
+const GB_AP=()=>'<span class="gb-ap">'+Course.icon('compass')+'How this course applies the book</span>';
+const gbIcP=n=>Course.icon(n).replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'');
+function gbSet(inp,v){inp.value=v;inp.dispatchEvent(new Event('input',{bubbles:true}));inp.dispatchEvent(new Event('change',{bubbles:true}));}
+function gbTap(el){el.dispatchEvent(new MouseEvent('click',{bubbles:true}));}
+const gbShow=el=>{try{const y=el.getBoundingClientRect().top+window.scrollY-104;if(Math.abs(y-window.scrollY)>40)window.scrollTo({top:Math.max(0,y),behavior:'smooth'});}catch(_){}};
+const gbCellEl=(L,k)=>L.card.querySelector('.gb-cell[data-k="'+k+'"]');
+
+/* ---------- the twelve tools (CANON “Tool names and one-minute moves”; same text as map.html) ---------- */
+const GB_T={
+ ahead:{n:'Look ahead and reason back',ic:'tree',les:'2',alt:'A game tree: the last branches are crossed out first, and an arrow runs back to the first fork.',
+  move:['Draw the turns: who moves, in what order.','Jump to the last move: what will that person really do, given <i>their</i> aims?','Cross out the branches they won’t take; step back one move and repeat.','Pick your first move from what’s left.'],
+  lim:['Works fully only with no chance, known aims and moves you can see.','People care about fairness and pride: a “rational” lowball can be rejected.','Long games can’t be drawn in full: look a few moves ahead, then judge.']},
+ dilemma:{n:'Spot and escape a prisoners’ dilemma',ic:'lock',les:'3–4',alt:'Two people and four boxes: both arrows slide to the corner where both lose.',
+  move:['Spot it: is grabbing better for each of you whatever the other does, yet both grabbing worse for both?','Make it repeated and visible, so cheating gets noticed.','Agree one clear rule and a fitting, certain response.','Start nice, respond to defection, forgive quickly. Or change the payoffs.'],
+  lim:['One mistake makes tit for tat echo: build in forgiveness.','Cooperation tends to break down near a known last round.','Not every dilemma should be escaped: firms “cooperating” on prices hurt customers, and it’s illegal.']},
+ shoes:{n:'Put yourself in their shoes',ic:'eye',les:'5',alt:'Two thought bubbles feed into a table, and one box lights up because both arrows point to it.',
+  move:['List your options and theirs.','One choice best whatever they do? Use it. Cross out what no one would sensibly pick.','Mark each side’s best reply; a box marked for both is an equilibrium.','Several? Go for the focal point you both expect the other to see.'],
+  lim:['Most people reason only two or three steps deep.','A game can have several equilibria; theory alone won’t pick one.','An equilibrium can be bad for both (a dilemma).']},
+ mix:{n:'Mix your moves',ic:'target',les:'6',alt:'A goal split left and right, with a spinner set to the right proportions.',
+  move:['Would it hurt if they knew your choice in advance? If not, don’t mix.','Pick proportions that leave them no better option.','Let an outside device decide (a coin, a watch’s second hand); never just alternate.','Checking others: a big enough penalty plus occasional random checks.'],
+  lim:['Only for pure conflict or checking: in coordination games, mixing causes mismatches.','In a one-off situation there’s no pattern to hide.','A bad result can follow the best mix: judge the policy.']},
+ moves:{n:'Commit, threaten or promise',ic:'arrow',les:'7',alt:'A path that forks with one branch cut away, and an “if, then” signpost.',
+  move:['What will they do if I change nothing?','Choose: commit (fix my own action), threaten (punish the wrong move) or promise (reward the right one).','Stopping something? Deter. Getting it done? Compel, with a deadline.','Check it’s not just a warning; make it clear, certain and the smallest size that works.'],
+  lim:['Worthless unless believed.','Risky: you may have to carry it out.','Threats too large to use aren’t believed.']},
+ credible:{n:'Make it credible',ic:'shield',les:'8',alt:'At the fork where you must follow through, the back-down road has a bridge you can burn.',
+  move:['Would I really follow through? Why would they believe it?','Change your payoffs: a written agreement, or your reputation on the line.','Or limit your way out: small steps, a burnt bridge, a partner who holds you to it.','Against their move: renegotiate, take small steps, leave them a face-saving way out.'],
+  lim:['Contracts can be renegotiated when both sides prefer it.','Reputation only matters if the game continues.','Brinkmanship risks a real fall: only where stakes are low.']},
+ signals:{n:'Read and send signals',ic:'info',les:'9',alt:'One person wears a costly badge the other type couldn’t afford; two doors sort people by what they pick.',
+  move:['What do they know that I don’t, and what do they gain from what they tell me?','Watch actions, not words: only actions too costly for the wrong type count.','To find out: offer a test or a menu that makes types choose differently.','To show: pick a signal cheap for you, costly for others.'],
+  lim:['When everyone does it (cleans the car), it tells you nothing.','The strong may countersignal by not signalling.','Screens have a cost too.']},
+ group:{n:'Coordinate the group',ic:'people',les:'10',alt:'A crowd split between two roads, beside a tipping curve where the group slides to one side.',
+  move:['Does each person’s choice affect the others, with no one paying for it?','A race for position, or several stable outcomes with a tipping point?','Name a focal point, get a few to move first, or ask an outsider to set the rule.','Voting in small steps? Agree the end point first.'],
+  lim:['One person usually can’t change a convention alone.','History and luck can lock in a worse standard.','A group can slide step by step to what it would reject as a whole.']},
+ bid:{n:'Bid smart',ic:'pointer',les:'11',alt:'Bidders under a rising price; each one sits down at their own walkaway line.',
+  move:['Decide whether to enter at all; set your walkaway value before you start.','Rising auction or proxy bid: go up to your value, then stop.','Sealed bid you pay: bid below your value, as if you’ve already won.','A war of attrition: look for a deal instead of bleeding.'],
+  lim:['Rules change and bidders adapt.','When the value is common, winning is bad news unless you adjust.','Escalating games are best not started.']},
+ batna:{n:'Bargain from your BATNA',ic:'scale',les:'12',alt:'A pie: each side’s BATNA slice is set aside first, and only the middle, the real pie, is split.',
+  move:['Work out your BATNA (your best option with no deal), and estimate theirs.','Measure the real pie: the deal’s value minus both BATNAs.','Who loses more from waiting? Improve your BATNA before you show it.','Trade across issues; start from an even split of the real pie.'],
+  lim:['Pride and fairness matter: lowball offers get rejected.','Walkouts hurt both sides and bystanders.','Brinkmanship in bargaining risks a real breakdown.']},
+ vote:{n:'Vote and set the agenda',ic:'list',les:'13',alt:'Three options with arrows going round in a circle: each beats one and loses to another.',
+  move:['Two options: vote your true preference.','Three or more: ask for rankings; look for one that beats every other head to head.','Watch the order: whoever sets the agenda can set the result.','On a single scale, take the median choice.'],
+  lim:['Majorities can go round in a circle.','Every system can invite strategic voting.','The median trick only works on a single line.']},
+ incent:{n:'Design incentives',ic:'star',les:'14',alt:'A pay line, a base plus a bonus that rises with the result, beside a frosted window that hides the effort.',
+  move:['Name what you can see: results, not effort.','Pay enough that they take the job; tie part of it to results; avoid all-or-nothing targets.','Several tasks? Don’t pay only for the easy-to-measure one.','Where people already care, money can crowd out goodwill.'],
+  lim:['Results are a noisy sign of effort: luck shifts them.','Quotas backfire when hopeless or already met.','A small payment can be worse than none.']}
+};
+
+/* ---------- each tool’s picture (shared course fixture, as on map.html; static badge only) ---------- */
+const pS='stroke="var(--tc)" fill="none" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"';
+const pG='stroke="var(--faint)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"';
+const pTX='fill="var(--muted)" font-family="Inter,sans-serif" font-size="7.5" font-weight="600"';
+const pHd=(x,y,r,c,f)=>'<circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="'+(f||'var(--card)')+'" stroke="'+c+'" stroke-width="2"/><path d="M'+(x-r*1.5)+' '+(y+r*2.9)+'q'+(r*1.5)+' '+(-r*2.1)+' '+(r*3)+' 0" stroke="'+c+'" stroke-width="2" fill="none" stroke-linecap="round"/>';
+const GB_PIC={
+ ahead:'<path d="M30 3.5H108" '+pS+' stroke-width="2"/><path d="M35 0.8 30 3.5l5 2.7" '+pS+' stroke-width="2"/>'+
+  '<path d="M12 42 46 24" '+pS+'/><path d="M12 42 46 58" '+pG+'/><path d="M46 24 86 15" '+pS+'/><path d="M46 24 86 34" '+pG+' stroke-dasharray="3 3"/><path d="M46 58 86 49" '+pG+'/><path d="M46 58 86 67" '+pG+' stroke-dasharray="3 3"/>'+
+  '<path d="M64 26l6 6M70 26l-6 6M64 59l6 6M70 59l-6 6" stroke="var(--no-strong)" stroke-width="2.2" stroke-linecap="round"/>'+
+  '<circle cx="12" cy="42" r="5" fill="var(--tc)"/><circle cx="46" cy="24" r="4.5" fill="var(--tc)"/><circle cx="46" cy="58" r="4.5" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/>'+
+  '<rect x="88" y="11" width="26" height="8" rx="3" fill="var(--tc)"/><rect x="88" y="30" width="26" height="8" rx="3" fill="var(--soft2)"/><rect x="88" y="45" width="26" height="8" rx="3" fill="var(--soft2)"/><rect x="88" y="63" width="26" height="8" rx="3" fill="var(--soft2)"/>',
+ dilemma:pHd(12,34,5,'var(--tc)')+pHd(73,4,2.8,'var(--faint)')+
+  '<g fill="var(--card)" stroke="var(--line2)" stroke-width="1.6"><rect x="32" y="14" width="40" height="27" rx="4"/><rect x="74" y="14" width="40" height="27" rx="4"/><rect x="32" y="43" width="40" height="27" rx="4"/></g>'+
+  '<rect x="74" y="43" width="40" height="27" rx="4" fill="var(--no-bg)" stroke="var(--no-strong)" stroke-width="2"/>'+
+  '<path d="M89 61c3-4 9-4 12 0" stroke="var(--no-strong)" stroke-width="2" fill="none" stroke-linecap="round"/><circle cx="91" cy="53" r="1.6" fill="var(--no-strong)"/><circle cx="99" cy="53" r="1.6" fill="var(--no-strong)"/>'+
+  '<path d="M45 24c3 4 11 4 14 0" '+pG+'/><circle cx="47" cy="20" r="1.4" fill="var(--faint)"/><circle cx="57" cy="20" r="1.4" fill="var(--faint)"/>'+
+  '<path d="M52 56H80" '+pS+'/><path d="M75 52l5 4-5 4" '+pS+'/><path d="M94 27V48" '+pS+'/><path d="M90 43l4 5 4-5" '+pS+'/>',
+ shoes:'<ellipse cx="17" cy="15" rx="14" ry="10" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/><circle cx="26" cy="29" r="2.4" fill="var(--faint)"/>'+
+  '<ellipse cx="103" cy="15" rx="14" ry="10" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/><circle cx="94" cy="29" r="2.4" fill="var(--faint)"/>'+
+  '<text x="17" y="18" text-anchor="middle" fill="var(--tc)" font-family="Inter,sans-serif" font-size="9" font-weight="700">?</text><text x="103" y="18" text-anchor="middle" fill="var(--tc)" font-family="Inter,sans-serif" font-size="9" font-weight="700">?</text>'+
+  '<g fill="var(--card)" stroke="var(--line2)" stroke-width="1.6"><rect x="38" y="30" width="21" height="19" rx="3"/><rect x="38" y="51" width="21" height="19" rx="3"/><rect x="61" y="51" width="21" height="19" rx="3"/></g>'+
+  '<rect x="61" y="30" width="21" height="19" rx="3" fill="var(--tc)"/><path d="M66 39.5l3 3 6-6" stroke="var(--card)" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>'+
+  '<path d="M30 34c10-6 22-6 28 1" '+pS+' stroke-width="2"/><path d="M53 31l5 4-6 2" '+pS+' stroke-width="2"/><path d="M92 36c-2 6-4 8-8 9" '+pS+' stroke-width="2"/><path d="M88 41l-4 4 6 1" '+pS+' stroke-width="2"/>',
+ mix:'<path d="M40 40V10h74v30" fill="none" stroke="var(--ink)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>'+
+  '<rect x="42" y="12" width="35" height="28" fill="var(--tb)"/><path d="M77 12v28" '+pG+' stroke-dasharray="3 3"/>'+
+  '<g stroke="var(--line2)" stroke-width="1"><path d="M50 12v28M60 12v28M68 12v28M86 12v28M96 12v28M105 12v28M42 20h70M42 30h70"/></g>'+
+  '<circle cx="77" cy="62" r="4.5" fill="var(--card)" stroke="var(--ink)" stroke-width="2"/><path d="M74 57 62 30" '+pS+' stroke-width="2" stroke-dasharray="3 3"/><path d="M80 57 94 30" '+pG+' stroke-dasharray="3 3"/>'+
+  '<circle cx="18" cy="42" r="14" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/><path d="M18 42V28A14 14 0 0 0 9.8 53.3Z" fill="var(--tc)"/><path d="M18 42l7-9" stroke="var(--ink)" stroke-width="2" stroke-linecap="round"/><circle cx="18" cy="42" r="2" fill="var(--ink)"/>'+
+  '<text x="18" y="68" text-anchor="middle" '+pTX+'>spinner</text>',
+ moves:'<path d="M6 46H38" '+pS+'/><path d="M38 46 66 22" '+pS+'/><path d="M38 46 50 56" '+pG+'/><path d="M58 63 66 70" '+pG+' stroke-dasharray="2 3"/><path d="M50 61l7-7M50 54l7 7" stroke="var(--no-strong)" stroke-width="2.2" stroke-linecap="round"/>'+
+  '<circle cx="66" cy="22" r="4" fill="var(--tc)"/><circle cx="6" cy="46" r="4" fill="var(--tc)"/>'+
+  '<path d="M96 70V18" stroke="var(--faint)" stroke-width="2.4" stroke-linecap="round"/><path d="M76 8h36l6 6-6 6H76Z" fill="var(--tb)" '+pS+' stroke-width="2"/>'+
+  '<text x="94" y="17" text-anchor="middle" fill="var(--tc)" font-family="Inter,sans-serif" font-size="8" font-weight="700">if → then</text>'+
+  '<text x="93" y="44" text-anchor="middle" '+pTX+'>promise</text><text x="93" y="54" text-anchor="middle" '+pTX+'>or threat</text>',
+ credible:'<path d="M8 70C22 62 30 52 44 42" stroke="var(--soft2)" stroke-width="9" fill="none" stroke-linecap="round"/><path d="M44 42C64 28 80 18 112 8" stroke="var(--tb)" stroke-width="9" fill="none" stroke-linecap="round"/>'+
+  '<path d="M8 70C22 62 30 52 44 42S80 18 112 8" '+pS+'/><path d="M44 42C60 50 70 58 112 62" '+pG+' stroke-dasharray="4 3"/>'+
+  '<g stroke="var(--faint)" stroke-width="2" stroke-linecap="round"><path d="M74 51v12M80 52v12M86 53v12M70 57h22"/></g>'+
+  '<path d="M82 46c-4-4-2-8 1-11 0 3 2 4 3 3 1-2 0-4 0-6 4 3 6 8 2 14-2 2-5 2-6 0z" fill="var(--no-strong)"/>'+
+  '<circle cx="44" cy="42" r="4.5" fill="var(--tc)"/><path d="M104 4l8 4-6 6" '+pS+' stroke-width="2"/>'+
+  '<text x="56" y="71" text-anchor="middle" '+pTX+'>back down</text>',
+ signals:pHd(16,24,6,'var(--tc)','var(--tb)')+'<path d="M7 44h18v22H7z" fill="var(--tb)" stroke="var(--tc)" stroke-width="2"/><path d="M16 49l2 4 4 .5-3 2.5 1 4-4-2-4 2 1-4-3-2.5 4-.5z" fill="var(--tc)"/>'+
+  pHd(44,24,6,'var(--faint)')+'<path d="M35 44h18v22H35z" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/>'+
+  '<rect x="68" y="16" width="20" height="50" rx="3" fill="var(--tb)" stroke="var(--tc)" stroke-width="2"/><circle cx="83" cy="42" r="1.8" fill="var(--tc)"/>'+
+  '<rect x="94" y="16" width="20" height="50" rx="3" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/><circle cx="109" cy="42" r="1.8" fill="var(--faint)"/>'+
+  '<text x="78" y="11" text-anchor="middle" fill="var(--tc)" font-family="Inter,sans-serif" font-size="8" font-weight="700">A</text><text x="104" y="11" text-anchor="middle" fill="var(--faint)" font-family="Inter,sans-serif" font-size="8" font-weight="700">B</text>',
+ group:'<path d="M4 36C24 36 30 14 64 12" stroke="var(--tb)" stroke-width="10" fill="none" stroke-linecap="round"/><path d="M4 36C24 36 30 58 64 60" stroke="var(--soft2)" stroke-width="10" fill="none" stroke-linecap="round"/>'+
+  '<g fill="var(--tc)"><circle cx="30" cy="25" r="3"/><circle cx="40" cy="18" r="3"/><circle cx="50" cy="14" r="3"/><circle cx="60" cy="12" r="3"/><circle cx="46" cy="21" r="2.6"/><circle cx="56" cy="18" r="2.6"/></g>'+
+  '<g fill="var(--faint)"><circle cx="38" cy="52" r="3"/><circle cx="54" cy="58" r="3"/></g>'+
+  '<path d="M76 64H116M76 64V8" '+pG+'/><path d="M78 60C92 60 94 14 114 12" '+pS+'/><circle cx="96" cy="36" r="4" fill="var(--card)" stroke="var(--tc)" stroke-width="2.2"/>'+
+  '<text x="96" y="71" text-anchor="middle" '+pTX+'>tipping point</text>',
+ bid:'<path d="M8 66V8" '+pG+'/><path d="M4 14l4-6 4 6" '+pG+'/><path d="M8 30H116" stroke="var(--tc)" stroke-width="2" stroke-dasharray="5 3"/>'+
+  '<text x="114" y="26" text-anchor="end" '+pTX+'>price</text>'+
+  pHd(34,16,5,'var(--tc)','var(--tb)')+'<path d="M34 31v20" '+pS+'/><path d="M26 22h16" stroke="var(--tc)" stroke-width="1.6" stroke-dasharray="2 2"/>'+
+  pHd(56,12,5,'var(--tc)','var(--tb)')+'<path d="M56 27v24" '+pS+'/>'+
+  pHd(78,46,4.5,'var(--faint)')+'<path d="M70 44h16" stroke="var(--faint)" stroke-width="1.6" stroke-dasharray="2 2"/><path d="M72 66h14" '+pG+'/>'+
+  pHd(100,50,4.5,'var(--faint)')+'<path d="M92 47h16" stroke="var(--faint)" stroke-width="1.6" stroke-dasharray="2 2"/><path d="M94 68h14" '+pG+'/>',
+ batna:'<path d="M44 36L69.6 40.5A26 26 0 1 0 18.4 40.5Z" fill="var(--tb)" stroke="var(--tc)" stroke-width="2.2" stroke-linejoin="round"/><path d="M44 36V10" stroke="var(--tc)" stroke-width="2" stroke-dasharray="3 3"/>'+
+  '<path d="M44 36L44 62A26 26 0 0 1 18.4 40.5Z" transform="translate(-6 6)" fill="var(--soft2)" stroke="var(--faint)" stroke-width="2" stroke-linejoin="round"/>'+
+  '<path d="M44 36L69.6 40.5A26 26 0 0 1 44 62Z" transform="translate(6 6)" fill="var(--soft2)" stroke="var(--faint)" stroke-width="2" stroke-linejoin="round"/>'+
+  '<text x="44" y="7" text-anchor="middle" '+pTX+'>real pie</text>'+
+  '<circle cx="99" cy="28" r="13" fill="var(--card)" stroke="var(--faint)" stroke-width="2"/><path d="M99 28V19M99 28l6 4" stroke="var(--ink)" stroke-width="2" stroke-linecap="round"/><text x="99" y="54" text-anchor="middle" '+pTX+'>waiting</text><text x="99" y="63" text-anchor="middle" '+pTX+'>shrinks it</text>',
+ vote:'<g fill="var(--tb)" stroke="var(--tc)" stroke-width="2"><circle cx="60" cy="13" r="9"/><circle cx="94" cy="58" r="9"/><circle cx="26" cy="58" r="9"/></g>'+
+  '<g fill="var(--tc)" font-family="Inter,sans-serif" font-size="10" font-weight="700" text-anchor="middle"><text x="60" y="16.5">A</text><text x="94" y="61.5">B</text><text x="26" y="61.5">C</text></g>'+
+  '<path d="M70 18C82 26 88 36 90 46" '+pS+'/><path d="M85 43l5 4 2-6" '+pS+'/><path d="M84 62H38" '+pS+'/><path d="M43 58l-5 4 5 4" '+pS+'/><path d="M28 47C30 36 38 26 50 18" '+pS+'/><path d="M44 17l6 1-2 6" '+pS+'/>',
+ incent:'<path d="M8 64H58M8 64V8" '+pG+'/><path d="M8 48H26L56 14" '+pS+' stroke-width="2.8"/><path d="M8 48H26V64H8Z" fill="var(--tb)"/><text x="17" y="59" text-anchor="middle" '+pTX+'>base</text><text x="46" y="44" text-anchor="middle" '+pTX+'>bonus</text>'+
+  '<rect x="68" y="8" width="46" height="56" rx="6" fill="var(--soft2)" stroke="var(--faint)" stroke-width="2"/>'+
+  '<g opacity=".35">'+pHd(91,26,6,'var(--ink)')+'</g><g stroke="var(--card)" stroke-width="3" opacity=".7"><path d="M72 30 90 12M72 46 106 12M78 56 110 24M94 58 110 42"/></g><text x="91" y="71" text-anchor="middle" '+pTX+'>effort hidden</text>'
+};
+
+/* ---------- the strategy map’s rows (CANON “The strategy map”: same rows, names and orders) ---------- */
+const GB_ROWS=[
+ {l:['START'],t:'Row zero: will anyone react to what you do?'},
+ {l:['Taking','turns'],t:'Taking turns: you move, then they respond',s:'Offers, deadlines, paying up front, a promise about later.',p:[['ahead'],['credible','can either of you be trusted at the last step?'],['moves']],x:'Arlo’s loan; when to mention the Kittiwake approach in the pay review.'},
+ {l:['Choosing','at once'],t:'You both choose at once, without seeing the other',s:'Prices, plans, bids, positions.',p:[['shoes'],['dilemma','if both of you are pushed to a worse outcome'],['mix','if any pattern of yours gets exploited']],x:'Who gets the senior designer this week; Plover and Kittiwake’s day rates.'},
+ {l:['Grab','or slack'],t:'Everyone’s tempted to grab or slack, and everyone loses',s:'Chores, an overtime race, a shared kitty, a shared space.',p:[['dilemma'],['group','if many people are involved'],['incent','to change the payoffs']],x:'Late nights with Linus; dishes with Juno; the building’s bike store.'},
+ {l:['Landing on','one choice'],t:'You need everyone to land on the same choice',s:'Where to meet, which app, who calls back, which holiday.',p:[['shoes','find the focal point'],['group'],['moves','move first, when you each prefer a different option']],x:'The holiday with Juno; the dropped call with Hedda; the team’s file-sharing tool.'},
+ {l:['Patterns','and checks'],t:'Your pattern is being read, or you’re the one checking',s:'Spot checks, penalties, bluffs, when to inspect.',p:[['mix']],x:'Penalty kicks on Thursdays; visits to check the builder’s work.'},
+ {l:['Changing','behaviour'],t:'You want to change someone’s behaviour',s:'Stop something, or get something done.',p:[['moves'],['credible'],['ahead','check they’ll respond as you expect']],x:'The builder’s deadline; Linus taking credit; Tali’s own savings plan.'},
+ {l:['They know','more'],t:'They know something you don’t (or you know something they don’t)',s:'A used car, a job candidate, a deal that looks too good, “trust me”.',p:[['signals'],['shoes','why are they offering this?'],['bid','if it’s a bid: the winner’s curse']],x:'The used car; hiring a junior designer; Arlo’s coffee-cart plan.'},
+ {l:['Splitting','or pricing'],t:'Splitting something or agreeing a price',s:'Pay, rent, a price, shared costs, who does what.',p:[['batna'],['credible','is your walk-away believable?'],['signals']],x:'Tali’s pay talk with Greer; the rent renewal; sharing the holiday-cottage cost.'},
+ {l:['Competing','for a prize'],t:'Competing with several others for one prize',s:'An auction, a tender, offers on a flat or a car, a race to launch.',p:[['bid'],['signals'],['dilemma','a war of attrition? Look for a deal']],x:'The online car auction; the council’s website tender.'},
+ {l:['A group','decides'],t:'A group decides together',s:'A family, a team, a club, a committee.',p:[['vote'],['group'],['batna','trade across issues']],x:'The Plover offsite vote; the five-a-side end-of-season do; where Hedda moves.'},
+ {l:['Work you','can’t watch'],t:'Getting someone to do good work you can’t watch',s:'A builder, a hired helper, a teammate, a cleaner.',p:[['incent'],['signals','screen who you hire'],['credible','pay in stages']],x:'The builder on Hedda’s bathroom; Greer’s team bonus.'}
+];
+
+/* ---------- the board ----------
+   Start (row zero) at the top left; squares 1–11 run clockwise round the edge in map order.
+   Middle: the “just decide” side square, and two extra squares lit only for big situations.
+   A dashed ring round everything is the larger game. */
+const GB_POS=[[0,0],[1,0],[2,0],[3,0],[3,1],[3,2],[3,3],[2,3],[1,3],[0,3],[0,2],[0,1]];
+const gbXY=k=>{const p=GB_POS[k];return [10+p[0]*80,22+p[1]*74];};
+const GB_ALT='The strategy map drawn as a board game. A Start square asks whether anyone will react. Eleven squares run round the edge, one per kind of everyday situation, each with tool badges in the order to try them. In the middle: a side square for just decide, and two extra squares for big situations. A ring round the board stands for the larger game.';
+function gbPip(cx,cy,r,key,on){const c=on?'var(--tc)':'var(--line2)',z=r*1.3;
+  return '<g class="tk tk-'+key+'"><circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" fill="'+c+'"/>'+
+    '<svg x="'+(cx-z/2)+'" y="'+(cy-z/2)+'" width="'+z+'" height="'+z+'" viewBox="0 0 24 24" fill="none" stroke="var(--card)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">'+gbIcP(GB_T[key].ic)+'</svg></g>';}
+function gbDraw(st){
+  const big=st.size==='big'&&st.lit>0;
+  let s='<rect x="3" y="10" width="330" height="306" rx="20" fill="none" stroke="'+(st.ring?'var(--h3)':'var(--line2)')+'" stroke-width="'+(st.ring?4:1.5)+'"'+(st.ring?'':' stroke-dasharray="5 5"')+'/>'+
+    '<rect x="100" y="3" width="136" height="15" rx="7" fill="var(--card)"/><text x="168" y="14.5" text-anchor="middle" font-size="11" font-weight="700" letter-spacing=".6" fill="'+(st.ring?'var(--h3)':'var(--faint)')+'">THE LARGER GAME</text>';
+  s+='<text x="177" y="100.5" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">squares 1–11 run clockwise</text>';
+  /* Start → just decide */
+  s+='<path d="M76 84L94 104" stroke="var(--faint)" stroke-width="1.6" stroke-dasharray="3 3" fill="none"/><path d="M88 103l6 1.5-1-6" stroke="var(--faint)" stroke-width="1.6" fill="none"/>';
+  s+='<rect x="96" y="104" width="144" height="42" rx="10" fill="'+(st.side?'var(--soft2)':'var(--soft)')+'" stroke="'+(st.side?'var(--ink)':'var(--faint)')+'" stroke-width="'+(st.side?2:1.5)+'" stroke-dasharray="4 3"/>'+
+    '<text x="182" y="122" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">Just decide</text><text x="182" y="137" text-anchor="middle" font-size="11" fill="var(--muted)">not a game</text>';
+  if(st.cap){const c=st.cap.length>26?st.cap.slice(0,25).replace(/\s+\S*$/,'')+'…':st.cap;s+='<text x="168" y="164" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri-deep)">'+c+'</text>';}
+  if(st.bounce)s+='<text x="122" y="165" font-size="11.5" font-weight="700" fill="var(--no-strong)">Bounced → Lesson 16</text>';
+  [['Sketch the','tree or','table'],['Check the','larger','game']].forEach((t,j)=>{const x=94+j*76;
+    s+='<rect x="'+x+'" y="174" width="72" height="62" rx="10" fill="'+(big?'var(--h3-bg)':'none')+'" stroke="'+(big?'var(--h3)':'var(--line2)')+'" stroke-width="'+(big?2.5:1.3)+'" stroke-dasharray="'+(big?'0':'4 3')+'"/>'+
+      '<text x="'+(x+36)+'" y="192" text-anchor="middle" font-size="11" font-weight="'+(big?700:500)+'" fill="'+(big?'var(--h3)':'var(--faint)')+'">'+t.map((w,q)=>'<tspan x="'+(x+36)+'" dy="'+(q?13:0)+'">'+w+'</tspan>').join('')+'</text>'+
+      '<text x="'+(x+64)+'" y="230" text-anchor="end" font-size="11" font-weight="700" fill="'+(big?'var(--h3)':'var(--faint)')+'">big</text>';});
+  for(let k=0;k<12;k++){const [x,y]=gbXY(k),R=GB_ROWS[k],lit=st.lit===k,sel=st.sel===k;
+    const dim=(st.only&&!st.only.includes(k))||(st.lit!=null&&st.lit>=0&&!lit&&!st.noDim);
+    const isS=k===0;
+    s+='<g class="gb-cell" data-k="'+k+'" tabindex="0" role="button" aria-label="'+(isS?'Start: will anyone react?':'Square '+k+': '+R.t)+'" opacity="'+(dim?.38:1)+'">'+
+      '<rect class="bg" x="'+x+'" y="'+y+'" width="76" height="70" rx="11" fill="'+(lit?'var(--pri-bg)':isS?'var(--h3-bg)':'var(--card)')+'" stroke="'+(lit||sel?'var(--pri)':isS?'var(--h3)':'var(--line2)')+'" stroke-width="'+(lit||sel?3:1.5)+'"'+(sel&&!lit?' stroke-dasharray="5 3"':'')+'/>'+
+      '<circle cx="'+(x+13)+'" cy="'+(y+13)+'" r="9" fill="'+(isS?'var(--h3)':lit?'var(--pri)':'var(--soft2)')+'"/><text x="'+(x+13)+'" y="'+(y+17)+'" text-anchor="middle" font-size="11" font-weight="700" fill="'+(isS?'var(--card)':lit?'var(--pri-ink)':'var(--muted)')+'">'+k+'</text>';
+    if(isS)s+='<text x="'+(x+27)+'" y="'+(y+17.5)+'" font-size="12" font-weight="800" letter-spacing=".5" fill="var(--h3)">START</text>'+
+      '<text x="'+(x+33)+'" y="'+(y+40)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">Will they</text><text x="'+(x+31)+'" y="'+(y+54)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">react?</text>';
+    else{s+=R.l.map((w,q)=>'<text x="'+(x+38)+'" y="'+(y+33+q*13)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="'+(lit?'var(--pri-deep)':'var(--ink)')+'">'+w+'</text>').join('');
+      R.p.forEach((p,j)=>{const on=!(lit&&st.size==='small'&&j>0);s+=gbPip(x+16+j*22,y+58,j?6.5:8,p[0],on);});}
+    st.marks.filter(m=>m.k===k).forEach((m,j)=>{const wd=m.t.length>2?32:16,mx=x+24+j*(wd+2);
+      const f=m.c==='ok'?'var(--ok-bg)':m.c==='no'?'var(--no-bg)':'var(--pri)',sc=m.c==='ok'?'var(--ok)':m.c==='no'?'var(--no-strong)':'var(--pri)',tc=m.c==='ok'?'var(--ok)':m.c==='no'?'var(--no-strong)':'var(--pri-ink)';
+      s+='<rect x="'+mx+'" y="'+(y+4)+'" width="'+wd+'" height="17" rx="8.5" fill="'+f+'" stroke="'+sc+'" stroke-width="1.5"/><text x="'+(mx+wd/2)+'" y="'+(y+16.5)+'" text-anchor="middle" font-size="11" font-weight="700" fill="'+tc+'">'+m.t+'</text>';});
+    s+='</g>';}
+  return s;}
+function gbBoard(L,host,o){
+  o=o||{};
+  const w=document.createElement('div');host.appendChild(w);
+  w.innerHTML='<svg class="gb-svg" viewBox="0 0 336 322" role="img" aria-label="'+GB_ALT+'"><g class="gb-base"></g>'+
+    '<g class="gb-tok" style="opacity:0"><circle cx="0" cy="-6" r="5.5" fill="var(--pri)" stroke="var(--card)" stroke-width="1.6"/><path d="M-8 9Q-7 -1 0 -1Q7 -1 8 9Z" fill="var(--pri)" stroke="var(--card)" stroke-width="1.6"/></g></svg>';
+  const svg=w.querySelector('svg'),base=svg.querySelector('.gb-base'),tok=svg.querySelector('.gb-tok');
+  const st={lit:null,sel:null,size:null,ring:false,side:false,cap:'',marks:[],only:null,bounce:false,noDim:false};
+  const api={w,svg,st,pos:null,busy:false};
+  const tokXY=k=>k===-1?[114,129]:k==='mid'?[108,160]:k===0?[gbXY(0)[0]+66,gbXY(0)[1]+52]:(()=>{const p=gbXY(k);return [p[0]+63,p[1]+15];})();
+  api.render=()=>{base.innerHTML=gbDraw(st);};
+  api.set=p=>{Object.assign(st,p);api.render();return api;};
+  api.place=(k,fast)=>{api.pos=k;const xy=tokXY(k);tok.style.transition=fast?'transform .1s linear,opacity .15s':'';tok.style.transform='translate('+xy[0]+'px,'+xy[1]+'px)';tok.style.opacity=1;};
+  api.hide=()=>{tok.style.opacity=0;api.pos=null;};
+  /* hop from Start, square by square, to square `to` (or to the side square when to is -1) */
+  api.hop=(to,cb,ms)=>{ms=ms||105;api.busy=true;st.lit=null;st.side=false;st.bounce=false;api.render();api.place(0,true);
+    const path=[];if(to===-1)path.push(-1);else for(let k=1;k<=to;k++)path.push(k);
+    let j=0;const tick=()=>{if(!svg.isConnected)return;if(j>=path.length){api.busy=false;if(to===-1)api.set({side:true});else if(to>0)api.set({lit:to});cb&&cb();return;}
+      api.place(path[j],true);j++;setTimeout(tick,ms);};setTimeout(tick,ms);};
+  svg.addEventListener('click',e=>{const c=e.target.closest&&e.target.closest('.gb-cell');if(c&&o.onCell)o.onCell(+c.dataset.k);});
+  svg.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const c=e.target.closest&&e.target.closest('.gb-cell');if(c&&o.onCell){e.preventDefault();o.onCell(+c.dataset.k);}});
+  api.render();return api;}
+
+/* a situation token: drag it onto the board, or tap it */
+function gbTok(t){const b=document.createElement('button');b.type='button';b.className='gb-t';
+  b.innerHTML='<svg viewBox="0 0 16 20" aria-hidden="true"><circle cx="8" cy="5" r="4" fill="currentColor"/><path d="M1 19Q2 9 8 9Q14 9 15 19Z" fill="currentColor"/></svg><span>'+t+'</span>';return b;}
+function gbDrag(btn,svg,onDrop){let sx=null,sy=0,ghost=null,moved=false;
+  btn.addEventListener('pointerdown',e=>{if(btn.disabled)return;sx=e.clientX;sy=e.clientY;moved=false;try{btn.setPointerCapture(e.pointerId);}catch(_){}});
+  btn.addEventListener('pointermove',e=>{if(sx===null)return;
+    if(!moved&&Math.hypot(e.clientX-sx,e.clientY-sy)>6){moved=true;ghost=btn.cloneNode(true);ghost.classList.add('gb-ghost');document.body.appendChild(ghost);}
+    if(ghost){ghost.style.left=e.clientX+'px';ghost.style.top=e.clientY+'px';}});
+  const stop=()=>{sx=null;if(ghost){ghost.remove();ghost=null;}};
+  btn.addEventListener('pointerup',e=>{if(sx===null)return;const was=moved;stop();
+    if(was){btn._skip=true;setTimeout(()=>{btn._skip=false;},0);const el=document.elementFromPoint(e.clientX,e.clientY),c=el&&el.closest&&el.closest('.gb-cell');onDrop(c&&svg.contains(c)?+c.dataset.k:null);}});
+  btn.addEventListener('pointercancel',stop);
+  btn.addEventListener('click',()=>{if(btn._skip)return;onDrop('tap');});}
+
+/* the Start questions: will they react? turns or at once? which sign fits? */
+const GB_Q={
+ react:{q:'Will anyone react to what you do?',ic:'people',o:[['yes','Yes, someone will react','a person, a rival, a group, even my future self'],['no','No, nothing pushes back','a puncture, a recipe, the weather']]},
+ when:{q:'How do the moves go?',ic:'clock',o:[['turns','Taking turns','one moves, then the other responds'],['once','At the same time','each chooses without seeing the other’s choice']]},
+ about:{q:'Which sign fits best?',ic:'eye',o:[[3,'Everyone’s tempted to grab or slack','and if all do, all lose'],[4,'We need to land on one choice','where to meet, which holiday'],[5,'My pattern is read, or I’m checking','penalties, bluffs, spot checks'],[6,'I want to change what someone does','stop it, or get it done'],[7,'They know something I don’t','or I know something they don’t'],[8,'Splitting or agreeing a price','pay, rent, shared costs'],[9,'Competing for one prize','an auction, a tender, offers'],[10,'A group decides together','three or more options'],[11,'Good work I can’t watch','a builder, a helper'],[0,'None of these: just their move and mine','']]}
+};
+function gbAsk(L,host,opt,cb){opt=opt||{};host.innerHTML='';
+  const box=document.createElement('div');box.className='gb-q';host.appendChild(box);
+  const ans={},said=[];let busy=false;
+  function show(key){const Q=GB_Q[key];box.innerHTML='<div class="qq">'+L.ic(Q.ic)+Q.q+'</div><div class="qo"></div>';const qo=box.querySelector('.qo');
+    Q.o.forEach(o=>{const b=document.createElement('button');b.type='button';b.dataset.v=o[0];if(o[0]===0)b.className='wide';
+      b.innerHTML=o[1]+(o[2]?'<small>'+o[2]+'</small>':'');b.onclick=()=>pick(key,o,b);qo.appendChild(b);});
+    if(opt.auto){const v=opt.auto[{react:0,when:1,about:2}[key]];setTimeout(()=>{if(!box.isConnected)return;const b=[...qo.children].find(x=>x.dataset.v===String(v));if(b)b.click();},opt.autoMs||240);}}
+  function pick(key,o,b){if(busy)return;busy=true;b.classList.add('sel');ans[key]=o[0];said.push(key==='about'&&o[0]===0?'No special sign':o[1]);
+    setTimeout(()=>{busy=false;if(!box.isConnected)return;
+      if(key==='react'){if(o[0]==='no')return end(-1);if(opt.only1)return end(0);show('when');}
+      else if(key==='when')show('about');
+      else end(o[0]===0?(ans.when==='turns'?1:2):o[0]);},170);}
+  function end(r){box.innerHTML='<div class="gb-trail">'+said.map(t=>'<span>'+t+'</span>').join('→')+'</div>';cb(r,ans);}
+  show('react');}
+function gbAns(L,v){const b=L.$$('.gb-q .qo button').find(x=>x.dataset.v===String(v));if(b)b.click();}
+
+/* the landing panel under the board: signs, tools in order, small/big switch, a tool’s one-minute move */
+function gbToolCard(key,note){const T=GB_T[key];
+  return '<div class="gb-tc tk tk-'+key+'"><svg class="pic" viewBox="0 0 120 72" role="img" aria-label="'+T.alt+'">'+GB_PIC[key]+'</svg>'+
+    '<span class="nm">'+T.n+'</span><span class="sub">Lesson '+T.les+' · its one-minute move</span>'+(note?'<span class="here">Here: '+note+'</span>':'')+
+    '<ol>'+T.move.map(m=>'<li>'+m+'</li>').join('')+'</ol><p class="lim"><b>Limits (from the book):</b> '+T.lim.join(' ')+'</p></div>';}
+function gbPanel(L,host,k,o){o=o||{};
+  if(k===-1){host.innerHTML='<div class="gb-land"><div class="gb-ph"><span class="n">0</span><b>Just decide: not a game</b></div><p>Nobody will react to what you do, so it’s an ordinary decision, the lumberjack’s, not the general’s. Pick the best option and get on with it.</p></div>';return {};}
+  if(k===0){host.innerHTML='<div class="gb-land"><div class="gb-ph"><span class="n">0</span><b>Start: will anyone react?</b></div><p>Every situation begins here. If nobody will react, step off to “just decide”. If someone will, it’s a game: find its square from its signs.</p></div>';return {};}
+  const R=GB_ROWS[k];let size=o.size||null,open=null;
+  host.innerHTML='<div class="gb-land"><div class="gb-ph"><span class="n">'+k+'</span><b>'+R.t+'</b></div><p><b>Signs:</b> '+R.s+'</p>'+
+    (o.sizer?'<div class="gb-zr"><span>How big is it?</span><div class="gb-size"><button type="button" data-z="small">Small</button><button type="button" data-z="big">Big</button></div></div>':'')+
+    '<div class="gb-tools"></div><div class="gb-xtra"></div><div class="gb-tcw"></div><p><b>Tali:</b> '+R.x+'</p></div>';
+  const tools=host.querySelector('.gb-tools'),xtra=host.querySelector('.gb-xtra'),tcw=host.querySelector('.gb-tcw');
+  function draw(){tools.innerHTML=R.p.map((p,j)=>(j?'<span class="gb-ar">→</span>':'')+'<button type="button" class="gb-tool tk tk-'+p[0]+(size==='small'&&j>0?' off':'')+(open===j?' sel':'')+'" data-j="'+j+'"><span class="d">'+L.ic(GB_T[p[0]].ic)+'</span>'+GB_T[p[0]].n+'</button>').join('');
+    xtra.innerHTML=size==='big'?'<span class="gb-x">+ Walk the whole row</span><span class="gb-x">+ Sketch the tree or table</span><span class="gb-x">+ Check the larger game</span>':size==='small'?'<span class="gb-x s">First tool only: about a minute, then act</span>':'<span class="gb-x s">Tap a tool for its one-minute move</span>';
+    tools.querySelectorAll('.gb-tool').forEach(b=>b.onclick=()=>{const j=+b.dataset.j;open=j;tcw.innerHTML=gbToolCard(R.p[j][0],R.p[j][1]);draw();if(o.onTool)o.onTool(R.p[j][0]);});
+    host.querySelectorAll('.gb-size button').forEach(b=>b.classList.toggle('sel',b.dataset.z===size));}
+  host.querySelectorAll('.gb-size button').forEach(b=>b.onclick=()=>{size=b.dataset.z;draw();if(o.onSize)o.onSize(size);});
+  draw();return {};}
+
+/* ---------- the four-box check card (CANON “The one-minute strategic check”) ---------- */
+const CK_H=[['Who’s in?','about 15 s'],['Which game?','about 10 s'],['Run the tool','about 25 s'],['Larger game?','about 10 s']];
+const CK_STAMP='<svg class="ck-stamp" viewBox="0 0 60 60" aria-hidden="true"><circle cx="30" cy="30" r="26" fill="none" stroke="currentColor" stroke-width="3"/><circle cx="30" cy="30" r="20.5" fill="none" stroke="currentColor" stroke-width="1.4"/><text x="30" y="35" text-anchor="middle" font-family="Inter,sans-serif" font-size="12.5" font-weight="800" fill="currentColor">DONE</text></svg>';
+function ckCard(L,host,cfg){
+  const w=document.createElement('div');w.className='ck';host.appendChild(w);
+  w.innerHTML='<div class="ck-top"><b>ONE-MINUTE STRATEGIC CHECK</b><span>'+L.ic('compass')+'How this course applies the book</span></div><div class="ck-sit">'+cfg.sit+'</div>'+
+    CK_H.map((h,j)=>'<div class="ck-b k'+(j+1)+'"><div class="ck-h"><span class="n">'+(j+1)+'</span><b>'+h[0]+'</b><span class="t">'+h[1]+'</span></div><div class="ck-body"></div>'+CK_STAMP+'</div>').join('')+
+    '<p class="ck-foot">The times are a guide, not a countdown. Then act, and later note what happened.</p>';
+  const boxes=[...w.querySelectorAll('.ck-b')];
+  function open(j){boxes.forEach((b,q)=>b.classList.toggle('on',q===j));const B=cfg.boxes[j],body=boxes[j].querySelector('.ck-body');
+    body.innerHTML='<p class="ck-q">'+B.q+'</p><div class="ck-os"></div><p class="ck-why"></p>';const os=body.querySelector('.ck-os'),why=body.querySelector('.ck-why');
+    if(B.taps){const seen=new Set();B.taps.forEach((t,q)=>{const b=document.createElement('button');b.type='button';b.className='ck-s';b.innerHTML='<span class="sn">'+(q+1)+'</span><span><b>'+t[0]+'</b><i>tap to run this step</i></span>';
+        b.onclick=()=>{if(seen.has(q))return;seen.add(q);b.classList.add('dn');b.querySelector('i').innerHTML=t[1];if(seen.size===B.taps.length){why.innerHTML=B.after||'';finish(j);}};os.appendChild(b);});}
+    else{let first=true;B.o.forEach((t,q)=>{const b=document.createElement('button');b.type='button';b.className='ck-o';b.innerHTML=t;
+        b.onclick=()=>{if(boxes[j].classList.contains('done'))return;const ok=q===B.r;
+          if(cfg.graded){if(!first)return;first=false;L.award(ok);b.classList.add(ok?'ok':'no');if(!ok)os.children[B.r].classList.add('ok');
+            setTimeout(()=>{if(!w.isConnected)return;body.innerHTML='<p class="ck-a'+(ok?'':' no')+'">'+(ok?'✓ ':'✗ You picked another. Best: ')+B.o[B.r]+'</p><p class="ck-why">'+B.why+'</p>';finish(j);},450);}
+          else if(ok){b.classList.add('ok');setTimeout(()=>{if(!w.isConnected)return;body.innerHTML='<p class="ck-a">✓ '+B.o[B.r]+'</p><p class="ck-why">'+B.why+'</p>';finish(j);},350);}
+          else{b.classList.add('no');why.innerHTML=(B.hint&&B.hint[q])||'Not quite. Try another.';}};
+        os.appendChild(b);});}}
+  function finish(j){boxes[j].classList.add('done');boxes[j].classList.remove('on');
+    if(j<3)setTimeout(()=>{if(w.isConnected)open(j+1);},250);else if(cfg.onDone)setTimeout(()=>{if(w.isConnected)cfg.onDone();},300);}
+  open(0);return w;}
+async function ckSolve(L,boxes){for(const B of boxes){await L.sleep(320);
+    if(B.taps){const bs=L.$$('.ck-b.on .ck-s');for(const b of bs){b.click();await L.sleep(15);}}
+    else{const bs=L.$$('.ck-b.on .ck-o');if(bs[B.r])bs[B.r].click();await L.sleep(520);}}
+  await L.sleep(400);}
+
+/* ---------- small one-off pictures ---------- */
+function gbTwoKinds(sel){const A=sel==='turns',B=sel==='once',dA=sel&&!A,dB=sel&&!B;
+  let s='<g opacity="'+(dA?.4:1)+'"><rect x="4" y="4" width="152" height="156" rx="14" fill="'+(A?'var(--pri-bg)':'var(--soft)')+'" stroke="'+(A?'var(--pri)':'var(--line)')+'" stroke-width="2"/>'+
+    '<text x="80" y="24" text-anchor="middle" font-size="12" font-weight="800" letter-spacing=".4" fill="var(--ink)">TAKING TURNS</text>';
+  const N=[[26,90],[72,60],[72,120]],Lf=[[124,44],[124,76],[124,104],[124,136]];
+  s+='<g stroke="var(--h2)" stroke-width="2.5" fill="none" stroke-linecap="round"><path d="M26 90L72 60M26 90L72 120M72 60L124 44M72 60L124 76M72 120L124 104M72 120L124 136"/></g>';
+  s+=N.map((p,j)=>'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="'+(j?6:7)+'" fill="var(--h2)"/>').join('')+Lf.map(p=>'<rect x="'+(p[0]-4)+'" y="'+(p[1]-5)+'" width="20" height="10" rx="3" fill="var(--soft2)" stroke="var(--line2)"/>').join('');
+  s+='<text x="26" y="111" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">me</text><text x="72" y="47" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">them</text>';
+  s+='<text x="80" y="154" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h2)">a chain → draw a tree</text></g>';
+  s+='<g opacity="'+(dB?.4:1)+'"><rect x="164" y="4" width="152" height="156" rx="14" fill="'+(B?'var(--pri-bg)':'var(--soft)')+'" stroke="'+(B?'var(--pri)':'var(--line)')+'" stroke-width="2"/>'+
+    '<text x="240" y="24" text-anchor="middle" font-size="12" font-weight="800" letter-spacing=".4" fill="var(--ink)">AT THE SAME TIME</text>';
+  [[200,52],[252,52],[200,96],[252,96]].forEach(p=>s+='<rect x="'+p[0]+'" y="'+p[1]+'" width="48" height="40" rx="6" fill="var(--card)" stroke="var(--line2)" stroke-width="1.6"/>');
+  s+='<circle cx="183" cy="94" r="6" fill="var(--h1)"/><text x="183" y="116" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">me</text><circle cx="258" cy="40" r="6" fill="var(--h4)"/><text x="284" y="44" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">them</text>';
+  s+='<path d="M216 72a12 12 0 1 1 8 11" stroke="var(--h1)" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M221 79l3 4 4-3" stroke="var(--h1)" stroke-width="2.2" fill="none" stroke-linecap="round"/>';
+  s+='<path d="M268 116a12 12 0 1 0 -8 11" stroke="var(--h4)" stroke-width="2.2" fill="none" stroke-linecap="round"/><path d="M263 123l-3 4-4-3" stroke="var(--h4)" stroke-width="2.2" fill="none" stroke-linecap="round"/>';
+  s+='<text x="240" y="154" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h1)">a circle → draw a table</text></g>';
+  return s;}
+const GB_PATHS=['20','400','8,000','160,000','3.2 million','64 million','1.3 billion','26 billion'];
+const GB_TIME=['20 seconds','7 minutes','2 hours','2 days','5 weeks','2 years','41 years','800 years'];
+function gbChess(n){const X=j=>30+(j-1)*36,base=168,H=j=>Math.round(j*1.301/10.41*104);
+  let s='<rect width="320" height="206" rx="14" fill="var(--soft)"/>';
+  if(n<8){const x0=X(n)+30;s+='<rect x="'+x0+'" y="28" width="'+(312-x0)+'" height="'+(base-28)+'" rx="8" fill="var(--h3-bg)"/>'+
+    '<path d="M'+x0+' 26V'+base+'" stroke="var(--h3)" stroke-width="2" stroke-dasharray="4 3"/>'+
+    '<text x="312" y="19" text-anchor="end" font-size="11.5" font-weight="700" fill="var(--h3)">shaded: judge from experience</text>';}
+  else s+='<text x="312" y="19" text-anchor="end" font-size="11.5" font-weight="700" fill="var(--no-strong)">you’d never finish checking</text>';
+  for(let j=1;j<=8;j++){const h=H(j),on=j<=n;
+    s+='<rect x="'+X(j)+'" y="'+(base-h)+'" width="24" height="'+h+'" rx="4" fill="'+(on?'var(--pri)':'var(--card)')+'" stroke="'+(on?'var(--pri)':'var(--line2)')+'" stroke-width="1.5"'+(on?'':' stroke-dasharray="3 3"')+'/>'+
+      '<text x="'+(X(j)+12)+'" y="'+(base+15)+'" text-anchor="middle" font-size="11" font-weight="'+(j===n?800:500)+'" fill="'+(j===n?'var(--ink)':'var(--muted)')+'">'+j+'</text>';}
+  s+='<path d="M22 '+base+'H312" stroke="var(--ink)" stroke-width="2"/>';
+  const lx=Math.max(48,Math.min(272,X(n)+12)),ty=base-H(n);
+  s+='<text x="'+lx+'" y="'+(ty-20)+'" text-anchor="middle" font-size="11.5" font-weight="800" fill="var(--pri-deep)">'+GB_PATHS[n-1]+' paths</text>'+
+    '<text x="'+lx+'" y="'+(ty-7)+'" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">'+GB_TIME[n-1]+'</text>';
+  s+='<text x="160" y="200" text-anchor="middle" font-size="11" fill="var(--muted)">moves ahead, one player’s turn each · ×20 per bar</text>';
+  return s;}
+function gbRing(c){const SC=[[8,3],[6,8]],v=c==null?null:SC[c];
+  const rc=v?(v[1]>=6?'var(--ok)':'var(--no-strong)'):'var(--line2)';
+  let s='<text x="160" y="14" text-anchor="middle" font-size="11.5" font-weight="800" letter-spacing=".5" fill="'+(v?rc:'var(--muted)')+'">THE LARGER GAME · THE NEXT TWO YEARS</text>'+
+    '<rect x="10" y="24" width="300" height="158" rx="30" fill="none" stroke="'+rc+'" stroke-width="10"/>';
+  s+='<rect x="74" y="42" width="172" height="80" rx="12" fill="var(--pri-bg)" stroke="var(--pri)" stroke-width="2.5"/>'+
+    '<text x="160" y="62" text-anchor="middle" font-size="12" font-weight="700" fill="var(--pri-deep)">Square 8 · this renewal</text>'+
+    '<text x="160" y="78" text-anchor="middle" font-size="11" fill="var(--muted)">what Tali saves now</text>'+
+    '<rect x="96" y="88" width="128" height="12" rx="6" fill="var(--soft2)"/>'+(v?'<rect x="96" y="88" width="'+(128*v[0]/10)+'" height="12" rx="6" fill="var(--pri)"/>':'')+
+    '<text x="160" y="116" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">'+(v?v[0]+' / 10':'?')+'</text>';
+  s+='<text x="160" y="140" text-anchor="middle" font-size="11" fill="var(--muted)">repairs, goodwill, the next renewal</text>'+
+    '<rect x="64" y="148" width="192" height="12" rx="6" fill="var(--soft2)"/>'+(v?'<rect x="64" y="148" width="'+(192*v[1]/10)+'" height="12" rx="6" fill="'+rc+'"/>':'')+
+    '<text x="160" y="176" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">'+(v?v[1]+' / 10':'?')+'</text>';
+  return s;}
+
+/* ---------- screen data kept outside the steps for their solvers ---------- */
+var S13=[
+ {q:'Who’s in the game, and what do they want?',o:['Just Tali: it’s a calendar problem','Tali and Linus, each wanting the designer for their own client','Tali and the designer, who will choose'],r:1,
+  hint:['Linus will react to whatever Tali books: that makes it a game, not a calendar job.',null,'The designer goes where they’re booked. The one who’ll react is Linus.'],
+  why:'Linus will react to Tali’s move, and both want the same scarce person. It’s a game.'},
+ {q:'Which game is it? Find the square.',o:['Square 1: taking turns','Square 4: landing on one choice','Square 2: choosing at once'],r:2,
+  hint:['Neither sees the other’s booking before making their own: that’s not turns.','They don’t want to end up in the same place together; each wants the designer for themselves.'],
+  why:'Each books without seeing the other’s choice. First tool: Put yourself in their shoes.'},
+ {q:'Run the tool: Put yourself in their shoes. Tap each step.',taps:[
+   ['List the options','Each can book the designer this week or next.'],
+   ['Best whatever they do?','No: Tali’s best depends on Linus’s booking. Nothing to cross out.'],
+   ['Mark best replies','If Linus takes this week, Tali’s best is next week, and the other way round: two boxes marked for both.'],
+   ['Several? Find the focal point','Two equilibria, like the book’s game of chicken: alternate, or toss a coin. Tali offers: “You this week, me next.”']],
+  after:'Two equilibria and a fair way to pick one.'},
+ {q:'Check the larger game. Tap each question.',taps:[
+   ['Is the tool hitting a limit?','No: a one-off clash with small stakes.'],
+   ['Will Tali deal with Linus again?','Every week, at least until the promotion.'],
+   ['Is the move fair enough?','Alternating is fair, so trust survives for next time.']],
+  after:'Fair, quick, and good for the next round.'}];
+var S15=[
+ ['Mon','Getting ready for the March pay talk with Greer',8,'big','Splitting the value of Tali’s work, and pay is hard to undo: walk the row, sketch the real pie.'],
+ ['Tue','Tali and Linus each book the senior designer, blind',2,'small','Choosing at once, and it’s one week: a minute in their shoes, then a fair offer.'],
+ ['Wed','Arlo asks for the loan’s second stage now',1,'big','Taking turns: Tali lends, Arlo repays or not. Family money: the whole row.'],
+ ['Thu','The rival keeper watches where Tali kicks',5,'small','A pattern being read. Mix the kicks; it’s a casual game.'],
+ ['Fri','The bike store is a mess again; nobody tidies',3,'small','Everyone’s tempted to leave it, and everyone loses. A minute: a clear, fair rule.'],
+ ['Sat','The online car auction ends Sunday night',9,'big','Several bidders, one car, a lot of money: walkaway set, bid as if you’ve won.'],
+ ['Sun','Juno wants the coast, Tali a city; both want to go together',4,'small','Landing on one choice: find the focal point, or take turns year by year.']];
+var S16=[
+ {q:'Who’s in the game, and what do they want?',o:['Just Tali: it’s Tali’s money','Arlo and the coffee-cart customers','Tali and Arlo, with Hedda hearing about any falling-out'],r:2,
+  why:'Arlo will react, and the family is in it too: a silent player, like the driver’s wife in the book’s taxi story.'},
+ {q:'Which game is it? Find the square.',o:['Square 1: taking turns. Tali lends, then Arlo repays or not','Square 2: choosing at once','Square 9: competing for one prize'],r:0,
+  why:'Tali moves first and Arlo answers later. First tool: Look ahead and reason back.'},
+ {q:'Run the tool: jump to the last move. What will Arlo really do?',o:['Count on “by the summer”: Arlo promised','Plan for late but well-meant: tie the second £1,000 to the first repayment, in writing','Assume Arlo won’t repay, and refuse outright'],r:1,
+  why:'Predict what Arlo will actually do, not what Tali would do. Twice late means plan for late; stages give Arlo a reason to repay.'},
+ {q:'Check the larger game. Which move keeps it?',o:['Hand over the rest now, so Arlo doesn’t feel doubted','Refuse coldly: money matters more than mood','Stage it kindly and say why: the rule protects them both'],r:2,
+  why:'Fair and clear beats both extremes. Arlo stays family long after the loan.'}];
+
+Course.lesson({
+  id:'0015', title:'Your strategy map: which tool for which situation', minutes:18, icon:'map',
+  goals:['Ask “will anyone react?” first, then find any situation’s square on the strategy map from its everyday signs',
+         'Size it: run the first tool for about a minute when it’s small, walk the whole row and sketch it when it’s big',
+         'Run the one-minute strategic check on Tali’s week and your own, with the larger game in view'],
+  parts:['Is it a game?','Find the square','Small or big','Your week'],
+  read:'Re-read the book’s Introduction (the lumberjack and the general), the “Two Kinds of Strategic Interactions” and “Very Complex Trees” sections of chapter 2, and the Epilogue to Part I at the end of chapter 4, which sums up Rules 1–4. Then keep the course’s strategy map page open as your daily reference.',
+  glossary:{
+   'strategy-map':'Strategy map: this course’s chart of everyday situations. Each kind of situation gets a square, with the tools to try in order. It applies the book’s ideas; the book itself has no such map.',
+   'one-minute-check':'One-minute strategic check: this course’s four-step routine before any move someone will answer: who’s in, which game, run the tool, check the larger game. Built from the book’s rules.',
+   'tree-logic':'Tree logic: thinking a turn-taking situation through in your head (“if I do this, they’ll do that”) without drawing the tree. The book says that with practice, many everyday situations can be handled this way.',
+   'larger-game':'Larger game: the bigger, longer game around the one in front of you, such as an ongoing relationship with the same person. The book: there is always a larger game.'
+  },
+  cheatsheet:[
+   '<b>Row zero first:</b> will anyone react to what you do? If not, it’s the lumberjack’s kind of decision: just decide. If someone will, it’s a game.',
+   '<b>Turns or at the same time?</b> Turns make a chain: draw a tree, look ahead and reason back (Rule 1). At the same time makes a circle: draw a table, use a dominant choice, cross out, look for mutual best replies (Rules 2–4).',
+   '<b>Then the signs pick the square</b> (course application): grabbing, landing together, patterns, changing someone, hidden information, splitting, one prize, a group vote, unseen work. Fits two? Pick the one for what you’re deciding now.',
+   '<b>Small or big</b> (course application): small or easy to undo → first tool, about a minute, then act. Big or hard to undo → walk the whole row, sketch the tree or table, check the larger game.',
+   '<b>Big games can’t be seen to the end:</b> like chess, look a few moves ahead, then judge the position from experience (chapter 2).',
+   '<b>The one-minute check</b> (course application): Who’s in? (15 s) · Which game? (10 s) · Run the tool (25 s) · Larger game? (10 s). Then act, and later note what happened.',
+   '<b>When the first tool keeps bouncing,</b> you’re stuck, not unlucky: go to “When the game goes wrong” (Lesson 16).',
+   '<b>There is always a larger game:</b> winning one square can lose a relationship. Fair, trustworthy moves are often the strategic ones.'
+  ],
+  steps:[
+/* ---------- PART 1: IS IT A GAME? ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tali’s Monday morning has three jobs. Which one needs Tali to think about how someone will react?</h1>');
+  L.mc(L.card,['Patching the slow puncture on the bike','Replying to the landlord’s 10% rent rise','Choosing a paint colour for the hallway'],1,
+   'The tyre and the paint don’t answer back. The landlord will read Tali’s reply and respond. Spotting that difference is the first question on today’s board.',
+   'The tyre and the paint don’t answer back, whatever Tali does. The landlord will read Tali’s reply and respond. Spotting that difference is the first question on today’s board.');}},
+
+{part:0,src:'Introduction',
+ solve:async L=>{const t=L.$$('#s2t .gb-t');t[0].click();await L.sleep(60);gbAns(L,'no');await L.sleep(520);t[1].click();await L.sleep(60);gbAns(L,'yes');await L.sleep(420);},
+ run(L){
+  L.h(L.kick('learn','Row zero')+'<h1 class="q">Does it fight back? Drag each of Tali’s jobs onto <b>Start</b> (or tap it) and answer the Start question.</h1>'+
+   '<div class="gb-tray" id="s2t"></div><div id="s2b"></div><div id="s2q"></div><p class="gb-ro" id="s2r" aria-live="polite">Notice which token leaves the board.</p>');
+  const bd=gbBoard(L,L.$('#s2b'));bd.set({only:[0]});
+  const T=[['Patch the bike puncture','Bike puncture'],['Reply to the landlord’s rent rise','Landlord’s rent rise']];const did=new Set();let busy=false,fin=false;
+  T.forEach((t,j)=>{const b=gbTok(t[0]);L.$('#s2t').appendChild(b);gbDrag(b,bd.svg,k=>{if(busy||did.has(j)||k===null)return;go(j,b,k);});});
+  function go(j,b,k){busy=true;b.classList.add('on');bd.set({side:false,cap:T[j][1],lit:null});bd.place(0);gbShow(L.$('#s2b'));
+    L.$('#s2r').innerHTML=k!=='tap'&&k!==0?'Every token starts on Start: first ask whether it’s a game at all.':'On Start. Answer the question below.';
+    gbAsk(L,L.$('#s2q'),{only1:true},r=>{did.add(j);b.classList.remove('on');b.classList.add('used');
+      if(r===-1)bd.hop(-1,()=>{busy=false;L.$('#s2r').innerHTML='<b>Off the board:</b> the tyre won’t react, so just decide. No strategy needed.';check();});
+      else{bd.set({lit:0});busy=false;L.$('#s2r').innerHTML='<b>It stays on the board:</b> the landlord will answer. It’s a game, so it needs a square.';check();}});}
+  function check(){if(did.size<2||fin)return;fin=true;
+    L.sheet('info','The lumberjack and the general','The book’s picture: a lumberjack’s wood doesn’t fight back, but a general’s enemy does. Rivals, partners, even children are '+L.g('strategic-game','strategic')+': their aims can clash with yours or match them. Only those situations go round the board.');L.done();}}},
+
+{part:0,src:'Course application · built on every chapter',
+ solve:async L=>{for(const k of [1,8,3]){gbTap(gbCellEl(L,k));await L.sleep(20);}},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('learn','The board')+'<h1 class="q">Eleven squares, one per kind of everyday game. Tap any three to see their signs and tools.</h1>'+
+   L.note('How this course applies the book: the '+L.g('strategy-map','strategy map')+' you built lesson by lesson, drawn as one board.','compass')+
+   '<div id="s3b"></div><div id="s3p"><p class="gb-ro">Each square’s badges are its tools, in the order to try them. The big first badge is where you start.</p></div>');
+  const bd=gbBoard(L,L.$('#s3b'),{onCell:k=>{bd.set({lit:k===0?null:k});gbPanel(L,L.$('#s3p'),k);if(k>0)seen.add(k);
+    if(seen.size>=3&&!fin){fin=true;L.sheet('info','Find the square, and the tools come with it','You don’t need to remember twelve tools. You need to recognise the situation: its signs point to a square, and the square tells you which tool to reach for first. Tap a badge to see its one-minute move.');L.done();}}});}},
+
+{part:0,src:'Chapter 2 · Two Kinds of Strategic Interactions; Chapter 4 · Epilogue to Part I',
+ solve:async L=>{L.$('#s4a').click();L.$('#s4b').click();},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('learn','The book’s first split')+'<h1 class="q">Is it turns, or at the same time? Tap each of Tali’s situations and see which picture it needs.</h1>'+
+   '<svg class="gb-svg" id="s4v" viewBox="0 0 320 164" role="img" aria-label="Left: a game tree for taking turns, a chain of moves. Right: a two by two table for choosing at the same time, with arrows going round in a circle."></svg>'+
+   '<div class="gb-pick"><button class="chip" id="s4a">Tali hints at Kittiwake, then Greer names a pay figure</button><button class="chip" id="s4b">Plover and Kittiwake each set next month’s day rates</button></div>'+
+   '<p class="gb-cap" id="s4t">Two pictures, two ways of thinking.</p>');
+  const T={s4a:['turns','<b>Turns:</b> Greer sees Tali’s move before answering. That’s a chain, “if I do this, they’ll do that”: '+L.g('sequential','sequential moves')+'. Draw a '+L.g('game-tree','game tree')+' and use Rule 1: look forward and reason backward.'],
+   s4b:['once','<b>At the same time:</b> neither sees the other’s rate first. That’s a circle, “I think that they think…”: '+L.g('simultaneous','simultaneous moves')+'. Draw a '+L.g('payoff-table','payoff table')+': a dominant choice? Cross out, then look for mutual best replies (Rules 2–4).']};
+  L.$('#s4v').innerHTML=gbTwoKinds(null);
+  ['s4a','s4b'].forEach(id=>L.$('#'+id).onclick=()=>{['s4a','s4b'].forEach(q=>L.$('#'+q).classList.toggle('sel',q===id));L.$('#s4v').innerHTML=gbTwoKinds(T[id][0]);L.$('#s4t').innerHTML=T[id][1];seen.add(id);
+    if(seen.size===2&&!fin){fin=true;L.sheet('info','The first question after “is it a game?”','The book sorts every game this way first, because each kind needs different thinking. Real games often mix the two, so fit the picture to the move in front of you. On the board, this is the second Start question.');L.done();}});}},
+
+{part:0,src:'Course application · built on Chapters 5 and 13',pts:1,
+ solve:async L=>{gbTap(gbCellEl(L,5));},
+ run(L){
+  let a=false;
+  L.h(L.kick('try','Try it')+GB_AP()+'<h1 class="q">Tali checks the builder’s work at Hedda’s every Friday, and the builder has noticed. Tap its square.</h1>'+
+   '<div id="s5b"></div><div id="s5p"></div>');
+  const bd=gbBoard(L,L.$('#s5b'),{onCell:k=>{if(a||k===0)return;a=true;const ok=k===5;L.award(ok);
+    bd.set({lit:5,marks:ok?[]:[{k,t:'✗',c:'no'}]});gbPanel(L,L.$('#s5p'),5);
+    L.sheet(ok?'ok':'no',ok?'Square 5: a pattern that’s being read':'It’s square 5: patterns and checks','When the other side can read your pattern, the check loses its bite: the builder tidies up on Thursdays. The square’s only tool is <b>Mix your moves</b>: random days, with a real consequence when a check finds a problem.');L.done();}});}},
+
+/* ---------- PART 2: FIND THE SQUARE ---------- */
+{part:1,src:'Course application · built on Chapters 2 and 4',
+ solve:async L=>{const t=L.$$('#s6t .gb-t'),runs=[[0,['no']],[1,['yes','turns',0]],[2,['yes','turns',8]]];
+  for(const [j,an] of runs){t[j].click();for(const v of an){await L.sleep(40);gbAns(L,v);await L.sleep(230);}await L.sleep(1200);}},
+ run(L){
+  const landed=new Set();let busy=false,fin=false;
+  L.h(L.kick('learn','Explore the board')+GB_AP()+'<h1 class="q">Drop any token on Start and answer. Watch it hop to its square. Land three on different squares.</h1>'+
+   '<div class="gb-tray" id="s6t"></div><div id="s6b"></div><div id="s6q"></div><div id="s6p"></div><p class="gb-ro" id="s6r" aria-live="polite">Notice: two questions do most of the work; then one sign picks the square.</p>');
+  const bd=gbBoard(L,L.$('#s6b'));
+  const T=['Paint colour','Arlo’s £3,000 loan','Landlord’s 10% rise','Dishes tonight','Used car, no warranty','Team offsite vote'];
+  T.forEach((t,j)=>{const b=gbTok(t);L.$('#s6t').appendChild(b);gbDrag(b,bd.svg,k=>{if(busy||k===null)return;start(j,b,k);});});
+  function start(j,b,k){busy=true;L.$$('#s6t .gb-t').forEach(x=>x.classList.toggle('on',x===b));L.$('#s6p').innerHTML='';
+    bd.set({lit:null,side:false,size:null,cap:T[j]});bd.place(0);gbShow(L.$('#s6b'));
+    L.$('#s6r').innerHTML=k!=='tap'&&k!==0?'Every token starts on Start, whatever square you aim for.':'On Start. Answer below.';
+    gbAsk(L,L.$('#s6q'),{},r=>{bd.hop(r,()=>{busy=false;b.classList.remove('on');b.classList.add('used');landed.add(r);gbPanel(L,L.$('#s6p'),r);
+      L.$('#s6r').innerHTML=r===-1?'Off to the side: not a game.':'Landed on <b>square '+r+'</b>. Its first tool is the one to reach for.';
+      if(landed.size>=3&&!fin){fin=true;L.sheet('info','Questions first, then the square','Will anyone react? Turns or at once? Which sign fits? Three taps, and the token lands where its tools are waiting. If you answered differently from how you’d really read the situation, drop it again: the board only knows what you tell it.');L.done();}});});}}},
+
+{part:1,src:'Course application · built on Chapter 13',pts:1,
+ solve:async L=>{L.$$('#s7o .opt')[1].click();await L.sleep(2800);},
+ run(L){
+  let a=false;
+  L.h(L.kick('try','Predict, then watch')+GB_AP()+'<h1 class="q">Greer is designing the team’s new bonus. Greer can’t watch anyone’s effort, only results. Where will Greer’s token land?</h1><div class="opts" id="s7o"></div><div id="s7b"></div><div id="s7q"></div><div id="s7p"></div>');
+  const bd=gbBoard(L,L.$('#s7b'));
+  ['Square 3: everyone’s tempted to grab or slack','Square 11: getting good work you can’t watch','Square 10: a group decides together'].forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';
+    b.onclick=()=>{if(a)return;a=true;const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');if(!ok)L.$$('#s7o .opt')[1].classList.add('ok');
+      L.$$('#s7o .opt').forEach(x=>x.setAttribute('aria-disabled','true'));
+      bd.set({cap:'Greer’s team bonus'});bd.place(0);gbShow(L.$('#s7b'));
+      gbAsk(L,L.$('#s7q'),{auto:['yes','turns',11],autoMs:230},r=>{bd.hop(r,()=>{gbPanel(L,L.$('#s7p'),r);
+        L.sheet(ok?'ok':'no',ok?'Square 11, as you predicted':'It lands on square 11','Greer sets the scheme, then the team responds: turns. The deciding sign is effort Greer can’t see. First tool: <b>Design incentives</b> (pay partly on results Greer can see, and don’t pay only for billable hours when mentoring matters too). Then screen who you hire, and pay in stages.');L.done();},95);});};
+    L.$('#s7o').appendChild(b);});}},
+
+{part:1,src:'Course application · built on Chapters 2 and 8',
+ solve:async L=>{L.$('#s8a').click();await L.sleep(40);L.$('#s8b').click();},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('ex','Fits two squares')+GB_AP()+'<h1 class="q">Arlo pitches a coffee-cart plan and asks for the loan. It’s turns <i>and</i> Arlo knows more. Which square? Tap what Tali is deciding right now.</h1>'+
+   '<div class="gb-pick"><button class="chip" id="s8a">Is the plan any good?</button><button class="chip" id="s8b">Lend now, to be repaid later?</button></div>'+
+   '<div id="s8b2"></div><div id="s8p"></div>');
+  const bd=gbBoard(L,L.$('#s8b2'));bd.set({cap:'Arlo’s coffee-cart plan',lit:null,only:[0,1,7]});bd.place(0);
+  const T={s8a:[7,'Hidden information: Arlo knows the plan better. First tool: <b>Read and send signals</b>. Would Arlo put £500 of their own savings in? That costs a doubter more than a believer.'],
+   s8b:[1,'Turns: Tali lends, Arlo repays or doesn’t. First tool: <b>Look ahead and reason back</b>. Arlo has been late twice: what will Arlo really do at the last step?']};
+  ['s8a','s8b'].forEach(id=>L.$('#'+id).onclick=()=>{['s8a','s8b'].forEach(q=>L.$('#'+q).classList.toggle('sel',q===id));const k=T[id][0];bd.set({only:null,lit:k});bd.place(k);
+    gbPanel(L,L.$('#s8p'),k);L.$('#s8p').insertAdjacentHTML('afterbegin','<p class="gb-cap">'+T[id][1]+'</p>');seen.add(id);
+    if(seen.size===2&&!fin){fin=true;L.sheet('info','Pick the square for the decision in front of you','A real situation often shows signs of two squares. Don’t freeze: ask what you’re deciding right now. First “is the plan any good?” (square 7), then “how do I lend?” (square 1). One decision at a time.');L.done();}});
+}},
+
+{part:1,src:'Course application · built on Chapters 8, 10, 11 and 12',pts:5,run(L){
+  L.h(GB_AP()+'<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Read the signs: which square?',['7 · They know more','8 · Splitting','9 · One prize','10 · Group decides'],[
+   ['Two private sellers of the same model: one offers a three-month warranty, the other won’t.',0,'The sellers know their cars; Tali doesn’t. A warranty is a signal only a good car’s seller can afford.'],
+   ['The landlord wants 10% more at renewal; moving would cost Tali, and an empty flat costs the landlord.',1,'Both lose something without a deal: splitting the value of renewing. Start from both sides’ alternatives.'],
+   ['The council will give its website rebuild to one sealed bid.',2,'Several agencies, one prize: bid smart, as if you’ve already won.'],
+   ['The five-a-side team must pick one end-of-season do from three ideas.',3,'A group with three options: rankings and the order of the vote matter.'],
+   ['Four friends share the cost of a holiday cottage.',1,'Splitting a cost: each one’s alternative (another trip, staying home) sets what’s fair.']]);}},
+
+/* ---------- PART 3: SMALL OR BIG ---------- */
+{part:2,src:'Course application · built on Chapter 2 · Very Complex Trees',
+ solve:async L=>{const z=L.$$('#s10z button');L.$('#s10a').click();await L.sleep(30);z[0].click();z[1].click();L.$('#s10b').click();await L.sleep(30);z[1].click();},
+ run(L){
+  const seen=new Set();let fin=false,cur=null;
+  L.h(L.kick('learn','Small or big?')+GB_AP()+'<h1 class="q">Same board, different effort. Pick a token, then switch between small and big. Watch what lights up.</h1>'+
+   '<div class="gb-pick"><button class="chip" id="s10a">Who washes up tonight</button><button class="chip" id="s10b">Tali’s March pay talk</button></div>'+
+   '<div class="gb-ctl"><div class="gb-size" id="s10z"><button type="button" data-z="small">Small</button><button type="button" data-z="big">Big</button></div></div>'+
+   '<div id="s10bd"></div><p class="gb-ro" id="s10r" aria-live="polite">Pick a token first.</p><div id="s10p"></div>');
+  const bd=gbBoard(L,L.$('#s10bd'));
+  const V={dishes:{k:3,c:'Dishes tonight',small:'<b>Right size.</b> About a minute: is it a little dilemma? A clear rule (alternate nights), then wash up.',big:'<b>Too big.</b> An evening of tables over one sink of plates: the thinking costs more than the dishes.'},
+   pay:{k:8,c:'The March pay talk',small:'<b>Too small.</b> One minute on your BATNA, then walk in? Pay is hard to undo for a year.',big:'<b>Right size.</b> Walk the row: your BATNA, then is your walk-away credible, then signals. Sketch the real pie. Check the larger game: Tali sees Greer every day.'}};
+  function show(z){const v=V[cur];bd.set({lit:v.k,size:z||null,cap:v.c});bd.place(v.k);gbPanel(L,L.$('#s10p'),v.k,{size:z||null});
+    L.$$('#s10z button').forEach(b=>b.classList.toggle('sel',b.dataset.z===z));
+    L.$('#s10r').innerHTML=z?v[z]:'Now switch between <b>Small</b> and <b>Big</b>.';}
+  function pick(id,key){cur=key;['s10a','s10b'].forEach(q=>L.$('#'+q).classList.toggle('sel',q===id));show(null);}
+  L.$('#s10a').onclick=()=>pick('s10a','dishes');L.$('#s10b').onclick=()=>pick('s10b','pay');
+  L.$$('#s10z button').forEach(b=>b.onclick=()=>{if(!cur){L.$('#s10r').innerHTML='Pick a token first.';return;}const z=b.dataset.z;show(z);seen.add(cur);seen.add(z);
+    if(seen.size>=4&&!fin){fin=true;
+      L.sheet('info','Match the effort to the stakes','Small, low-stakes or easy to undo: run only the first tool, for about a minute, then act. Big or hard to undo: walk the whole row, sketch the tree or table, and check the larger game. Book basis: with practice, many everyday situations need only '+L.g('tree-logic','tree logic')+' in your head; big ones deserve more.');L.done();}});}},
+
+{part:2,src:'Chapter 2 · Very Complex Trees',
+ solve:async L=>{const i=L.$('#s11s');for(const v of [4,6,8]){gbSet(i,v);await L.sleep(15);}},
+ run(L){
+  let fin=false;
+  L.h(L.kick('ex','The book’s chess lesson')+'<h1 class="q">Even a big situation can’t be drawn to the end. Slide how far ahead you look, and watch the paths pile up.</h1>'+
+   '<svg class="gb-svg" id="s11v" viewBox="0 0 320 206" role="img" aria-label="Bars for moves looked ahead, one to eight. Each bar shows how many paths you would have to check; they grow twenty times per move. A shaded zone beyond your look-ahead says judge from experience."></svg>'+
+   '<label class="gb-sl"><span class="h"><span>Look ahead</span><b id="s11n"></b></span><input type="range" id="s11s" min="1" max="8" step="1" value="2"></label>'+
+   '<p class="gb-ro" id="s11r" aria-live="polite"></p><p class="gb-ill">Here one move is one player’s turn. The book’s example: 20 first moves in chess, 20 replies to each, so 400 paths at 2 moves (one each); later moves often have more. Experts look about five pairs ahead: 10 moves, past the end of this chart. The one-a-second times are illustrative.</p>');
+  const i=L.$('#s11s');
+  function draw(){const n=+i.value;L.$('#s11v').innerHTML=gbChess(n);L.$('#s11n').textContent=n+(n===1?' move':' moves')+(n%2?'':' ('+n/2+' each)');
+    L.$('#s11r').innerHTML='Looking <b>'+n+'</b> '+(n===1?'move':'moves')+' ahead: about <b>'+GB_PATHS[n-1]+'</b> paths, even if every move had only 20 options. Checking one a second: <b>'+GB_TIME[n-1]+'</b>.';
+    if(n>=7&&!fin){fin=true;L.sheet('info','Look a few moves ahead, then judge','The book estimates chess’s full tree at about 10<sup>120</sup> branch points: no one can draw it. Experts look ahead about five pairs of moves (10 on this chart’s count, past its end), then judge the position from experience. For your big situations: sketch a few moves of the tree or table, then use judgment. Science plus art, not either alone.');L.done();}}
+  i.addEventListener('input',draw);draw();}},
+
+{part:2,src:'Course application · built on Chapter 2',pts:6,run(L){
+  L.h(L.kick('try','Try it')+GB_AP()+'<h1 class="q">Small or big? Sort Tali’s situations.</h1>');
+  L.buckets(L.card,['Small: first tool, a minute','Big: walk the whole row'],[
+   ['Who takes the bins out this week',0,'Low stakes, easy to change next week. A minute, a fair rule, done.'],
+   ['Signing a two-year lease on a new flat',1,'Hard to undo for two years: walk the row and sketch it.'],
+   ['Which day to drop in on the builder this week',0,'Small and repeatable: mix the day and move on.'],
+   ['Hedda deciding whether to sell the family flat',1,'A family’s home and money: several games at once. Take your time.'],
+   ['A £15 bid in the office charity auction',0,'If you lose, you lose £15 of fun. Set a number and bid.'],
+   ['Accepting a job offer from Kittiwake Digital',1,'Pay, career and relationships for years: the whole row, and the larger game.']],
+   'The size test is about the stakes and how hard it is to undo, not how emotional it feels. Small: first tool, about a minute, then act. Big: the whole row, sketched.');}},
+
+{part:2,src:'Course application · built on Chapters 1, 2 and 4',
+ solve:async L=>{await ckSolve(L,S13);},
+ run(L){
+  L.h(L.kick('learn','The four-box check card')+'<h1 class="q">Tuesday, 9:05. Linus has just booked the senior designer for the same week as Tali. Fill the card, box by box.</h1>'+
+   '<p class="gb-cap">The '+L.g('one-minute-check','one-minute check')+' is the board in your pocket: four boxes, about a minute in all. Tap the best answer; a wrong tap gives you a hint.</p><div id="s13c"></div>');
+  ckCard(L,L.$('#s13c'),{sit:'Linus and Tali both want the senior designer next week, each for their own client.',boxes:S13,
+   onDone:()=>{L.sheet('info','About a minute, one fair move','Four boxes: who’s in and what they want, which square, the first tool’s steps, the larger game. Tali walks over with a fair offer instead of a sulk. Small situation, so that’s enough: act, and later note what happened.');L.done();}});}},
+
+{part:2,src:'Course application · built on Chapters 1, 2, 3, 11 and 14',
+ solve:async L=>{const b=L.$$('#s14k .chip');for(const j of [0,2,3,4]){b[j].click();await L.sleep(1500);}},
+ run(L){
+  const seen=new Set();let fin=false,busy=false;
+  L.h(L.kick('learn','Edge cases and limits')+GB_AP()+'<h1 class="q">Where does the board stop helping? Try at least four of these.</h1>'+
+   '<div id="s14b"></div><div class="gb-pick" id="s14k"></div><p class="gb-cap" id="s14t" aria-live="polite">Each button drops one of Tali’s situations on the board.</p>');
+  const bd=gbBoard(L,L.$('#s14b'));
+  const P=[['Not a game','Patch the puncture',{to:-1},'No one reacts, so it’s the lumberjack’s kind of decision: just decide. Don’t turn a puncture into a strategy session.'],
+   ['Fits two squares','Arlo’s coffee-cart plan',{to:7,via:1},'Turns <i>and</i> hidden information. It pauses on square 1, then settles on 7, because what Tali is deciding now is whether the plan is any good.'],
+   ['Too small to bother','Who washes up tonight',{to:3,size:'small'},'First tool only, about a minute: alternate nights, then wash up. More than that costs more than the plates.'],
+   ['Big and hard to undo','Tali’s March pay talk',{to:8,size:'big'},'The whole row lights, plus the two extra squares: sketch the real pie, then check the larger game. Pay sticks for a year.'],
+   ['First tool hits its limit','Linus breaks the late-night truce, again',{to:3,bounce:true,cap:'Linus breaks the truce'},'Tit for tat has started to echo: each slip answered by a slip. Running the same tool harder won’t help. That’s being stuck: Lesson 16, “When the game goes wrong”.'],
+   ['The larger game overrides','Haggling the rent to the last pound',{to:8,ring:true,cap:'Rent haggled to the pound'},'Tali could win this square and lose the landlord’s goodwill for years. The ring lights up: the larger game outranks the square.']];
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];b.onclick=()=>{if(busy)return;busy=true;
+      L.$$('#s14k .chip').forEach((x,q)=>x.classList.toggle('sel',q===j));const o=p[2];
+      bd.set({cap:o.cap||p[1],ring:false,size:null,bounce:false,side:false,lit:null});L.$('#s14t').innerHTML='…';gbShow(L.$('#s14b'));
+      const land=()=>{busy=false;if(o.size)bd.set({size:o.size});if(o.ring)bd.set({ring:true});
+        if(o.bounce){setTimeout(()=>{if(!bd.svg.isConnected)return;bd.place('mid');bd.set({lit:3,bounce:true,cap:''});},250);}
+        L.$('#s14t').innerHTML='<b>'+p[1]+':</b> '+p[3];seen.add(j);
+        if(seen.size>=4&&!fin){fin=true;L.sheet('info','The board’s limits','It can’t tell you what you haven’t noticed: if no one will react, step off it. It needs you to pick the decision at hand. It doesn’t replace judgment on big, messy games. And when the first tool keeps bouncing, you’re stuck, not unlucky: that’s Lesson 16.');L.done();}};
+      if(o.via){bd.hop(o.via,()=>{setTimeout(()=>{if(!bd.svg.isConnected)return;bd.set({only:null,lit:null});bd.place(o.to);setTimeout(()=>{if(bd.svg.isConnected){bd.set({lit:o.to});land();}},380);},350);},70);}
+      else bd.hop(o.to,land,70);};
+    L.$('#s14k').appendChild(b);});}},
+
+/* ---------- PART 4: YOUR WEEK ---------- */
+{part:3,src:'Chapter 1 · #10 Game Theory Can Be Dangerous to Your Health',
+ solve:async L=>{L.$('#s17a').click();L.$('#s17b').click();},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('ex','Where fairness wins')+GB_AP()+'<h1 class="q">Every square sits inside a ring. Try both ways of playing the rent renewal and watch the ring.</h1>'+
+   '<svg class="gb-svg" id="s17v" viewBox="0 0 320 190" role="img" aria-label="Square 8, this renewal, sits inside a big ring, the larger game over the next two years. Each has a bar for how well Tali does."></svg>'+
+   '<p class="gb-ill">Illustrative numbers. The rent story and the advice are this course’s; the taxi ride and the larger game are the book’s.</p>'+
+   '<div class="gb-pick"><button class="chip" id="s17a">Squeeze: bluff about a cheaper flat</button><button class="chip" id="s17b">Fair and firm: real costs, a longer tenancy</button></div>'+
+   '<p class="gb-cap" id="s17t">Tali has no cheaper flat lined up. What happens beyond this renewal?</p>');
+  const T={s17a:[0,'<b>Squeeze:</b> the bluff might shave the rise. But if it’s called, every later request is harder, and repairs get slow. Won the square, lost the ring.'],
+   s17b:[1,'<b>Fair and firm:</b> Tali shows what moving would really cost both sides and offers a two-year tenancy for a smaller rise. A bit less now, a lot more later.']};
+  L.$('#s17v').innerHTML=gbRing(null);
+  ['s17a','s17b'].forEach(id=>L.$('#'+id).onclick=()=>{['s17a','s17b'].forEach(q=>L.$('#'+q).classList.toggle('sel',q===id));L.$('#s17v').innerHTML=gbRing(T[id][0]);L.$('#s17t').innerHTML=T[id][1];seen.add(id);
+    if(seen.size===2&&!fin){fin=true;L.$('#s17t').insertAdjacentHTML('afterend',L.quote('There is always a larger game.','Dixit and Nalebuff, chapter 1'));
+      L.sheet('info','The book’s taxi ride','Two economists tried to haggle a Jerusalem taxi fare down at the end of the ride. The proud driver drove them straight back where they’d started. In the book’s imagined follow-up letter, the driver’s silent wife had been in the front seat all along. The lessons: pride and fairness are part of the payoffs, and you may be playing only part of a '+L.g('larger-game','larger game')+'. Fair moves are often the strategic ones.');L.done();}});}},
+
+{part:3,src:'Course application · built on every chapter',pts:7,
+ solve:async L=>{for(const d of S15){await L.sleep(30);gbTap(gbCellEl(L,d[2]));L.$$('#s15z button')[d[3]==='big'?1:0].click();L.$('#s15g').click();await L.sleep(30);}},
+ run(L){
+  let n=0,sel=null,size=null,score=0;
+  L.h(L.kick('pr','Challenge · Tali’s week')+GB_AP()+'<h1 class="q">Seven days, seven games. For each, tap its square (or drag the token there), choose small or big, then place it.</h1>'+
+   '<div class="gb-hand" id="s15h"></div><div id="s15b"></div>'+
+   '<div class="gb-ctl"><div class="gb-size" id="s15z"><button type="button" data-z="small">Small</button><button type="button" data-z="big">Big</button></div><button class="btn pri" id="s15g" disabled>'+L.ic('check')+'Place it</button></div>'+
+   '<p class="gb-ro" id="s15r" aria-live="polite">First attempt counts. Square and size both need to be right.</p>');
+  const bd=gbBoard(L,L.$('#s15b'),{onCell:k=>{if(n>=S15.length||k===0)return;sel=k;bd.set({sel:k});upd();}});
+  bd.set({noDim:true});
+  function hand(){const d=S15[n];L.$('#s15h').innerHTML='<span class="gb-day">'+d[0].toUpperCase()+'</span>';const t=gbTok(d[1]);L.$('#s15h').appendChild(t);
+    gbDrag(t,bd.svg,k=>{if(typeof k==='number'&&k>0){sel=k;bd.set({sel:k});upd();}});}
+  function upd(){L.$('#s15g').disabled=!(sel&&size);L.$$('#s15z button').forEach(b=>b.classList.toggle('sel',b.dataset.z===size));}
+  L.$$('#s15z button').forEach(b=>b.onclick=()=>{if(n>=S15.length)return;size=b.dataset.z;upd();});
+  L.$('#s15g').onclick=()=>{if(!(sel&&size)||n>=S15.length)return;const d=S15[n],okK=sel===d[2],okZ=size===d[3],ok=okK&&okZ;L.award(ok);if(ok)score++;
+    const m=bd.st.marks.slice();m.push({k:d[2],t:d[0],c:ok?'ok':'no'});bd.set({marks:m,sel:null});
+    L.$('#s15r').innerHTML=(ok?'<b>✓ '+d[0]+':</b> ':'<b>✗ '+d[0]+':</b> square '+d[2]+', '+d[3]+'. ')+d[4];
+    n++;sel=null;size=null;upd();
+    if(n<S15.length)hand();else{L.$('#s15h').innerHTML='<span class="gb-day">WEEK DONE</span>';L.$('#s15g').disabled=true;
+      L.sheet(score===7?'ok':'info',score+' of 7 placed right','Seven different squares in one ordinary week, and only three were big: the pay talk, the second stage of Arlo’s loan and the car auction. That’s the pattern most weeks follow: a few big games that deserve a sketch, many small ones that need just a minute.');L.done();}};
+  hand();upd();}},
+
+{part:3,src:'Course application · built on Chapters 1, 2 and 7',pts:4,
+ solve:async L=>{await ckSolve(L,S16);},
+ run(L){
+  L.h(L.kick('pr','Practice · run the check')+'<h1 class="q">Wednesday. Arlo asks for the loan’s second £1,000 now, to be repaid “later”. A big one. Fill the card.</h1><div id="s16c"></div>');
+  ckCard(L,L.$('#s16c'),{sit:'Arlo has had the first £1,000 and hasn’t repaid any yet. Arlo has been late with small loans twice before.',boxes:S16,graded:true,
+   onDone:()=>{L.sheet('info','Big, so the whole row','Square 1’s row continues past the first tool: <b>Make it credible</b> (in writing, in stages) and <b>Commit, threaten or promise</b> (a clear rule both of them know). Sketch the tree on paper: lend, repay or not, next stage or not. And keep it kind: the larger game is the family.');L.done();}});}},
+
+{part:3,src:'Course application · built on Chapters 7, 8 and 11',pts:1,run(L){
+  L.h(L.kick('pr','Practice')+GB_AP()+'<h1 class="q">The rent renewal is big, so Tali walks the whole row. Tali has worked out their BATNA. What does the next tool in square 8’s row ask?</h1>');
+  L.mc(L.card,['Is Tali’s walk-away believable to the landlord?','Can Tali be unpredictable about whether they’ll renew?','Can Tali get Juno and the landlord to rank the options?'],0,
+   'Square 8 runs: Bargain from your BATNA → <b>Make it credible</b> → Read and send signals. A BATNA only helps if the landlord believes Tali would really use it: real viewings say more than words.',
+   'Square 8 runs: Bargain from your BATNA → <b>Make it credible</b> → Read and send signals. Mixing is for pure conflict where patterns get exploited, and ranking is for group votes. Next is: would the landlord believe Tali would really move?');}},
+
+{part:3,src:'Course application · built on Chapter 10',pts:1,run(L){
+  L.h(L.kick('pr','Practice')+GB_AP()+'<h1 class="q">Sunday, 9:50 pm. Tali and Juno set a £5,500 walkaway for the car auction. The price passes it. Juno says: “One more bid, we’ve come this far.” What does the check card say?</h1>');
+  L.mc(L.card,['Bid once more: the card is filled in, so the plan is done','Switch to mixing, so the other bidders can’t read them','Stop: the walkaway was set for exactly this moment'],2,
+   'The card isn’t a ritual you finish and forget: box 3 ran Bid smart, and its move says go up to your value, then stop. “We’ve come this far” is the escalation the book warns about. Another car will come.',
+   'Box 3 ran Bid smart: go up to your value, then stop. Mixing is for patterns that get exploited, not for prices. “We’ve come this far” is the escalation the book warns about. Another car will come.');}},
+
+{part:3,src:'Course application · built on every chapter',
+ solve:async L=>{const v=[['Asking my manager for Friday off','1','small'],['Splitting a group gift with friends','8','small'],['Choosing a nursery with my partner','4','big']];
+  for(let j=0;j<3;j++){gbSet(L.$('#y'+j+'t'),v[j][0]);gbSet(L.$('#y'+j+'s'),v[j][1]);L.$$('#y'+j+'z button')[v[j][2]==='big'?1:0].click();}L.$('#ygo').click();},
+ run(L){
+  L.h(L.kick('pr','Your turn · ungraded')+'<h1 class="q">Map your coming week: three situations, three squares</h1>'+
+   L.note('How this course applies the book: the board on your own life. Nothing here is graded or saved.','compass')+
+   '<div id="ywr"></div><div id="ywb"></div><div class="gb-ctl"><button class="btn pri" id="ygo" disabled>'+L.ic('map')+'Put my week on the board</button></div><div id="ywo"></div>');
+  const bd=gbBoard(L,L.$('#ywb'));bd.set({noDim:true});
+  const ph=['e.g. asking for a day off','e.g. sharing a bill or a cost','e.g. a family or team decision'];
+  const opts='<option value="">Which square?</option><option value="0">0 · Not a game: just decide</option>'+GB_ROWS.slice(1).map((r,k)=>'<option value="'+(k+1)+'">'+(k+1)+' · '+r.l.join(' ')+'</option>').join('');
+  const S=[{},{},{}];
+  for(let j=0;j<3;j++){L.$('#ywr').insertAdjacentHTML('beforeend','<div class="gb-yt"><div class="hd"><span class="n">'+(j+1)+'</span>SITUATION '+(j+1)+'</div>'+
+    '<input class="gb-in" id="y'+j+'t" maxlength="70" placeholder="'+ph[j]+'" aria-label="Situation '+(j+1)+'">'+
+    '<select class="gb-sel" id="y'+j+'s" aria-label="Square for situation '+(j+1)+'">'+opts+'</select>'+
+    '<div class="gb-zr"><span>Size</span><div class="gb-size" id="y'+j+'z"><button type="button" data-z="small">Small</button><button type="button" data-z="big">Big</button></div></div></div>');
+    L.$('#y'+j+'t').addEventListener('input',()=>{S[j].t=L.$('#y'+j+'t').value.trim();chk();});
+    L.$('#y'+j+'s').addEventListener('change',()=>{S[j].k=L.$('#y'+j+'s').value;chk();});
+    L.$$('#y'+j+'z button').forEach(b=>b.onclick=()=>{S[j].z=b.dataset.z;L.$$('#y'+j+'z button').forEach(x=>x.classList.toggle('sel',x===b));chk();});}
+  function chk(){bd.set({marks:S.map((s,j)=>s.k&&s.k!=='0'?{k:+s.k,t:String(j+1),c:'pri'}:null).filter(Boolean),side:S.some(s=>s.k==='0')});
+    L.$('#ygo').disabled=!S.every(s=>s.t&&s.t.length>1&&s.k!==undefined&&s.k!==''&&s.z);}
+  L.$('#ygo').onclick=()=>{L.$('#ywo').innerHTML='<div class="gb-out"><div class="k">MY WEEK ON THE BOARD</div>'+S.map((s,j)=>{const k=+s.k;
+      if(k===0)return '<p><b>'+(j+1)+'. '+L.esc(s.t)+'</b><br>Not a game: just decide, and save your strategy for the rest.</p>';
+      const R=GB_ROWS[k],first=GB_T[R.p[0][0]].n;
+      return '<p><b>'+(j+1)+'. '+L.esc(s.t)+'</b><br>Square '+k+' · first tool: <b>'+first+'</b><br>'+(s.z==='big'?'Big: walk the row ('+R.p.map(p=>GB_T[p[0]].n).join(' → ')+'), sketch it, check the larger game.':'Small: one minute on '+first+', then act.')+'</p>';}).join('')+
+      '<p><b>Before each:</b> the four boxes. Who’s in? Which game? Run the tool. Larger game?</p></div>';
+    L.sheet('info','Your week is mapped','Run the one-minute check just before each of these moments, not now. Afterwards, note what happened: the book’s point is that the art of strategy improves only with examples and practice, and your own week is the best source of both.');L.done();};}},
+
+{part:3,src:'Introduction; course application · built on every chapter',run(L){
+  L.h(L.kick('learn','Your strategy map, complete')+'<h1 class="q">One board for every game in your week</h1>'+
+   '<div id="fnb"></div>'+
+   '<p class="gb-cap"><b>Start:</b> will anyone react? <b>Then:</b> turns or at once, and one sign picks the square. <b>Size it:</b> small, a minute; big, the whole row. <b>Before you move:</b> the four boxes. And the ring is always there.</p>'+
+   L.note('How this course applies the book. Keep the <a href="map.html">strategy map page</a> as your daily one-screen reference. Next: what to do when a game goes wrong (Lesson 16), then one big situation with every tool (Lesson 17).','compass'));
+  const bd=gbBoard(L,L.$('#fnb'));bd.set({ring:true});
+  L.done();}}
+  ]
+});
+
+</script>
+</body>
+</html>

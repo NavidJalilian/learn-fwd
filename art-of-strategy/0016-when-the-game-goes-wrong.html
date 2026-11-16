@@ -1,0 +1,780 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>When the Game Goes Wrong</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* ===== This lesson's own visuals: the stuck-game arcade (ten looping arcade screens, one per kind of
+   stuck, broken by dropping the right tool token, which prints a next-step ticket) and the editable
+   rulebook card (six lines of a game's rules; each edit redraws an outcome strip). Course application
+   of the book's ideas; the CANON "stuck playbook" is the source of the kinds, tools and next steps. ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card button[hidden],.sg-tw[hidden],.sg-hide{display:none!important}
+.sg-svg{display:block;width:100%;max-width:340px;margin:0 auto}
+.sg-app{display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:var(--muted);margin:-2px 0 8px}
+.sg-app svg.i{width:15px;height:15px}
+.sg-lab{font-size:11.5px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin:10px auto 4px;max-width:340px}
+.sg-gal{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;max-width:340px;margin:4px auto 8px}
+.sg-mini{position:relative;border:2px solid var(--line);border-radius:10px;background:var(--card);padding:3px 2px 4px;font:inherit;color:var(--ink);cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:2px;min-height:72px}
+.sg-mini svg{display:block;width:100%;height:auto}
+.sg-mini span{font-size:11px;line-height:1.12;font-weight:600;text-align:center}
+.sg-mini.sel{border-color:var(--pri);background:var(--pri-bg)}
+.sg-mini.fx{border-color:var(--ok-line)}
+.sg-mini.fx::after{content:'✓';position:absolute;top:-6px;right:-5px;width:18px;height:18px;border-radius:50%;background:var(--ok-strong);color:var(--card);font-size:11px;font-weight:700;display:grid;place-items:center}
+.sg-mini.fx svg *{animation:none!important}
+.sg-tray{display:grid;grid-template-columns:repeat(5,1fr);gap:2px;max-width:340px;margin:0 auto}
+.sg-tok{border:0;background:none;font:inherit;color:var(--ink);display:flex;flex-direction:column;align-items:center;gap:3px;padding:3px 0;cursor:pointer;min-height:62px}
+.sg-tok i{width:38px;height:38px;border-radius:50%;display:grid;place-items:center;background:var(--h3-bg);border:2px solid var(--h3);color:var(--h3);box-shadow:inset 0 -3px 0 var(--line2)}
+.sg-tok i svg.i{width:19px;height:19px}
+.sg-tok span{font-size:11px;line-height:1.12;font-weight:600;text-align:center}
+.sg-tok.used i{opacity:.42;border-style:dashed}
+.sg-tok.ok i{background:var(--ok-bg);border-color:var(--ok-strong);color:var(--ok)}
+.sg-tok.pk i{background:var(--pri-bg);border-color:var(--pri);color:var(--pri-deep)}
+.sg-say{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px auto;max-width:340px;min-height:24px}
+.sg-say b.k{display:block;font-size:11.5px;letter-spacing:.4px;color:var(--muted);margin-bottom:2px}
+.sg-say blockquote{margin:6px 0 2px}
+.sg-ticket{max-width:330px;margin:8px auto;background:var(--card);border:2px dashed var(--ok-line);border-radius:4px;padding:10px 13px 11px;font-size:14.5px;line-height:1.45;animation:sgtk .55s ease-out both}
+.sg-ticket b.k{display:flex;align-items:center;gap:5px;font-size:11.5px;letter-spacing:.5px;color:var(--ok);margin-bottom:3px}
+.sg-ticket b.k svg.i{width:14px;height:14px;stroke-width:2.6}
+@keyframes sgtk{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:none}}
+.sg-mom{border-left:4px solid var(--h4);background:var(--h4-bg);border-radius:10px;padding:9px 12px;font-size:15px;line-height:1.45;margin:4px auto 8px;max-width:340px}
+.sg-mom b.k{display:block;font-size:11.5px;letter-spacing:.4px;color:var(--h4);margin-bottom:2px}
+.sg-ctl{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px auto;max-width:340px}
+.sg-ctl .chip,.sg-ctl .btn{margin:0}
+.sg-ctl .chip{padding:7px 11px;font-size:14px}
+.sg-ro{font-size:14px;text-align:center;color:var(--muted);margin:6px auto;line-height:1.4;max-width:340px}
+.sg-ro b{color:var(--ink)}
+.sg-card{max-width:340px;margin:4px auto 6px;background:var(--card);border:2px solid var(--line2);border-radius:14px;padding:10px 10px 4px;box-shadow:var(--shadow)}
+.sg-ch{display:flex;flex-direction:column;gap:1px;border-bottom:2px solid var(--line);padding:0 4px 7px;margin-bottom:2px}
+.sg-ch span{display:flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase}
+.sg-ch span svg.i{width:14px;height:14px}
+.sg-ch b{font-family:var(--serif);font-size:18px;font-weight:500;line-height:1.25}
+.sg-lines{list-style:none;margin:0;padding:0}
+.sg-ln{border-bottom:1px dashed var(--line)}
+.sg-ln:last-child{border-bottom:0}
+.sg-lh{display:grid;grid-template-columns:22px 1fr 18px;gap:7px;align-items:start;width:100%;text-align:left;background:none;border:0;font:inherit;color:var(--ink);padding:7px 2px;cursor:pointer;min-height:40px}
+.sg-lh .n{width:21px;height:21px;border-radius:50%;background:var(--soft2);display:grid;place-items:center;font-size:11.5px;font-weight:700;color:var(--muted)}
+.sg-ln.ed .sg-lh .n{background:var(--pri);color:var(--pri-ink)}
+.sg-lh .t{font-size:14px;line-height:1.35}
+.sg-lh .t small{display:block;font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase}
+.sg-lh s{color:var(--faint)}
+.sg-lh em{display:block;font-style:italic;color:var(--pri-deep);font-family:var(--serif);font-size:15.5px;line-height:1.3}
+.sg-lh .pen{color:var(--faint);font-size:15px;line-height:1.2}
+.sg-ln.op{background:var(--soft);border-radius:10px}
+.sg-opts{padding:0 6px 8px 31px;display:flex;flex-direction:column;gap:5px}
+.sg-opts .chip{margin:0;text-align:left;font-size:13.5px;padding:7px 10px;line-height:1.3;display:block}
+.sg-opts p{margin:0;font-size:13px;color:var(--muted)}
+.sg-onote{font-size:13.5px;color:var(--muted);text-align:center;margin:4px auto;max-width:330px;line-height:1.4}
+.sg-onote b.no{color:var(--no)}.sg-onote b.ok{color:var(--ok)}
+.sg-sum{list-style:none;margin:6px auto;padding:8px 10px;max-width:340px;background:var(--card);border:2px solid var(--line2);border-radius:14px}
+.sg-sum li{display:grid;grid-template-columns:22px 1fr;gap:7px;font-size:14px;line-height:1.35;padding:5px 0;border-bottom:1px dashed var(--line)}
+.sg-sum li:last-child{border-bottom:0}
+.sg-sum li .n{width:21px;height:21px;border-radius:50%;background:var(--pri-bg);color:var(--pri-deep);display:grid;place-items:center;font-size:11.5px;font-weight:700}
+.sg-sum small{display:block;font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase}
+.sg-rc{max-width:320px;margin:6px auto;background:var(--card);border:2px solid var(--line2);border-bottom:2px dashed var(--line2);border-radius:8px 8px 2px 2px;padding:10px 14px 12px}
+.sg-rc>b{display:flex;justify-content:space-between;font-size:11.5px;letter-spacing:.5px;color:var(--muted)}
+.sg-rc ol{list-style:none;margin:6px 0 0;padding:0}
+.sg-rc li{padding:6px 0;border-bottom:1px dotted var(--line2);font-size:14px;line-height:1.35}
+.sg-rc li:last-child{border-bottom:0}
+.sg-rc li small{display:block;font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--muted);text-transform:uppercase}
+.sg-rc li.cur{background:var(--pri-bg);margin:0 -8px;padding:6px 8px;border-radius:8px}
+.sg-rc li .ph{color:var(--faint)}
+.sg-rc li.dn small{color:var(--ok)}
+.sg-q{font-size:15px;font-weight:600;margin:8px auto 4px;max-width:340px}
+.sg-qp{display:flex;align-items:center;gap:10px;margin:0 0 10px;font-size:11.5px;font-weight:700;letter-spacing:.4px;line-height:1.25;text-transform:uppercase;color:var(--muted)}
+.sg-qp svg{display:block;width:88px;height:auto;flex:none}
+.sg-rc .rr{display:flex;gap:6px;align-items:flex-start;margin:8px 0 0;padding-top:7px;border-top:2px solid var(--line);font-size:13px;line-height:1.35;color:var(--muted)}
+.sg-rc .rr svg.i{width:15px;height:15px;flex:none;margin-top:1px;color:var(--pri)}
+.sg-in{display:block;width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:12px;padding:9px 11px;font:inherit;font-size:15px;background:var(--card);color:var(--ink);margin:4px 0 8px}
+.sg-in:focus{outline:none;border-color:var(--pri)}
+.sg-fl{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.3px;display:block;margin-top:6px}
+.sg-map{border:1.5px solid var(--line);border-radius:12px;padding:6px 9px;margin:0 0 5px;background:var(--card)}
+.sg-map b{display:block;font-size:13px;margin-bottom:3px}
+.sg-map .r{display:flex;flex-wrap:wrap;align-items:center;gap:4px}
+.sg-map .m{font-size:12px;font-weight:600;border-radius:8px;padding:3px 7px;background:var(--soft2);color:var(--ink)}
+.sg-map .m.cur{background:var(--pri);color:var(--pri-ink)}
+.sg-map .ar{color:var(--faint);font-size:12px}
+.sg-map.st{border-color:var(--no-line);background:var(--no-bg)}
+/* animations */
+.sg-ping{animation:sgping 1.4s ease-in-out infinite alternate}
+@keyframes sgping{to{transform:translateX(132px)}}
+.sg-bangA{animation:sgbang 2.8s infinite}.sg-bangB{animation:sgbang 2.8s -1.4s infinite}
+@keyframes sgbang{0%,9%{opacity:1}13%,100%{opacity:0}}
+.sg-pop{transform-box:fill-box;transform-origin:center;animation:sgpop 2.6s infinite}
+@keyframes sgpop{0%{transform:scale(.88);opacity:1}55%{transform:scale(1.04);opacity:1}64%{transform:scale(1.08);opacity:1}71%{transform:scale(1.35);opacity:0}100%{opacity:0}}
+.sg-walk{animation:sgwalk 2.6s linear infinite}
+@keyframes sgwalk{to{transform:translateX(-118px)}}
+.sg-hopA{animation:sghopA 4s infinite}.sg-hopB{animation:sghopB 4s infinite}
+@keyframes sghopA{0%,18%{transform:none}20%,38%{transform:translateX(45px)}40%,58%{transform:translateX(90px)}60%,78%{transform:translateX(135px)}80%,100%{transform:translateX(180px)}}
+@keyframes sghopB{0%,15%{transform:translateX(45px)}17%,35%{transform:translateX(90px)}37%,55%{transform:translateX(135px)}57%,100%{transform:translateX(180px)}}
+.sg-shk{animation:sgshk .18s infinite alternate}.sg-shk2{animation:sgshk .18s .09s infinite alternate-reverse}
+@keyframes sgshk{from{transform:translateX(-1.6px)}to{transform:translateX(1.6px)}}
+.sg-blink{animation:sgblink 1.4s infinite}
+@keyframes sgblink{0%,100%{opacity:.15}50%{opacity:1}}
+.sg-shrink{transform-box:fill-box;transform-origin:left center;animation:sgshrink 3s ease-in infinite}
+@keyframes sgshrink{from{transform:scaleX(1)}to{transform:scaleX(.22)}}
+.sg-yield{animation:sgyield .8s ease-out forwards}
+@keyframes sgyield{to{transform:translateY(-30px)}}
+.sg-pass{animation:sgpass 1.2s .7s ease-in-out forwards}
+@keyframes sgpass{to{transform:translateX(96px)}}
+.sg-go{animation:sggo .7s ease-out both}
+@keyframes sggo{to{transform:translateY(-42px)}}
+.sg-m1{animation:sgface 2.4s infinite}.sg-m2{animation:sgface 2.4s -.8s infinite}.sg-m3{animation:sgface 2.4s -1.6s infinite}
+@keyframes sgface{0%,30%{opacity:1}34%,100%{opacity:0}}
+.sg-run{stroke-dasharray:7 6;animation:sgrun .9s linear infinite}
+@keyframes sgrun{to{stroke-dashoffset:-13}}
+.sg-wob{transform-box:fill-box;transform-origin:50% 100%;animation:sgwob 3.2s infinite}
+@keyframes sgwob{0%{opacity:0;transform:translateY(-8px)}14%{opacity:1;transform:none}46%{transform:rotate(0)}54%{transform:rotate(-4deg)}62%{transform:rotate(4deg)}70%{transform:rotate(-3deg)}84%{opacity:1;transform:translateY(14px) rotate(16deg)}94%,100%{opacity:0;transform:translateY(20px) rotate(20deg)}}
+.sg-off{animation:sgoff 2.8s ease-in infinite}
+@keyframes sgoff{0%,25%{transform:none;opacity:1}85%{opacity:.85}100%{transform:translateX(112px);opacity:0}}
+.sg-trace{stroke-dasharray:170;animation:sgtrace 2.6s infinite}
+@keyframes sgtrace{0%{stroke-dashoffset:170}45%,100%{stroke-dashoffset:0}}
+.sg-endx{animation:sgendx 2.6s infinite}
+@keyframes sgendx{0%,40%{opacity:.15}50%,100%{opacity:1}}
+.sg-draw{stroke-dasharray:240;animation:sgdraw .9s ease-out both}
+@keyframes sgdraw{from{stroke-dashoffset:240}to{stroke-dashoffset:0}}
+.sg-coin{animation:sgcoin .55s ease-in forwards}
+@keyframes sgcoin{0%{transform:translateY(-46px);opacity:0}25%{opacity:1}80%{transform:translateY(30px);opacity:1}100%{transform:translateY(36px);opacity:0}}
+.sg-cab.shake{animation:sgcabsh .4s}
+@keyframes sgcabsh{20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-3px)}80%{transform:translateX(3px)}}
+.sg-tping{animation:sgtping 1.2s ease-in-out infinite alternate}@keyframes sgtping{to{transform:translateX(20px)}}
+.sg-twalk{animation:sgtwalk 2.6s linear infinite}@keyframes sgtwalk{to{transform:translateX(-26px)}}
+.sg-thop{animation:sgthop 3s infinite}.sg-thop2{animation:sgthop 3s -.3s infinite}
+@keyframes sgthop{0%,20%{transform:none}25%,45%{transform:translateX(12px)}50%,100%{transform:translateX(24px)}}
+.sg-toff{animation:sgtoff 2.4s ease-in infinite}@keyframes sgtoff{0%,20%{transform:none;opacity:1}100%{transform:translateX(24px);opacity:0}}
+.sg-spin{transform-box:fill-box;transform-origin:center;animation:sgspin 3s linear infinite}@keyframes sgspin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){.sg-ping,.sg-bangA,.sg-bangB,.sg-pop,.sg-walk,.sg-hopA,.sg-hopB,.sg-shk,.sg-shk2,.sg-blink,.sg-shrink,.sg-m1,.sg-m2,.sg-m3,.sg-run,.sg-wob,.sg-off,.sg-trace,.sg-endx,.sg-tping,.sg-twalk,.sg-thop,.sg-thop2,.sg-toff,.sg-spin{animation:none!important}}
+`;document.head.appendChild(st);})();
+
+/* ---------- the tools (CANON “Tool names”) as arcade tokens ---------- */
+const SG_TOK=[
+ ['look','Look ahead','Look ahead and reason back','tree','turns: you move, then they respond'],
+ ['dil','Dilemma','Spot and escape a prisoners’ dilemma','lock','both sides tempted to grab, so both lose'],
+ ['shoes','Their shoes','Put yourself in their shoes','eye','choosing at the same time, or finding the point you’d both expect'],
+ ['mix','Mix','Mix your moves','target','pure conflict, where any pattern you show gets used'],
+ ['commit','Commit','Commit, threaten or promise','arrow','changing what others (or future you) expect, before they move'],
+ ['cred','Credible','Make it credible','shield','a threat or promise that isn’t believed'],
+ ['sig','Signals','Read and send signals','info','one side knowing more than the other'],
+ ['coord','Coordinate','Coordinate the group','people','many people whose choices depend on each other'],
+ ['bid','Bid smart','Bid smart','pointer','competing with others for one prize'],
+ ['batna','BATNA','Bargain from your BATNA','scale','splitting something or agreeing terms'],
+ ['vote','Vote','Vote and set the agenda','list','a group choosing among three or more options'],
+ ['inc','Incentives','Design incentives','star','work you depend on but can’t watch'],
+ ['chg','Change the game','Change the game','pencil','when every move inside the game ends badly']];
+const SGT={};SG_TOK.forEach(t=>SGT[t[0]]=t);
+
+/* ---------- the ten kinds of stuck (CANON “the stuck playbook”) ---------- */
+const SG_K=[
+ {k:'coop',s:'They won’t cooperate',t:'They won’t cooperate: we keep hurting each other',sign:'You both keep score, each hit answers the last, and nobody remembers who started.',why:'each side answers the last hit, so one slip echoes back and forth',right:['dil'],
+  ok:'Someone has to stop hitting back. Then one clear rule, slips made visible, and quick forgiveness keep it fair.',tk:'Make the first forgiving move. Then agree one clear rule, make slips visible, respond once, and forgive quickly.'},
+ {k:'believe',s:'Not believed',t:'My threat or promise isn’t believed',sign:'You’ve said what you’ll do, more than once, and nothing changes.',why:'they’ve worked out you wouldn’t really follow through',right:['cred'],
+  ok:'Not a bigger threat, a believable one: a size you’d really carry out, made hard to back out of.',tk:'Pick one device (a written agreement, small steps, a partner who holds you to it) and shrink the threat to a size you’d really carry out.'},
+ {k:'exploit',s:'Exploited or read',t:'I’m being exploited, or they can read me',sign:'They always seem one step ahead, or keep offering you the same “deal”.',why:'they know your next step before you take it',right:['mix','sig','look'],
+  ok:'Hide the pattern, close the information gap, or stop playing a game whose ending you already know.',tk:'A pattern? Let a coin decide. They know more? Don’t take their bet. The same trick again? Look ahead to the end and stop playing that game.'},
+ {k:'dead',s:'Deadlock',t:'Deadlock: neither side will give way',sign:'Both wait for the other to give in, and the waiting costs you both.',why:'each hopes the other will blink first while the pie shrinks',right:['batna','shoes'],seq:true,
+  ok:'First you both saw what waiting costs, then you picked a fair way to choose.',half:'<b class="k">HALFWAY</b>Now both can see the pie shrinking for every day without a deal. One more token: how do you choose fairly between two outcomes you both prefer to the standoff?',
+  tk:'Measure the real pie and what waiting costs each of you. Then use a fair focal point: take turns, or toss one shared coin.'},
+ {k:'wait',s:'Everyone waits',t:'Everyone waits for someone else',sign:'Everyone agrees it should happen; nobody goes first.',why:'no one wants to move alone, so everyone stays put',right:['coord'],
+  ok:'A clear point to meet and a few first movers get the crowd past the moment where everyone waits.',tk:'Name a focal point (one time, one place), get a few people to move first, or ask someone outside to set the rule.'},
+ {k:'read',s:'Can’t read them',t:'I can’t read them',sign:'Their words keep changing; you can’t tell a serious plan from a bluff.',why:'words cost nothing, so they tell you nothing',right:['sig'],
+  ok:'Words were free; a costly action isn’t. Now their type shows.',tk:'Watch what they do, not what they say. Set a small, costly test only a serious person would pass. Notice what they didn’t do.'},
+ {k:'circ',s:'Going in circles',t:'The group goes round in circles',sign:'Each vote overturns the last, and the order of questions decides.',why:'majorities can cycle, so some vote always beats the winner',right:['vote'],
+  ok:'Rankings and an agreed order of questions stop the circle.',tk:'Ask everyone to rank the options, look for one that beats each other head to head, and agree the order of questions first.'},
+ {k:'work',s:'Poor work',t:'The work I depend on is poor',sign:'You can’t watch the effort, and the results keep slipping.',why:'they’re paid the same whatever the result',right:['inc'],
+  ok:'Pay now follows results you can see, stage by stage.',tk:'Pay partly on results you can see, in stages, a little above the going rate for ongoing work. Check you aren’t paying for only one task.'},
+ {k:'future',s:'Future self wins',t:'I keep losing to my future self',sign:'Calm you makes the plan; tempted you breaks it.',why:'tempted you still has the option',right:['commit'],
+  ok:'Calm you decided, and tempted you no longer has the option.',tk:'Commit now while calm you is in charge: cut off the tempting option, or put something at stake with someone who will enforce it.'},
+ {k:'bad',s:'Every move bad',t:'Every move in this game ends badly',sign:'You’ve run each option in your head, and all of them lose.',why:'the problem is the game itself, not how you play it',right:['chg'],
+  ok:'You stopped hunting for a better move and rewrote the rules instead.',tk:'Change the game instead of playing it better: who plays, the order, the payoffs, what each side knows, the larger game, or whether to play at all.'}];
+const SGK={};SG_K.forEach(K=>SGK[K.k]=K);
+const SG_NEAR={
+ 'coop|mix':'Random skips only add more slips to answer. The echo needs someone to stop hitting back.',
+ 'coop|commit':'A new threat (“one more and I’ll…”) is just a bigger hit in the same echo.',
+ 'coop|cred':'Being believed isn’t the problem: you both believe each other’s hits all too well.',
+ 'believe|commit':'A bigger threat is still a threat they don’t believe. The fix is credibility, not size.',
+ 'believe|batna':'There’s nothing to split here: your words are the problem, not the deal.',
+ 'exploit|cred':'Sounding tougher doesn’t hide your pattern or close their information gap.',
+ 'dead|cred':'Digging in harder is brinkmanship: the risk of a crash grows for you both.',
+ 'dead|mix':'If you each toss your own coin, you mismatch about half the time. Mixing is for pure conflict.',
+ 'dead|commit':'If you both commit at once, you crash. First make the cost of waiting visible.',
+ 'dead|shoes':'A fair split of what? First make what waiting costs each of you visible; then a focal point lands.',
+ 'wait|commit':'One person’s promise doesn’t move a crowd that’s waiting for each other.',
+ 'wait|dil':'Close: it’s a many-person game. But nobody here is cheating; they’re waiting. Give them a point to meet.',
+ 'read|look':'You can’t look ahead to their move until you know who they are. Find out first.',
+ 'read|cred':'Your credibility isn’t in doubt here; theirs is.',
+ 'circ|coord':'Close, but the group isn’t waiting: it keeps choosing, and the choices go round.',
+ 'circ|batna':'Several people and three options: that’s a voting problem before it’s a bargain.',
+ 'work|cred':'Threatening them won’t show you their effort. Pay on what you can see.',
+ 'work|sig':'Screening helps the next time you hire. For work already under way, tie pay to results.',
+ 'future|cred':'Close, but start one step earlier: commit now, so future you can’t back out.'};
+function sgWhy(k,t){const K=SGK[k],T=SGT[t];
+ if(k==='bad')return '<b class="k">STILL LOOPING</b>Every path inside this game ends badly, so no tool inside it can help. Rewrite the rules.';
+ if(t==='chg')return '<b class="k">STILL LOOPING</b>Too soon: a tool inside this game can still unblock it. Change the game when every move ends badly.';
+ const n=SG_NEAR[k+'|'+t];
+ return '<b class="k">STILL LOOPING</b>'+(n||(T[2]+' is for '+T[4]+'. Here '+K.why+'.'));}
+
+/* ---------- drawing helpers ---------- */
+const SGC={you:'var(--h1)',them:'var(--h4)'};
+const sgT=(x,y,t,o)=>{o=o||{};return '<text x="'+x+'" y="'+y+'" text-anchor="'+(o.a||'middle')+'" font-size="'+(o.fs||11)+'" font-weight="'+(o.w||700)+'" fill="'+(o.c||'var(--ink)')+'">'+t+'</text>';};
+function sgFig(x,y,c,lab,o){o=o||{};const s=o.s||1,d=o.dash?' fill-opacity=".2" stroke="'+c+'" stroke-width="2" stroke-dasharray="3 2"':'';
+ return '<g'+(o.cls?' class="'+o.cls+'"':'')+(o.sty?' style="'+o.sty+'"':'')+'><circle cx="'+x+'" cy="'+(y-22*s)+'" r="'+(8*s)+'" fill="'+c+'"'+d+'/>'+
+  '<path d="M'+(x-11*s)+' '+(y+4*s)+'q0 -'+(17*s)+' '+(11*s)+' -'+(17*s)+'q'+(11*s)+' 0 '+(11*s)+' '+(17*s)+'z" fill="'+c+'"'+d+'/>'+
+  (lab?sgT(x,y+18,lab):'')+'</g>';}
+function sgOk(x,y,r){r=r||9;return '<g><circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="var(--ok-strong)"/><path d="M'+(x-r*.45)+' '+y+'l'+(r*.32)+' '+(r*.34)+'l'+(r*.6)+' -'+(r*.68)+'" fill="none" stroke="var(--card)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></g>';}
+function sgNo(x,y,r,cls){r=r||9;const a=r*.42;return '<g'+(cls?' class="'+cls+'"':'')+'><circle cx="'+x+'" cy="'+y+'" r="'+r+'" fill="var(--no-strong)"/><path d="M'+(x-a)+' '+(y-a)+'L'+(x+a)+' '+(y+a)+'M'+(x+a)+' '+(y-a)+'L'+(x-a)+' '+(y+a)+'" stroke="var(--card)" stroke-width="2.2" stroke-linecap="round"/></g>';}
+const sgBang=(x,y)=>'<path d="M'+x+' '+(y-10)+'v-6M'+(x+9)+' '+(y-6)+'l5 -4M'+(x-9)+' '+(y-6)+'l-5 -4M'+(x+11)+' '+(y+2)+'h6M'+(x-11)+' '+(y+2)+'h-6" stroke="var(--no-strong)" stroke-width="2.5" stroke-linecap="round"/>';
+function sgBub(x,y,w,txt,o){o=o||{};const h=o.h||30;return '<g'+(o.cls?' class="'+o.cls+'"':'')+'><rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="10" fill="'+(o.fill||'var(--no-bg)')+'" stroke="'+(o.st||'var(--no-strong)')+'" stroke-width="2"/>'+
+ '<path d="M'+(x+10)+' '+(y+h-1)+'l-6 12 l16 -12z" fill="'+(o.fill||'var(--no-bg)')+'" stroke="'+(o.st||'var(--no-strong)')+'" stroke-width="2" stroke-linejoin="round"/><rect x="'+(x+8)+'" y="'+(y+h-4)+'" width="18" height="5" fill="'+(o.fill||'var(--no-bg)')+'"/>'+
+ sgT(x+w/2,y+h/2+4,txt,{fs:o.fs||11.5,c:o.tc||'var(--no)'})+'</g>';}
+function sgCar(x,d,c,lab){return '<rect x="'+x+'" y="66" width="58" height="20" rx="6" fill="'+c+'"/><path d="M'+(x+(d>0?10:14))+' 66l7 -12h20l7 12z" fill="'+c+'" opacity=".7"/>'+
+ '<circle cx="'+(x+13)+'" cy="88" r="6" fill="var(--ink)"/><circle cx="'+(x+45)+'" cy="88" r="6" fill="var(--ink)"/><circle cx="'+(d>0?x+54:x+4)+'" cy="73" r="2.6" fill="var(--card)"/>'+
+ (lab?sgT(x+29,81,lab,{c:'var(--card)'}):'');}
+function sgArr(x1,y1,cx,cy,x2,y2,col,cls){const dx=x2-cx,dy=y2-cy,l=Math.hypot(dx,dy),ux=dx/l,uy=dy/l,bx=x2-8*ux,by=y2-8*uy,px=-uy*4.5,py=ux*4.5;
+ return '<path'+(cls?' class="'+cls+'"':'')+' d="M'+x1+' '+y1+'Q'+cx+' '+cy+' '+bx.toFixed(1)+' '+by.toFixed(1)+'" fill="none" stroke="'+col+'" stroke-width="2.6"/><path d="M'+x2+' '+y2+'L'+(bx+px).toFixed(1)+' '+(by+py).toFixed(1)+'L'+(bx-px).toFixed(1)+' '+(by-py).toFixed(1)+'Z" fill="'+col+'"/>';}
+const sgLeg=(y)=>'<circle cx="12" cy="'+(y-4)+'" r="4.5" fill="'+SGC.you+'"/>'+sgT(20,y,'you',{a:'start',w:600,c:'var(--muted)'})+'<circle cx="52" cy="'+(y-4)+'" r="4.5" fill="'+SGC.them+'"/>'+sgT(60,y,'them',{a:'start',w:600,c:'var(--muted)'});
+
+/* ---------- the ten arcade screens (260 × 130), looping or unstuck ---------- */
+function sgScene(k,st,o){o=o||{};const fx=st==='fix',la=o.lab||['You','Them'];let s='';
+ if(k==='coop'){s+=sgFig(40,92,SGC.you,la[0])+sgFig(220,92,SGC.them,la[1]);
+  if(!fx)s+=sgT(130,18,o.cap||'hit, hit back, hit back…',{c:'var(--no)'})+'<g class="sg-bangA">'+sgBang(56,62)+'</g><g class="sg-bangB">'+sgBang(204,62)+'</g><g class="sg-ping"><circle cx="64" cy="66" r="7" fill="var(--no-strong)"/></g>';
+  else s+=sgT(130,18,o.capFix||'both do their share again',{c:'var(--ok)'})+'<path class="sg-draw" d="M58 58Q130 22 202 58" fill="none" stroke="var(--ok-strong)" stroke-width="3" stroke-linecap="round"/>'+sgOk(130,44,10);}
+ else if(k==='believe'){const bw=o.bw||110;
+  s+=sgFig(38,96,SGC.you,la[0])+'<path d="M150 58V108" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 4"/>'+sgT(150,124,'the line',{w:600,c:'var(--muted)'});
+  if(!fx)s+=sgBub(52,14,bw,o.say||'or else!',{cls:'sg-pop'})+'<g class="sg-walk">'+sgFig(226,96,SGC.them,la[1])+'</g>';
+  else s+=sgBub(52,14,o.bwFix||bw,o.sayFix||'said, and believed',{fill:'var(--ok-bg)',st:'var(--ok-strong)',tc:'var(--ok)'})+sgFig(200,96,SGC.them,la[1])+sgOk(222,58,9);}
+ else if(k==='exploit'){const v=o.v||'pat',X=[45,90,135,180,225];
+  s+=X.map((x,i)=>'<rect x="'+(x-16)+'" y="98" width="32" height="9" rx="4" fill="var(--soft2)" stroke="var(--line2)"/>'+(v==='pat'?sgT(x,122,fx?'?':['L','R','L','R','L'][i],{c:'var(--muted)'}):'')).join('');
+  if(!fx)s+=sgT(130,16,o.cap||'they’re always one step ahead',{c:'var(--no)'})+sgLeg(36)+'<g class="sg-hopB">'+sgFig(0,96,SGC.them,null,{dash:true})+'</g><g class="sg-hopA">'+sgFig(45,96,SGC.you,null)+'</g>';
+  else if(v==='bet')s+=sgT(130,16,o.capFix||'their offer told you something',{c:'var(--ok)'})+sgFig(60,96,SGC.you,null)+'<rect x="82" y="44" width="94" height="26" rx="6" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/>'+sgT(129,61,'no bet, thanks',{c:'var(--ok)'})+sgFig(210,96,SGC.them,null,{dash:true})+sgOk(60,48,8);
+  else if(v==='same')s+=sgT(130,16,o.capFix||'look ahead: stop playing that game',{c:'var(--ok)'})+'<rect x="20" y="52" width="16" height="12" rx="3" fill="var(--soft2)"/>'+sgFig(46,80,SGC.you,null)+'<path d="M96 96V44" stroke="var(--line2)" stroke-width="3"/><rect x="72" y="30" width="96" height="22" rx="5" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/>'+sgT(120,45,'not this game',{c:'var(--ok)'})+sgFig(180,96,SGC.them,null,{dash:true})+sgOk(46,36,8);
+  else s+=sgT(130,16,o.capFix||'a coin decides: nothing to read',{c:'var(--ok)'})+sgFig(135,96,SGC.you,null)+sgFig(45,96,SGC.them,null,{dash:true})+sgOk(135,52,8);}
+ else if(k==='dead'){
+  if(st==='loop')s+=sgT(130,18,o.cap||'neither gives way',{c:'var(--no)'})+'<g class="sg-blink"><circle cx="56" cy="80" r="4" fill="var(--line2)"/><circle cx="46" cy="76" r="5" fill="var(--line2)"/></g><g class="sg-blink" style="animation-delay:.5s"><circle cx="204" cy="80" r="4" fill="var(--line2)"/><circle cx="214" cy="76" r="5" fill="var(--line2)"/></g>'+
+   '<g class="sg-shk">'+sgCar(66,1,SGC.you,la[0])+'</g><g class="sg-shk2">'+sgCar(136,-1,SGC.them,la[1])+'</g>'+sgT(130,118,o.sub||'every day of waiting costs you both',{w:600,c:'var(--muted)'});
+  else if(st==='half')s+=sgT(130,16,'the pie shrinks each day you wait',{c:'var(--h3)'})+'<rect x="40" y="24" width="180" height="12" rx="6" fill="var(--soft2)"/><rect class="sg-shrink" x="40" y="24" width="180" height="12" rx="6" fill="var(--h3)"/>'+
+   sgCar(66,1,SGC.you,la[0])+sgCar(136,-1,SGC.them,la[1])+sgT(130,118,'both can see it now',{w:600,c:'var(--muted)'});
+  else s+=sgT(130,14,o.capFix||'take turns, or toss one shared coin',{c:'var(--ok)'})+'<g class="sg-yield">'+sgCar(136,-1,SGC.them,la[1])+'</g><g class="sg-pass">'+sgCar(66,1,SGC.you,la[0])+'</g>'+sgT(130,118,o.subFix||'this time one goes first; next time the other',{w:600,c:'var(--muted)'});}
+ else if(k==='wait'){
+  s+='<rect x="96" y="8" width="68" height="24" rx="6" fill="var(--h2-bg)" stroke="var(--h2)" stroke-width="2"/>'+sgT(130,24,o.goal||'the job',{c:'var(--h2)'})+'<path d="M12 62H248" stroke="var(--line2)" stroke-width="2" stroke-dasharray="6 5"/>'+sgT(14,56,'start',{a:'start',w:600,c:'var(--muted)'});
+  for(let i=0;i<8;i++){const x=30+i*28.5,c=i===2?SGC.you:SGC.them;
+   if(!fx)s+=sgFig(x,108,c,null,{s:.7})+'<text class="sg-blink" style="animation-delay:'+(i*.18).toFixed(2)+'s" x="'+x+'" y="82" text-anchor="middle" font-size="14" font-weight="700" fill="var(--muted)">…</text>';
+   else{const first=i>=2&&i<=4;s+=sgFig(x,108,c,null,{s:.7,cls:'sg-go',sty:'animation-delay:'+(first?(i-2)*.12:.9+i*.08).toFixed(2)+'s'});}}
+  if(fx)s+='<path d="M196 50l3 6 6 1-4.5 4 1 6-5.5-3-5.5 3 1-6-4.5-4 6-1z" fill="var(--ok-strong)"/>'+sgT(212,58,o.focal||'one clear time',{a:'start',c:'var(--ok)'})+sgOk(176,20,8);}
+ else if(k==='read'){
+  s+='<path d="M126 112q0-38 24-38q24 0 24 38z" fill="'+SGC.them+'"/><circle cx="150" cy="50" r="17" fill="'+SGC.them+'"/><circle cx="144" cy="46" r="2.2" fill="var(--card)"/><circle cx="156" cy="46" r="2.2" fill="var(--card)"/>';
+  if(!fx){s+='<path class="sg-m1" d="M143 54q7 6 14 0" fill="none" stroke="var(--card)" stroke-width="2.2" stroke-linecap="round"/><path class="sg-m2" d="M143 56h14" fill="none" stroke="var(--card)" stroke-width="2.2" stroke-linecap="round"/><path class="sg-m3" d="M143 58q7 -6 14 0" fill="none" stroke="var(--card)" stroke-width="2.2" stroke-linecap="round"/>'+
+    '<path d="M140 22H224" stroke="var(--h3)" stroke-width="3" stroke-linecap="round"/><rect x="150" y="22" width="66" height="94" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="2"/><path d="M166 24V114M182 24V114M198 24V114" stroke="var(--h3)" stroke-width="1.2" opacity=".6"/>'+
+    '<rect x="8" y="16" width="112" height="40" rx="10" fill="var(--soft)" stroke="var(--line2)" stroke-width="2"/>'+sgT(64,33,(o.say||['“Definitely','happening!”'])[0])+sgT(64,47,(o.say||['“Definitely','happening!”'])[1])+sgT(64,122,'words keep changing',{w:600,c:'var(--muted)'});}
+  else s+='<path d="M143 54q7 6 14 0" fill="none" stroke="var(--card)" stroke-width="2.2" stroke-linecap="round"/><path d="M140 22H224" stroke="var(--h3)" stroke-width="3" stroke-linecap="round"/><rect x="208" y="22" width="16" height="94" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="2"/>'+
+   '<rect x="86" y="76" width="'+(o.tw||52)+'" height="24" rx="6" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/>'+sgT(86+(o.tw||52)/2,92,o.tag||'£500 in',{c:'var(--ok)'})+sgOk(180,40,9)+sgT(64,122,o.capFix||'actions, not words',{c:'var(--ok)'});}
+ else if(k==='circ'){const N=[[130,30],[204,90],[56,90]],nm=o.opts||['A','B','C'];
+  if(!fx)s+=sgArr(146,40,190,46,196,72,'var(--no-strong)','sg-run')+sgArr(186,98,130,118,74,98,'var(--no-strong)','sg-run')+sgArr(64,72,70,46,114,38,'var(--no-strong)','sg-run')+sgT(130,74,'each beats the last',{w:600,c:'var(--muted)'});
+  else s+=sgArr(194,74,186,44,148,38,'var(--ok-strong)')+sgArr(66,74,74,44,112,38,'var(--ok-strong)')+'<path d="M76 92H184" stroke="var(--line2)" stroke-width="2" stroke-dasharray="4 4"/>'+sgT(130,74,o.capFix||'one beats both',{c:'var(--ok)'});
+  N.forEach((p,i)=>{const win=fx&&i===0;s+='<circle cx="'+p[0]+'" cy="'+p[1]+'" r="17" fill="'+(win?'var(--ok-bg)':'var(--soft2)')+'" stroke="'+(win?'var(--ok-strong)':'var(--line2)')+'" stroke-width="2"/>'+sgT(p[0],p[1]+4,nm[i].length>2?'ABC'[i]:nm[i],{fs:12})+(nm[i].length>2?sgT(p[0],p[1]+30,nm[i],{w:600,c:'var(--muted)'}):'');});
+  if(fx)s+=sgOk(152,16,8);}
+ else if(k==='work'){const row=(r,cls)=>{let b='';const y=94-r*16,off=r%2?10:0;for(let j=0;j<4;j++)b+='<rect x="'+(66+off+j*32)+'" y="'+y+'" width="30" height="14" rx="2" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="1.5"/>';return cls?'<g class="'+cls+'">'+b+'</g>':b;};
+  s+='<path d="M50 110H214" stroke="var(--line2)" stroke-width="3"/>'+row(0)+row(1);
+  if(!fx)s+='<g class="sg-wob">'+row(2)+row(3)+'</g>'+sgT(130,16,o.cap||'built, wobbles, falls again',{c:'var(--no)'});
+  else{s+=row(2)+row(3)+sgT(130,16,o.capFix||'paid as each stage passes a check',{c:'var(--ok)'});
+   [0,1,2,3].forEach(r=>{const y=101-r*16;s+=sgOk(222,y,6)+'<circle cx="38" cy="'+y+'" r="7" fill="var(--h3)"/>'+sgT(38,y+4,'£',{c:'var(--card)'});});}}
+ else if(k==='future'){const key=(x,y)=>'<circle cx="'+x+'" cy="'+y+'" r="5" fill="none" stroke="var(--h3)" stroke-width="2.6"/><path d="M'+(x+5)+' '+y+'h16m-5 0v5m-5 -5v4" stroke="var(--h3)" stroke-width="2.6" stroke-linecap="round"/>';
+  s+=sgFig(46,100,SGC.you,la[0]||'you, now');
+  if(!fx)s+=sgT(130,16,o.cap||'calm you plans; later you walks off with it',{c:'var(--no)'})+'<g class="sg-off">'+sgFig(118,100,SGC.you,null,{dash:true})+key(132,80)+sgT(118,118,la[1]||'you, later')+'</g>';
+  else s+=sgT(130,16,o.capFix||'locked in while you were calm',{c:'var(--ok)'})+'<rect x="104" y="62" width="54" height="40" rx="6" fill="var(--soft2)" stroke="var(--line2)" stroke-width="2"/>'+key(116,82)+'<path d="M124 62v-8a7 7 0 0 1 14 0v8" fill="none" stroke="var(--ink)" stroke-width="2.6"/><rect x="120" y="58" width="22" height="14" rx="3" fill="var(--ink)"/>'+sgFig(206,100,SGC.you,la[1]||'you, later',{dash:true})+sgOk(206,56,8);}
+ else if(k==='bad'){const E=[[150,34],[158,66],[150,98]],P=o.paths;
+  s+='<rect x="10" y="6" width="176" height="116" rx="10" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="5 4"/>'+sgT(18,20,'this game',{a:'start',w:600,c:'var(--muted)'})+'<circle cx="34" cy="66" r="9" fill="'+SGC.you+'"/>';
+  E.forEach((e,i)=>{const d='M43 66Q95 '+e[1]+' '+(e[0]-10)+' '+e[1];
+   s+=fx?'<path d="'+d+'" fill="none" stroke="var(--line2)" stroke-width="2.6" opacity=".6"/>'+sgNo(e[0],e[1],8)+'':'<path class="sg-trace" style="animation-delay:'+(i*.35)+'s" d="'+d+'" fill="none" stroke="var(--no-strong)" stroke-width="2.6"/>'+sgNo(e[0],e[1],8,'sg-endx');
+   if(P)s+=sgT(e[0],e[1]-13,P[i],{c:fx?'var(--muted)':'var(--no)'});});
+  if(fx)s+='<path class="sg-draw" d="M40 74Q100 122 186 112L218 104" fill="none" stroke="var(--ok-strong)" stroke-width="3.4" stroke-linecap="round"/>'+sgOk(230,100,10)+sgT(226,80,o.capFix||'new rules',{c:'var(--ok)'});}
+ return s;}
+
+/* ---------- small looping thumbnails (60 × 44) for the arcade row ---------- */
+function sgThumb(k){let s='<svg viewBox="0 0 60 44" aria-hidden="true"><rect width="60" height="44" rx="6" fill="var(--soft)"/>';
+ const car=(x,c)=>'<rect x="'+x+'" y="18" width="20" height="10" rx="3" fill="'+c+'"/><circle cx="'+(x+5)+'" cy="29" r="2.6" fill="var(--ink)"/><circle cx="'+(x+15)+'" cy="29" r="2.6" fill="var(--ink)"/>';
+ if(k==='coop')s+='<circle cx="10" cy="24" r="6" fill="var(--h1)"/><circle cx="50" cy="24" r="6" fill="var(--h4)"/><g class="sg-tping"><circle cx="20" cy="24" r="4" fill="var(--no-strong)"/></g>';
+ else if(k==='believe')s+='<circle cx="9" cy="32" r="6" fill="var(--h1)"/><g class="sg-pop"><rect x="12" y="6" width="26" height="13" rx="4" fill="var(--no-bg)" stroke="var(--no-strong)" stroke-width="1.6"/></g><g class="sg-twalk"><circle cx="52" cy="32" r="6" fill="var(--h4)"/></g>';
+ else if(k==='exploit')s+=[6,18,30,42].map(x=>'<rect x="'+x+'" y="34" width="10" height="4" rx="2" fill="var(--line2)"/>').join('')+'<g class="sg-thop2"><circle cx="23" cy="25" r="5" fill="var(--h4)" fill-opacity=".3" stroke="var(--h4)" stroke-width="1.6"/></g><g class="sg-thop"><circle cx="11" cy="25" r="5" fill="var(--h1)"/></g>';
+ else if(k==='dead')s+='<g class="sg-shk">'+car(9,'var(--h1)')+'</g><g class="sg-shk2">'+car(31,'var(--h4)')+'</g>';
+ else if(k==='wait')s+='<path d="M4 18H56" stroke="var(--line2)" stroke-width="1.6" stroke-dasharray="3 3"/>'+[8,19,30,41,52].map((x,i)=>'<circle cx="'+x+'" cy="30" r="4.5" fill="'+(i===2?'var(--h1)':'var(--h4)')+'"/><circle class="sg-blink" style="animation-delay:'+(i*.2)+'s" cx="'+x+'" cy="20" r="1.6" fill="var(--muted)"/>').join('');
+ else if(k==='read')s+='<circle cx="27" cy="22" r="10" fill="var(--h4)"/><path class="sg-m1" d="M23 25q4 3 8 0" fill="none" stroke="var(--card)" stroke-width="1.6"/><path class="sg-m3" d="M23 27q4 -3 8 0" fill="none" stroke="var(--card)" stroke-width="1.6"/><rect x="27" y="6" width="22" height="32" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="1.5"/>';
+ else if(k==='circ')s+='<circle class="sg-spin sg-run" cx="30" cy="23" r="12" fill="none" stroke="var(--no-strong)" stroke-width="2"/><circle cx="30" cy="10" r="4.5" fill="var(--line2)"/><circle cx="19" cy="30" r="4.5" fill="var(--line2)"/><circle cx="41" cy="30" r="4.5" fill="var(--line2)"/>';
+ else if(k==='work'){const r=(y,o)=>[0,1,2].map(j=>'<rect x="'+(12+o+j*12)+'" y="'+y+'" width="11" height="6" rx="1" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="1.2"/>').join('');s+=r(32,0)+r(25,4)+'<g class="sg-wob">'+r(18,0)+r(11,4)+'</g>';}
+ else if(k==='future')s+='<circle cx="12" cy="24" r="6" fill="var(--h1)"/><g class="sg-toff"><circle cx="26" cy="24" r="6" fill="var(--h1)" fill-opacity=".25" stroke="var(--h1)" stroke-width="1.5" stroke-dasharray="2 2"/><circle cx="35" cy="17" r="2.5" fill="none" stroke="var(--h3)" stroke-width="1.6"/><path d="M37 17h6" stroke="var(--h3)" stroke-width="1.6"/></g>';
+ else if(k==='auc')s+='<path d="M4 13H56" stroke="var(--h2)" stroke-width="1.6" stroke-dasharray="3 2"/><text x="4" y="10" text-anchor="start" font-size="7.6" font-weight="700" fill="var(--h2)">PRIZE</text>'+[[10,12,'var(--h3)'],[24,20,'var(--h3)'],[38,30,'var(--no-strong)']].map(b=>'<rect x="'+b[0]+'" y="'+(40-b[1])+'" width="11" height="'+b[1]+'" rx="2" fill="'+b[2]+'"/>').join('');
+ else if(k==='small')s+='<rect x="4" y="4" width="52" height="36" rx="5" fill="none" stroke="var(--h2)" stroke-width="1.6" stroke-dasharray="4 3"/><rect x="10" y="24" width="13" height="10" rx="2" fill="var(--no-bg)" stroke="var(--no-strong)" stroke-width="1.4"/><rect x="29" y="11" width="22" height="23" rx="3" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="1.4"/>';
+ else if(k==='bad')s+='<circle cx="9" cy="22" r="4" fill="var(--h1)"/>'+[[46,9],[48,22],[46,35]].map((e,i)=>'<path class="sg-trace" style="animation-delay:'+(i*.3)+'s" d="M12 22Q28 '+e[1]+' '+(e[0]-4)+' '+e[1]+'" fill="none" stroke="var(--no-strong)" stroke-width="1.8"/><circle cx="'+e[0]+'" cy="'+e[1]+'" r="3.6" fill="var(--no-strong)"/>').join('');
+ return s+'</svg>';}
+
+/* ---------- one arcade cabinet ---------- */
+function sgCab(k,st,o){o=o||{};const K=SGK[k],fx=st==='fix',hf=st==='half';
+ const tone=fx?['ok','var(--ok)','var(--ok-strong)','UNSTUCK']:hf?['h3','var(--h3)','var(--h3)','HALFWAY']:['no','var(--no)','var(--no-strong)','LOOPING'];
+ const title=o.title||K.s;let coin='';
+ if(o.coin){const T=SGT[o.coin];coin='<g class="sg-coin"><circle cx="165" cy="150" r="12" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="2.5"/><svg x="157" y="142" width="16" height="16" viewBox="0 0 24 24"><g fill="none" stroke="var(--h3)" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">'+Course.icon(T[3]).replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'')+'</g></svg></g>';}
+ return '<svg class="sg-svg sg-cab" viewBox="0 0 330 214" role="img" aria-label="Arcade screen: '+(o.aria||K.t)+'. '+(fx?'Unstuck.':hf?'Halfway.':'Still looping.')+'">'+
+  '<path d="M24 16q0 -14 14 -14h254q14 0 14 14v190q0 6 -6 6H30q-6 0 -6 -6z" fill="var(--soft2)" stroke="var(--line2)" stroke-width="2"/>'+
+  '<rect x="36" y="8" width="258" height="26" rx="7" fill="var(--'+tone[0]+'-bg)"/>'+sgT(165,25.5,title,{fs:12.5,c:tone[1]})+
+  '<rect x="33" y="40" width="264" height="134" rx="10" fill="var(--line2)"/><g transform="translate(35 42)"><rect width="260" height="130" rx="8" fill="var(--card)"/>'+(o.scene||sgScene(k,st,o))+'</g>'+
+  '<path d="M56 194l-6 -13" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/><circle cx="49" cy="180" r="6" fill="var(--h4)"/><ellipse cx="56" cy="196" rx="11" ry="4" fill="var(--line2)"/>'+
+  sgT(146,198,'TOOL TOKEN',{a:'end',w:700,c:'var(--muted)'})+'<rect x="152" y="184" width="26" height="20" rx="4" fill="var(--card)" stroke="var(--line2)" stroke-width="2"/><path d="M165 188V200" stroke="var(--ink)" stroke-width="3" stroke-linecap="round"/>'+
+  sgT(268,198,tone[3],{a:'end',c:tone[1]})+'<circle cx="282" cy="194" r="7" fill="'+tone[2]+'"/>'+coin+'</svg>';}
+
+/* ---------- the arcade: optional row of ten screens, one big cabinet, a token tray, a ticket ---------- */
+function sgArcade(L,host,o){o=o||{};const sc=o.sc||{};
+ const st={k:o.k===undefined?'coop':o.k,prog:{},fixed:{},used:0,first:{}};
+ const w=document.createElement('div');w.className='sg-anim';host.appendChild(w);
+ w.innerHTML=(o.gallery?'<div class="sg-gal" role="group" aria-label="The ten stuck screens"></div>':'')+'<div class="sg-cabw"></div>'+
+  (o.tokens===false?'':'<div class="sg-tw"'+(o.trayHidden?' hidden':'')+'><div class="sg-lab">'+(o.trayLab||'Tool tokens · tap one to drop it in')+'</div><div class="sg-tray"></div></div>')+
+  '<div class="sg-say" aria-live="polite">'+(o.say0||'')+'</div><div class="sg-tk"></div>';
+ const $=s=>w.querySelector(s);
+ const stOf=k=>st.fixed[k]?'fix':(st.prog[k]?'half':'loop');
+ const say=h=>{$('.sg-say').innerHTML=h;};
+ function cab(coin,shake){if(!st.k){$('.sg-cabw').innerHTML=o.empty||'';return;}
+  $('.sg-cabw').innerHTML=sgCab(st.k,stOf(st.k),Object.assign({coin},sc[st.k]||{}));if(shake)$('.sg-cab').classList.add('shake');}
+ function gal(){if(!o.gallery)return;$('.sg-gal').innerHTML=SG_K.map(K=>'<button type="button" class="sg-mini'+(K.k===st.k?' sel':'')+(st.fixed[K.k]?' fx':'')+'" data-k="'+K.k+'" aria-pressed="'+(K.k===st.k)+'" aria-label="'+K.t+(st.fixed[K.k]?' (unstuck)':'')+'">'+sgThumb(K.k)+'<span>'+K.s+'</span></button>').join('');
+  w.querySelectorAll('.sg-mini').forEach(b=>b.onclick=()=>{const k=b.dataset.k;if(o.onPick&&o.onPick(k,api)===false)return;api.select(k);});}
+ function tray(){if(o.tokens===false)return;$('.sg-tray').innerHTML=SG_TOK.map(t=>'<button type="button" class="sg-tok" data-t="'+t[0]+'" aria-label="Drop the token: '+t[2]+'"><i>'+Course.icon(t[3])+'</i><span>'+t[1]+'</span></button>').join('');
+  w.querySelectorAll('.sg-tok').forEach(b=>b.onclick=()=>api.drop(b.dataset.t));}
+ const api={st,say,
+  select(k,quiet){st.k=k;gal();cab();if(o.tokens!==false)w.querySelectorAll('.sg-tok').forEach(b=>b.classList.remove('used','ok'));
+   if(!quiet&&o.onSelect)o.onSelect(k,api);},
+  showTray(){const t=$('.sg-tw');if(t)t.hidden=false;},
+  reset(k){delete st.fixed[k];delete st.prog[k];delete st.first[k];$('.sg-tk').innerHTML='';if(st.k===k){cab();gal();}w.querySelectorAll('.sg-tok').forEach(b=>b.classList.remove('used','ok'));},
+  ticket(text,tool){$('.sg-tk').innerHTML='<div class="sg-ticket"><b class="k">'+Course.icon('check')+'NEXT STEP'+(tool?' · '+tool.toUpperCase():'')+'</b>'+text+'</div>';},
+  drop(t){const k=st.k;if(!k)return;const K=SGK[k],T=SGT[t];
+   if(st.fixed[k]){say('<b class="k">ALREADY UNSTUCK</b>'+(o.gallery?'Pick another screen to try.':'This one is done.'));return;}
+   st.used++;const r=(o.right&&o.right[k])||K.right;let res='no';
+   if(K.seq){const p=st.prog[k]||0;if(t===r[p]){if(p+1>=r.length)res='ok';else{st.prog[k]=p+1;res='half';}}}
+   else if(r.includes(t))res='ok';
+   if(st.first[k]==null)st.first[k]=res!=='no';
+   if(res==='ok')st.fixed[k]=true;
+   cab(t,res==='no');gal();
+   const b=w.querySelector('.sg-tok[data-t="'+t+'"]');if(b)b.classList.add(res==='no'?'used':'ok');
+   if(res==='ok'){say('<b class="k">UNSTUCK · '+T[2].toUpperCase()+'</b>'+((o.okSay&&o.okSay[k])||K.ok));if(o.autoTicket!==false)api.ticket((o.ticket&&o.ticket[k])||K.tk,T[2]);}
+   else if(res==='half')say((o.halfSay&&o.halfSay[k])||K.half);
+   else say((o.whySay&&o.whySay[k+'|'+t])||sgWhy(k,t));
+   if(o.onDrop)o.onDrop(k,t,res,api);}};
+ gal();cab();tray();return api;}
+
+/* ---------- the editable rulebook card ---------- */
+const SG_LN=[['who','Who plays'],['order','Order of moves'],['pay','Payoffs'],['know','What each side knows'],['link','Linked games'],['play','Play or walk away']];
+const sgK=v=>(v<0?'−':'+')+'£'+Math.abs(v)+'k';
+const sgP=v=>(v<0?'−':'+')+'£'+Math.abs(v).toLocaleString('en-GB');
+const SG_RB={
+ land:{title:'The rent renewal',max:1500,
+  base:{who:'Tali alone, against the landlord',order:'The landlord named +10% first',pay:'Pay the rise, or pay to move',know:'The landlord knows Tali hates moving',link:'Just this one renewal',play:'Tali has to play'},
+  ed:{who:[['agent','Juno negotiates, with a walk-away number agreed at home','A negotiator with fixed limits (chapter 7’s mandated agent). Side effect: an agent who can’t give way can also block a fair deal.']],
+   order:[['late','Wait until the last week to answer','Trap: with no time left to find a flat, Tali’s walk-away is gone, and the landlord knows it.']],
+   pay:[['two','Offer a two-year tenancy for a smaller rise','The landlord gets something real: no empty months for two years. Side effect: Tali is tied in for two years.']],
+   know:[['view','Book two real viewings of other flats, and say so','An action that costs Tali time shows moving is real (a signal, chapter 8). Side effect: it only works if it’s true; a bluff can be called.']],
+   link:[['larger','Keep the larger game in view: repairs, the deposit, a reference','No change in the number, but the talk stays friendly. Squeezing the landlord hard could cost Tali later.']],
+   play:[['move','Walk away: give notice and move','Both lose: moving costs Tali more than the rise, and the landlord gets an empty month.'],['brink','“Drop the rise or we leave tomorrow” (brinkmanship)','Tali hates moving, so Tali would blink first. The book’s advice: then don’t start down that path.']]},
+  out(E){if(E.play==='move')return{rows:[['Tali',-1500,'−£1,500 to move, once'],['Landlord',-1000,'−£1,000: a month empty']],note:'<b class="no">Walking away:</b> both lose.'};
+   const cut=(E.who?2:0)+(E.pay?4:0)+(E.know?(E.order?2:6):0),r=Math.max(2,10-cut),sec=E.pay?500:0;
+   return{r,rows:[['Tali',-r*120,'+'+r+'% rent: −£'+(r*120).toLocaleString('en-GB')+' a year'],['Landlord',r*120+sec,'+£'+(r*120).toLocaleString('en-GB')+(sec?' and 2 safe years':' a year')]],
+    note:(E.play==='brink'?'<b class="no">Risk:</b> about 1 in 3 that the talk breaks down and Tali must move at short notice. ':'')+(E.order?'<b class="no">Weaker:</b> no time left to move. ':'')+(E.link?'<b class="ok">Friendly:</b> the relationship stays intact. ':'')+(!E.play&&!E.order&&!E.link&&r===10?'Rent rise: +10% a year.':'')};}},
+ attr:{title:'Plover vs Kittiwake: one big client',max:90,
+  base:{who:'Plover and Kittiwake; the client watches',order:'Each waits for the other to give up',pay:'Every month, more free pitch work',know:'Each guesses the other is about to fold',link:'Just this one client',play:'Stay in until the other quits'},
+  ed:{who:[['paid','Ask the client for a short, paid pitch with a deadline','A third party sets a fair rule: both still compete, openly, and the bleeding stops.']],
+   order:[['wait','Wait one more month and see','In a war of attrition, waiting is the bleeding.']],
+   pay:[['split','Agree with Kittiwake which agency takes this client',null,'This course’s caution, not the book’s: two small rivals quietly sharing out clients is collusion. It hurts customers and it’s illegal. (The book’s own case ended in a merger the government allowed.)']],
+   know:[['show','Do an even bigger free pitch to show Plover won’t quit','Both sides can be sure they’ll outlast the other: this is how losses balloon.']],
+   link:[['larger','Look for the larger game: put the time into the council tender and current clients','The months already spent are gone either way; the time now earns elsewhere.']],
+   play:[['stop','Set a limit now, then stop','Money already lost is lost whether Plover stays or goes; only the extra cost of hanging on counts.']]},
+  out(E){let P,K,C;const war=!(E.who||E.play);
+   if(war){const m=1+(E.order?.5:0)+(E.know?1:0);P=-30*m;K=-30*m;C=10*m;}else if(E.who){P=-5;K=-5;C=0;}else{P=-5;K=-10;C=5;}
+   if(E.link)P+=20;
+   return{rows:[['Plover',P,sgK(P)+' over three months'],['Kittiwake',K,sgK(K)],['The client',C,war?sgK(C)+' of free work':(C?sgK(C):'£0: a fair choice')]],note:war?'<b class="no">The race goes on:</b> every month both lose more.':'<b class="ok">The race has stopped.</b>'};}},
+ dollar:{title:'A £10 note, auctioned at the end-of-season do',max:12,
+  base:{who:'Tali, a teammate and the host',order:'Bids rise £1 at a time',pay:'Top bid wins £10; the top two both pay',know:'Everyone sees every bid',link:'Just tonight’s game',play:'Tali opens with £1'},
+  ed:{who:[['agree','Before bidding, the players agree: one bids £1, nobody raises, they share the £9','The book’s “simpler and more profitable” answer for its students. Fine for a party game; rival firms doing it against customers would be illegal.']],
+   play:[['out','Don’t take the first step','The book: better not to take the first step unless you know where it leads.']]},
+  out(E,c){if(E.play==='out')return{rows:[['Tali',0,'£0: never bid, lost nothing'],['Teammate',9,'+£9: one £1 bid, no rival'],['Host',-9,'−£9: sold £10 for £1']],note:'<b class="ok">No escalation.</b> Tali walks away with £0 lost, instead of being dragged past the prize. With no rival bidder, there is no war.'};
+   if(E.who==='agree')return{rows:[['Tali',4.5,'+£4.50: half the £9'],['Teammate',4.5,'+£4.50'],['Host',-9,'−£9']],note:'<b class="ok">No escalation.</b>'};
+   const tl=c.t>c.m,lead=Math.max(c.t,c.m),sec=Math.min(c.t,c.m),win=10-lead;
+   const tv=tl?win:-sec,mv=tl?-sec:win,hv=lead+sec-10;
+   return{rows:[['Tali',tv,(tv<0?'−':'+')+'£'+Math.abs(tv)+(tl?' if it ends now (leads)':' if it ends now')],['Teammate',mv,(mv<0?'−':'+')+'£'+Math.abs(mv)],['Host',hv,(hv<0?'−':'+')+'£'+Math.abs(hv)]],note:'Bids: Tali £'+c.t+' · teammate £'+c.m+'. '+(lead>10?'<b class="no">Past £10:</b> even the winner now loses.':'')};}}};
+function sgBars(rows,max){const H=rows.length*36+10;
+ let s='<svg class="sg-svg" viewBox="0 0 330 '+H+'" role="img" aria-label="'+rows.map(r=>r[0]+': '+r[2]).join('; ')+'"><rect width="330" height="'+H+'" rx="12" fill="var(--soft)"/><path d="M165 6V'+(H-4)+'" stroke="var(--line2)" stroke-width="1.5"/>';
+ rows.forEach((r,i)=>{const y=6+i*36,v=r[1],len=Math.min(150,Math.abs(v)/max*150);
+  s+=sgT(10,y+12,r[0],{a:'start',fs:11.5})+sgT(320,y+12,r[2],{a:'end',w:600,c:'var(--muted)'})+'<rect x="'+(v<0?165-len:165)+'" y="'+(y+18)+'" width="'+Math.max(len,2).toFixed(1)+'" height="11" rx="4" fill="'+(v<0?'var(--no-strong)':'var(--ok-strong)')+'"/>';});
+ return s+'</svg>';}
+function sgRule(L,host,o){const P=SG_RB[o.p],E={};let open=null,lock=!!o.lock,tries=0;
+ const w=document.createElement('div');host.appendChild(w);
+ w.innerHTML='<div class="sg-card"><div class="sg-ch"><span>'+Course.icon('pencil')+'Rules of this game</span><b>'+P.title+'</b></div><ol class="sg-lines"></ol></div>'+(o.mid||'')+
+  '<div class="sg-lab">Outcome · illustrative numbers</div><div class="sg-out"></div><div class="sg-say" aria-live="polite">'+(o.say0||'Tap a line of the rules to see the book’s edits for it.')+'</div>';
+ const $=s=>w.querySelector(s),say=h=>{$('.sg-say').innerHTML=h;};
+ const optOf=(l,k)=>(P.ed[l]||[]).find(x=>x[0]===k);
+ function draw(){$('.sg-lines').innerHTML=SG_LN.map((ln,i)=>{const l=ln[0],ed=E[l]?optOf(l,E[l]):null,op=open===l;
+   return '<li class="sg-ln'+(ed?' ed':'')+(op?' op':'')+'"><button type="button" class="sg-lh" data-l="'+l+'" aria-expanded="'+op+'"><span class="n">'+(i+1)+'</span><span class="t"><small>'+ln[1]+'</small>'+(ed?'<s>'+P.base[l]+'</s><em>'+ed[1]+'</em>':P.base[l])+'</span><span class="pen" aria-hidden="true">✎</span></button>'+
+    (op?'<div class="sg-opts">'+((P.ed[l]||[]).length?(P.ed[l].map(x=>'<button type="button" class="chip'+(E[l]===x[0]?' sel':'')+'" data-o="'+x[0]+'">'+x[1]+'</button>').join('')+(E[l]?'<button type="button" class="chip" data-o="">Put the old rule back</button>':'')):'<p>No useful edit on this line for this game.</p>')+'</div>':'')+'</li>';}).join('');
+  w.querySelectorAll('.sg-lh').forEach(b=>b.onclick=()=>{open=open===b.dataset.l?null:b.dataset.l;draw();});
+  w.querySelectorAll('.sg-opts .chip').forEach(b=>b.onclick=()=>pick(open,b.dataset.o));
+  const R=P.out(E,o.ctx?o.ctx():null);$('.sg-out').innerHTML=sgBars(R.rows,P.max)+(R.note?'<p class="sg-onote">'+R.note+'</p>':'');api.R=R;}
+ function pick(l,k){const x=k?optOf(l,k):null;
+  if(lock){say(o.lockSay||'Play it out first.');return;}
+  if(x&&x[3]){say('<b class="k">BLOCKED</b>'+x[3]);api.blocked=true;if(o.onChange)o.onChange(E,api);return;}
+  if(k&&!E[l]&&o.maxEd&&Object.keys(E).length>=o.maxEd){say('<b class="k">TWO EDITS AT MOST</b>Put one line back before you change another.');return;}
+  if(k){E[l]=k;tries++;say('<b class="k">EDITED · '+SG_LN.find(z=>z[0]===l)[1].toUpperCase()+'</b>'+x[2]);}else{delete E[l];say('Old rule back on line '+(SG_LN.findIndex(z=>z[0]===l)+1)+'.');}
+  draw();if(o.onChange)o.onChange(E,api);}
+ const api={E,draw,say,get tries(){return tries;},unlock(){lock=false;},R:null,blocked:false};
+ draw();return api;}
+
+const sgQP=(k,l)=>'<span class="sg-qp">'+sgThumb(k)+'<span>'+l+'</span></span>';
+const sgApp=t=>'<p class="sg-app">'+Course.icon('compass')+(t||'How this course applies the book')+'</p>';
+
+/* ---------- the strategy-map rows (CANON “The strategy map”) for the closing strip ---------- */
+const SG_TL={dil:'Dilemma',cred:'Credible',mix:'Mix',sig:'Signals',look:'Look ahead',batna:'BATNA',shoes:'Their shoes',coord:'Coordinate',vote:'Vote',inc:'Incentives',commit:'Commit',chg:'Change the game'};
+const SG_PB=[['coop',['dil']],['believe',['cred']],['exploit',['mix','sig','look']],['dead',['batna','shoes']],['wait',['coord']],['read',['sig']],['circ',['vote']],['work',['inc']],['future',['commit']],['bad',['chg']]];
+
+Course.lesson({
+  id:'0016', title:'When the game goes wrong: what to do when you’re stuck', minutes:20, icon:'alert',
+  goals:['Name the shape of a stuck situation and reach for the tool that unblocks it, with one concrete next step',
+         'Spot when a tool has hit its limit, and change the game (who plays, the order, the payoffs, what people know, the larger game) instead of playing it harder',
+         'Know when not to play: escalating bids, wars of attrition, and small fights that cost the larger game'],
+  parts:['Name the stuck','Unstick it','Change the game','Use it this week'],
+  read:'This lesson applies the whole book. To go deeper, reread its limits: tit for tat’s flaw and how to achieve cooperation (chapter 3), large threats and brinkmanship (chapter 6), undermining credibility (chapter 7), the war of attrition and the spectrum case (chapter 10), and “What Price a Dollar?” in chapter 14.',
+  glossary:{
+   'war-of-attrition':'War of attrition: a contest of who gives in first, where both sides pay for every round they stay in. What’s already spent is gone either way; the book’s advice is to make a deal.',
+   'dollar-auction':'Dollar auction: a game where a dollar is auctioned but the top two bidders both pay, so each raise looks sensible and the bids climb past the prize.',
+   'larger-game':'Larger game: the bigger, longer relationship that the game in front of you is part of. Winning a small game can lose the larger one.'
+  },
+  cheatsheet:[
+   '<b>Stuck has a shape.</b> Name it first: hurting each other, not believed, exploited or read, deadlock, everyone waits, can’t read them, going in circles, poor work, future self wins, every move bad. (How this course applies the book.)',
+   '<b>One shape, one tool, one next step.</b> The wrong tool keeps the loop running: mixing makes a dilemma’s echo worse, and a bigger threat isn’t a more believable one.',
+   '<b>The echo:</b> tit for tat has no way to say “enough is enough”. Someone has to make the first forgiving move.',
+   '<b>Deadlock takes two moves:</b> first make what waiting costs you both visible (the real pie), then use a fair focal point: take turns, or toss one shared coin.',
+   '<b>When every move ends badly, change the game:</b> who plays, the order, the payoffs, what each side knows, the larger game, or whether to play at all.',
+   '<b>Know when not to play:</b> Charlie Brown should refuse Lucy’s football; in a dollar auction, don’t take the first step; in a war of attrition, what’s spent is gone, so make a deal or stop.',
+   '<b>Cooperation is often the way out:</b> forgive first, leave a face-saving way out, and let small wins go when the larger game (a landlord, a sibling, a partner) matters more.',
+   '<b>Stuck check (about a minute, course application):</b> name the shape → is a tool hitting its limit? → one token, one next step → still every move bad, or escalating? Change the game or walk away. Run it when the same argument comes round again.'
+  ],
+  steps:[
+/* ---------- PART 1: NAME THE STUCK ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tali has asked Linus four times to end the late-night race. Same words, same result. What helps most now?</h1>'+
+   '<svg class="sg-svg" viewBox="0 0 330 140" role="img" aria-label="A loop: Tali asks Linus to leave at 7; Linus agrees, then stays till 8; Tali asks again. Week 1, 2, 3, 4.">'+
+   '<rect x="6" y="30" width="138" height="56" rx="12" fill="var(--h1-bg)" stroke="var(--h1)" stroke-width="2"/>'+sgT(75,52,'Tali: “Let’s both',{fs:12})+sgT(75,68,'leave at 7.”',{fs:12})+
+   '<rect x="186" y="30" width="138" height="56" rx="12" fill="var(--h4-bg)" stroke="var(--h4)" stroke-width="2"/>'+sgT(255,52,'Linus agrees,',{fs:12})+sgT(255,68,'then stays till 8.',{fs:12})+
+   sgArr(110,28,165,-6,222,28,'var(--no-strong)')+sgArr(222,88,165,124,110,88,'var(--no-strong)')+sgT(165,62,'×4',{fs:13,c:'var(--no)'})+sgT(165,136,'week 1, 2, 3, 4…',{w:600,c:'var(--muted)'})+'</svg>');
+  L.mc(L.card,['Ask a fifth time, more firmly','Work out what kind of stuck this is, and what keeps it going','Stay late too, until the promotion is decided'],1,
+   'Right. Repeating a move that keeps failing just runs the loop again. Being stuck has a shape, and the shape tells you which tool unblocks it. That’s this lesson.',
+   'Doing the same thing harder runs the same loop. First name the kind of stuck (here, each side keeps answering the other), because the kind tells you which tool unblocks it.');}},
+
+{part:0,src:'Course application · built on Chapters 2 to 13',
+ solve:async L=>{['coop','wait','read','bad'].forEach(k=>L.$('.sg-mini[data-k="'+k+'"]').click());},
+ run(L){
+  L.h(L.kick('learn','Stuck has a shape')+'<h1 class="q">Ten arcade screens, ten ways to be stuck. Each one loops. Tap a few.</h1>'+sgApp());
+  const seen=new Set();let fin=false;
+  const A=sgArcade(L,L.card,{gallery:true,tokens:false,k:'coop',say0:'Notice: every screen is a loop. The same move gives the same bad result, again and again.',
+   onSelect(k,a){const K=SGK[k];a.say('<b class="k">'+K.t.toUpperCase()+'</b>'+K.sign+' <i>What keeps it looping:</i> '+K.why+'.');seen.add(k);
+    if(!fin&&seen.size>=4){fin=true;L.sheet('info','Name the loop before you fix it','Each kind of stuck has one first tool that breaks it, from the lessons you’ve played. Next, you’ll drop tool tokens into the screens and watch what happens.');L.done();}}});
+  seen.add('coop');}},
+
+{part:0,src:'Course application · built on Chapters 2 to 13',
+ solve:async L=>{L.$('.sg-mini[data-k="coop"]').click();L.$('.sg-tok[data-t="dil"]').click();L.$('.sg-mini[data-k="wait"]').click();L.$('.sg-tok[data-t="coord"]').click();},
+ run(L){
+  L.h(L.kick('learn','Explore · drop a token')+'<h1 class="q">Pick any screen, then drop a tool token in. Break two loops.</h1>'+sgApp()+
+   '<p class="small" style="margin:0 0 4px">Notice what the wrong token does, and what the right one prints.</p>');
+  let fin=false;
+  sgArcade(L,L.card,{gallery:true,k:'coop',say0:'The wrong tool leaves the screen looping and says why. The right one breaks the loop and prints your next step.',
+   onDrop(k,t,res,a){const n=Object.keys(a.st.fixed).length;
+    if(!fin&&n>=2){fin=true;L.sheet('info','Right tool, loop broken','A tool works only on the shape it was made for. Mixing your moves won’t end an echo of revenge; a bigger threat won’t make you believed. Match the shape first.');L.done();}}});}},
+
+{part:0,src:'Course application · built on Chapters 6 and 7',
+ solve:async L=>{for(let n=0;n<3;n++)L.$('#exn').click();},
+ run(L){
+  L.h(L.kick('ex','Tali’s first stuck moment')+'<h1 class="q">The builder doesn’t believe Tali’s deadline. Step through: name it, pick the tool, take one step.</h1>'+sgApp()+
+   '<div class="sg-mom"><b class="k">TALI’S MOMENT</b>Tali told Hedda’s builder: “Finish by the 15th or I’ll get someone else.” The builder knows Tali won’t sack them halfway through Hedda’s bathroom. Work keeps drifting.</div><div id="exh"></div>'+
+   '<div class="sg-ctl"><button class="btn pri" id="exn">'+L.ic('play')+'1 · Name the shape</button></div>');
+  const A=sgArcade(L,L.$('#exh'),{k:'believe',tokens:false,autoTicket:false,sc:{believe:{lab:['Tali','builder'],say:'or I’ll get someone else!',bw:160,sayFix:'next payment waits',bwFix:130}},
+   say0:'Tali’s threat pops every time the builder walks past the line.'});
+  let s=0;const lab=['2 · Reach for the tool','3 · One next step'];
+  L.$('#exn').onclick=()=>{s++;
+   if(s===1){A.say('<b class="k">1 · NAME THE SHAPE</b>Tali has said it three times; nothing changes. That’s “my threat isn’t believed”: replacing the builder midway would hurt Tali (and Hedda) more than the builder. The builder has done the look-ahead.');L.$('#exn').innerHTML=L.ic('play')+lab[0];}
+   else if(s===2){A.drop('cred');A.say('<b class="k">2 · MAKE IT CREDIBLE</b>Not a bigger threat: a smaller one Tali would really carry out. Hold back the next stage payment until the tiling is done, and put it in writing.');L.$('#exn').innerHTML=L.ic('play')+lab[1];}
+   else{A.ticket('Tonight, email the builder the stage plan: the next payment is released when the tiling is finished; if it slips past the 15th, that payment waits.','Make it credible');L.$('#exn').hidden=true;
+    L.sheet('info','Name it, one tool, one step','The shape (not believed) picked the tool (make it credible), and the tool gave a small, concrete next step. Small threats Tali would really carry out beat big ones nobody believes (chapter 6).');L.done();}};}},
+
+{part:0,src:'Course application · built on Chapter 3',pts:1,
+ solve:async L=>{L.$('.sg-mini[data-k="coop"]').click();L.$('.sg-tok[data-t="dil"]').click();},
+ run(L){
+  L.h(L.kick('try','Your turn')+'<h1 class="q">Which screen is Tali in? Tap it, then drop the token that breaks it.</h1>'+sgApp()+
+   '<div class="sg-mom"><b class="k">TALI’S MOMENT</b>Tali and Linus agreed “out by 7”. Tali stayed till 8 once for a client crisis. Since then Linus stays later, Tali answers, and it bounces back and forth.</div><div id="trh"></div>');
+  let picked=false,ok1=false;
+  const A=sgArcade(L,L.$('#trh'),{gallery:true,k:null,trayHidden:true,empty:'<p class="sg-ro">Tap the screen that matches.</p>',sc:{coop:{lab:['Tali','Linus']}},
+   ticket:{coop:'Leave at 7 tomorrow even though Linus stayed till 9: the first forgiving move. Then agree one clear rule (out by 7; a client crisis gets flagged in the team chat).'},
+   onPick(k,a){if(picked)return k==='coop';picked=true;ok1=k==='coop';L.award(ok1);
+    a.select('coop',true);a.showTray();
+    a.say(ok1?'<b class="k">RIGHT SCREEN</b>Each answers the other’s last move: the echo. Now drop the tool token.':'<b class="k">IT’S “THEY WON’T COOPERATE”</b>Nobody is bluffing or holding out; each late night answers the last one. That’s an echo of tit for tat. Now drop the tool token.');return false;},
+   onDrop(k,t,res){if(res==='ok'){L.sheet(ok1?'ok':'no',ok1?'Echo spotted':'Now you’ve seen the echo','A slip (one late night for a crisis) started a chain of answers. Tit for tat has no way to say “enough is enough”, so someone has to make the first forgiving move.');L.done();}}});}},
+
+{part:0,src:'Course application · built on Chapters 3 and 5',pts:1,
+ solve:async L=>{L.$('#pr1').children[1].click();await L.sleep(650);L.$('.sg-tok[data-t="dil"]').click();},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Since Tali missed one turn, Tali and Juno skip the dishes in turn. Will “Mix your moves” break this echo?</h1>'+sgApp()+
+   '<div class="sg-ctl" id="pr1"></div><div id="prh"></div>');
+  const card=L.card;let A=null;
+  [['Yes: random turns break the pattern',0],['No: it keeps looping',1]].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o[0];
+   b.onclick=()=>{if(A)return;const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');[...L.$('#pr1').children].forEach(x=>x.disabled=true);
+    A=sgArcade(L,L.$('#prh'),{k:'coop',trayHidden:true,sc:{coop:{lab:['Tali','Juno'],cap:'skip, skip back, skip back…'}},
+     ticket:{coop:'Do the dishes tonight, out of turn, without comment. Then agree a list on the fridge both can see, and let a single slip pass.'},
+     say0:(ok?'<b class="k">YOUR PREDICTION: NO</b>':'<b class="k">YOUR PREDICTION: YES</b>')+'Watch the mix token go in…',
+     onDrop(k,t,res){if(res==='ok'){L.sheet(ok?'ok':'no',ok?'Right: wrong tool, same loop':'Mixing fed the echo','Mixing is for pure conflict, where any pattern gets exploited. Here Tali and Juno want the same thing (clean dishes, a calm flat). Random skips are just more slips to answer. The echo ends when one of them forgives.');L.done();}}});
+    setTimeout(()=>{if(!card.isConnected)return;A.drop('mix');A.showTray();
+     A.say(A.st.first.coop===false?SG_NEAR['coop|mix']+' <b>Now drop the token that does break it.</b>':'');},450);};
+   L.$('#pr1').appendChild(b);});}},
+
+/* ---------- PART 2: UNSTICK IT ---------- */
+{part:1,src:'Course application · built on Chapters 1, 2 and 5',
+ solve:async L=>{const T={pat:'mix',bet:'sig',same:'look'};for(const v of ['pat','bet','same']){L.$('#ex3 [data-v="'+v+'"]').click();L.$('.sg-tok[data-t="'+T[v]+'"]').click();}},
+ run(L){
+  L.h(L.kick('learn','One shape, three causes')+'<h1 class="q">“They’re always one step ahead” has three causes, each with its own tool. Fix all three.</h1>'+sgApp()+
+   '<div class="sg-ctl" id="ex3"></div><div class="sg-mom" id="ex3m"></div><div id="ex3h"></div>');
+  const C={pat:['A pattern','The rival keeper saves Tali’s penalties. After a miss, Tali always goes left.','mix','they’ve read your pattern',
+    'Let a watch’s second hand pick the side, weighted toward the side the keeper covers worse. Never just alternate.'],
+   bet:['They know more','A man at the pitch offers Tali an even bet on a match result he says he “hasn’t checked”.','sig','“Fancy an even bet?”',
+    'Ask what the offer tells you: why would they want this bet? Don’t take it (the book’s sucker bet), or insist on picking your side after they name it.'],
+   same:['The same trick','Arlo asks for “one last” small loan. The last two came back late.','look','“Just one more, I promise”',
+    'Arlo’s next move is no mystery: Lucy will pull the football away again. Decline this round kindly, or lend only in written stages.']};
+  const done=new Set();let fin=false,v='pat',A=null;
+  function load(nv){v=nv;[...L.$('#ex3').children].forEach(b=>b.classList.toggle('sel',b.dataset.v===v));L.$('#ex3m').innerHTML='<b class="k">'+C[v][0].toUpperCase()+'</b>'+C[v][1];
+   L.$('#ex3h').innerHTML='';A=sgArcade(L,L.$('#ex3h'),{k:'exploit',right:{exploit:[C[v][2]]},sc:{exploit:{v,cap:C[v][3]}},ticket:{exploit:C[v][4]},
+    okSay:{exploit:{pat:'A pattern can be read; a coin can’t. Mixing is for exactly this: pure conflict where being predictable hurts.',bet:'Every action tells you something about what the other side knows. If they want the bet, ask why before you take it.',same:'A future move by someone you know isn’t uncertain. Charlie Brown should refuse to play Lucy’s game; so can Tali.'}[v]},
+    whySay:{['exploit|'+(v==='pat'?'sig':'mix')]:'<b class="k">STILL LOOPING</b>Right family, wrong cause. Look at what’s really going on in this moment.',['exploit|'+(v==='same'?'sig':'look')]:'<b class="k">STILL LOOPING</b>Right family, wrong cause. Look at what’s really going on in this moment.'},
+    onDrop(k,t,res){if(res==='ok'){done.add(v);if(!fin&&done.size===3){fin=true;L.sheet('info','Same symptom, three different fixes','A pattern: mix (chapter 5). Hidden information: read the signal in their offer, don’t take the bet (chapter 1, tale 9). A trick you’ve seen before: look ahead and stop playing (chapter 2, Charlie Brown).');L.done();}}}});
+   if(done.has(v))A.drop(C[v][2]);}
+  Object.keys(C).forEach(k=>{const b=document.createElement('button');b.className='chip';b.dataset.v=k;b.textContent=C[k][0];b.onclick=()=>load(k);L.$('#ex3').appendChild(b);});
+  load('pat');}},
+
+{part:1,src:'Course application · built on Chapters 4, 10 and 11',
+ solve:async L=>{L.$('.sg-tok[data-t="batna"]').click();L.$('.sg-tok[data-t="shoes"]').click();},
+ run(L){
+  L.h(L.kick('ex','Deadlock takes two tokens')+'<h1 class="q">Tali and Juno are stuck on the holiday. Drop two tokens, in the right order.</h1>'+sgApp()+
+   '<div class="sg-mom"><b class="k">TALI’S MOMENT</b>Juno wants the coast, Tali a city break. Three weeks of “you choose”, “no, you choose”. The cheap fares are going.</div><div id="ddh"></div>');
+  sgArcade(L,L.$('#ddh'),{k:'dead',sc:{dead:{lab:['Tali','Juno'],sub:'fares rise every week they wait'}},
+   ticket:{dead:'Waiting costs both (fares rise every week), so a deal beats the standoff. Coast this summer, a city break next spring, on the calendar tonight. Or toss one coin together.'},
+   say0:'Both would rather go somewhere together than nowhere. Each hopes the other gives in first.',
+   onDrop(k,t,res){if(res==='ok'){L.sheet('info','First see the cost, then split it fairly','This is the book’s chicken and battle-of-the-sexes shape (chapter 4): two good outcomes, each prefers a different one. The book’s fair ways out: alternate if you’ll play again, or toss a coin. And in a test of who lasts longest, both bleed: make a deal (chapter 10).');L.done();}}});}},
+
+{part:1,src:'Course application · built on Chapters 1, 2, 3, 5, 6, 7 and 11',
+ solve:async L=>{['wrong','echo','big','two'].forEach(k=>L.$('#edg [data-p="'+k+'"]').click());},
+ run(L){
+  L.h(L.kick('ex','Edge cases and limits')+'<h1 class="q">Where unsticking goes wrong. Try at least four.</h1>'+sgApp()+'<div class="sg-ctl" id="edg"></div><div id="edh"></div><div class="sg-say" id="eds" aria-live="polite">Pick a case.</div>');
+  const cell=(x,y,v,o)=>{o=o||{};return '<rect x="'+x+'" y="'+y+'" width="22" height="18" rx="4" fill="'+(o.c||(v?'var(--ok-strong)':'var(--no-strong)'))+'"'+(o.hi?' stroke="var(--pri)" stroke-width="3"':'')+'/>'+sgT(x+11,y+13,o.t||(v?'✓':'×'),{c:'var(--card)'});};
+  const P={
+   wrong:['Wrong tool','dead','loop',(()=>{const T='CTCCTCTT',J='TTCTTCCC';let s=sgT(4,14,'TWO COINS, TOSSED APART',{a:'start',c:'var(--muted)'})+sgT(4,32,'Tali',{a:'start'})+sgT(4,54,'Juno',{a:'start'});
+     for(let i=0;i<8;i++){const x=46+i*26;s+=cell(x,19,1,{c:T[i]==='C'?'var(--h2)':'var(--h3)',t:T[i]})+cell(x,41,1,{c:J[i]==='C'?'var(--h2)':'var(--h3)',t:J[i]})+(T[i]===J[i]?sgOk(x+11,72,6):sgNo(x+11,72,6));}
+     s+=sgT(4,98,'ONE SHARED COIN',{a:'start',c:'var(--muted)'});for(let i=0;i<8;i++){const x=46+i*26;s+=sgOk(x+11,114,6);}
+     return s+sgT(256,98,'C = coast, T = town',{a:'end',w:600,c:'var(--muted)'});})(),
+    '<b class="k">WRONG TOOL: MIXING IN A COORDINATION GAME</b>If Tali and Juno each toss their own coin, they end up apart about half the time (in the book’s hunting version, 25 times in 49). Mixing is for pure conflict. Here, one shared coin settles it.'],
+   echo:['The echo has started','coop','loop',(()=>{const Y=[1,0,1,1,1,1,1,1],T=[0,1,0,1,1,1,1,1];let s=sgT(4,14,'EIGHT ROUNDS OF TIT FOR TAT',{a:'start',c:'var(--muted)'})+sgT(4,38,'You',{a:'start'})+sgT(4,66,'Them',{a:'start'});
+     for(let i=0;i<8;i++){const x=46+i*26;s+=cell(x,24,Y[i],{hi:i===3})+cell(x,52,T[i]);}
+     return s+sgArr(123,100,112,88,100,78,'var(--pri)')+sgT(130,112,'the first forgiving move',{a:'start',c:'var(--pri-deep)'});})(),
+    '<b class="k">THE ECHO HAS STARTED</b>Their slip in round 1, your hit back in round 2, theirs in 3… Tit for tat lacks a way to say “enough is enough” (chapter 3). In round 4 you let one go, and from then on both cooperate.'],
+   big:['Threat too big','believe','loop',sgBub(8,10,244,'“Finish by the 15th or I’ll sue and never pay a penny!”',{fs:11})+sgNo(238,10,8)+sgT(130,62,'too big to believe or to use',{c:'var(--no)'})+
+     sgArr(130,68,138,76,130,84,'var(--muted)')+sgBub(40,86,180,'“…or the next payment waits.”',{fill:'var(--ok-bg)',st:'var(--ok-strong)',tc:'var(--ok)',h:28})+sgOk(222,86,8),
+    '<b class="k">THREAT TOO BIG</b>A huge threat is neither believable nor usable, and if it fails you must carry it out or back down (chapter 6). Shrink it until it’s the smallest size that works, one you’d really carry out.'],
+   two:['Two stucks at once','dead','loop','<g transform="translate(6 18) scale(1.9)">'+sgThumb('dead').replace('<svg viewBox="0 0 60 44" aria-hidden="true">','<g>').replace('</svg>','</g>')+'</g><g transform="translate(140 18) scale(1.9)">'+sgThumb('wait').replace('<svg viewBox="0 0 60 44" aria-hidden="true">','<g>').replace('</svg>','</g>')+'</g>'+
+     '<circle cx="18" cy="14" r="10" fill="var(--pri)"/>'+sgT(18,18,'1',{c:'var(--pri-ink)'})+'<circle cx="152" cy="14" r="10" fill="var(--pri)"/>'+sgT(152,18,'2',{c:'var(--pri-ink)'})+sgT(63,116,'the holiday',{w:600,c:'var(--muted)'})+sgT(197,116,'the bike store',{w:600,c:'var(--muted)'}),
+    '<b class="k">TWO STUCKS AT ONCE</b>The holiday standoff and the bike-store mess have different shapes and different tools. Take them one at a time. Linking them (“I’ll clear the store if we go to the city”) is fair only as a trade both want; it can also turn into a threat (chapter 11).'],
+   brink:['Brinkmanship temptation','dead','loop',(()=>{let s=sgT(4,14,'EACH STEP TOWARD “WE LEAVE TOMORROW”',{a:'start',c:'var(--muted)'});[[60,'1 in 10'],[38,'1 in 5'],[18,'1 in 3']].forEach((r,i)=>{const y=26+i*32,g=r[0];
+     s+='<rect x="'+(96-g/2-50)+'" y="'+y+'" width="50" height="16" rx="5" fill="'+SGC.you+'"/><rect x="'+(96+g/2)+'" y="'+y+'" width="50" height="16" rx="5" fill="'+SGC.them+'"/>'+sgT(176,y+12,'talks break: '+r[1],{a:'start',c:'var(--no)'});});
+     return s+sgT(4,124,'illustrative numbers',{a:'start',w:600,c:'var(--muted)'});})(),
+    '<b class="k">BRINKMANSHIP TEMPTATION</b>Tali could push the rent talk toward a breakdown nobody fully controls. But Tali hates moving, so Tali would blink first; the book’s advice is then not to start. The risk of falling is real. Keep it for low stakes.'],
+   low:['Lowball, take it or leave it','dead','loop',sgT(4,14,'TAKE IT OR LEAVE IT · £100 TO SPLIT',{a:'start',c:'var(--muted)'})+
+     sgT(4,40,'90:10',{a:'start'})+'<rect x="44" y="27" width="162" height="18" rx="4" fill="'+SGC.you+'"/><rect x="206" y="27" width="18" height="18" rx="4" fill="'+SGC.them+'"/>'+sgT(125,40,'you keep £90',{c:'var(--card)'})+sgNo(242,36,8)+
+     sgT(44,62,'often refused: both get £0',{a:'start',c:'var(--no)'})+
+     sgT(4,90,'50:50',{a:'start'})+'<rect x="44" y="77" width="90" height="18" rx="4" fill="'+SGC.you+'"/><rect x="134" y="77" width="90" height="18" rx="4" fill="'+SGC.them+'"/>'+sgT(89,90,'you £50',{c:'var(--card)'})+sgT(179,90,'them £50',{c:'var(--card)'})+sgOk(242,86,8)+
+     sgT(44,112,'usually accepted',{a:'start',c:'var(--ok)'})+sgT(256,126,'the book’s experiments',{a:'end',w:600,c:'var(--muted)'}),
+    '<b class="k">LOWBALL, TAKE IT OR LEAVE IT</b>Look-ahead logic says they should take any share, since refusing leaves them nothing. In the book’s ultimatum experiments, offers under a fifth were refused about half the time (chapter 2): people pay to punish unfairness. A lowball or a hard “take it or I walk” can sink a deal you both wanted.'],
+   undo:['A deal you’d both tear up','future','loop','<rect x="8" y="8" width="116" height="74" rx="8" fill="var(--soft)" stroke="var(--no-strong)" stroke-width="2"/>'+sgT(66,26,'THE PACT',{c:'var(--muted)'})+sgT(66,46,'dip into the fund:',{w:600})+sgT(66,62,'£50 to a workmate',{w:600})+
+     '<path d="M8 74l9 -6 9 6 9 -6 9 6 9 -6 9 6 9 -6 9 6 9 -6 9 6 9 -6 9 6" fill="none" stroke="var(--no-strong)" stroke-width="2.4" stroke-linejoin="round"/>'+sgNo(118,12,9)+
+     sgT(66,102,'“Lunch on me if you',{fs:11,c:'var(--no)'})+sgT(66,116,'let me off?” “Deal.”',{fs:11,c:'var(--no)'})+
+     '<rect x="140" y="8" width="112" height="74" rx="8" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/>'+sgT(196,26,'BETTER HOLDER',{c:'var(--ok)'})+sgT(196,46,'Juno holds the £50',{w:600})+sgT(196,62,'and wants the',{w:600})+sgT(196,76,'holiday too',{w:600})+sgOk(246,12,9)+
+     sgT(196,102,'won’t trade it',{fs:11,c:'var(--ok)'})+sgT(196,116,'for a lunch',{fs:11,c:'var(--ok)'}),
+    '<b class="k">A DEAL YOU’D BOTH TEAR UP</b>Tali’s savings pact binds nothing: on the day, Tali offers lunch to be let off, and the workmate, who gains nothing if the pact holds, agrees. A contract both sides would rather renegotiate is weak (chapter 7’s dieter and his bet). Give the stake to someone who cares about the result.'],
+   let:['The larger game says let it go','bad','loop','<rect x="8" y="8" width="244" height="114" rx="12" fill="none" stroke="var(--h2)" stroke-width="2" stroke-dasharray="6 4"/>'+sgT(18,24,'THE LARGER GAME: TALI AND THE LANDLORD',{a:'start',c:'var(--h2)'})+
+     '<rect x="20" y="40" width="96" height="58" rx="8" fill="var(--no-bg)" stroke="var(--no-strong)" stroke-width="2"/>'+sgT(68,64,'argue a £15',{c:'var(--no)'})+sgT(68,80,'cleaning charge',{c:'var(--no)'})+
+     sgArr(120,69,130,69,140,69,'var(--muted)')+'<rect x="144" y="40" width="96" height="58" rx="8" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/>'+sgT(192,64,'rent talk',{c:'var(--ok)'})+sgT(192,80,'next week',{c:'var(--ok)'})+sgT(130,114,'win the £15, lose the goodwill',{w:600,c:'var(--muted)'}),
+    '<b class="k">THE LARGER GAME SAYS LET IT GO</b>Tali is tempted to fight a £15 charge days before asking for a smaller rent rise. Like the authors’ Jerusalem taxi ride (chapter 1), a small win can cost far more in time and pride. Sometimes the fair concession is the strategic one.']};
+  const seen=new Set();let fin=false;
+  Object.keys(P).forEach(k=>{const b=document.createElement('button');b.className='chip';b.dataset.p=k;b.textContent=P[k][0];
+   b.onclick=()=>{[...L.$('#edg').children].forEach(x=>x.classList.toggle('sel',x===b));const p=P[k];
+    L.$('#edh').innerHTML='<div class="sg-anim">'+sgCab(p[1],p[2],{scene:p[3],title:p[0],aria:p[0]})+'</div>';L.$('#eds').innerHTML=p[4];seen.add(k);
+    if(!fin&&seen.size>=4){fin=true;L.sheet('info','Tools have limits','The right tool can still be used wrongly: too big, too unfair, too easy to undo, too late, too risky, or on the wrong game. And sometimes the strategic move is to stop, forgive or let a small game go.');L.done();}};
+   L.$('#edg').appendChild(b);});
+  L.$('#edg').children[0].click();}},
+
+{part:1,src:'Course application · built on Chapters 6, 8, 9, 12 and 13',pts:5,
+ solve:async L=>{const R={wait:'coord',read:'sig',circ:'vote',work:'inc',future:'commit'};
+   for(let n=0;n<5;n++){const k=L.$('#chm').dataset.k;L.$('.sg-mini[data-k="'+k+'"]').click();L.$('.sg-tok[data-t="'+R[k]+'"]').click();if(n<4)L.$('#chn').click();}},
+ run(L){
+  L.h(L.kick('pr','Challenge · Tali’s stuck week')+'<h1 class="q">Unstick five moments with the fewest tokens. A point for each one you match and fix first time.</h1>'+sgApp()+
+   '<div class="sg-mom" id="chm"></div><div id="chh"></div><p class="sg-ro" id="chr"></p><div class="sg-ctl"><button class="btn pri" id="chn" hidden>'+L.ic('arrow')+'Next moment</button></div>');
+  const M=[
+   ['wait','Tali’s building: everyone says the bike store should be cleared, and nobody wants to be the one who does it for everyone.','Post one clear time (Saturday at 10) in the building chat, ask two neighbours to start with Tali and Juno, and let the rest follow.',{goal:'clear the store',focal:'Sat 10:00'}],
+   ['read','Arlo says the coffee cart is “definitely happening” and asks for the first £1,000. Last month it was a food truck.','Ask for an action, not words: Arlo puts in £500 of their own savings and books the pitch licence before Tali lends anything.',{}],
+   ['circ','Plover’s offsite: the team has voted three times. City beat coast, coast beat countryside, countryside beat city.','Ask everyone to rank all three, check whether one beats each other head to head, and agree the order of questions before any vote.',{opts:['City','Coast','Country'],capFix:'rank all three'}],
+   ['work','The freelance developer on the council site is paid by the day. The work keeps slipping, and Tali can’t watch it.','Move to a base plus a payment for each finished, tested page, and check one page at random each week.',{capFix:'paid per finished page'}],
+   ['future','Every payday Tali means to save for the holiday. By the 20th the money has gone.','Set an automatic transfer to the holiday fund on payday, before calm Tali can change their mind.',{lab:['Tali, payday','Tali, the 20th'],capFix:'transfer set on payday'}]];
+  let i=0,pts=0,tok=0,picked=false,ok1=false,A=null;
+  function load(){const m=M[i];picked=false;ok1=false;L.$('#chn').hidden=true;
+   L.$('#chm').dataset.k=m[0];L.$('#chm').innerHTML='<b class="k">MOMENT '+(i+1)+' OF 5</b>'+m[1];L.$('#chh').innerHTML='';
+   A=sgArcade(L,L.$('#chh'),{gallery:true,k:null,trayHidden:true,empty:'<p class="sg-ro">Tap the screen that matches.</p>',sc:{[m[0]]:m[3]},ticket:{[m[0]]:m[2]},
+    onPick(k,a){if(picked)return false;picked=true;ok1=k===m[0];a.select(m[0],true);a.showTray();
+     a.say(ok1?'<b class="k">RIGHT SCREEN</b>Now the token.':'<b class="k">IT’S “'+SGK[m[0]].s.toUpperCase()+'”</b>'+SGK[m[0]].sign+' Now the token.');return false;},
+    onDrop(k,t,res,a){tok++;ro();if(res==='ok'){const ok=ok1&&a.st.first[k];L.award(ok);if(ok)pts++;ro();
+      if(i<4)L.$('#chn').hidden=false;else{L.sheet(pts===5?'ok':pts>=3?'info':'no',pts+' of 5 first time','Tokens used: '+tok+' (the fewest possible is 5). Each shape has one first tool: everyone waits → coordinate; can’t read them → signals; going in circles → vote; poor work → incentives; future self wins → commit.');L.done();}}}});}
+  const ro=()=>{L.$('#chr').innerHTML='Points: <b>'+pts+'</b> · tokens used: <b>'+tok+'</b> (fewest possible: 5)';};
+  L.$('#chn').onclick=()=>{i++;load();};load();ro();}},
+
+/* ---------- PART 3: CHANGE THE GAME ---------- */
+{part:2,src:'Course application · built on Chapter 6',
+ solve:async L=>{L.$('.sg-tok[data-t="chg"]').click();},
+ run(L){
+  L.h(L.kick('learn','Every move ends badly')+'<h1 class="q">The landlord wants 10% more. Every path in this game loses. Find the token that helps.</h1>'+sgApp()+
+   '<div class="sg-mom"><b class="k">TALI’S MOMENT</b>The landlord is counting on Tali hating to move. Paying hurts, haggling fails (the landlord knows Tali won’t leave), and moving costs more than the rise.</div><div id="cgh"></div><div id="cgs"></div>');
+  sgArcade(L,L.$('#cgh'),{k:'bad',sc:{bad:{paths:['pay +10%','haggle','move'],capFix:'new rules'}},autoTicket:false,
+   say0:'Try a tool inside the game first, if you like. Watch what happens.',
+   onDrop(k,t,res,a){if(res!=='ok')return;
+    L.$('#cgs').innerHTML='<div class="sg-lab">The book’s ways to change a game</div><ol class="sg-sum">'+[['Who plays','bring in a third party, a team or an agent'],['Order of moves','move first, or wait and let them commit'],['Payoffs','add a reward, a penalty or a contract'],['What each side knows','signal, screen, or cut off communication'],['Linked games','look for the larger game'],['Play or walk away','sometimes the best move is not to play']].map((r,j)=>'<li><span class="n">'+(j+1)+'</span><span><small>'+r[0]+'</small>'+r[1]+'</span></li>').join('')+'</ol>';
+    L.sheet('info','Change the game, not your play','Strategic moves change the game before it’s played (chapter 6). When every option ends badly, look at the rules themselves: six lines you can edit. Next, you’ll edit them.');L.done();}});}},
+
+{part:2,src:'Chapter 10 · The War of Attrition',
+ solve:async L=>{L.$('.sg-lh[data-l="pay"]').click();L.$('.sg-opts .chip[data-o="split"]').click();L.$('.sg-lh[data-l="who"]').click();L.$('.sg-opts .chip[data-o="paid"]').click();L.$('.sg-lh[data-l="link"]').click();L.$('.sg-opts .chip[data-o="larger"]').click();},
+ run(L){
+  L.h(L.kick('ex','Explore · rewrite a war of attrition')+'<h1 class="q">Plover and Kittiwake keep pouring free work into one client. Edit the rules until the race stops.</h1>'+sgApp()+
+   '<p class="small" style="margin:0 0 6px">The book’s case: two satellite-TV rivals lost £1.5 billion between them in a year trying to outlast each other, then merged. A '+L.g('war-of-attrition','war of attrition')+' is a dangerous game.</p>');
+  let fin=false;
+  sgRule(L,L.card,{p:'attr',say0:'Tap a line. Try at least two edits (and see which one isn’t allowed).',
+   onChange(E,a){if(!fin&&a.tries>=2&&a.R&&a.R.note.indexOf('stopped')>0){fin=true;L.sheet('info','Stop the bleeding, legally','What’s spent is gone either way; only the extra cost of hanging on counts. The book’s advice: make a deal with the other player. In its case, the two TV rivals merged, and the government allowed it. <b>How this course applies it:</b> Plover can’t quietly share out clients with Kittiwake (that’s collusion), so its way out is a fair, open rule set by the client, or its time spent elsewhere.');L.done();}}});}},
+
+{part:2,src:'Chapter 14 · What Price a Dollar?',
+ solve:async L=>{for(let n=0;n<11;n++)L.$('#dar').click();L.$('.sg-lh[data-l="play"]').click();L.$('.sg-opts .chip[data-o="out"]').click();},
+ run(L){
+  L.h(L.kick('ex','The book’s dollar auction')+'<h1 class="q">A £10 note is auctioned; the top two bidders both pay. Raise, and watch where each sensible step leads.</h1>'+sgApp()+
+   '<p class="small" style="margin:0 0 6px">The book’s '+L.g('dollar-auction','dollar auction')+' rises 5 cents at a time; here it’s £1 steps on £10 (illustrative numbers).</p>');
+  const c={t:1,m:2};let fin=false,R=null;
+  const mid='<div class="sg-ctl"><button class="btn pri" id="dar">'+L.ic('arrow')+'The one in second place raises £1</button></div><p class="sg-ro" id="dro" aria-live="polite"></p>';
+  R=sgRule(L,L.card,{p:'dollar',lock:true,lockSay:'<b class="k">PLAY IT OUT FIRST</b>Raise until the bids pass £10, then come back to the rules.',ctx:()=>c,mid,
+   say0:'Tali opened with £1; the teammate bid £2. Tap the button to raise for whoever is second.',
+   onChange(E,a){if(!fin&&E.play==='out'){fin=true;L.sheet('info','Don’t take the first step','Each raise only asks “pay £1 more, or lose what I’ve already bid?” so it always looks sensible. That is the slippery slope: the bidding has no natural limit but your wallet. Better not to start unless you know where it leads.');L.done();}}});
+  const ro=()=>{const lead=Math.max(c.t,c.m),sec=Math.min(c.t,c.m),who=c.t<c.m?'Tali':'The teammate';L.$('#dro').innerHTML=lead>10?'<b>Both are now paying more than £10 between them for a £10 note.</b> Stop and edit line 6.':who+' is second: stop and lose <b>£'+sec+'</b>, or raise to £'+(lead+1)+' and maybe win £10?';};
+  L.$('#dar').onclick=()=>{if(c.t<c.m)c.t=c.m+1;else c.m=c.t+1;R.draw();ro();if(Math.max(c.t,c.m)>10){R.unlock();L.$('#dar').disabled=true;R.say('<b class="k">PAST THE PRIZE</b>Now open line 6 of the rules.');}};
+  ro();}},
+
+{part:2,src:'Course application · built on Chapters 6, 8 and 11',pts:1,
+ solve:async L=>{L.$('.sg-lh[data-l="know"]').click();L.$('.sg-opts .chip[data-o="view"]').click();L.$('.sg-lh[data-l="pay"]').click();L.$('.sg-opts .chip[data-o="two"]').click();L.$('#rbc').click();},
+ run(L){
+  L.h(L.kick('pr','Challenge · rewrite the rent game')+'<h1 class="q">With at most two edits, get Tali’s rise to 3% or less while the landlord still does better than an empty flat.</h1>'+sgApp()+
+   '<p class="small" style="margin:0 0 6px">Rent £1,000 a month; every number here is illustrative. No brinkmanship, no walking away.</p>');
+  const R=sgRule(L,L.card,{p:'land',maxEd:2,say0:'Tap a line to edit it. Some edits help, some are traps.'});
+  const ctl=document.createElement('div');ctl.className='sg-ctl';ctl.innerHTML='<button class="btn pri" id="rbc">'+L.ic('check')+'Check my rules</button>';L.card.appendChild(ctl);
+  let done=false;
+  L.$('#rbc').onclick=()=>{if(done)return;const E=R.E,n=Object.keys(E).length,r=R.R.r;
+   const ok=n<=2&&!E.play&&r!=null&&r<=3;done=true;L.award(ok);L.$('#rbc').disabled=true;
+   L.sheet(ok?'ok':'no',ok?'Game changed, fairly':'Not quite',(ok?'':'Your rules give '+(E.play==='move'?'a move that costs both':E.play==='brink'?'a real risk of breakdown':'a '+r+'% rise')+'. ')+
+    'Two edits do it: real viewings change what the landlord knows (Tali’s walk-away is real), and a two-year tenancy changes the payoffs (no empty months). The rise falls to 2%, and the landlord still gains. Waiting until the last week is a trap: it kills Tali’s walk-away.');L.done();};}},
+
+/* ---------- PART 4: USE IT THIS WEEK ---------- */
+{part:3,src:'Course application · built on Chapters 1, 3, 4 and 7',
+ solve:async L=>{['forgive','turns','outlet','taxi'].forEach(k=>L.$('#cw [data-c="'+k+'"]').click());},
+ run(L){
+  L.h(L.kick('learn','Where cooperation wins')+'<h1 class="q">Often the way out of stuck is a fair or generous move. Look at four.</h1>'+sgApp()+'<div class="sg-ctl" id="cw"></div><div id="cwh"></div><div class="sg-say" id="cws" aria-live="polite">Pick one.</div>');
+  const taxi='<rect x="30" y="60" width="120" height="34" rx="9" fill="var(--h3)"/><path d="M52 60l12 -18h46l14 18z" fill="var(--h3)" opacity=".75"/><rect x="74" y="30" width="30" height="12" rx="3" fill="var(--h3-bg)" stroke="var(--h3)"/>'+sgT(89,40,'TAXI',{fs:11,c:'var(--h3)'})+
+   '<circle cx="56" cy="96" r="9" fill="var(--ink)"/><circle cx="124" cy="96" r="9" fill="var(--ink)"/><rect x="164" y="22" width="84" height="26" rx="6" fill="var(--soft2)"/>'+sgT(206,39,'asked 2,500')+'<rect x="164" y="54" width="84" height="26" rx="6" fill="var(--no-bg)"/>'+sgT(206,71,'offered 2,200',{c:'var(--no)'})+sgT(206,100,'+ half an hour',{c:'var(--no)'})+sgT(130,122,'300 shekels against time and pride',{w:600,c:'var(--muted)'});
+  const outlet=sgFig(46,100,SGC.you,'Tali')+sgFig(176,100,SGC.them,'Linus')+'<path d="M206 76A44 44 0 1 1 186 40" fill="none" stroke="var(--h3)" stroke-width="4" stroke-dasharray="2 7" stroke-linecap="round"/>'+sgArr(176,58,190,34,214,22,'var(--ok-strong)')+sgT(176,14,'a face-saving way out',{c:'var(--ok)'});
+  const C={forgive:['Forgive first','coop','fix',null,'<b class="k">FORGIVE FIRST</b>When mistakes happen, more forgiving strategies beat strict tit for tat (chapter 3). Tali leaves at 7 even after Linus’s late night: one kind move ends the echo.'],
+   turns:['Take turns','dead','fix',null,'<b class="k">TAKE TURNS, OR TOSS A COIN</b>When each prefers a different good outcome, the book’s fair answers are to alternate or toss a coin (chapter 4). In a war of attrition, its advice is to make a deal (chapter 10).'],
+   outlet:['Leave a way out','believe','fix',outlet,'<b class="k">LEAVE THEM A WAY OUT</b>'+L.quote('When you surround an enemy, leave an outlet free.','Sun Tzu, quoted in chapter 7')+'Linus says he “never covers anyone’s clients”. Tali offers a one-off swap Linus can say yes to without losing face.'],
+   taxi:['Let it go','bad','fix',taxi,'<b class="k">LET THE SMALL GAME GO</b>The authors haggled 300 shekels off a Jerusalem taxi fare and paid in time and the driver’s hurt pride (chapter 1). Their point: pride matters, and there is always a larger game.']};
+  const seen=new Set();let fin=false;
+  Object.keys(C).forEach(k=>{const b=document.createElement('button');b.className='chip';b.dataset.c=k;b.textContent=C[k][0];
+   b.onclick=()=>{[...L.$('#cw').children].forEach(x=>x.classList.toggle('sel',x===b));const c=C[k];
+    L.$('#cwh').innerHTML='<div class="sg-anim">'+sgCab(c[1],c[2],{scene:c[3]||undefined,title:c[0],aria:c[0],lab:k==='forgive'?['Tali','Linus']:['Tali','Juno'],capFix:k==='forgive'?'one kind move ends the echo':undefined})+'</div>';L.$('#cws').innerHTML=c[4];seen.add(k);
+    if(!fin&&seen.size===4){fin=true;L.sheet('info','Fair is often strategic','Strategy isn’t winning every small game. Forgiving, alternating, leaving a way out and letting go keep the larger game (a partner, a colleague, a sibling, a landlord) worth playing.');L.done();}};
+   L.$('#cw').appendChild(b);});
+  L.$('#cw').children[0].click();}},
+
+{part:3,src:'Course application · built on Chapters 1, 2, 10 and 14',pts:5,run(L){
+  L.h(sgApp()+'<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Same game or new game?',['Same game, better tool','Change the rules','Stop playing, or let it go'],[
+   [sgQP('coop','They won’t cooperate')+'Linus apologised for the late-night bounce. Tali can now agree one clear rule and forgive the slip.',0,'The game is fine; it needed the right tool (escape the dilemma: a clear rule, then forgiveness).'],
+   [sgQP('auc','A bidding war')+'At a quiz night, a £20 voucher is auctioned and the top two bids both pay.',2,'That’s the dollar auction. Every raise looks sensible and the slope has no bottom. Don’t take the first step.'],
+   [sgQP('bad','Every move bad')+'The family rota for helping Hedda: whatever Tali or Arlo proposes ends in a row. Hedda could set one simple rule both accept.',1,'Every move inside the game ends badly, so change who plays: a third party both trust sets the rule.'],
+   [sgQP('small','A small game inside a larger one')+'Days before the rent talk, Tali is about to dispute a £15 cleaning charge.',2,'The larger game (next week’s rent talk) matters far more than £15. Like the taxi fare, let it go.'],
+   [sgQP('circ','Going in circles')+'The offsite vote keeps cycling, and nobody has asked the team to rank the options yet.',0,'There’s a tool for this inside the game: ask for rankings and agree the order of questions.']]);}},
+
+{part:3,src:'Course application · built on Chapters 3, 6, 8 and 9',pts:6,run(L){
+  L.h(L.kick('pr','Which screen is it?')+'<h1 class="q">Sort each moment onto its screen.</h1>'+sgApp()+
+   '<div class="sg-gal" style="grid-template-columns:repeat(4,1fr);pointer-events:none">'+['coop','believe','wait','read'].map(k=>'<div class="sg-mini">'+sgThumb(k)+'<span>'+SGK[k].s+'</span></div>').join('')+'</div>');
+  L.buckets(L.card,['They won’t cooperate','Not believed','Everyone waits','Can’t read them'],[
+   ['A client has ignored Tali’s “final” feedback deadline three times.',1,'Three “finals” taught the client that the deadline isn’t final. Make it credible: a smaller, real consequence, in writing.'],
+   ['Everyone in the five-a-side chat agrees someone should book next season’s pitch. Nobody does.',2,'Each waits for someone else. Name a focal point: one person, one date.'],
+   ['A car seller swears the car “has never had a problem” but won’t allow an inspection.',3,'Words are free; refusing a cheap inspection is the signal. Notice what they didn’t do.'],
+   ['Since Tali skipped one cooking night, Tali and Juno have each “forgotten” in turn.',0,'The echo. One of them makes the first forgiving move.'],
+   ['Every month Greer says “I’ll think about the remote day”. Tali can’t tell if it’s a soft no.',3,'Ask for an action: a one-month trial with a review date tells you more than more words.'],
+   ['Tali said “no more loans if you’re late again”. Arlo was late, got another loan, and knows it.',1,'Arlo watched the threat fail once. Next time it needs a device: a written plan, small stages.']],
+   'Name the screen first; the tool follows from it.');}},
+
+{part:3,src:'Course application · built on Chapters 1, 2 and 7',pts:4,
+ solve:async L=>{for(let n=0;n<4;n++){L.$('#scq .chip[data-r="1"]').click();await L.sleep(10);}},
+ run(L){
+  L.h(L.kick('pr','The stuck check · about a minute')+'<h1 class="q">Run Tali’s stuck check, line by line. The ticket fills as you go.</h1>'+sgApp()+
+   '<div class="sg-mom"><b class="k">TALI’S MOMENT</b>Arlo asks for “one last” £200. The last two loans came back late.</div><div class="sg-rc" id="scr"></div><p class="sg-q" id="scqq"></p><div class="sg-ctl" id="scq"></div><div class="sg-say" id="scs" aria-live="polite">Answer the first line.</div>');
+  const Q=[['1 · Name the shape','Which screen is Tali in?',[['Exploited: the same trick again',1,'Like Lucy’s football: Tali keeps running up, and Arlo’s next move is no mystery.'],['Deadlock: neither gives way',0,'Nobody is holding out: Arlo asks and Tali gives. It’s the same play, again.'],['Not believed: my threat fails',0,'Tali hasn’t threatened anything. The pattern is Tali saying yes and the loan coming back late.']]],
+   ['2 · Is a tool hitting its limit?','What has Tali been relying on?',[['A written plan, in stages',0,'There’s been no written plan: each loan was a handshake. That’s why it keeps happening.'],['Hope that this time is different',1,'Hope over experience, as the book says of Charlie Brown. Arlo’s past tells Tali what comes next.']]],
+   ['3 · One token, one next step','Which tool, and what next?',[['Mix your moves: lend some months at random',0,'Lending at random still lends; Arlo’s move after the loan stays the same.'],['Bid smart: offer Arlo less',0,'There’s no prize to compete for. The question is whether to play this round at all.'],['Look ahead and reason back: don’t take this turn',1,'Look ahead: lend, and the loan comes back late. So decline this round.']]],
+   ['4 · Check the larger game','How does Tali say it?',[['Say no to this loan, kindly, and offer help another way',1,'Arlo is family: the larger game is the relationship. Decline the turn, not the person: help with the coffee-cart plan, or a small staged loan in writing later.'],['Refuse, and tell Hedda what Arlo did',0,'That wins the argument and costs the family. The larger game is Tali and Arlo’s relationship.']]]];
+  let i=0;const fill=[];
+  function draw(){L.$('#scr').innerHTML='<b><span>STUCK CHECK</span><span>~1 MIN</span></b><ol>'+Q.map((q,j)=>'<li class="'+(j===i?'cur':j<i?'dn':'')+'"><small>'+q[0]+'</small>'+(fill[j]?fill[j]:'<span class="ph">· · · · · ·</span>')+'</li>').join('')+'</ol><p class="rr">'+L.ic('arrow')+'<span><b>When to run it:</b> the moment you notice the same argument coming round again, in your own life too.</span></p>';
+   if(i<Q.length){L.$('#scqq').textContent=Q[i][1];
+    L.$('#scq').innerHTML='';Q[i][2].forEach(o=>{const b=document.createElement('button');b.className='chip';b.textContent=o[0];b.dataset.r=o[1];
+     b.onclick=()=>{const right=Q[i][2].find(x=>x[1]);L.award(!!o[1]);L.$('#scs').innerHTML='<b class="k">'+(o[1]?'RIGHT':'NOT QUITE')+'</b>'+o[2]+(o[1]?'':' Better: '+right[0].charAt(0).toLowerCase()+right[0].slice(1)+'.');fill[i]=right[0];i++;draw();};
+     L.$('#scq').appendChild(b);});}
+   else{L.$('#scqq').textContent='';L.$('#scq').innerHTML='';
+    L.sheet('info','Ticket printed','Name the shape, check the limit, one tool and one step, then the larger game. About a minute, and Tali says no to the turn while keeping the sibling. Rerun it whenever you hear the same argument for the second time: with a partner, a flatmate, a colleague or a seller.');L.done();}}
+  draw();}},
+
+{part:3,src:'Course application · built on every chapter',
+ solve:async L=>{L.$('#yg .sg-mini[data-k="dead"]').click();L.$('#yt .sg-tok[data-t="batna"]').click();L.$('#y1').value='who hosts the family dinner';L.$('#y2').value='ask each what skipping it costs them, then alternate';
+   ['#y1','#y2'].forEach(s=>L.$(s).dispatchEvent(new Event('input',{bubbles:true})));L.$('#yb').click();},
+ run(L){
+  L.h(L.kick('pr','Your turn · ungraded')+'<h1 class="q">Where are you stuck right now? Pick its screen, a token, and one next step.</h1>'+sgApp()+
+   '<div class="sg-gal" id="yg"></div><label class="sg-fl" for="y1">WHAT’S STUCK (A FEW WORDS)</label><input class="sg-in" id="y1" maxlength="70" placeholder="e.g. who replies to the client emails">'+
+   '<div class="sg-lab">Your token</div><div class="sg-tray" id="yt"></div>'+
+   '<label class="sg-fl" for="y2">MY ONE NEXT STEP</label><input class="sg-in" id="y2" maxlength="90" placeholder="e.g. do my share first, no comment">'+
+   '<div class="sg-ctl"><button class="btn pri" id="yb" disabled>'+L.ic('play')+'Print my ticket</button></div><div id="ytk"></div>');
+  let k=null,t=null;
+  L.$('#yg').innerHTML=SG_K.map(K=>'<button type="button" class="sg-mini" data-k="'+K.k+'" aria-pressed="false">'+sgThumb(K.k)+'<span>'+K.s+'</span></button>').join('');
+  L.$('#yt').innerHTML=SG_TOK.map(x=>'<button type="button" class="sg-tok" data-t="'+x[0]+'" aria-pressed="false" aria-label="Choose the token: '+x[2]+'"><i>'+L.ic(x[3])+'</i><span>'+x[1]+'</span></button>').join('');
+  const chk=()=>{L.$('#yb').disabled=!(k&&t&&L.$('#y2').value.trim().length>1);};
+  L.$$('#yg .sg-mini').forEach(b=>b.onclick=()=>{k=b.dataset.k;L.$$('#yg .sg-mini').forEach(x=>{x.classList.toggle('sel',x===b);x.setAttribute('aria-pressed',x===b);});chk();});
+  L.$$('#yt .sg-tok').forEach(b=>b.onclick=()=>{t=b.dataset.t;L.$$('#yt .sg-tok').forEach(x=>{x.classList.toggle('pk',x===b);x.setAttribute('aria-pressed',x===b);});chk();});
+  ['#y1','#y2'].forEach(s=>L.$(s).addEventListener('input',chk));
+  L.$('#yb').onclick=()=>{const K=SGK[k],T=SGT[t],fits=K.right.includes(t);
+   L.$('#ytk').innerHTML='<div class="sg-ticket"><b class="k">'+L.ic('check')+'MY NEXT STEP · '+T[2].toUpperCase()+'</b>'+(L.$('#y1').value.trim()?'<i>'+L.esc(L.$('#y1').value.trim())+'</i>: ':'')+L.esc(L.$('#y2').value.trim())+'</div>'+
+    '<p class="sg-ro">Screen: <b>'+K.s+'</b>. '+(fits?'Your token fits this screen.':'The playbook’s first tool for this screen is <b>'+K.right.map(x=>SGT[x][2]).join(' or ')+'</b>. Your token may still fit a different shape; check which screen it really is.')+'</p>';
+   L.sheet('info','Take the step, then look again','Do the one step this week. If the loop still runs, name the shape again: maybe the tool hit its limit, or every move in this game is bad and it’s time to change the game.');L.done();};}},
+
+{part:3,src:'Course application · built on every chapter',run(L){
+  L.h(L.kick('learn','Your strategy map')+'<h1 class="q">The stuck playbook joins your map: each loop, and the token that breaks it</h1>'+
+   L.note('How this course applies the book. The full playbook, with next steps, is on your map’s “It’s going wrong” tab.','compass')+'<div id="pbm"></div>'+
+   '<p class="small"><a href="map.html#stuck">Open your strategy map</a> next time a game goes wrong.</p>');
+  L.$('#pbm').innerHTML=SG_PB.map(r=>'<div class="sg-map st"><b>'+SGK[r[0]].t+'</b><div class="r">'+r[1].map((k,j)=>(j?'<span class="ar">'+(r[0]==='dead'?'then':'or')+'</span>':'')+'<span class="m cur">'+SG_TL[k]+'</span>').join('')+'</div></div>').join('');
+  L.done();}}
+  ]
+});
+</script>
+</body>
+</html>

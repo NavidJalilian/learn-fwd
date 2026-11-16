@@ -1,0 +1,710 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Look Ahead and Reason Back</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* ===== This lesson’s own visuals: the fold-back game tree (folded from the tips, with a
+   “whose aims?” switch and a red ghost for a wrong prediction) and the 21-flag field. ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card button[hidden],.lb-ctl[hidden]{display:none!important}
+.lb-svg{display:block;width:100%;max-width:340px;margin:0 auto;user-select:none;-webkit-user-select:none}
+.lb-tree .lb-svg,.lb-svg.lb-wide{width:calc(100% + 24px);max-width:360px;margin:0 -12px}
+@media (min-width:420px){.lb-tree .lb-svg,.lb-svg.lb-wide{margin:0 auto}}
+.lb-ro{font-size:14px;text-align:center;color:var(--muted);margin:6px 2px;min-height:20px;line-height:1.45}
+.lb-ro b{color:var(--ink)}
+.lb-ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;justify-content:center;margin:6px 0}
+.lb-ctl .chip,.lb-ctl .btn{margin:0}
+.lb-lab{font-size:11.5px;font-weight:700;letter-spacing:.4px;color:var(--muted);width:100%;text-align:center;text-transform:uppercase}
+.lb-fk{cursor:pointer;outline:none}
+.lb-fk:focus-visible .lb-hit{stroke:var(--pri);stroke-width:2}
+.lb-fk.shake{animation:lbs .32s}
+.lb-rdy{animation:lbp 1.3s ease-in-out infinite}
+@keyframes lbp{0%,100%{stroke-opacity:.15}50%{stroke-opacity:.95}}
+@keyframes lbs{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.lb-flag{transition:opacity .35s,transform .35s}
+.lb-flag.gone{opacity:.13;transform:translateY(-8px)}
+.lb-cap{font-size:14.5px;line-height:1.45;background:var(--soft);border-radius:12px;padding:9px 12px;margin:8px 0}
+.lb-cap b.h{display:block;font-size:11.5px;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:2px}
+.lb-dir{display:flex;justify-content:space-between;gap:8px;font-size:12px;font-weight:700;color:var(--muted);max-width:330px;margin:4px auto 0}
+.lb-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin:6px 0 8px}
+.lb-steps span{font-size:11.5px;line-height:1.25;font-weight:600;text-align:center;border-radius:10px;padding:6px 3px;background:var(--soft);color:var(--muted);border:1.5px solid transparent}
+.lb-steps span.cur{background:var(--pri-bg);color:var(--pri-deep);border-color:var(--pri)}
+.lb-steps span.dn{background:var(--ok-bg);color:var(--ok)}
+.lb-chk{display:flex;flex-wrap:wrap;gap:5px;justify-content:center;margin:4px 0 6px}
+.lb-chk span{font-size:12.5px;font-weight:600;border-radius:9px;padding:4px 8px;background:var(--soft2);color:var(--muted)}
+.lb-chk span.ok{background:var(--ok-bg);color:var(--ok)}
+.lb-chk span.no{background:var(--no-bg);color:var(--no)}
+.lb-rule{display:flex;gap:10px;align-items:center;border:2px solid var(--pri);background:var(--pri-bg);color:var(--pri-deep);border-radius:14px;padding:10px 12px;margin:10px 0 4px;font-weight:600;font-size:15px;line-height:1.35}
+.lb-rule small{display:block;font-weight:500;font-size:13px;color:var(--ink);opacity:.8}
+.lb-in{display:block;width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:12px;padding:9px 11px;font:inherit;font-size:15px;background:var(--card);color:var(--ink);margin:3px 0 8px}
+.lb-in:focus{outline:none;border-color:var(--pri)}
+.lb-fl{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.3px;display:block;margin-top:6px;text-transform:uppercase}
+.lb-row{border:1.5px solid var(--line);border-radius:12px;padding:6px 9px;margin:0 0 5px;background:var(--card)}
+.lb-row.hot{border-color:var(--pri);background:var(--pri-bg)}
+.lb-row>b{display:block;font-size:13px;margin-bottom:4px;line-height:1.3}
+.lb-row .r{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.lb-row .m{font-size:12px;font-weight:600;border-radius:8px;padding:3px 7px;background:var(--soft2);color:var(--ink)}
+.lb-row .m.cur{background:var(--pri);color:var(--pri-ink)}
+.lb-row .m.tbd{background:transparent;border:1.5px dashed var(--line2);color:var(--faint)}
+.lb-row .ar{color:var(--faint);font-size:12px}
+.lb-os{transition:opacity .3s}
+.lb-key{font-size:12.5px;color:var(--muted);text-align:center;margin:2px 0 0}
+`;document.head.appendChild(st);})();
+
+const LB_HALO=' style="paint-order:stroke;stroke:var(--soft);stroke-width:3.5px;stroke-linejoin:round"';
+const lbCol=w=>w===0?'var(--h1)':w==='c'?'var(--h3)':'var(--h2)';
+const lbPm=v=>(v>0?'+':v<0?'−':'')+Math.abs(v);
+const lbK=v=>(v>0?'+':v<0?'−':'')+Math.abs(v)+'k';
+const lbMoney=v=>'£'+(Math.abs(v-Math.round(v))<1e-9?Math.round(v):v.toFixed(2));
+const lbMin=v=>(-v)+' min';
+
+/* ---------- the fold-back game tree ----------
+   node: {who:0|1|'c'|'p', kids:[{e:'edge label', n:node}], q (yes-rate for 'p'), hid}
+   leaf: {lab, v:[first player, other player, other player as the first player imagines them]} */
+function lbTree(L,host,o){
+  const W=330,leafW=o.leafW||104,S=o.S||48,top=o.sub?42:28,fmt=o.fmt||lbPm,names=o.names,two=names.length>1;
+  let aims='own',busy=false,hlA=new Set(),hlG=new Set(),uid=0;const nodes=[],forks=[];
+  (function prep(n,d,par){n.id=uid++;n.d=d;n.par=par;nodes.push(n);if(n.kids){forks.push(n);n.kids.forEach(k=>prep(k.n,d+1,n));}else n.val=n.v;})(o.root,0,null);
+  const leaves=nodes.filter(n=>!n.kids),maxD=Math.max(1,...forks.map(f=>f.d)),leafX=W-leafW-4,x0=22,colW=(leafX-(o.gap||76)-x0)/maxD;
+  let yy=top,gg=o.groupGap!=null?o.groupGap:10;leaves.forEach((n,i)=>{if(i&&n.par!==leaves[i-1].par)yy+=gg;n.x=leafX;n.y=yy+S/2;yy+=S;});
+  (function sy(n){if(!n.kids)return;n.kids.forEach(k=>sy(k.n));n.x=x0+n.d*colW;n.y=n.kids.reduce((a,k)=>a+k.n.y,0)/n.kids.length;})(o.root);
+  const H=yy+6;
+  const w=document.createElement('div');w.className='lb-tree';host.appendChild(w);
+  w.innerHTML='<svg class="lb-svg" viewBox="0 0 '+W+' '+H+'" role="group" aria-label="'+(o.label||'A game tree: forks are choices, boxes on the right are outcomes')+'"></svg><p class="lb-ro" aria-live="polite"></p><div class="lb-ask"></div>';
+  const svg=w.querySelector('svg'),ro=w.querySelector('.lb-ro');
+  const nm=n=>n.who==='c'?'Chance':names[n.who===0?0:1];
+  const vs=v=>two?[fmt(v[0]),fmt(v[1])]:[fmt(v[0])];
+  const ready=n=>n.kids.every(k=>!k.n.kids||k.n.f);
+  const say=h=>{ro.innerHTML=h;};
+  function pairT(v){const a=vs(v);if(!two)return '<tspan fill="var(--h1)">'+a[0]+'</tspan>';const i=o.ini||names.map(s=>s[0]);
+    return '<tspan fill="var(--h1)">'+(o.noIni?'':i[0]+' ')+a[0]+'</tspan><tspan fill="var(--faint)"> · </tspan><tspan fill="var(--h2)">'+(o.noIni?'':i[1]+' ')+a[1]+'</tspan>';}
+  function pinfo(n){let t,len,st;
+    if(n.f==='c'||n.f==='dep'){const a=n.f==='c'?'chance':'depends';t='<tspan fill="var(--h3)">'+a+'</tspan>';len=a.length;st='var(--h3)';}
+    else if(n.who==='p'){const a='≈'+fmt(n.val[0]);t='<tspan fill="var(--h1)">'+a+'</tspan>';len=a.length;st='var(--h2)';}
+    else{const a=vs(n.val);t='<tspan fill="var(--h1)">'+a[0]+'</tspan>'+(two?'<tspan fill="var(--faint)" dx="3">|</tspan><tspan fill="var(--h2)" dx="3">'+a[1]+'</tspan>':'');len=two?a[0].length+a[1].length+1.8:a[0].length;st=n.ghost?'var(--no-strong)':lbCol(n.who===0?0:1);}
+    return {t,w:len*7+16,st,dash:!!n.ghost};}
+  const pillSvg=(p,cx,cy)=>'<rect x="'+(cx-p.w/2)+'" y="'+(cy-11)+'" width="'+p.w+'" height="22" rx="11" fill="var(--card)" stroke="'+p.st+'" stroke-width="2"'+(p.dash?' stroke-dasharray="4 3"':'')+'/><text x="'+cx+'" y="'+(cy+4.5)+'" text-anchor="middle" font-size="12" font-weight="700">'+p.t+'</text>';
+  const pcx=(n,p)=>Math.max(p.w/2+4,Math.min(n.x-12+p.w/2,leafX-4-p.w/2));
+  const cut=(n,j)=>n.f==='ok'&&n.who!=='p'&&n.pick!==j;
+  function dead(c){let x=c;while(x.par){const p=x.par,j=p.kids.findIndex(k=>k.n===x);if(cut(p,j))return true;x=p;}return false;}
+  function draw(){
+    let s='<rect width="'+W+'" height="'+H+'" rx="14" fill="var(--soft)"/>';
+    s+='<text x="10" y="17" font-size="11.5" font-weight="700"><tspan fill="var(--h1)">● '+names[0]+'</tspan>'+(two?'<tspan fill="var(--h2)">  ● '+names[1]+'</tspan>':'')+'<tspan fill="var(--muted)" font-weight="500">  '+(o.note||'illustrative numbers')+'</tspan></text>';
+    if(o.sub)s+='<text x="10" y="33" font-size="11.5" font-weight="700" fill="var(--no)">'+o.sub+'</text>';
+    const hid=forks.filter(f=>f.hid);
+    if(hid.length){const y1=Math.min(...hid.map(f=>f.y))-24,y2=Math.max(...hid.map(f=>f.y))+24,x=hid[0].x;
+      s+='<rect x="'+(x-25)+'" y="'+y1+'" width="50" height="'+(y2-y1)+'" rx="24" fill="var(--h2-bg)" stroke="var(--h2)" stroke-width="1.5" stroke-dasharray="5 4"/>';
+      s+='<text x="'+(x-32)+'" y="'+((y1+y2)/2+4)+'" text-anchor="end" font-size="11" font-weight="700" fill="var(--h2)"'+LB_HALO+'>can’t see which</text>';}
+    forks.forEach(n=>n.kids.forEach((k,j)=>{const c=k.n,cx=c.kids?c.x-13:leafX,key=n.id+'>'+c.id;
+      let st='stroke="var(--line2)" stroke-width="2.5"',lf='var(--muted)',deco='';
+      if(hlA.has(key))st='stroke="var(--pri)" stroke-width="4.5"';
+      else if(hlG.has(key))st='stroke="var(--no-strong)" stroke-width="3" stroke-dasharray="6 4"';
+      else if(n.f==='ok'&&n.who==='p')st='stroke="var(--ink)" stroke-width="'+(1.5+4*(j===0?n.q:1-n.q)).toFixed(1)+'"';
+      else if(n.f==='ok'){if(j===n.pick)st='stroke="var(--ink)" stroke-width="3"';else{st='stroke="var(--line2)" stroke-width="2" stroke-dasharray="3 4" opacity=".6"';lf='var(--faint)';}}
+      s+='<path d="M'+n.x+' '+n.y+'V'+c.y+'H'+cx+'" fill="none" '+st+' stroke-linejoin="round"/>';
+      s+='<text x="'+(n.x+(cx-n.x)*.5+3).toFixed(1)+'" y="'+(c.y>n.y+1?c.y+15:c.y-6)+'" text-anchor="middle" font-size="12" font-weight="600" fill="'+lf+'"'+deco+LB_HALO+'>'+k.e+'</text>';}));
+    leaves.forEach(c=>{const dd=dead(c),h=c.lab?34:24;
+      s+='<g opacity="'+(dd?.42:1)+'"><rect x="'+leafX+'" y="'+(c.y-h/2)+'" width="'+leafW+'" height="'+h+'" rx="9" fill="var(--card)" stroke="var(--line2)" stroke-width="1.5"/>';
+      if(c.lab)s+='<text x="'+(leafX+7)+'" y="'+(c.y-3)+'" font-size="11.5" font-weight="500" fill="var(--muted)">'+c.lab+'</text><text x="'+(leafX+7)+'" y="'+(c.y+12)+'" font-size="12.5" font-weight="700">'+pairT(c.v)+'</text>';
+      else s+='<text x="'+(leafX+leafW/2)+'" y="'+(c.y+4.5)+'" text-anchor="middle" font-size="12.5" font-weight="700">'+pairT(c.v)+'</text>';
+      s+='</g>';});
+    forks.forEach(n=>{const col=lbCol(n.who===0?0:n.who==='c'?'c':1),name=nm(n),rdy=!n.f&&ready(n)&&!o.noFold&&!n.hid&&!api.lock;
+      let g='<g class="lb-fk" data-id="'+n.id+'" role="button" tabindex="0" aria-label="'+name+'’s fork'+(n.f?', folded':rdy?', ready to fold':'')+'"><circle class="lb-hit" cx="'+n.x+'" cy="'+n.y+'" r="20" fill="transparent"/>';
+      let lx=n.x;
+      if(n.f&&!n.anim){const p=pinfo(n),cx=pcx(n,p);g+=pillSvg(p,cx,n.y);lx=cx;}
+      else{if(rdy)g+='<circle class="lb-rdy" cx="'+n.x+'" cy="'+n.y+'" r="17" fill="none" stroke="var(--pri)" stroke-width="2.5"/>';
+        g+='<circle cx="'+n.x+'" cy="'+n.y+'" r="12" fill="var(--card)" stroke="'+col+'" stroke-width="2.5"/><text x="'+n.x+'" y="'+(n.y+4.5)+'" text-anchor="middle" font-size="12" font-weight="700" fill="'+col+'">'+(n.who==='c'?'?':(o.ini?o.ini[n.who===0?0:1]:name[0]))+'</text>';}
+      if(!o.noNames)g+='<text x="'+Math.max(lx,name.length*3.3+5)+'" y="'+(n.y-17)+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+col+'"'+LB_HALO+'>'+name+'</text>';
+      s+=g+'</g>';});
+    svg.innerHTML=s;}
+  function realVal(n){if(!n.kids)return n.v;if(n.who==='c')return null;const kv=n.kids.map(k=>realVal(k.n));if(kv.some(v=>!v))return null;
+    if(n.who==='p')return [0,1].map(i=>kv[0][i]*n.q+kv[1][i]*(1-n.q));const i=n.who===0?0:1;return kv.reduce((b,v)=>v[i]>b[i]?v:b);}
+  function realPick(n){const i=n.who===0?0:1,kv=n.kids.map(k=>realVal(k.n));let b=0;kv.forEach((v,j)=>{if(v&&(!kv[b]||v[i]>kv[b][i]))b=j;});return b;}
+  function slide(from,to,p,cb){const ns='http://www.w3.org/2000/svg',g=document.createElementNS(ns,'g');g.innerHTML=pillSvg(p,0,0);svg.appendChild(g);
+    const t0=Date.now(),D=340;(function step(){if(!svg.isConnected)return;const k=Math.min(1,(Date.now()-t0)/D),e=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+      g.setAttribute('transform','translate('+(from[0]+(to[0]-from[0])*e).toFixed(1)+','+(from[1]+(to[1]-from[1])*e).toFixed(1)+')');
+      if(k<1)setTimeout(step,16);else{g.remove();cb();}})();}
+  function finish(n,instant,pk,msg){
+    const after=()=>{n.anim=false;draw();say(msg);
+      if(n===o.root){if(n.f==='ok'){const path=[];let x=n;while(x&&x.kids&&x.f==='ok'&&x.pick!=null){const c=x.kids[x.pick].n;path.push(x.id+'>'+c.id);x=c;}
+          if(n.ghost)hlG=new Set(path);else hlA=new Set(path);draw();}
+        if(o.onRoot)o.onRoot(api);}
+      if(o.onFold)o.onFold(n,api);};
+    if(instant||pk==null){after();return;}
+    busy=true;n.anim=true;draw();const c=n.kids[pk].n,p=pinfo(n),from=c.kids?[pcx(c,pinfo(c)),c.y]:[leafX+leafW/2,c.y],to=[pcx(n,p),n.y];
+    slide(from,to,p,()=>{busy=false;after();});}
+  function fold(n,instant,fp){
+    const kv=n.kids.map(k=>k.n);
+    if(n.who==='c'){n.f='c';finish(n,instant,null,'<b>Chance decides here</b>, not a person. You can’t fold it to one sure answer.');return;}
+    if(kv.some(c=>c.kids&&(c.f==='c'||c.f==='dep'))){n.f='dep';finish(n,instant,null,'<b>'+nm(n)+'’s choice hangs on luck further along</b>, so there’s no sure answer here, only “it depends”.');return;}
+    if(n.who==='p'){n.val=[0,1].map(i=>kv[0].val[i]*n.q+kv[1].val[i]*(1-n.q));n.f='ok';n.pick=null;
+      finish(n,instant,0,'<b>'+Math.round(n.q*100)+' in 100 say yes.</b> On average '+names[0]+' keeps '+fmt(n.val[0])+'.');return;}
+    const ri=n.who===0?0:1,ai=(n.who!==0&&aims==='shoes'&&kv.every(c=>c.val[2]!==undefined))?2:ri;
+    const best=i=>kv.reduce((b,c,j)=>c.val[i]>kv[b].val[i]?j:b,0);
+    const rp=best(ri),pk=fp!=null?fp:best(ai);
+    n.pick=pk;n.f='ok';n.val=kv[pk].val.slice();n.ghost=pk!==rp||!!kv[pk].ghost;
+    const a=kv.map(c=>c.val[ai]),who=nm(n),verb=who==='You'?'take':'takes';
+    const how=ai===2?'what '+names[0]+' would want in '+who+'’s shoes':(who==='You'?'your numbers':who+'’s own numbers');
+    let msg='<b>'+who+' '+verb+' “'+n.kids[pk].e+'”</b>: '+fmt(a[pk])+' beats '+a.filter((x,j)=>j!==pk).map(fmt).join(' and ')+' on '+how+'.';
+    if(n===o.root)msg+=' Best first move: <b>'+n.kids[pk].e+'</b>'+(n.ghost?' (if the prediction is right)':'')+'.';
+    finish(n,instant,pk,msg);}
+  function next(){let b=null;forks.forEach(f=>{if(!f.f&&!f.hid&&ready(f)&&(!b||f.d>b.d))b=f;});return b;}
+  function bump(id){const g=svg.querySelector('[data-id="'+id+'"]');if(g)L.shake(g);}
+  function ask(n){const box=w.querySelector('.lb-ask');box.innerHTML='<p class="lb-ro"><b>'+nm(n)+'’s move.</b> Which branch will '+nm(n)+' take?</p><div class="lb-ctl"></div>';
+    n.kids.forEach((k,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=k.e;b.dataset.j=j;
+      b.onclick=()=>{if(busy)return;if(j===realPick(n)){box.innerHTML='';fold(n,false,j);}
+        else{api.miss++;L.shake(b);b.classList.add('no');say('Not that one. At '+nm(n)+'’s fork, read '+nm(n)+'’s numbers ('+(n.who===0?'the first':'the second')+' in each pair) and take the bigger.');}};
+      box.lastChild.appendChild(b);});}
+  function tap(id){if(busy)return;const n=nodes[id];if(!n||!n.kids)return;
+    if(api.lock){say(o.lockMsg||'Follow the steps above.');return;}
+    if(n.f){say('Already folded. Find a fork still waiting (glowing ring).');return;}
+    if(n.hid){say(o.hidMsg||'');bump(id);return;}
+    if(o.noFold){say(o.noFoldMsg||'');return;}
+    if(!ready(n)){say('<b>Start from the tips.</b> Fold the later forks first: a glowing ring marks the ones ready now.');bump(id);return;}
+    if(o.mode==='pick'){ask(n);return;}
+    fold(n,false);}
+  svg.addEventListener('click',e=>{const g=e.target.closest('.lb-fk');if(g)tap(+g.dataset.id);});
+  svg.addEventListener('keydown',e=>{const g=e.target.closest('.lb-fk');if(g&&(e.key==='Enter'||e.key===' ')){e.preventDefault();tap(+g.dataset.id);}});
+  function reset(){forks.forEach(n=>{n.f=false;n.pick=null;n.val=null;n.ghost=false;n.anim=false;});hlA=new Set();hlG=new Set();w.querySelector('.lb-ask').innerHTML='';draw();say(o.start||'Tap the glowing fork: the last move comes first.');if(o.onReset)o.onReset(api);}
+  function setAims(a){aims=a;if(chipRow)chipRow.querySelectorAll('.chip').forEach(b=>b.classList.toggle('sel',b.dataset.a===a));reset();}
+  function foldAll(instant){
+    if(instant){let g=0;while(!o.root.f&&g++<50){const n=next();if(!n)break;fold(n,true);}return Promise.resolve();}
+    return (async()=>{let g=0;while(!o.root.f&&g++<60){if(!w.isConnected)return;if(busy){await L.sleep(40);continue;}const n=next();if(!n)break;fold(n,false);await L.sleep(40);}
+      while(busy&&w.isConnected)await L.sleep(30);})();}
+  function playOut(){const path=[];let x=o.root;while(x&&x.kids&&x.who!=='c'&&x.who!=='p'){const j=(x.who===0&&x.f==='ok'&&x.pick!=null)?x.pick:realPick(x);const c=x.kids[j].n;path.push(x.id+'>'+c.id);x=c;}hlA=new Set(path);draw();return x;}
+  function showPath(picks,ghost){const p=new Set();let x=o.root;picks.forEach(j=>{const c=x.kids[j].n;p.add(x.id+'>'+c.id);x=c;});if(ghost)hlG=p;else hlA=p;draw();return x;}
+  let chipRow=null;
+  if(o.aimsSw){chipRow=document.createElement('div');chipRow.className='lb-ctl';chipRow.innerHTML='<span class="lb-lab">Whose aims? Predict '+names[1]+' with…</span>';
+    [['own',names[1]+'’s own aims'],['shoes',names[0]+' in '+names[1]+'’s shoes']].forEach(([k,lab])=>{const b=document.createElement('button');b.className='chip'+(k===aims?' sel':'');b.textContent=lab;b.dataset.a=k;b.onclick=()=>{if(!busy)setAims(k);};chipRow.appendChild(b);});
+    w.insertBefore(chipRow,svg);}
+  const api={wrap:w,root:o.root,nodes,miss:0,lock:false,get busy(){return busy;},get aims(){return aims;},
+    tap,fold,reset,setAims,foldAll,playOut,showPath,draw,say,next,realPick,el:id=>svg.querySelector('[data-id="'+id+'"]')};
+  draw();say(o.start||'Tap the glowing fork: the last move comes first.');
+  return api;}
+
+/* autoplay helper: tap forks from the tips, the way a learner would */
+async function lbSolveTree(L,t,pick){for(let g=0;g<30&&!t.root.f;g++){if(t.busy){await L.sleep(40);continue;}const n=t.next();if(!n)break;
+  t.el(n.id).dispatchEvent(new MouseEvent('click',{bubbles:true}));
+  if(pick){await L.sleep(20);const b=t.wrap.querySelector('.lb-ask button[data-j="'+t.realPick(n)+'"]');if(b)b.click();}
+  await L.sleep(60);}while(t.busy)await L.sleep(30);}
+
+/* ---------- trees (Tali’s numbers are made up for the course; the book’s are marked) ---------- */
+const LB_LUCY=()=>({who:0,kids:[
+  {e:'Accept',n:{who:1,kids:[{e:'Let him kick',n:{lab:'Charlie kicks',v:[1,0]}},{e:'Pull it away',n:{lab:'Charlie falls',v:[-1,1]}}]}},
+  {e:'Refuse',n:{lab:'No game',v:[0,0]}}]});
+const LB_COMMUTE=()=>({who:0,kids:[
+  {e:'Car',n:{who:0,kids:[{e:'Tunnel',n:{v:[-75]}},{e:'Bridge',n:{v:[-90]}}]}},
+  {e:'Train',n:{who:0,kids:[{e:'PATH',n:{v:[-55]}},{e:'Penn St.',n:{v:[-70]}}]}}]});
+const LB_ARLO=()=>({who:0,kids:[
+  {e:'Lend',n:{who:1,kids:[{e:'Repay',n:{lab:'Paid back',v:[2,3,3]}},{e:'Keep it',n:{lab:'Kept the cash',v:[-3,4,1]}}]}},
+  {e:'Don’t',n:{lab:'No loan',v:[0,0,0]}}]});
+const LB_FREDO=big=>({who:0,kids:[
+  {e:'Invest',n:{who:1,kids:[{e:'Honour',n:{lab:'Contract kept',v:[150,250]}},{e:'Abscond',n:{lab:big?'Runs, loses US':'Runs with it all',v:[-100,big?100:500]}}]}},
+  {e:'Don’t',n:{lab:'No deal',v:[0,0]}}]});
+const LB_LINUS=()=>({who:0,kids:[
+  {e:'Morning',n:{who:1,kids:[{e:'Accept',n:{lab:'Tali stays late',v:[0,1,2]}},{e:'Push back',n:{lab:'Greer steps in',v:[-1,2,0]}}]}},
+  {e:'Evening',n:{who:1,kids:[{e:'Accept',n:{lab:'Tali home by 6',v:[2,3,0]}},{e:'Push back',n:{lab:'Greer steps in',v:[-1,0,1]}}]}}]});
+const LB_VETO=on=>({who:0,kids:[
+  {e:'U + M',n:{who:1,kids:on?[{e:'Sign all',n:{v:[3,3]}},{e:'Cut U',n:{v:[1,4]}},{e:'Veto all',n:{v:[2,2]}}]:[{e:'Sign',n:{v:[3,3]}},{e:'Veto',n:{v:[2,2]}}]}},
+  {e:'U only',n:{who:1,kids:[{e:'Sign',n:{v:[4,1]}},{e:'Veto',n:{v:[2,2]}}]}},
+  {e:'M only',n:{who:1,kids:[{e:'Sign',n:{v:[1,4]}},{e:'Veto',n:{v:[2,2]}}]}}]});
+/* yes-rates: only £1 (under 20% of the pot: refused about half the time) is the book’s; the rest are made up and starred */
+const LB_ULTQ={1:.5,12:.6,24:.95,30:.98},LB_ULT_SUB='* made-up rate · £1’s 50% is the book’s';
+const LB_ULT=(real,offers)=>({who:0,kids:(offers||[1,12,24,30]).map(x=>{const m=x===1?'':'*';return {e:'Offer £'+x,n:{who:real?'p':1,q:LB_ULTQ[x],kids:[
+  {e:real?'Yes '+Math.round(LB_ULTQ[x]*100)+'%'+m:'Yes',n:{v:[60-x,x]}},{e:real?'No '+Math.round((1-LB_ULTQ[x])*100)+'%'+m:'No',n:{v:[0,0]}}]}};})});
+const LB_PAY=()=>({who:0,kids:[
+  {e:'Mention',n:{who:1,kids:[{e:'Build in',n:{lab:'Higher offer',v:[2,2,2]}},{e:'Ignore',n:{lab:'Usual offer',v:[1,1,0]}}]}},
+  {e:'Wait',n:{who:0,kids:[{e:'Accept',n:{lab:'Usual offer',v:[1,3,3]}},{e:'Mention',n:{who:1,kids:[{e:'Hold',n:{lab:'Same, but tense',v:[0,1,0]}},{e:'Raise',n:{lab:'Greer gives in',v:[3,0,2]}}]}}]}}]});
+const LB_JUNO=()=>({who:0,kids:[
+  {e:'Book now',n:{who:1,kids:[{e:'Pays half',n:{lab:'Trip, costs shared',v:[3,3]}},{e:'Lets it slide',n:{lab:'Tali pays it all',v:[-2,1]}}]}},
+  {e:'Wait',n:{lab:'Fares go up',v:[0,0]}}]});
+const LB_COURT=()=>({who:0,kids:[
+  {e:'Invest',n:{who:1,kids:[{e:'Honour',n:{lab:'Contract kept',v:[150,250]}},{e:'Abscond',n:{who:'c',kids:[{e:'Courts act',n:{lab:'Money recovered',v:[150,-100]}},{e:'Courts fail',n:{lab:'Fredo keeps it',v:[-100,500]}}]}}]}},
+  {e:'Don’t',n:{lab:'No deal',v:[0,0]}}]});
+const LB_SEAL=()=>({who:0,kids:[
+  {e:'High bid',n:{who:1,hid:1,kids:[{e:'High',n:{v:[2,2]}},{e:'Low',n:{v:[0,3]}}]}},
+  {e:'Low bid',n:{who:1,hid:1,kids:[{e:'High',n:{v:[3,0]}},{e:'Low',n:{v:[1,1]}}]}}]});
+
+/* ---------- the flag field (Survivor’s 21 flags) ---------- */
+function lbFlags(L,host,o){
+  o=o||{};const X=i=>14+(i-1)*15.1;let n=21,turn=null,over=false,busy=false,won=null,moves=[],stakes=(o.stakes||[]).slice(),ghost=[],show=o.show!==false;const hot=!!o.hot;
+  const w=document.createElement('div');host.appendChild(w);
+  let fl='';for(let i=1;i<=21;i++){const x=X(i).toFixed(1);fl+='<g class="lb-flag" data-i="'+i+'"><path d="M'+x+' 96V50" stroke="var(--ink)" stroke-width="1.6" stroke-linecap="round"/><path d="M'+x+' 50l10 5-10 5Z" fill="var(--h3)"/></g>';}
+  w.innerHTML='<p class="lb-ro" aria-live="polite"></p><svg class="lb-svg lb-wide" viewBox="0 0 330 130" role="img" aria-label="A row of 21 flags. Flags are taken from the right-hand end; flag 1, on the left, is the last flag.">'+
+    '<rect width="330" height="130" rx="14" fill="var(--soft)"/><path d="M6 96H324" stroke="var(--line2)" stroke-width="2"/>'+
+    '<text x="8" y="30" font-size="11" font-weight="700" fill="var(--muted)">← LAST FLAG</text><text x="322" y="30" text-anchor="end" font-size="11" font-weight="700" fill="var(--muted)">TAKEN FROM THIS END →</text>'+
+    '<g class="lb-stk"></g>'+fl+'<g class="lb-bars"></g></svg>'+
+    '<p class="lb-key"><b style="color:var(--h1)">▬</b> taken by your side · <b style="color:var(--h2)">▬</b> taken by Kittiwake'+(o.demo?'':'')+'</p>'+
+    '<div class="lb-ctl lb-tk"></div><div class="lb-ctl lb-op"></div>';
+  const ro=w.querySelector('.lb-ro'),tk=w.querySelector('.lb-tk'),op=w.querySelector('.lb-op');
+  if(o.demo){tk.hidden=true;op.hidden=true;w.querySelector('.lb-key').hidden=true;}
+  [1,2,3].forEach(k=>{const b=document.createElement('button');b.className='btn';b.dataset.k=k;b.textContent='Take '+k;b.onclick=()=>{if(turn!=='me'||over||busy||k>n)return;take('me',k);};tk.appendChild(b);});
+  let showChip=null,again=null,starts=[];
+  if(o.toggle){showChip=document.createElement('button');showChip.className='chip'+(show?' sel':'');showChip.textContent='Show the stakes';showChip.onclick=()=>{show=!show;showChip.classList.toggle('sel',show);upd();};op.appendChild(showChip);}
+  if(o.choose){[['me','Your side goes first'],['them','Kittiwake goes first']].forEach(([k,lab])=>{const b=document.createElement('button');b.className='chip';b.textContent=lab;b.dataset.s=k;b.onclick=()=>{if(turn||(!over&&moves.length))return;starts.forEach(x=>x.classList.toggle('sel',x===b));start(k);};op.appendChild(b);starts.push(b);});}
+  if(!o.demo){again=document.createElement('button');again.className='btn';again.innerHTML=L.ic('cycle')+'Play again';again.hidden=true;again.onclick=()=>{if(o.choose){turn=null;over=false;moves=[];n=21;starts.forEach(x=>x.classList.remove('sel'));upd();}else start(o.first||'me');};op.appendChild(again);}
+  const ai=()=>Math.min(n,hot?(((n-1)%4)||1):((n%4)||1));
+  function take(who,k){moves.push([who,n-k+1,n]);n-=k;
+    if(n===0){over=true;won=hot?who!=='me':who==='me';turn=null;upd();if(o.onEnd)o.onEnd(won,api);return;}
+    turn=who==='me'?'them':'me';upd();
+    if(turn==='them'){busy=true;setTimeout(()=>{if(!w.isConnected)return;busy=false;take('them',ai());},o.delay||450);}}
+  function upd(){
+    w.querySelectorAll('.lb-flag').forEach(g=>g.classList.toggle('gone',+g.dataset.i>n));
+    w.querySelector('.lb-bars').innerHTML=moves.map(m=>'<rect x="'+(X(m[1])-5.5).toFixed(1)+'" y="101" width="'+(X(m[2])-X(m[1])+11).toFixed(1)+'" height="7" rx="3.5" fill="var('+(m[0]==='me'?'--h1':'--h2')+')"/>').join('');
+    w.querySelector('.lb-stk').innerHTML=(show?stakes:[]).map(k=>{const x=(X(k)+7.55).toFixed(1);return '<g opacity="'+(ghost.includes(k)?.4:1)+'"><path d="M'+x+' 40V112" stroke="var(--no-strong)" stroke-width="2" stroke-dasharray="4 3"/><path d="M'+x+' 40l7 4-7 4Z" fill="var(--no-strong)"/><text x="'+x+'" y="124" text-anchor="middle" font-size="11" font-weight="700" fill="var(--no)">'+k+'</text></g>';}).join('');
+    const last=moves.length?moves[moves.length-1]:null;
+    const st=over?(won?'<b>Your side wins!</b>':'<b>Kittiwake wins.</b>'):turn==='me'?'Your turn: take 1, 2 or 3.':turn==='them'?'Kittiwake’s team is thinking…':(o.choose?'Choose who goes first.':'');
+    ro.innerHTML='Flags left: <b>'+n+'</b>'+(last?' · '+(last[0]==='me'?'you':'Kittiwake')+' took '+(last[2]-last[1]+1):'')+(st?'<br>'+st:'');
+    tk.querySelectorAll('button').forEach(b=>b.disabled=turn!=='me'||over||busy||+b.dataset.k>n);
+    if(again)again.hidden=!over;
+    starts.forEach(b=>b.disabled=!!turn||(moves.length>0&&!over)||over);}
+  function start(first){n=21;moves=[];over=false;won=null;turn=first;upd();
+    if(first==='them'){busy=true;setTimeout(()=>{if(!w.isConnected)return;busy=false;take('them',ai());},o.delay||450);upd();}}
+  const api={wrap:w,start,get n(){return n;},get turn(){return turn;},get over(){return over;},get won(){return won;},get busy(){return busy;},
+    best:()=>Math.min(n,hot?(((n-1)%4)||1):((n%4)||1)),setStakes(a,g){stakes=a.slice();ghost=(g||[]).slice();upd();},
+    mark(who,k){moves.push([who,n-k+1,n]);n-=k;upd();},say(h){ro.innerHTML=h;},upd};
+  upd();return api;}
+async function lbSolveFlags(L,f){for(let g=0;g<120&&!f.over;g++){if(f.turn==='me'&&!f.busy){const b=f.wrap.querySelector('.lb-tk [data-k="'+f.best()+'"]');if(b&&!b.disabled)b.click();}await L.sleep(50);}}
+
+/* autoplay helper: wait until a condition holds (max ~4 s) */
+async function lbWait(L,f){for(let g=0;g<100&&!f();g++)await L.sleep(40);}
+
+/* small people for pictures */
+function lbFig(x,y,col,nm){return '<circle cx="'+x+'" cy="'+(y-16)+'" r="8" fill="var(--card)" stroke="'+col+'" stroke-width="2"/><rect x="'+(x-10)+'" y="'+(y-5)+'" width="20" height="22" rx="8" fill="'+col.replace(')','-bg)')+'" stroke="'+col+'" stroke-width="2"/>'+(nm?'<text x="'+x+'" y="'+(y+32)+'" text-anchor="middle" font-size="11" font-weight="700" fill="'+col+'">'+nm+'</text>':'');}
+
+/* ---------- the strategy-map strip (CANON “The strategy map”, built lesson by lesson) ---------- */
+const LB_ROWS=[['Taking turns: you move, then they respond',['look','cred','move']],['You both choose at once',['shoes','pd','mix']],['Everyone’s tempted to grab or slack',['pd','group','inc']],
+  ['Everyone must land on the same choice',['shoes','group','move']],['Your pattern is read, or you check',['mix']],['You want to change someone’s behaviour',['move','cred','look']],
+  ['They know something you don’t',['sig','shoes','bid']],['Splitting something or agreeing a price',['batna','cred','sig']],['Competing with others for one prize',['bid','sig','pd']],
+  ['A group decides together',['vote','group','batna']],['Good work you can’t watch',['inc','sig','cred']]];
+
+Course.lesson({
+  id:'0002', title:'Look ahead and reason back', minutes:20, icon:'tree',
+  goals:['Tell turn-taking games from same-time games, and fold a game tree from the tips back to your best first move',
+         'Predict what others will really do from their aims, fairness and pride included, not what you would do in their shoes',
+         'Run the one-minute move on loans, offers and promises, and know where it stops working'],
+  parts:['Turns, not luck','Fold the tree','The flag game','Real people, real life'],
+  read:'Read chapter 2 of the book for the full Survivor move-by-move table, the line-item veto trees, the chess story and the Orange Bowl case.',
+  glossary:{
+   'decision-tree':'Decision tree: a map of one person’s choices, fork after fork, with nobody else reacting. A game tree adds other people’s forks.',
+   'ultimatum':'Ultimatum game: one person proposes how to split a sum; the other can only accept or refuse, and if they refuse, neither gets anything.',
+   'dictator':'Dictator game: like the ultimatum game, except the other person can’t refuse; the proposer simply decides the split.',
+   'fully-solvable':'Fully solvable game: one you can fold all the way back by reasoning, because there’s no luck, everyone’s aims are known and every move is seen.'
+  },
+  cheatsheet:[
+   '<b>Turns or same time?</b> When people take turns, use Rule 1: <b>look forward and reason backward</b>.',
+   'A future move by someone you know isn’t a coin toss: Lucy will pull the ball away. Predict it from <b>their aims</b>.',
+   '<b>Fold from the tips:</b> at the last fork, what will that person really do? Cross out the rest, step back, repeat. Don’t pick the route whose first branch looks best.',
+   'Predict what <b>they</b> will do, not what you’d do in their shoes. A promise needs a reason to be kept when the time comes (Fredo); a larger game can supply one. Games aren’t zero-sum: both can win.',
+   '21 flags: leave them 4, 8, 12, 16, 20, so take 1 first. In a game, <b>more options can hurt</b> (the line-item veto).',
+   'One-minute move (how this course applies the book): draw the turns → jump to the last move → cross out and step back → pick your first move.',
+   'Limits: luck, unknown aims, unseen moves, trees too big to draw (look a few moves ahead, then judge). Real people care about fairness: offers under 20% are rejected about half the time. With someone you’ll meet again, an even split also buys trust.',
+   'If you must take a risk, <b>take it early</b>, while there’s still time to recover (Osborne’s two-pointer).'
+  ],
+  steps:[
+/* ---------- PART 1: TURNS, NOT LUCK ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Every autumn Lucy holds a football for Charlie Brown, then pulls it away as he kicks. This year she invites him again. What should Charlie expect?</h1>');
+  L.mc(L.card,['A fresh year: it could go either way','She’ll pull it away again','She’ll let him kick, to make up for last year'],1,
+   'Her move lies in the future, but it isn’t uncertain: Charlie knows she’d rather see him fall. The book says he should refuse to play.',
+   'Lucy’s move is in the future, yet Charlie knows what she prefers: seeing him fall. A future move by someone you know isn’t a coin toss. The book says he should refuse to play.');}},
+
+{part:0,src:'Chapter 2 · Decision Trees and Game Trees · Charlie Brown in Football and in Business',
+ solve:async L=>{await lbSolveTree(L,L.t);},
+ run(L){
+  L.h(L.kick('learn','The football, as a tree')+'<h1 class="q">Fold Charlie’s choice from the tips: Lucy’s fork first, then Charlie’s.</h1><div id="tt"></div>'+
+   '<p class="small" style="margin:0">Each fork is one person’s choice. Each box shows what each gets, Charlie’s score first (illustrative: +1 good, −1 bad).</p>');
+  L.t=lbTree(L,L.$('#tt'),{root:LB_LUCY(),names:['Charlie','Lucy'],leafW:104,note:'illustrative scores',
+   start:'Lucy moves last, so her fork glows first. Tap it.',
+   onRoot(){L.sheet('info','Her move is in the future, not in doubt','Lucy prefers Charlie on his back, so “let him kick” withers. With it gone, accepting leads straight to a fall, so Charlie’s best move is to refuse. That’s the whole method: fold from the last move back to the first.');L.done();}});}},
+
+{part:0,src:'Chapter 2 · Two Kinds of Strategic Interactions',run(L){
+  L.h(L.kick('learn','Two kinds of game')+'<h1 class="q">Do you see their move before you choose?</h1>'+
+   '<svg class="lb-svg" viewBox="0 0 330 170" role="img" aria-label="Left: taking turns, Tali offers and Arlo replies. Right: at the same time, Plover and Kittiwake choose behind a wall.">'+
+   '<rect x="0" y="0" width="160" height="170" rx="14" fill="var(--soft)"/><rect x="170" y="0" width="160" height="170" rx="14" fill="var(--soft)"/>'+
+   '<text x="80" y="20" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">TAKING TURNS</text>'+
+   lbFig(34,88,'var(--h1)','Tali')+lbFig(126,88,'var(--h2)','Arlo')+
+   '<path d="M48 60Q80 34 110 58" fill="none" stroke="var(--h1)" stroke-width="2.5" stroke-linecap="round"/><path d="M104 50l9 9-12 2Z" fill="var(--h1)"/>'+
+   '<text x="80" y="40" text-anchor="middle" font-size="11" font-weight="700" fill="var(--h1)">1 · offer</text>'+
+   '<path d="M112 108Q80 132 50 110" fill="none" stroke="var(--h2)" stroke-width="2.5" stroke-linecap="round"/><path d="M56 118l-9-8 12-2Z" fill="var(--h2)"/>'+
+   '<text x="80" y="140" text-anchor="middle" font-size="11" font-weight="700" fill="var(--h2)">2 · reply, having seen it</text>'+
+   '<text x="80" y="160" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--muted)">see, then answer</text>'+
+   '<text x="250" y="20" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">AT THE SAME TIME</text>'+
+   lbFig(206,88,'var(--h1)','Plover')+lbFig(294,88,'var(--h2)','Kittiwake')+
+   '<rect x="246" y="46" width="8" height="78" rx="3" fill="var(--line2)"/>'+
+   '<circle cx="206" cy="46" r="11" fill="var(--card)" stroke="var(--muted)" stroke-width="1.5"/><text x="206" y="51" text-anchor="middle" font-size="13" font-weight="700" fill="var(--muted)">?</text>'+
+   '<circle cx="294" cy="46" r="11" fill="var(--card)" stroke="var(--muted)" stroke-width="1.5"/><text x="294" y="51" text-anchor="middle" font-size="13" font-weight="700" fill="var(--muted)">?</text>'+
+   '<text x="250" y="140" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">sealed bids, same deadline</text>'+
+   '<text x="250" y="160" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--muted)">choose blind</text></svg>'+
+   '<div class="lb-rule">'+L.ic('tree')+'<div>Rule 1 · Look forward and reason backward<small>For turns: foresee where your first move leads, and choose from that.</small></div></div>'+
+   '<p class="small">In '+L.g('sequential','turns')+', you look ahead to their reply. '+L.g('simultaneous','At the same time')+', you must think about what they’re thinking (lesson 5). Some games, like football, mix both.</p>');
+  L.done();}},
+
+{part:0,src:'Chapter 2 · Decision Trees and Game Trees',
+ solve:async L=>{L.$('#cf').click();await L.sleep(50);L.$('#cl').click();await lbWait(L,()=>L.t.root.f&&!L.t.busy);await L.sleep(30);},
+ run(L){
+  L.h(L.kick('learn','Decision trees and game trees')+'<h1 class="q">The book’s commute: Princeton to downtown New York. Car or train first?</h1><div id="tt"></div>'+
+   '<div class="lb-ctl"><button class="btn" id="cf">Pick the best-looking first branch</button><button class="btn pri" id="cl">'+L.ic('tree')+'Look ahead, reason back</button></div>');
+  const tried=new Set();let fin=false;
+  L.t=lbTree(L,L.$('#tt'),{root:LB_COMMUTE(),names:['You'],noNames:true,leafW:70,S:40,fmt:lbMin,note:'minutes to downtown (illustrative)',noFold:true,
+   start:'A '+L.g('decision-tree','decision tree')+': only your own forks. Try both ways of choosing.'});
+  const end=()=>{if(!fin&&tried.size===2){fin=true;L.sheet('info','Don’t cross that bridge when you get to it','Choosing by the first branch (“I like driving”) and sorting out the rest later lands you on 75 minutes. Folding from the tips finds the PATH train, 55. A '+L.g('game-tree','game tree')+' is the same picture with other people’s forks in it: there you must think as they would.');L.done();}};
+  L.$('#cf').onclick=()=>{if(L.t.busy)return;L.t.reset();L.t.showPath([0,0],true);L.t.say('<b>Car first</b>, because you’d rather drive. The best you can then do is the tunnel: <b>75 min</b>.');tried.add('f');end();};
+  L.$('#cl').onclick=async()=>{if(L.t.busy)return;L.t.reset();await L.t.foldAll(false);if(!L.t.wrap.isConnected)return;L.t.say('<b>Folded from the tips:</b> the train, then the PATH at Newark: <b>55 min</b>. The first branch you liked less wins.');tried.add('l');end();};}},
+
+{part:0,src:'Chapter 2 · Two Kinds of Strategic Interactions',pts:5,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Turns, or at the same time?',['Turns','Same time'],[
+   ['Arlo asks Tali for a loan. Months later, Arlo decides whether to repay.',0,'Tali moves, then Arlo moves, knowing what Tali did: turns.'],
+   ['Plover and Kittiwake each send the council a sealed bid by Friday noon.',1,'Neither sees the other’s bid before choosing: same time.'],
+   ['The landlord proposes a 10% rent rise; Tali can accept, counter or leave.',0,'An offer, then a reply to it: turns.'],
+   ['Tali kicks a penalty as the goalkeeper dives.',1,'The keeper can’t wait to see the kick. Both choose blind.'],
+   ['Greer names a pay figure, then Tali answers.',0,'Tali answers having heard the figure: turns.']]);}},
+
+/* ---------- PART 2: FOLD THE TREE ---------- */
+{part:1,src:'Chapter 2 · Decision Trees and Game Trees · Charlie Brown in Football and in Business',
+ solve:async L=>{await lbSolveTree(L,L.t);await L.sleep(30);L.$('#po').click();},
+ run(L){
+  L.h(L.kick('learn','Explore · fold the loan')+'<h1 class="q">Arlo wants £3,000 for a coffee cart, repaid “by the summer”. Fold it, then play it out.</h1><div id="tt"></div>'+
+   '<div class="lb-ctl"><button class="btn pri" id="po" hidden>'+L.ic('play')+'Play it out</button></div>'+
+   '<p class="small" style="margin:0">Arlo has repaid late twice. The numbers are Tali’s honest read of what each wants at that moment (illustrative). Try both settings of the switch.</p>');
+  L.t=lbTree(L,L.$('#tt'),{root:LB_ARLO(),names:['Tali','Arlo'],aimsSw:true,leafW:104,
+   onRoot(){L.$('#po').hidden=false;},onReset(){const p=L.$('#po');if(p)p.hidden=true;}});
+  L.$('#po').onclick=()=>{if(L.t.busy)return;const end=L.t.playOut(),g=L.t.root.ghost;
+    L.t.say(g?'<b>Predicted</b> (red dashed): Arlo repays. <b>What happens</b> (blue): Tali lends, Arlo keeps the cash, Tali ends on '+lbPm(end.v[0])+'.':'<b>What happens</b> (blue): Tali doesn’t lend. Both get 0.');
+    L.sheet('info',g?'The ghost was wrong':'Arlo keeps the cash, so no loan',g?'In Tali’s shoes, repaying looks obvious, so the fold said “lend”. But Arlo plays by Arlo’s aims: at summer the cash is worth more to Arlo. Predict what they will do, not what you would do.':'At summer, keeping the cash (+4) beats repaying (+3) for Arlo, so don’t lend. Yet “paid back” beats “no loan” for <b>both</b>: the game isn’t '+L.g('zero-sum','zero-sum')+'. The promise needs a reason (lessons 7–8). Flip the switch to see the trap.');L.done();};}},
+
+{part:1,src:'Chapter 2 · Decision Trees and Game Trees · Charlie Brown in Football and in Business',
+ solve:async L=>{L.$('#fm').children[0].click();await lbSolveTree(L,L.t);L.$('#fm').children[1].click();await lbSolveTree(L,L.t);},
+ run(L){
+  L.h(L.kick('ex','A story from the book')+'<h1 class="q">Fredo’s pitch: a great deal, if the promise is kept. Fold it twice.</h1>'+
+   '<div class="lb-ctl" id="fm"></div><div id="tt"></div><p class="small" style="margin:0">Charlie, grown up, meets Fredo abroad: “Invest $100,000 and in a year I’ll turn it into $500,000, split equally.” There’s a contract, but the courts there are weak.</p>');
+  const seen=new Set();let mode=0,fin=false;
+  const build=()=>{L.$('#tt').innerHTML='';L.t=lbTree(L,L.$('#tt'),{root:LB_FREDO(mode===1),names:['Charlie','Fredo'],fmt:lbK,noIni:true,leafW:112,note:mode?'$; US-trade cost illustrative':'the book’s numbers, $',
+    start:mode?'Now Fredo also does business in the US, where Charlie could ruin it. Fold again.':'Fold it: Fredo’s fork first.',
+    onRoot(t){seen.add(mode);if(!fin&&seen.size===2){fin=true;L.sheet('info','One tree, three lessons','<b>1</b> It’s Lucy’s football again: one tree, many stories. <b>2</b> A wary Charlie won’t invest, so Fredo loses $250,000 too: the promise must be made believable (lessons 7–8). <b>3</b> A kept contract beats no deal for <b>both</b>; a larger game made honesty pay.');L.done();}}});};
+  ['One-off deal','Larger game: Fredo trades in the US'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip'+(j===0?' sel':'');b.textContent=t;b.onclick=()=>{if(L.t&&L.t.busy)return;mode=j;[...L.$('#fm').children].forEach((x,q)=>x.classList.toggle('sel',q===j));build();};L.$('#fm').appendChild(b);});
+  build();}},
+
+{part:1,src:'Chapter 2 · Being of Two Minds',pts:1,
+ solve:async L=>{L.$('#lp').children[1].click();L.$('#lw').click();await lbWait(L,()=>L.t.root.f&&!L.t.busy);await L.sleep(30);},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tali offers Linus the 9 a.m. or the 6 p.m. client workshop. Folded with <i>Linus’s</i> aims, which offer wins?</h1>'+
+   '<p class="small" style="margin:0">Linus accepts or pushes back to Greer. Tali hates late finishes; Linus loves being seen, and Greer comes to the evening one. Second number = Linus’s view (illustrative).</p>'+
+   '<div class="lb-ctl" id="lp"></div><div class="lb-ctl"><button class="btn pri" id="lw" hidden>'+L.ic('play')+'Fold it with Linus’s aims</button></div><div id="tt"></div><div class="lb-ctl"><button class="btn" id="ls" hidden>Now fold it in Tali’s shoes</button></div>');
+  let pick=null;
+  ['Offer Linus the morning','Offer Linus the evening'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{if(b.disabled)return;pick=j;[...L.$('#lp').children].forEach((x,q)=>x.classList.toggle('sel',q===j));L.$('#lw').hidden=false;};L.$('#lp').appendChild(b);});
+  L.t=lbTree(L,L.$('#tt'),{root:LB_LINUS(),names:['Tali','Linus'],leafW:104,noFold:true,start:'Pick your prediction first.'});
+  L.$('#lw').onclick=async function(){this.hidden=true;[...L.$('#lp').children].forEach(x=>x.disabled=true);await L.t.foldAll(false);if(!L.t.wrap.isConnected)return;
+    const ok=pick===1;L.award(ok);L.$('#ls').hidden=false;
+    L.sheet(ok?'ok':'no',ok?'The evening: both win':'Linus wants the evening','By Linus’s own numbers, the evening slot, where Greer is watching, is the prize (+3). Offer it and Linus accepts, and Tali is home by 6. Both win, which Tali’s own tastes would have hidden. The book’s tip: get someone outside to play the other side’s part.');L.done();};
+  L.$('#ls').onclick=async function(){if(L.t.busy)return;this.hidden=true;L.t.setAims('shoes');await L.t.foldAll(false);if(!L.t.wrap.isConnected)return;L.t.playOut();
+    L.t.say('<b>In Tali’s shoes</b> (red dashed), Linus “surely” takes the morning, so Tali offers it. <b>What happens</b> (blue): Linus pushes back, and Tali ends on −1.');};}},
+
+{part:1,src:'Chapter 2 · Decision Trees and Game Trees · More Complex Trees',
+ solve:async L=>{L.$('#vm').children[0].click();await lbWait(L,()=>L.t&&L.t.root.f&&!L.t.busy);await L.sleep(30);L.$('#vm').children[1].click();await lbWait(L,()=>L.t&&L.t.root.f&&!L.t.busy);},
+ run(L){
+  L.h(L.kick('learn','More options can hurt')+'<h1 class="q">The book’s line-item veto: one extra branch for the president. Who gains?</h1>'+
+   '<p class="small" style="margin:0">Congress likes urban renewal (U), the president a missile system (M); both prefer the pair to nothing (2). The book’s ratings: 4 best, 1 worst.</p>'+
+   '<div class="lb-ctl" id="vm"></div><div id="tt"></div>');
+  const seen=new Set();let fin=false,mode=-1;
+  ['No line-item veto','Line-item veto'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=async()=>{if(L.t&&L.t.busy)return;mode=j;[...L.$('#vm').children].forEach((x,q)=>x.classList.toggle('sel',q===j));
+    L.$('#tt').innerHTML='';const t=L.t=lbTree(L,L.$('#tt'),{root:LB_VETO(j===1),names:['Congress','President'],ini:['C','P'],noNames:true,leafW:72,S:32,gap:70,fmt:String,note:'the book’s ratings',noFold:true,start:'Folding…'});
+    await t.foldAll(false);if(!t.wrap.isConnected)return;seen.add(j);
+    t.say(j?'<b>With the veto</b>, the president would cut U from the pair, so Congress sends U alone, which is vetoed. <b>Both get 2.</b>':'<b>Without it</b>, the president signs the pair, so Congress sends it. <b>Both get 3</b>, their second best.');
+    if(!fin&&seen.size===2){fin=true;L.sheet('info','Extra freedom left the president worse off','For one person deciding alone, more options can never hurt. In a game they can, because the others react to them. The flip side: tying your own hands can help, the idea behind commitments in lesson 7.');L.done();}};L.$('#vm').appendChild(b);});
+  L.t=null;L.$('#tt').innerHTML='<p class="lb-ro">Pick a setting to fold the tree.</p>';}},
+
+{part:1,src:'Chapter 2 · Decision Trees and Game Trees · Charlie Brown in Football and in Business',pts:6,run(L){
+  L.h(L.kick('pr','Practice · read the last fork')+'<h1 class="q">When the time comes, will they have a reason to keep the promise?</h1>');
+  L.buckets(L.card,['They’ll have a reason to keep it','Only hope says they will'],[
+   ['Greer writes a March pay review into Tali’s contract.',0,'It’s in writing, and Greer’s standing with the whole team rides on keeping it.'],
+   ['A stranger online promises to post concert tickets once Tali has paid.',1,'Once paid, the seller gains nothing by posting. Fredo’s tree, with no larger game.'],
+   ['Arlo promises to repay £3,000 “by the summer”, with nothing written down.',1,'Nothing changes Arlo’s numbers at the last fork. Lessons 7 and 8 show how to add a reason.'],
+   ['A bike shop with years of local reviews promises a refund if the lights fail.',0,'A larger game: its name with every future customer makes keeping the promise pay.'],
+   ['A neighbour moving abroad tomorrow promises to pay back £50 next month.',1,'After tomorrow there’s no future game between you, so nothing at the last step makes them pay.'],
+   ['A builder asks for the whole price up front and promises to finish by June.',1,'Fully paid, the builder’s reason to hurry is gone. Paying in stages changes the tree (lesson 8).']],
+   'A promise is worth what the promiser gains by keeping it when the time comes. Read their numbers at the last fork, not their words.');}},
+
+/* ---------- PART 3: THE FLAG GAME ---------- */
+{part:2,src:'Chapter 2 · Strategies for “Survivors”',
+ solve:async L=>{while(L.$('#sb'))L.$('#sb').click();},
+ run(L){
+  L.h(L.kick('ex','A story from the book')+'<h1 class="q">A TV game that a million dollars hung on</h1><div id="sf"></div><div class="lb-cap" id="sc" aria-live="polite"></div>'+
+   '<div class="lb-ctl"><button class="btn pri" id="sb">Next '+L.ic('down')+'</button></div>');
+  const f=lbFlags(L,L.$('#sf'),{demo:true}),key=f.wrap.querySelector('.lb-key');
+  const B=[
+   ['The game','<i>Survivor: Thailand</i>: two tribes take 1, 2 or 3 flags a turn. Last flag wins; the losers vote one of their own out.',()=>f.say('Flags left: <b>21</b>')],
+   ['The opening','Sook Jai went first and took 2. What would you have taken?',()=>{f.mark('them',2);f.say('Sook Jai took <b>2</b> · flags left: <b>19</b>');key.hidden=false;}],
+   ['Half the insight','A Chuay Gahn player saw it: leave them 4 at the end. Right, but only one step back.',()=>{f.setStakes([4]);f.say('Leave them <b>4</b>, and the last flag is yours');}],
+   ['The whole chain','For 4, leave 8 the turn before; then 12, 16, 20. So the right opening was 1. Almost every real move was wrong.',()=>{f.setStakes([4,8,12,16,20],[8,12,16,20]);f.say('The right opening: take <b>1</b>, leave <b>20</b>');}]];
+  key.innerHTML='<b style="color:var(--h2)">▬</b> taken by Sook Jai · <svg width="8" height="13" viewBox="0 0 8 13" style="vertical-align:-2px" aria-hidden="true"><path d="M4 1V12" stroke="var(--no-strong)" stroke-width="2" stroke-dasharray="3 2"/></svg> counts to leave them';
+  let k=0;
+  const go=()=>{const b=B[k];b[2]();L.$('#sc').innerHTML='<b class="h">'+(k+1)+' of 4 · '+b[0]+'</b>'+b[1];k++;
+    if(k===B.length){L.$('#sb').remove();L.sheet('info','No luck, so you can reason it back','Nothing is hidden and every move is seen, so the game folds back from the end. It still takes practice: the book’s students needed three or four games, and watching helps.');L.done();}};
+  L.$('#sb').onclick=go;go();}},
+
+{part:2,src:'Chapter 2 · Strategies for “Survivors”',
+ solve:async L=>{await lbSolveFlags(L,L.f);},
+ run(L){
+  L.h(L.kick('learn','Explore · the flag game')+'<h1 class="q">Quiz-night tie-break with Kittiwake’s team: 21 flags, take 1, 2 or 3 a turn. Whoever takes the last flag wins. You go first.</h1><div id="ff"></div>'+
+   '<p class="small" style="margin:0">Kittiwake’s team plays perfectly whenever it can.</p>');
+  let fin=false;
+  L.f=lbFlags(L,L.$('#ff'),{onEnd(won){if(fin)return;fin=true;
+    L.sheet('info',won?'You beat perfect play':'Kittiwake never slipped',won?'You won against a team that never errs, so you found the pattern (or got lucky). Next: why it works.':'Look at the counts Kittiwake left you after each of its turns. There’s a pattern. Next, reason back from the end to find it.');L.done();}});
+  L.f.start('me');}},
+
+{part:2,src:'Chapter 2 · Strategies for “Survivors”',
+ solve:async L=>{while(L.$('#wb'))L.$('#wb').click();},
+ run(L){
+  L.h(L.kick('learn','Reason back from the end')+'<h1 class="q">Start at the last flag and work back. Plant one stake at a time.</h1><div id="fw"></div>'+
+   '<div class="lb-dir"><span>← the game runs this way</span><span>you reason this way →</span></div><div class="lb-cap" id="wc"></div><div class="lb-ctl"><button class="btn pri" id="wb">'+L.ic('pointer')+'Plant the first stake</button></div>');
+  const f=lbFlags(L,L.$('#fw'),{demo:true});f.say('Stakes mark the counts to leave the other side.');
+  const K=[4,8,12,16,20],T=[
+   ['Stake 1 · leave them 4','Facing 4, they must take 1, 2 or 3. You take the other 3, 2 or 1, and the last flag is yours.'],
+   ['Stake 2 · leave them 8','To be sure of leaving 4, leave 8 the turn before. Whatever they take, you take 4 minus that.'],
+   ['Stake 3 · leave them 12','The same trick, one step further back: from 12 you can always bring them to 8.'],
+   ['Stake 4 · leave them 16','Each of your turns plus theirs makes 4. Keep stepping back.'],
+   ['Stake 5 · leave them 20','From 21, take just 1 and leave 20. Then the win is certain, if you keep to the stakes.']];
+  L.$('#wc').innerHTML='<b class="h">The end</b>Whoever takes the last flag wins. What count do you want the other side to face at the very end?';
+  let k=0;
+  L.$('#wb').onclick=function(){k++;f.setStakes(K.slice(0,k));f.say('Stakes planted: <b>'+k+' of 5</b>');L.$('#wc').innerHTML='<b class="h">'+T[k-1][0]+'</b>'+T[k-1][1];
+    if(k===5){this.remove();L.sheet('info','Tree logic, no tree drawn','You just looked ahead and reasoned back without drawing a single branch. The book says that once you’ve practised, many everyday games can be solved this way. Note the first mover doesn’t always win: start with 20 flags and the second mover has the sure win.');L.done();}
+    else this.innerHTML=L.ic('pointer')+'Step back one turn';};}},
+
+{part:2,src:'Chapter 2 · Strategies for “Survivors”',pts:1,
+ solve:async L=>{L.$('#op').children[0].click();L.$('#og').click();await L.sleep(20);await lbSolveFlags(L,L.f);},
+ run(L){
+  L.h(L.kick('pr','Predict, then play')+'<h1 class="q">Rematch. Your side goes first with 21 flags. How many do you take?</h1>'+
+   '<div class="lb-ctl" id="op"></div><div class="lb-ctl"><button class="btn pri" id="og" hidden>'+L.ic('play')+'Play it</button></div><div id="of"></div><div id="ofb"></div>');
+  let pick=null,fin=false;
+  [1,2,3].forEach((k,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=k+(k>1?' flags':' flag');b.onclick=()=>{if(b.disabled)return;pick=j;[...L.$('#op').children].forEach((x,q)=>x.classList.toggle('sel',q===j));L.$('#og').hidden=false;};L.$('#op').appendChild(b);});
+  L.$('#og').onclick=function(){this.hidden=true;[...L.$('#op').children].forEach(x=>x.disabled=true);const ok=pick===0;L.award(ok);
+    L.fb(L.$('#ofb'),ok?'<b>Right:</b> take 1 and leave 20, the first stake. Now keep to the stakes.':'<b>Taking '+(pick+1)+' leaves '+(20-pick)+'</b>, which isn’t a stake, so Kittiwake can reach 16 next. The right opening is 1. Play it with the stakes as your guide.',ok?'ok':'no');
+    L.f=lbFlags(L,L.$('#of'),{stakes:[4,8,12,16,20],toggle:true,onEnd(won){if(won&&!fin){fin=true;L.sheet('ok','Win secured from move one','You left Kittiwake 20, 16, 12, 8 and 4. Against a side that knows the trick, the winner was settled before the first flag moved.');L.done();}
+      else if(!won)L.f.say('Kittiwake wins. <b>Play again</b> and leave them a stake count every turn.');}});
+    L.f.start('me');};}},
+
+{part:2,src:'Workouts · Trip to the Gym No. 1',pts:1,
+ solve:async L=>{L.f.wrap.querySelector('[data-s="them"]').click();await lbSolveFlags(L,L.f);},
+ run(L){
+  L.h(L.kick('pr','Challenge · hot potato')+'<h1 class="q">New rule: whoever takes the last flag <i>loses</i>. Still 21 flags. You choose who goes first. Win.</h1><div id="hf"></div>'+
+   '<p class="small" style="margin:0">Hint: work back from the end again. Which count do you want them to face last?</p>');
+  let first=true;
+  L.f=lbFlags(L,L.$('#hf'),{hot:true,choose:true,onEnd(won){
+    if(first){first=false;L.award(won);
+      L.sheet(won?'ok':'no',won?'You let them start':'21 is a losing start',
+       'Now you want them to face 1 flag, so the stakes are 1, 5, 9, 13, 17 and 21. Starting at 21 you’re already on a stake, so the side that starts loses against perfect play. Let Kittiwake go first. Going first isn’t always an advantage.');L.done();}
+    else L.f.say(won?'<b>Your side wins.</b>':'<b>Kittiwake wins.</b> Leave them 17, 13, 9, 5, 1.');}});}},
+
+/* ---------- PART 4: REAL PEOPLE, REAL LIFE ---------- */
+{part:3,src:'Chapter 2 · Do People Actually Solve Games by Backward Reasoning?',
+ solve:async L=>{L.$('#um').children[0].click();L.$('#uf').click();await lbWait(L,()=>L.t.root.f&&!L.t.busy);await L.sleep(30);L.$('#um').children[1].click();L.$('#uf').click();await lbWait(L,()=>L.t.root.f&&!L.t.busy);},
+ run(L){
+  L.h(L.kick('learn','Real people · the ultimatum game')+'<h1 class="q">Split a £60 refund. The co-captain can only say yes or no.</h1>'+
+   '<p class="small" style="margin:0">A rained-off week: the pitch firm refunds £60. Tali proposes the split once; a no, and it all stays in the team kitty.</p><div class="lb-ctl" id="um"></div><div id="ut"></div><div class="lb-ctl"><button class="btn pri" id="uf">'+L.ic('tree')+'Fold it</button></div><p class="small" id="un" style="margin:0"></p>');
+  const seen=new Set();let mode=0,fin=false;
+  const build=()=>{L.$('#ut').innerHTML='';L.t=lbTree(L,L.$('#ut'),{root:LB_ULT(mode===1),names:['Tali','Co-captain'],ini:['T','C'],noIni:true,noNames:true,leafW:84,S:34,gap:72,fmt:lbMoney,note:mode?'pounds; yes-rates on branches':'pounds',sub:mode?LB_ULT_SUB:'',
+    start:'Tap the glowing forks, or press Fold it.',
+    onRoot(){seen.add(mode);L.$('#uf').disabled=true;
+      if(!fin&&seen.size===2){fin=true;L.sheet('info','Fairness moves the fold','In the book’s experiments, offers under 10% are rare and 50:50 is the most common. Refusers gain no reputation (each pair plays once); brain scans link it to anger. Keep reasoning back, with fairness in their aims.');L.done();}}});
+    L.$('#uf').disabled=false;
+    L.$('#un').innerHTML=mode?'£1 is under 20% of the pot: the book finds such offers turned down about half the time. Rates with a * are made up for the course.':'The theory’s co-captain cares only about money, so any yes beats £0.';};
+  [['Money only (the theory)'],['Real people (the book’s experiments)']].forEach((t,j)=>{const b=document.createElement('button');b.className='chip'+(j===0?' sel':'');b.textContent=t[0];b.onclick=()=>{if(L.t&&L.t.busy)return;mode=j;[...L.$('#um').children].forEach((x,q)=>x.classList.toggle('sel',q===j));build();};L.$('#um').appendChild(b);});
+  L.$('#uf').onclick=()=>{if(!L.t.busy&&!L.t.root.f)L.t.foldAll(false);};
+  build();}},
+
+{part:3,src:'Chapter 2 · Case Study: The Tale of Tom Osborne and the ’84 Orange Bowl',pts:1,
+ solve:async L=>{L.$('#xp').children[1].click();L.$('#xw').click();await L.sleep(2300);},
+ run(L){
+  const OS=[[['Kick for 1','✓ 31–24'],['Touchdown','31–30'],['Go for 2','✗ 31–30'],['Lose','title gone','no']],
+            [['Go for 2','✗ 31–23'],['Touchdown','31–29'],['Go for 2','✓ 31–31'],['Tie','still no. 1','ok']]];
+  let svg='<svg class="lb-svg" viewBox="0 0 330 170" role="img" aria-label="Two orders of play after a two-point try fails"><rect width="330" height="170" rx="14" fill="var(--soft)"/>'+
+   '<text x="10" y="20" font-size="11.5" font-weight="700" fill="var(--ink)">Osborne’s order: kick first, two at the end</text>'+
+   '<text x="10" y="98" font-size="11.5" font-weight="700" fill="var(--ink)">The other order: two first</text>';
+  OS.forEach((lane,r)=>lane.forEach((b,j)=>{const x=8+j*80,y=r?106:28,c=b[2]==='no'?'--no':b[2]==='ok'?'--ok':null;
+    svg+='<rect x="'+x+'" y="'+y+'" width="72" height="46" rx="10" fill="none" stroke="var(--line2)" stroke-width="1.5" stroke-dasharray="4 4"/><text x="'+(x+36)+'" y="'+(y+28)+'" text-anchor="middle" font-size="12" font-weight="700" fill="var(--faint)">'+(j+1)+'</text>'+
+     '<g class="lb-os" id="os'+r+j+'" opacity="0"><rect x="'+x+'" y="'+y+'" width="72" height="46" rx="10" fill="var('+(c?c+'-bg':'--card')+')" stroke="var('+(c?c:'--line2')+')" stroke-width="1.5"/>'+
+     '<text x="'+(x+36)+'" y="'+(y+19)+'" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">'+b[0]+'</text><text x="'+(x+36)+'" y="'+(y+36)+'" text-anchor="middle" font-size="12" font-weight="700" fill="var('+(c||'--ink')+')">'+b[1]+'</text>'+
+     (j<3?'<path d="M'+(x+73)+' '+(y+23)+'l6-4v8Z" fill="var(--faint)"/>':'')+'</g>';}));
+  svg+='</svg>';
+  L.h(L.kick('pr','Case · predict, then watch')+'<h1 class="q">Osborne’s Orange Bowl: if the two-point try fails, which order still leaves a way to tie?</h1>'+svg+
+   '<p class="small" style="margin:4px 0 0">1984: Nebraska needs only a tie to finish first. Down 31–17 to Miami, it scores: 31–23. One more touchdown is coming. Kick for 1 point now, or go for 2?</p>'+
+   '<div class="lb-ctl" id="xp"></div><div class="lb-ctl"><button class="btn pri" id="xw" hidden>'+L.ic('play')+'Watch both orders</button></div>');
+  let pick=null;
+  ['Kick first, go for two at the end','Go for two first','The order makes no difference'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{if(b.disabled)return;pick=j;[...L.$('#xp').children].forEach((x,q)=>x.classList.toggle('sel',q===j));L.$('#xw').hidden=false;};L.$('#xp').appendChild(b);});
+  L.$('#xw').onclick=function(){this.hidden=true;[...L.$('#xp').children].forEach(x=>x.disabled=true);let k=0;const ids=['00','10','01','11','02','12','03','13'];
+    const tick=()=>{const g=L.$('#os'+ids[k]);if(!g||!g.isConnected)return;g.setAttribute('opacity',1);k++;if(k<ids.length){setTimeout(tick,220);return;}
+      const ok=pick===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Take the risk early':'Only a miss tells them apart','Osborne kicked first, then missed the late two-pointer and lost the title. Going for two first, a miss leaves 31–23 and time to try again; a make lets them kick later. If both tries work, order doesn’t matter. The book’s moral: if you must take a risk, take it early, like a first serve. For Tali: pitch the bold idea first; if it flops, the safe one is still there.');L.done();};
+    tick();};}},
+
+{part:3,src:'Chapter 2 · Being of Two Minds',pts:1,
+ solve:async L=>{await lbSolveTree(L,L.t,true);},
+ run(L){
+  L.h(L.kick('pr','Challenge · the pay review')+'<h1 class="q">Pay review: mention the Kittiwake call before Greer names a figure, or wait?</h1>'+
+   '<p class="small" style="margin:0">Tap each fork from the tips and pick the branch that player will take.</p><div id="tt"></div>'+
+   '<p class="small" style="margin:0">Tali’s read of Greer: cost-conscious, respects real alternatives, hates backing down once a figure is said. A recruiter called; there’s no firm offer, and Tali says so honestly.</p>');
+  L.t=lbTree(L,L.$('#tt'),{root:LB_PAY(),names:['Tali','Greer'],mode:'pick',leafW:104,start:'Two forks glow: start with either one.',
+   onRoot(t){const ok=t.miss===0;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Mention it first':'Folded, with '+t.miss+' slip'+(t.miss>1?'s':''),'Once Greer has named a figure, raising it means backing down, so Greer would hold and Tali would just accept. Before any figure is said, Greer can build a real alternative in at no cost to pride. The timing changed Greer’s best reply, and both end better off (+2 each).');L.done();}});}},
+
+{part:3,src:'Course application · built on Chapter 2',pts:1,
+ solve:async L=>{L.$('#mb').click();await L.sleep(30);L.$('#mq').children[0].click();await L.sleep(30);await lbSolveTree(L,L.t);},
+ run(L){
+  L.h(L.kick('pr','One-minute move')+'<h1 class="q">Juno: “Book our holiday train tickets now while they’re cheap, and I’ll pay my half when my next shoot pays.” Run the move.</h1>'+
+   L.note('How this course applies the book: a one-minute routine built only from the chapter’s Rule 1.','compass')+
+   '<div class="lb-steps" id="ms"><span>1 · Draw the turns</span><span>2 · Jump to the last move</span><span>3 · Cross out, step back</span><span>4 · Pick your first move</span></div>'+
+   '<div class="lb-cap" id="mc" aria-live="polite"></div><div class="lb-ctl"><button class="btn pri" id="mb">'+L.ic('tree')+'Draw the turns</button></div><div id="mt"></div><div class="lb-ctl" id="mq"></div>');
+  const step=(k,h,t)=>{L.$$('#ms span').forEach((s,j)=>s.className=j<k?'dn':j===k?'cur':'');L.$('#mc').innerHTML='<b class="h">'+h+'</b>'+t;};
+  step(0,'Step 1 · Draw the turns','Who moves, in what order? Tali books (or not); later, Juno pays (or not).');
+  let asked=false;
+  L.$('#mb').onclick=function(){this.parentNode.remove();
+    L.t=lbTree(L,L.$('#mt'),{root:LB_JUNO(),names:['Tali','Juno'],leafW:108,start:'',lockMsg:'Answer step 2 first.',
+     onFold(n,t){if(n!==t.root)step(2,'Step 3 · Cross out, step back','“Lets it slide” withers. Now step back: tap Tali’s fork.');},
+     onRoot(){L.$$('#ms span').forEach(s=>s.className='dn');step(4,'Step 4 · Pick your first move','Book the tickets.');
+      L.sheet('info','Book them: the promise has a reason behind it','Unlike Fredo’s one-off deal, Juno’s promise comes with a reason to keep it: they share a home and a life, a larger game. Looking ahead doesn’t mean distrusting everyone. It means asking whether, at the last step, keeping the promise is in their interest. With practice you’ll run this in your head.');L.done();}});
+    L.t.lock=true;L.t.draw();
+    step(1,'Step 2 · Jump to the last move','Juno moves last. Given Juno’s aims (the relationship counts in Juno’s numbers), what will Juno really do?');
+    ['Pay their half','Let it slide'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{if(asked)return;asked=true;const ok=j===0;L.award(ok);b.classList.add(ok?'ok':'no');
+      L.$('#mq').insertAdjacentHTML('beforeend','<p class="lb-ro" style="width:100%">'+(ok?'Yes: by Juno’s own numbers, paying (+3) beats letting it slide (+1).':'Look at Juno’s numbers: paying is +3, letting it slide +1. The relationship tips it.')+'</p>');
+      L.t.lock=false;L.t.draw();step(2,'Step 3 · Cross out, step back','Tap Juno’s fork to cross out the branch Juno won’t take.');};L.$('#mq').appendChild(b);});};}},
+
+{part:3,src:'Chapter 2 · What Makes a Game Fully Solvable by Backward Reasoning?',
+ solve:async L=>{for(const b of L.$$('#lp .chip')){b.click();await L.sleep(30);}},
+ run(L){
+  L.h(L.kick('learn','Edge cases and limits')+'<h1 class="q">When does folding stop working? Try each case.</h1><div class="lb-ctl" id="lp"></div><div class="lb-chk" id="lc"></div><div id="lt"></div><div id="lf"></div>');
+  const chess=()=>{let s='<svg class="lb-svg" viewBox="0 0 330 200" role="img" aria-label="Chess as a tree: 20 first moves, 400 after one move each, about 10 to the 120 positions in all"><rect width="330" height="200" rx="14" fill="var(--soft)"/>';
+    for(let i=0;i<20;i++){const y=14+i*9;s+='<path d="M20 100L110 '+y+'" stroke="var(--line2)" stroke-width="1"/>';if(i%3===0)for(let j=0;j<7;j++)s+='<path d="M110 '+y+'L196 '+(y-12+j*4)+'" stroke="var(--line2)" stroke-width=".8"/>';}
+    s+='<circle cx="20" cy="100" r="6" fill="var(--h1)"/><rect x="200" y="8" width="126" height="184" rx="12" fill="var(--soft2)" opacity=".85"/>'+
+     '<path d="M200 8V192" stroke="var(--pri)" stroke-width="2.5" stroke-dasharray="6 4"/>'+
+     '<text x="110" y="196" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">20 first moves</text>'+
+     '<text x="263" y="40" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">400 after one</text><text x="263" y="54" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">move each…</text>'+
+     '<text x="263" y="92" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">≈10<tspan font-size="10" dy="-6">120</tspan><tspan dy="6"> positions</tspan></text>'+
+     '<text x="263" y="138" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri)">★ judge the position</text><text x="263" y="152" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri)">from experience</text>'+
+     '<text x="196" y="22" text-anchor="end" font-size="11" font-weight="700" fill="var(--pri)"'+LB_HALO+'>look ahead →|</text></svg>';
+    L.$('#lt').innerHTML=s;};
+  const P=[
+   ['Luck in the tree',[0,1,1],t=>{t=lbTree(L,L.$('#lt'),{root:LB_COURT(),names:['Charlie','Fredo'],fmt:lbK,noIni:true,leafW:112,note:'$; courts illustrative'});t.foldAll(true);},'Fredo’s courts may or may not enforce the contract: chance decides, not a person. The fold stops at “it depends”. With the odds you could fold to an average; without them, there’s no sure answer.'],
+   ['Their aims unclear',[1,0,1],t=>{t=lbTree(L,L.$('#lt'),{root:LB_LINUS(),names:['Tali','Linus'],leafW:104});t.setAims('shoes');t.foldAll(true);t.playOut();t.say('Red dashed: the prediction in Tali’s shoes. Blue: what Linus really does.');},'You can rarely know their aims for sure. Make an honest guess about <i>their</i> aims, not yours, and ask someone outside to play their part.'],
+   ['They can’t see your move',[1,1,0],t=>{t=lbTree(L,L.$('#lt'),{root:LB_SEAL(),names:['Plover','Kittiwake'],ini:['P','K'],leafW:72,S:34,hidMsg:'Kittiwake can’t tell which fork it’s at.'});t.say('Kittiwake can’t tell which fork it’s at.');},'Kittiwake must bid without seeing Plover’s bid, so there’s no seen last move to start from. That’s a same-time game: lesson 5’s tool, put yourself in their shoes.'],
+   ['Real people',[1,0,1],t=>{t=lbTree(L,L.$('#lt'),{root:LB_ULT(true,[1,24]),names:['Tali','Co-captain'],noIni:true,noNames:true,leafW:84,S:34,gap:72,fmt:lbMoney,note:'pounds',sub:LB_ULT_SUB});t.foldAll(true);},'With fairness in the co-captain’s aims, the £1 lowball keeps only about half its value on average, and the fold moves to a fairer split. People bring fairness, pride and anger into a game: count them in.'],
+   ['More options can hurt',[1,1,1],t=>{t=lbTree(L,L.$('#lt'),{root:LB_VETO(true),names:['Congress','President'],ini:['C','P'],noNames:true,leafW:72,S:32,gap:70,fmt:String,note:'the book’s ratings'});t.foldAll(true);},'Fully solvable, but with a twist: the president’s extra branch makes Congress react, and both slip from 3 to 2. Before you grab more freedom in a game, fold the tree with it.'],
+   ['Too big to draw',[1,1,1,0],()=>chess(),'Chess has no luck, known aims and every move in view, yet about 10<sup>120</sup> positions: no computer can fold it all. Experts fold the endgame, look a few moves ahead elsewhere, then judge positions by experience. So: fold the next few turns, then use judgment.']];
+  const seen=new Set();let fin=false;
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];b.onclick=()=>{[...L.$('#lp').children].forEach((x,q)=>x.classList.toggle('sel',q===j));
+    L.$('#lt').innerHTML='';L.$('#lf').innerHTML='';p[2]();
+    L.$('#lc').innerHTML=['No luck','Known aims','Every move seen','Small enough to draw'].map((c,q)=>q<p[1].length?'<span class="'+(p[1][q]?'ok':'no')+'">'+(p[1][q]?'✓ ':'✗ ')+c+'</span>':'').join('');
+    L.fb(L.$('#lf'),p[3],'info');seen.add(j);
+    if(!fin&&seen.size===P.length){fin=true;L.sheet('info','Fold fully only when all three hold','No luck, known aims, every move seen. Otherwise fold what you can: put fairness and pride into their aims, look a few moves ahead and judge the rest from experience. Then watch for the moves you didn’t expect, and learn from them.');L.done();}};L.$('#lp').appendChild(b);});
+  L.$('#lt').innerHTML='<p class="lb-ro">Pick a case.</p>';}},
+
+{part:3,src:'Chapter 2 · What Makes a Game Fully Solvable by Backward Reasoning?',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which limit is this?',['Luck decides part','Their aims are unclear','They can’t see the move'],[
+   ['Tali lends Arlo money; whether summer is sunny decides if the cart earns enough to repay.',0,'The weather, not a person, decides that fork. Fold to “it depends”, or to an average if you know the odds.'],
+   ['Tali expects Greer to be pleased about the Kittiwake call, because Tali would be.',1,'That’s Tali’s shoes, not Greer’s. Predict what Greer will actually want.'],
+   ['Plover and Kittiwake each send a sealed bid for the council website by Friday noon.',2,'Neither sees the other’s bid before choosing: a same-time game, lesson 5’s tool.'],
+   ['Tali plans a joke birthday gift for the co-captain, sure they’ll find it as funny as Tali does.',1,'Tali is projecting. The co-captain’s taste decides the reply, not Tali’s.'],
+   ['Juno and Tali each book a table for Friday without telling the other.',2,'Both choose blind, so there’s no seen last move to fold back from.'],
+   ['Arlo’s cart needs a park licence, and the council picks holders by lottery.',0,'A lottery is pure chance. No reasoning about people folds that fork.']]);}},
+
+{part:3,src:'Chapter 2 · Irrationality versus Other-Regarding Rationality',
+ solve:async L=>{for(const b of L.$$('#cv .chip')){b.click();await L.sleep(30);}},
+ run(L){
+  const px=p=>20+p*4.8;
+  const V=[
+   ['No say (dictator)','<path d="M'+px(40)+' 186H'+px(18)+'" stroke="var(--h3)" stroke-width="3" stroke-linecap="round"/><path d="M'+px(18)+' 180l-8 6 8 6Z" fill="var(--h3)"/>','Dictator game: gives less, still above 0','With no power to refuse, people give less, but well above zero. So ultimatum offers are part generosity, part fear of a no.'],
+   ['Proposer earned it','<rect x="'+px(36)+'" y="181" width="'+(px(45)-px(36))+'" height="11" rx="5" fill="var(--h3)"/>','Won the role in a quiz: about 10% less','When the proposer won the role in a quiz, offers fell by about 10%, yet stayed well above zero.'],
+   ['A quiet way out','<circle cx="'+px(0)+'" cy="186" r="6" fill="var(--h3)"/>','If no one would ever know: most give $0','Offered $9 of $10 with the other person never learning the game existed, most dictators took it. Shame drives some giving.'],
+   ['Big stakes','<rect x="'+px(40)+'" y="181" width="'+(px(50)-px(40))+'" height="11" rx="5" fill="var(--h3)"/>','Months of income at stake: still generous','Rejections got somewhat rarer, but offers stayed generous. Norms vary too: in two gift-giving cultures, offers topped 50%.']];
+  const chart=v=>'<svg class="lb-svg lb-wide" viewBox="0 0 330 216" role="img" aria-label="Share of the pot offered in ultimatum experiments, on a scale from 0 to 60 percent">'+
+   '<rect width="330" height="216" rx="14" fill="var(--soft)"/>'+
+   '<path d="M'+px(50)+' 26V196" stroke="var(--ok-strong)" stroke-width="2" stroke-dasharray="5 4"/><text x="'+(px(50)-4)+'" y="18" text-anchor="end" font-size="11.5" font-weight="700" fill="var(--ok)">50:50, the most common offer</text>'+
+   '<text x="20" y="38" font-size="11.5" font-weight="600" fill="var(--ink)"'+LB_HALO+'>Theory: offer almost nothing</text><circle cx="'+px(1)+'" cy="50" r="6" fill="var(--faint)"/>'+
+   '<text x="20" y="72" font-size="11.5" font-weight="600" fill="var(--ink)"'+LB_HALO+'>Median offer: 40–50%</text><rect x="'+px(40)+'" y="78" width="'+(px(50)-px(40))+'" height="11" rx="5" fill="var(--pri)"/>'+
+   '<text x="20" y="104" font-size="11.5" font-weight="600" fill="var(--ink)"'+LB_HALO+'>Under 20%: rejected about half the time</text><rect x="'+px(0)+'" y="110" width="'+(px(20)-px(0))+'" height="11" rx="5" fill="var(--no-strong)" opacity=".6"/>'+
+   '<text x="20" y="136" font-size="11.5" font-weight="600" fill="var(--ink)"'+LB_HALO+'>Machiguenga (Peru): 26% average</text><circle cx="'+px(26)+'" cy="146" r="6" fill="var(--h3)"/>'+
+   '<path d="M8 160H322" stroke="var(--line2)" stroke-width="1" stroke-dasharray="2 3"/>'+
+   (v?'<text x="20" y="175" font-size="11.5" font-weight="700" fill="var(--h3)"'+LB_HALO+'>'+v[2]+'</text>'+v[1]:'<text x="20" y="182" font-size="11.5" font-weight="600" fill="var(--muted)">Tap a variant: where do offers move?</text>')+
+   '<path d="M'+px(0)+' 198H'+px(60)+'" stroke="var(--line2)" stroke-width="1.5"/>'+
+   [0,20,40,60].map(p=>'<text x="'+px(p)+'" y="211" text-anchor="middle" font-size="11" fill="var(--muted)">'+p+'%</text>').join('')+'</svg>';
+  const T=[[1,29.5],[12,28.8],[24,34.2],[30,29.4]],bx=v=>76+v*5.4;
+  const tali='<svg class="lb-svg lb-wide" viewBox="0 0 330 160" role="img" aria-label="Tali’s average take from the £60 refund for each offer: £1 keeps £29.50, £12 keeps £28.80, £24 keeps £34.20, £30 keeps £29.40">'+
+   '<rect width="330" height="160" rx="14" fill="var(--soft)"/><text x="10" y="18" font-size="11.5" font-weight="700" fill="var(--ink)">Tali’s £60: average kept, one week</text>'+
+   '<text x="10" y="33" font-size="11" font-weight="500" fill="var(--muted)">made-up yes-rates from the ultimatum screen</text>'+
+   T.map(([o,v],j)=>{const y=42+j*24,c=o===24?'var(--pri)':o===30?'var(--ok-strong)':'var(--line2)';return '<text x="10" y="'+(y+13)+'" font-size="12" font-weight="600" fill="var(--ink)">Offer £'+o+'</text><rect x="76" y="'+(y+3)+'" width="'+(bx(v)-76)+'" height="13" rx="6" fill="'+c+'"/><text x="'+(bx(v)+5)+'" y="'+(y+14)+'" font-size="12" font-weight="700" fill="var(--ink)">'+lbMoney(v)+'</text>';}).join('')+
+   '<text x="10" y="150" font-size="11.5" font-weight="700"><tspan fill="var(--pri)">£24: smart</tspan><tspan fill="var(--muted)" font-weight="500"> · </tspan><tspan fill="var(--ok)">£30: about £5 less, buys trust</tspan></text></svg>';
+  L.h(L.kick('learn','Where cooperation wins')+'<h1 class="q">People offer far more than the theory says. Why?</h1><div id="cc"></div>'+
+   '<div class="lb-ctl" id="cv"></div><p class="lb-ro" id="cr">Share of the pot offered, from the book’s summary of '+L.g('ultimatum','ultimatum-game')+' experiments.</p>'+tali+
+   '<p class="small" style="margin:4px 0 0">A fair-range offer is smart: the book’s proposers balanced more for themselves against the risk of a no. The even £30 costs Tali about £5 here. What it buys is a teammate’s trust, every Thursday (repeated games, lesson 4).</p>');
+  L.$('#cc').innerHTML=chart(null);
+  const seen=new Set();let fin=false;
+  V.forEach((v,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=v[0];b.onclick=()=>{[...L.$('#cv').children].forEach((x,q)=>x.classList.toggle('sel',q===j));
+    L.$('#cc').innerHTML=chart(v);L.$('#cr').innerHTML=(j===0?L.g('dictator','Dictator game')+': ':'')+v[3];seen.add(j);
+    if(!fin&&seen.size===V.length){fin=true;L.sheet('info','Fairness is part of the game','The book suggests fairness holds so strongly because groups that share it fight less and cooperate more (it calls this speculation). With real people, a lowball doesn’t pay. With someone you’ll meet again, an even split is kind and buys trust.');L.done();}};L.$('#cv').appendChild(b);});}},
+
+{part:3,src:'Course application · built on Chapter 2',
+ solve:async L=>{L.$('#yc').children[0].click();L.$('#y1').value='Lend my friend £200';L.$('#y2').value='Repays slowly, but repays';
+   ['#y1','#y2'].forEach(s=>L.$(s).dispatchEvent(new Event('input',{bubbles:true})));L.$('#yd').children[0].click();L.$('#yb').click();await lbWait(L,()=>L.t&&L.t.root.f&&!L.t.busy);await L.sleep(30);},
+ run(L){
+  L.h(L.kick('pr','Your turn · ungraded')+'<h1 class="q">One “if I do this, what will they do next?” in your week. Fold it.</h1>'+
+   L.note('How this course applies the book: the one-minute move on your own situation.','compass')+
+   '<span class="lb-fl">The situation</span><div class="lb-ctl" id="yc" style="justify-content:flex-start"></div>'+
+   '<label class="lb-fl" for="y1">1 · Your first move</label><input class="lb-in" id="y1" maxlength="60" placeholder="e.g. pay the deposit before the work starts">'+
+   '<label class="lb-fl" for="y2">2 · Their last move, judged by their aims</label><input class="lb-in" id="y2" maxlength="60" placeholder="e.g. finish on time, because they want the next job">'+
+   '<span class="lb-fl">3 · At that moment, keeping their word is…</span><div class="lb-ctl" id="yd" style="justify-content:flex-start"></div>'+
+   '<div class="lb-ctl"><button class="btn pri" id="yb" disabled>'+L.ic('tree')+'Draw and fold it</button></div><div id="yt"></div>');
+  let sit=null,dir=null;
+  ['A loan or IOU','Paying before work is done','A request at work','A family plan'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{sit=t;[...L.$('#yc').children].forEach((x,q)=>x.classList.toggle('sel',q===j));chk();};L.$('#yc').appendChild(b);});
+  ['in their interest','not in their interest'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{dir=j;[...L.$('#yd').children].forEach((x,q)=>x.classList.toggle('sel',q===j));chk();};L.$('#yd').appendChild(b);});
+  const v=s=>L.$(s).value.trim();
+  function chk(){L.$('#yb').disabled=!(sit&&v('#y1').length>1&&v('#y2').length>1&&dir!==null);}
+  ['#y1','#y2'].forEach(s=>L.$(s).addEventListener('input',chk));
+  const cutT=s=>{s=L.esc(s);return s.length>16?s.slice(0,15)+'…':s;};
+  L.$('#yb').onclick=async()=>{if(L.t&&L.t.busy)return;L.$('#yt').innerHTML='';
+    const fw=dir===0?[[2,2],[-2,1]]:[[2,1],[-2,2]];
+    L.t=lbTree(L,L.$('#yt'),{root:{who:0,kids:[{e:'Go ahead',n:{who:1,kids:[{e:'Keep word',n:{lab:cutT(v('#y2')),v:fw[0]}},{e:'Break it',n:{lab:'They don’t',v:fw[1]}}]}},{e:'Don’t',n:{lab:'Nothing happens',v:[0,0]}}]},
+      names:['You','Them'],ini:['Y','T'],leafW:112,fmt:x=>x>1?'good':x>0?'okay':x<0?'bad':'nothing',noIni:true,note:'your read, not real numbers',noFold:true});
+    await L.t.foldAll(false);if(!L.t.wrap.isConnected)return;
+    L.sheet('info',dir===0?'Go ahead: their aims back your move':'Pause: change the tree first',(dir===0?'At the last fork, keeping their word pays them, so your first move holds up.':'At the last fork, nothing makes them keep it. Before you move, look for a reason they could have: something written, small steps, a larger game (lessons 7 and 8). Or don’t play.')+' Write “'+L.esc(v('#y1'))+'” as one line in your notes, and later note what really happened.');L.done();};}},
+
+{part:3,src:'Course application · built on Chapter 2',run(L){
+  L.h(L.kick('learn','Your strategy map')+'<h1 class="q">Look ahead and reason back joins two rows of the map</h1>'+
+   L.note('How this course applies the book. Later lessons fill the dashed gaps.','compass')+
+   '<svg class="lb-svg lb-wide" viewBox="0 0 330 132" role="img" aria-label="Trigger: you act, then they respond. Tool: a small game tree folded from the tips back to your first move.">'+
+   '<rect width="330" height="132" rx="14" fill="var(--soft)"/>'+
+   '<text x="70" y="20" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--muted)">TRIGGER</text><text x="250" y="20" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--muted)">TOOL</text>'+
+   lbFig(32,70,'var(--h1)','You')+lbFig(108,70,'var(--h2)','They')+
+   '<path d="M44 46Q70 30 96 44" fill="none" stroke="var(--h1)" stroke-width="2.5" stroke-linecap="round"/><path d="M90 37l8 8-11 2Z" fill="var(--h1)"/>'+
+   '<path d="M96 96Q70 112 44 98" fill="none" stroke="var(--h2)" stroke-width="2.5" stroke-linecap="round"/><path d="M50 106l-8-7 11-2Z" fill="var(--h2)"/>'+
+   '<text x="70" y="124" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">people take turns</text>'+
+   '<path d="M140 70H168" stroke="var(--faint)" stroke-width="2.5"/><path d="M168 64l9 6-9 6Z" fill="var(--faint)"/>'+
+   '<path d="M196 70V46H232M196 70V94H232" fill="none" stroke="var(--ink)" stroke-width="2.5"/>'+
+   '<path d="M232 46V36H290M232 94V84H290" fill="none" stroke="var(--ink)" stroke-width="2.5"/>'+
+   '<path d="M232 46V56H290M232 94V104H290" fill="none" stroke="var(--line2)" stroke-width="2" stroke-dasharray="3 4"/>'+
+   '<path d="M282 52l8 8M290 52l-8 8M282 100l8 8M290 100l-8 8" stroke="var(--no)" stroke-width="2"/>'+
+   '<circle cx="196" cy="70" r="7" fill="var(--card)" stroke="var(--h1)" stroke-width="2.5"/><circle cx="232" cy="46" r="6" fill="var(--card)" stroke="var(--h2)" stroke-width="2.5"/><circle cx="232" cy="94" r="6" fill="var(--card)" stroke="var(--h2)" stroke-width="2.5"/>'+
+   '<path d="M300 36V70H212" fill="none" stroke="var(--pri)" stroke-width="2" stroke-dasharray="5 3"/><path d="M212 64l-8 6 8 6Z" fill="var(--pri)"/>'+
+   '<text x="250" y="124" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri)">fold from the tips back</text></svg>'+
+   '<div class="lb-row" style="margin-top:8px"><b>Row zero · Is it a game at all? Will the other side react?</b><div class="r"><span class="m">lumberjack or general</span></div></div><div id="dm"></div>'+
+   '<p class="small">It’s the <b>first</b> tool whenever people take turns. When you want to change someone’s behaviour, it comes last, as the check that they’ll respond the way you expect.</p>');
+  const ico='<svg width="14" height="12" viewBox="0 0 14 12" style="vertical-align:-1px;margin-right:4px" aria-hidden="true"><path d="M2 6H4M4 2V10M4 2H12M4 10H12" fill="none" stroke="currentColor" stroke-width="1.8"/></svg>';
+  L.$('#dm').innerHTML=LB_ROWS.map(r=>{const hot=r[1].includes('look');return '<div class="lb-row'+(hot?' hot':'')+'"><b>'+r[0]+(r[1][0]==='look'?' · start here':hot?' · check last':'')+'</b><div class="r">'+
+    r[1].map((k,j)=>(j?'<span class="ar">→</span>':'')+(k==='look'?'<span class="m cur">'+ico+'Look ahead and reason back</span>':'<span class="m tbd">?</span>')).join('')+'</div></div>';}).join('');
+  L.done();}}
+  ]
+});
+</script>
+</body>
+</html>

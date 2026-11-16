@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Auctions, Bidding and Contests</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/course.css">
+</head>
+<body>
+<script src="../assets/course.js"></script>
+<script src="course-data.js"></script>
+<script>
+/* ===== This lesson’s own visuals: the standing-bidders room (six bidders under a price board,
+   each with a walkaway card, sitting down once the price passes it, with a price track below and a
+   rules switch), the ACME yes-zone strip, the bid-as-if-you’ve-won mirror, the ghost rivals on a
+   0–100 line, the launch-race bars, the burn piles of a war of attrition and the two-licence board.
+   Everything lives in this file. ===== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card button[hidden]{display:none!important}
+.ab-svg{display:block;width:100%;max-width:330px;margin:4px auto}
+.ac-drag{touch-action:none;cursor:ew-resize}
+.ab-ro{font-size:14px;text-align:center;color:var(--muted);margin:6px 0;min-height:20px;line-height:1.45}
+.ab-ro b{color:var(--ink)}
+.ab-ill{font-size:12px;color:var(--muted);text-align:center;margin:2px 0 4px;font-style:italic}
+.ab-ctl{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;align-items:center;margin:6px 0}
+.ab-ctl .chip,.ab-ctl .btn{margin:0}
+.ab-cap{font-size:15px;line-height:1.5;margin:8px 0}
+.ab-sl{display:block;margin:6px auto 0;max-width:330px}
+.ab-sl .h{display:flex;justify-content:space-between;font-size:14px;gap:8px}
+.ab-sl input{width:100%;height:34px;margin:0;accent-color:var(--pri)}
+.ab-sl input:disabled{opacity:.4}
+.ab-say{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:48px}
+.ab-say b.t{display:block;font-size:11.5px;letter-spacing:.4px;color:var(--muted);margin-bottom:2px}
+.ab-res{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}
+.ab-res div{border-radius:12px;padding:8px 10px;font-size:13.5px;line-height:1.4;background:var(--soft);border:2px solid transparent}
+.ab-res div.diff{border-color:var(--h4);background:var(--h4-bg)}
+.ab-res b{display:block;font-size:11.5px;letter-spacing:.3px;color:var(--muted)}
+.ab-steps{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin:4px 0 8px}
+.ab-steps span{font-size:11px;line-height:1.25;font-weight:600;text-align:center;border-radius:10px;padding:6px 2px;background:var(--soft);color:var(--muted);border:1.5px solid transparent}
+.ab-steps span.cur{background:var(--pri-bg);color:var(--pri-deep);border-color:var(--pri)}
+.ab-steps span.dn{background:var(--ok-bg);color:var(--ok)}
+.ab-in{display:block;width:100%;box-sizing:border-box;border:2px solid var(--line);border-radius:12px;padding:9px 11px;font:inherit;font-size:15px;background:var(--card);color:var(--ink);margin:4px 0 8px}
+.ab-in:focus{outline:none;border-color:var(--pri)}
+.ab-fl{font-size:12.5px;font-weight:700;color:var(--muted);letter-spacing:.2px;display:block;margin-top:6px}
+.ab-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.ab-chips .chip{margin:0}
+.ab-wcard{border:2.5px dashed var(--pri);border-radius:16px;background:var(--pri-bg);padding:12px 14px;margin:10px auto 4px;max-width:320px;color:var(--ink)}
+.ab-wcard .k{font-size:11.5px;font-weight:700;letter-spacing:.5px;color:var(--pri-deep)}
+.ab-wcard .n{font-size:28px;font-weight:700;color:var(--pri-deep);line-height:1.2;margin:2px 0 6px;word-break:break-word}
+.ab-wcard .i{font-size:15px;font-weight:600;margin-bottom:6px;word-break:break-word}
+.ab-wcard .r{font-size:14px;line-height:1.45;border-top:1px solid var(--line);padding-top:6px}
+/* strategy-map strip */
+.mp-row{display:grid;grid-template-columns:22px 1fr;gap:2px 8px;align-items:start;border-bottom:1px solid var(--line);padding:6px 2px}
+.mp-row .n{width:20px;height:20px;border-radius:6px;background:var(--soft2);color:var(--muted);font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;margin-top:1px}
+.mp-row.hot .n{background:var(--pri);color:var(--pri-ink)}
+.mp-row b{font-size:13px;line-height:1.35;font-weight:600}
+.mp-row.hot b{color:var(--pri-deep)}
+.mp-row .t{grid-column:2;display:flex;flex-wrap:wrap;gap:3px;align-items:center}
+.mp-t{font-size:11.5px;font-weight:600;border-radius:7px;padding:2px 7px;background:var(--soft2);color:var(--ink)}
+.mp-t.cur{background:var(--pri);color:var(--pri-ink)}
+.mp-t.tbd{background:transparent;border:1.5px dashed var(--line2);color:var(--faint);padding:1px 6px}
+.mp-ar{color:var(--faint);font-size:11px}
+`;document.head.appendChild(st);})();
+
+/* ---------- small helpers ---------- */
+const abFmt=v=>'£'+String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+const abRound=(v,s)=>Math.round(v/s)*s;
+function abSet(inp,v){inp.value=v;inp.dispatchEvent(new Event('input',{bubbles:true}));}
+function abChips(L,host,labels,cb){labels.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+  b.onclick=()=>{[...host.children].forEach((x,q)=>x.classList.toggle('sel',q===j));cb(j,b);};host.appendChild(b);});}
+
+/* ---------- the standing-bidders room (Tali’s car: illustrative numbers) ----------
+   vals = each bidder’s walkaway card (index o.me is the learner’s bidder). stop = where the
+   learner’s bidder sits down (rising, clock, proxy) or what they write (sealed, Dutch).
+   Rivals bid their card; under pay-your-bid rules they shade by the book’s rule (bid what you
+   expect the next-highest value to be, given you’re the highest, with values spread from lo up);
+   with a 20% buyer’s premium they scale back by 1.2. Lazy rivals (proxy) keep a low first proxy
+   unless an early bid makes them do their homework. */
+const AB_X=[35,85,135,185,235,285];
+const AB_LB={rise:'RISING PRICE · ENGLISH',japan:'CLOCK · HANDS UP',vick:'SEALED · 2ND PRICE',first:'SEALED · PAY YOUR BID',dutch:'FALLING CLOCK',proxy:'ONLINE · PROXY BIDS'};
+function abBids(o){return o.vals.map((v,i)=>{if(i===o.me)return o.stop;
+  if(o.rule==='proxy'&&o.lazy&&o.lazy[i]!=null&&o.snipe)v=o.lazy[i];
+  if(o.prem)v=v/1.2;
+  if(o.rule==='first'||o.rule==='dutch')v=o.lo+(v-o.lo)*5/6;
+  return abRound(v,5);});}
+function abRes(o){const b=abBids(o),idx=b.map((v,i)=>i).sort((x,y)=>b[y]-b[x]||(x===o.me?-1:y===o.me?1:x-y));
+  const w=idx[0],s=idx[1],pay1=o.rule==='first'||o.rule==='dutch',price=pay1?b[w]:b[s],pay=price*(o.prem?1.2:1);
+  const val=o.common!=null?o.common:o.vals[o.me];
+  return {b,w,s,price,pay,me:w===o.me,gain:w===o.me?val-pay:0,wgain:(o.common!=null?o.common:o.vals[w])-pay,val};}
+function abSay(o,r){const N=o.names,me=N[o.me];
+  let t='Winner: <b>'+(r.me?me:'bidder '+N[r.w])+'</b> · price <b>'+abFmt(r.price)+'</b>'+(o.prem?' (+20% = <b>'+abFmt(r.pay)+'</b>)':'');
+  if(o.common!=null)return t+'<br>True value <b>'+abFmt(o.common)+'</b> · the winner '+(r.wgain>=0?'gains':'loses')+' <b>'+abFmt(Math.abs(r.wgain))+'</b>';
+  t+='<br>'+me+'’s gain: <b>'+(r.me?(r.gain>=0?'+':'−')+abFmt(Math.abs(r.gain)):'£0')+'</b>';
+  if(r.me&&r.gain<0)t+=' · paid over the walkaway';
+  if(!r.me&&r.pay<r.val)t+=' · lost at a price '+me+' would have paid';
+  return t;}
+function abFig(x,state,col,op){let s='<g opacity="'+op+'">';
+  if(state==='sit'){
+    s+='<path d="M'+(x-17)+' 116V162M'+(x-17)+' 144H'+(x+8)+'M'+(x+6)+' 144V162" stroke="var(--line2)" stroke-width="3" fill="none" stroke-linecap="round"/>';
+    s+='<circle cx="'+(x-5)+'" cy="111" r="9" fill="'+col+'"/><rect x="'+(x-14)+'" y="122" width="18" height="20" rx="6" fill="'+col+'"/>';
+    s+='<path d="M'+(x-5)+' 139H'+(x+12)+'V160" stroke="'+col+'" stroke-width="5.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';}
+  else{
+    s+='<circle cx="'+x+'" cy="89" r="9" fill="'+col+'"/><rect x="'+(x-10)+'" y="100" width="20" height="34" rx="7" fill="'+col+'"/>';
+    s+='<path d="M'+(x-5)+' 133V160M'+(x+5)+' 133V160" stroke="'+col+'" stroke-width="5" stroke-linecap="round"/>';
+    if(state==='raise')s+='<path d="M'+(x+8)+' 105L'+(x+16)+' 81" stroke="'+col+'" stroke-width="4.5" stroke-linecap="round"/><rect x="'+(x+10)+'" y="63" width="16" height="18" rx="4" fill="var(--card)" stroke="'+col+'" stroke-width="2.5"/>';
+    else s+='<path d="M'+(x+9)+' 104L'+(x+13)+' 128" stroke="'+col+'" stroke-width="4.5" stroke-linecap="round"/>';}
+  return s+'</g>';}
+function abRoom(L,host,o){
+  o=Object.assign({lo:3000,hi:6500,names:['Tali','A','B','C','D','E'],vals:[5500,3200,3700,4100,4500,4900],me:0,stop:5500,rule:'japan',
+    prem:false,common:null,lazy:null,snipe:false,hideMe:false,tag:'Illustrative numbers · the online car auction',idle:'',say:null},o||{});
+  const w=document.createElement('div');host.appendChild(w);
+  w.innerHTML='<svg class="ab-svg" viewBox="0 0 320 256" role="img" aria-label="Six bidders under a price board. Each holds a walkaway card and sits down once the price passes it. A price track below marks where each one stopped."></svg><p class="ab-ro" aria-live="polite"></p><p class="ab-ill"></p>';
+  const svg=w.querySelector('svg'),ro=w.querySelector('.ab-ro');
+  const api={w,o,busy:false,runs:0,r:null};let tm=0,st={phase:'idle',p:0,k:0};
+  const X=v=>20+280*Math.max(0,Math.min(1,(v-o.lo)/(o.hi-o.lo)));
+  const col=i=>i===o.me?'var(--pri)':'var(--h2)';
+  function render(){
+    const r=api.r||abRes(o),b=r.b,n=o.vals.length,sealed=o.rule==='vick'||o.rule==='first',done=st.phase==='done',idle=st.phase==='idle';
+    let s='<rect width="320" height="256" rx="14" fill="var(--soft)"/>';
+    let big=idle?'ready':abFmt(abRound(st.p,10));
+    if(sealed&&!done&&!idle)big=st.k<.45?'sealed…':'opening…';
+    if(done)big='SOLD '+abFmt(r.price);
+    s+='<rect x="74" y="6" width="172" height="44" rx="10" fill="var(--ink)"/><text x="160" y="21" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)" opacity=".8" letter-spacing=".5">'+AB_LB[o.rule]+(o.prem?' · +20%':'')+'</text>'+
+      '<text x="160" y="43" text-anchor="middle" font-size="19" font-weight="700" fill="var(--card)">'+big+'</text>';
+    for(let i=0;i<n;i++){
+      const x=AB_X[i],c=col(i),me=i===o.me,out=!idle&&i!==r.w&&(done||(!sealed&&o.rule!=='dutch'&&st.p>=b[i]));
+      let state;
+      if(idle)state='stand';
+      else if(o.rule==='dutch')state=done&&i===r.w?'raise':'sit';
+      else if(sealed)state=done&&i!==r.w?'sit':'stand';
+      else state=out?'sit':'raise';
+      const shadow=o.rule==='rise'&&!me&&!idle&&!done;
+      s+=abFig(x,shadow?'stand':state,c,shadow?.28:1);
+      if(shadow)s+='<text x="'+x+'" y="93" text-anchor="middle" font-size="12" font-weight="700" fill="var(--muted)">?</text>';
+      if(done&&i===r.w)s+='<circle cx="'+x+'" cy="89" r="14" fill="none" stroke="var(--ok-strong)" stroke-width="3"/>';
+      if(o.rule==='proxy'&&o.lazy&&o.lazy[i]!=null){const q=o.snipe||idle?'?':'!';
+        s+='<ellipse cx="'+(x-17)+'" cy="68" rx="10" ry="9" fill="var(--card)" stroke="var(--h4)" stroke-width="1.5"/><text x="'+(x-17)+'" y="72.5" text-anchor="middle" font-size="12" font-weight="700" fill="var(--h4)">'+q+'</text>';}
+      if(sealed&&!idle){const open=done||st.k>=.45;
+        s+='<rect x="'+(x-21)+'" y="54" width="42" height="20" rx="3" fill="var(--card)" stroke="'+c+'" stroke-width="1.8"/>';
+        s+=open?'<text x="'+x+'" y="68" text-anchor="middle" font-size="11" font-weight="700" fill="'+c+'">'+abFmt(b[i])+'</text>':'<path d="M'+(x-21)+' 54L'+x+' 66L'+(x+21)+' 54" fill="none" stroke="'+c+'" stroke-width="1.5"/>';}
+      s+='<text x="'+x+'" y="176" text-anchor="middle" font-size="12" font-weight="'+(me?700:600)+'" fill="'+(me?'var(--pri-deep)':'var(--ink)')+'">'+o.names[i]+'</text>';
+      const face=(me&&!o.hideMe)||done||(o.rule==='japan'&&out);
+      s+='<rect x="'+(x-23)+'" y="181" width="46" height="20" rx="5" fill="var('+(face?'--card':'--soft2')+')" stroke="'+(face?c:'var(--line2)')+'" stroke-width="1.5"/>'+
+        '<text x="'+x+'" y="195" text-anchor="middle" font-size="11" font-weight="700" fill="'+(face?c:'var(--muted)')+'">'+(face?abFmt(o.vals[i]):'?')+'</text>';}
+    /* price track */
+    s+='<path d="M20 232H300" stroke="var(--ink)" stroke-width="2.5"/>';
+    s+='<text x="20" y="250" font-size="11" fill="var(--muted)">'+abFmt(o.lo)+'</text><text x="300" y="250" text-anchor="end" font-size="11" fill="var(--muted)">'+abFmt(o.hi)+'</text>';
+    if(o.common==null&&!o.hideMe){const wx=X(o.vals[o.me]);s+='<path d="M'+wx+' 212V240" stroke="var(--pri)" stroke-width="2" stroke-dasharray="3 3"/><text x="'+wx+'" y="250" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri-deep)">walkaway</text>';}
+    if(o.common!=null&&done){const cx=X(o.common);s+='<path d="M'+cx+' 210V240" stroke="var(--no-strong)" stroke-width="2.5"/><text x="'+cx+'" y="250" text-anchor="middle" font-size="11" font-weight="700" fill="var(--no)">true value</text>';}
+    for(let i=0;i<n;i++){const me=i===o.me,out=!idle&&i!==r.w&&(done||(!sealed&&o.rule!=='dutch'&&st.p>=b[i]));
+      const show=me?!o.hideMe:(done||(o.rule==='japan'&&out)||(sealed&&!idle&&st.k>=.45));
+      if(!show)continue;
+      s+='<circle cx="'+X(b[i]).toFixed(1)+'" cy="232" r="7.5" fill="'+col(i)+'" stroke="var(--card)" stroke-width="1.5"/><text x="'+X(b[i]).toFixed(1)+'" y="236" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)">'+o.names[i][0]+'</text>';}
+    if(done){const pi=(o.rule==='first'||o.rule==='dutch')?r.w:r.s;s+='<circle cx="'+X(b[pi]).toFixed(1)+'" cy="232" r="11.5" fill="none" stroke="var(--ok-strong)" stroke-width="2.5"/>';}
+    if(!idle&&(!sealed||done)){const px=X(done?r.price:st.p);s+='<path d="M'+(px-6).toFixed(1)+' 213H'+(px+6).toFixed(1)+'L'+px.toFixed(1)+' 222Z" fill="var(--ink)"/>';}
+    svg.innerHTML=s;}
+  api.run=cb=>{if(api.busy){api.finish();return;}
+    const r=abRes(o),sealed=o.rule==='vick'||o.rule==='first',T=sealed?1300:1600,t0=Date.now(),from=o.rule==='dutch'?o.hi:o.lo,to=r.price;
+    api.busy=true;api.r=r;api.cb=cb;st={phase:'run',p:from,k:0};render();ro.innerHTML=sealed?'Envelopes in…':'Bidding…';
+    clearInterval(tm);tm=setInterval(()=>{if(!w.isConnected){clearInterval(tm);return;}
+      const k=Math.min(1,(Date.now()-t0)/T);st.k=k;st.p=from+(to-from)*k;if(k>=1)api.finish();else render();},30);};
+  api.finish=()=>{if(!api.busy)return;clearInterval(tm);api.busy=false;st={phase:'done',p:api.r.price,k:1};render();
+    ro.innerHTML=(o.say||abSay)(o,api.r);api.runs++;const cb=api.cb;api.cb=null;if(cb)cb(api.r);};
+  api.set=patch=>{Object.assign(o,patch||{});clearInterval(tm);api.busy=false;api.cb=null;api.r=null;st={phase:'idle',p:0,k:0};render();ro.innerHTML=o.idle||'';w.querySelector('.ab-ill').textContent=o.tag;};
+  api.set();return api;}
+
+/* ---------- the ACME yes-zone strip (the book’s numbers) ---------- */
+function acStrip(L,host,o){
+  o=Object.assign({x:7,hide:false,lock:false,onX:null},o||{});
+  const w=document.createElement('div');host.appendChild(w);
+  w.innerHTML='<svg class="ab-svg ac-drag" viewBox="0 0 320 196" role="img" aria-label="A strip of ACME’s possible values today, from $2m to $12m. The part below your offer, where the owners say yes, is lit. Below, two bars compare what you pay with what the company is worth to you if they say yes."></svg>'+
+    '<label class="ab-sl"><span class="h"><span>Your offer (drag the strip or slide)</span><b class="v"></b></span><input type="range" min="2" max="12" step="0.1"></label><p class="ab-ro" aria-live="polite"></p>';
+  const svg=w.querySelector('svg'),inp=w.querySelector('input'),ro=w.querySelector('.ab-ro');
+  const X=v=>22+276*(v-2)/10,m=v=>'$'+(Math.round(v*100)/100)+'m';
+  const api={w,x:o.x,hide:o.hide,lock:o.lock,inp};
+  function draw(){const x=api.x,a=(2+x)/2,wv=1.5*a,g=wv-x,p=(x-2)/10;
+    let s='<rect width="320" height="196" rx="14" fill="var(--soft)"/><text x="12" y="16" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">ACME’S VALUE TODAY · ALL EQUALLY LIKELY</text>';
+    if(api.hide)s+='<rect x="'+X(2)+'" y="30" width="'+(X(12)-X(2))+'" height="32" rx="6" fill="var(--soft2)" stroke="var(--line2)" stroke-width="1.5"/><text x="160" y="50" text-anchor="middle" font-size="12" font-weight="600" fill="var(--muted)">anywhere from $2m to $12m</text>';
+    else{const yw=X(x)-X(2);
+      s+='<rect x="'+X(x)+'" y="30" width="'+(X(12)-X(x))+'" height="32" rx="6" fill="var(--soft2)" stroke="var(--line2)" stroke-width="1.5"/>';
+      if(yw>1)s+='<rect x="'+X(2)+'" y="30" width="'+yw+'" height="32" rx="6" fill="var(--ok-bg)" stroke="var(--ok)" stroke-width="2"/>';
+      if(yw>=96)s+='<text x="'+(X(2)+yw/2)+'" y="50" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ok)">owners say yes</text>';
+      if(X(12)-X(x)>=60)s+='<text x="'+((X(x)+X(12))/2)+'" y="50" text-anchor="middle" font-size="12" font-weight="600" fill="var(--muted)">say no</text>';}
+    [2,4,6,8,10,12].forEach(v=>s+='<text x="'+X(v)+'" y="78" text-anchor="'+(v===2?'start':v===12?'end':'middle')+'" font-size="11" fill="var(--muted)">$'+v+'m</text>');
+    s+='<path d="M'+X(x).toFixed(1)+' 24V68" stroke="var(--pri)" stroke-width="3"/><circle cx="'+X(x).toFixed(1)+'" cy="24" r="8" fill="var(--pri)" stroke="var(--card)" stroke-width="2"/>';
+    if(api.hide){const ax=X(7);
+      s+='<path d="M'+(ax-6)+' 62H'+(ax+6)+'L'+ax+' 53Z" fill="var(--ink)"/><text x="'+ax+'" y="94" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">average today: $7m</text>';
+      s+='<text x="160" y="122" text-anchor="middle" font-size="13" font-weight="700" fill="var(--h4)">the common guess: $7m × 1.5 = $10.5m</text>';
+      s+='<text x="12" y="157" font-size="12" font-weight="600" fill="var(--ink)">Worth to you</text><text x="12" y="171" font-size="12" font-weight="600" fill="var(--ink)">if they say yes</text><rect x="106" y="148" width="190" height="20" rx="5" fill="var(--soft2)" stroke="var(--line2)" stroke-dasharray="4 3"/><text x="201" y="163" text-anchor="middle" font-size="14" font-weight="700" fill="var(--muted)">?</text>';}
+    if(!api.hide){
+      const ax=X(a),lx=Math.max(98,Math.min(222,ax));
+      s+='<path d="M'+(ax-6).toFixed(1)+' 62H'+(ax+6).toFixed(1)+'L'+ax.toFixed(1)+' 53Z" fill="var(--ink)"/><text x="'+lx.toFixed(1)+'" y="94" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">average if they say yes: '+m(a)+'</text>';
+      const k=15.5,bar=(y,v,c,lab)=>{const wd=v*k;let t='<text x="12" y="'+(y+13)+'" font-size="12" font-weight="600" fill="var(--ink)">'+lab+'</text><rect x="106" y="'+y+'" width="'+wd.toFixed(1)+'" height="18" rx="5" fill="'+c+'"/>';
+        t+=wd>58?'<text x="'+(106+wd-5).toFixed(1)+'" y="'+(y+13)+'" text-anchor="end" font-size="11.5" font-weight="700" fill="var(--card)">'+m(v)+'</text>':'<text x="'+(110+wd).toFixed(1)+'" y="'+(y+13)+'" font-size="11.5" font-weight="700" fill="var(--ink)">'+m(v)+'</text>';return t;};
+      s+=bar(108,x,'var(--h4)','You pay');
+      s+=bar(134,wv,g>=-.001?'var(--ok-strong)':'var(--no-strong)','Worth to you');
+      const ev=Math.abs(g)<.005?'Break even when they say yes':(g>0?'If they say yes: +':'If they say yes: −')+(Math.abs(g)<.005?'':m(Math.abs(g))+' on average');
+      s+='<text x="160" y="178" text-anchor="middle" font-size="13" font-weight="700" fill="var('+(Math.abs(g)<.005?'--h4':g>0?'--ok':'--no')+')">'+ev+'</text>';}
+    svg.innerHTML=s;inp.value=x;w.querySelector('.v').textContent=m(x);
+    ro.innerHTML=api.hide?'':
+      'Chance of a yes: <b>'+Math.round(p*100)+'%</b> · average value if yes <b>'+m(a)+'</b> · ×1.5 = <b>'+m(wv)+'</b>';}
+  api.draw=draw;
+  api.set=x=>{api.x=Math.max(2,Math.min(12,Math.round(x*10)/10));draw();if(o.onX)o.onX(api.x,api);};
+  let drag=false;
+  const fromEv=e=>{const r=svg.getBoundingClientRect();return ((e.clientX-r.left)/r.width*320-22)/276*10+2;};
+  svg.addEventListener('pointerdown',e=>{if(api.lock)return;drag=true;try{svg.setPointerCapture(e.pointerId);}catch(_){}api.set(fromEv(e));});
+  svg.addEventListener('pointermove',e=>{if(drag&&!api.lock)api.set(fromEv(e));});
+  ['pointerup','pointercancel'].forEach(t=>svg.addEventListener(t,()=>{drag=false;}));
+  inp.addEventListener('input',()=>{if(!api.lock)api.set(+inp.value);});
+  let tw=0;
+  api.anim=(to,ms,cb)=>{clearInterval(tw);const f=api.x,t0=Date.now();tw=setInterval(()=>{if(!w.isConnected){clearInterval(tw);return;}
+    const k=Math.min(1,(Date.now()-t0)/ms);api.x=Math.round((f+(to-f)*k)*100)/100;draw();if(k>=1){clearInterval(tw);if(cb)cb();}},30);};
+  inp.disabled=api.lock;draw();return api;}
+
+/* ---------- other pictures ---------- */
+function abMini(x,base,col,op){return '<g opacity="'+op+'"><circle cx="'+x+'" cy="'+(base-38)+'" r="7" fill="'+col+'"/><rect x="'+(x-7)+'" y="'+(base-29)+'" width="14" height="20" rx="5" fill="'+col+'"/><path d="M'+(x-3.5)+' '+(base-10)+'V'+base+'M'+(x+3.5)+' '+(base-10)+'V'+base+'" stroke="'+col+'" stroke-width="3.5" stroke-linecap="round"/></g>';}
+function abMiniSit(x,base,col){return '<path d="M'+(x-12)+' '+(base-26)+'V'+base+'M'+(x-12)+' '+(base-12)+'H'+(x+6)+'M'+(x+5)+' '+(base-12)+'V'+base+'" stroke="var(--line2)" stroke-width="2.5" fill="none" stroke-linecap="round"/><circle cx="'+(x-4)+'" cy="'+(base-30)+'" r="6.5" fill="'+col+'"/><rect x="'+(x-10)+'" y="'+(base-23)+'" width="12" height="12" rx="4" fill="'+col+'"/><path d="M'+(x-4)+' '+(base-13)+'H'+(x+9)+'V'+base+'" stroke="'+col+'" stroke-width="3.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';}
+function abSBArt(buy){
+  let s='<rect width="320" height="200" rx="14" fill="var(--soft)"/><rect x="92" y="8" width="136" height="58" rx="10" fill="var(--card)" stroke="var(--ink)" stroke-width="2"/>';
+  s+='<text x="160" y="25" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".5">'+(buy?'ONE BUYER':'ONE SELLER')+'</text><text x="160" y="42" text-anchor="middle" font-size="13" font-weight="700" fill="var(--ink)">'+(buy?'the council':'one used car')+'</text>'+
+    '<text x="160" y="58" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ok)">'+(buy?'lowest bid wins':'highest bid wins')+'</text>';
+  const xs=[36,98,160,222,284],P=buy?[['Plover','£47k'],['Kittiwake','£52k'],['C','£61k'],['D','£44k'],['E','£49k']]:[['A','£3,700'],['B','£4,900'],['C','£3,200'],['D','£4,500'],['E','£4,100']],win=buy?3:1;
+  xs.forEach((x,i)=>{const wn=i===win,c=wn?'var(--ok-strong)':(buy&&i===0?'var(--pri)':'var(--h2)');
+    s+='<path d="M'+x+' 104L160 68" stroke="'+(wn?'var(--ok-strong)':'var(--line2)')+'" stroke-width="'+(wn?3:1.5)+'"/>';
+    s+='<rect x="'+(x-27)+'" y="104" width="54" height="21" rx="6" fill="var('+(wn?'--ok-bg':'--card')+')" stroke="'+c+'" stroke-width="'+(wn?2.5:1.5)+'"/><text x="'+x+'" y="119" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+c+'">'+P[i][1]+'</text>';
+    s+=abMini(x,172,c,1)+'<text x="'+x+'" y="190" text-anchor="middle" font-size="11" font-weight="600" fill="var(--ink)">'+P[i][0]+'</text>';});
+  return s;}
+function abWalkArt(p){const W=5500,X=v=>26+268*(v-4000)/3000,d=W-p,eq=d===0,ok=d>0,col=eq?'var(--h4)':ok?'var(--ok)':'var(--no)';
+  let s='<rect width="320" height="172" rx="14" fill="var(--soft)"/>';
+  s+='<text x="160" y="28" text-anchor="middle" font-size="16" font-weight="700" fill="'+col+'">'+(eq?'Win or lose: all the same':ok?'Glad to win: +'+abFmt(d):'Would rather lose: −'+abFmt(-d))+'</text>';
+  s+='<text x="160" y="47" text-anchor="middle" font-size="12" fill="var(--muted)">price '+abFmt(p)+' · walkaway '+abFmt(W)+'</text>';
+  const cx=X(W);
+  s+='<rect x="'+(cx-44)+'" y="60" width="88" height="34" rx="7" fill="var(--pri-bg)" stroke="var(--pri)" stroke-width="2"/><text x="'+cx+'" y="74" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri-deep)" letter-spacing=".5">WALKAWAY</text><text x="'+cx+'" y="89" text-anchor="middle" font-size="13" font-weight="700" fill="var(--pri-deep)">£5,500</text>';
+  s+='<path d="M'+cx+' 94V128" stroke="var(--pri)" stroke-width="2" stroke-dasharray="4 3"/>';
+  if(!eq){const a=X(Math.min(p,W)),b=X(Math.max(p,W));s+='<rect x="'+a+'" y="110" width="'+(b-a)+'" height="16" rx="4" fill="'+col+'" opacity=".35"/>';}
+  s+='<path d="M26 118H294" stroke="var(--ink)" stroke-width="2.5"/>';
+  [4000,5000,6000,7000].forEach((v,j)=>s+='<path d="M'+X(v)+' 113V123" stroke="var(--ink)" stroke-width="1.5"/><text x="'+X(v)+'" y="142" text-anchor="'+(j===0?'start':j===3?'end':'middle')+'" font-size="11" fill="var(--muted)">'+abFmt(v)+'</text>');
+  const px=X(p);s+='<circle cx="'+px+'" cy="118" r="8" fill="var(--ink)" stroke="var(--card)" stroke-width="2"/><text x="'+Math.max(30,Math.min(290,px))+'" y="162" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">price</text>';
+  return s;}
+function abMirArt(k){
+  const T=[[['Tap a reply'],'--muted','--card'],[['“No.”','Nothing to go through','with. Your offer','didn’t matter.'],'--muted','--soft2'],
+    [['“Yes!”','Now it’s real.','Am I still a yes?'],'--ok','--ok-bg'],[['ACME: “Yes, $10.5m.”','So it isn’t worth','$11m or $12m today.','That’s news.'],'--h4','--h4-bg']][k+1];
+  let s='<rect width="320" height="176" rx="14" fill="var(--soft)"/><text x="160" y="18" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">IF I WIN, WHAT DOES THAT TELL ME?</text>';
+  s+='<circle cx="54" cy="72" r="11" fill="var(--pri)"/><rect x="42" y="86" width="24" height="44" rx="8" fill="var(--pri)"/><path d="M48 129V162M60 129V162" stroke="var(--pri)" stroke-width="6" stroke-linecap="round"/>';
+  s+='<path d="M64 96L80 100" stroke="var(--pri)" stroke-width="5" stroke-linecap="round"/><rect x="78" y="86" width="40" height="28" rx="4" fill="var(--card)" stroke="var(--pri)" stroke-width="2"/><text x="98" y="104" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri-deep)">offer</text>';
+  s+='<ellipse cx="220" cy="98" rx="90" ry="66" fill="var('+T[2]+')" stroke="var(--h4)" stroke-width="5"/><path d="M220 164V172M196 172H244" stroke="var(--h4)" stroke-width="4" stroke-linecap="round"/>';
+  const ls=T[0],y0=98-(ls.length-1)*9;
+  ls.forEach((t,j)=>s+='<text x="220" y="'+(y0+j*18+4)+'" text-anchor="middle" font-size="'+(j===0&&k>=0?13:12)+'" font-weight="'+(j===0?700:600)+'" fill="var('+T[1]+')">'+t+'</text>');
+  return s;}
+function abGhostArt(n,dutch,clk,stopped){const V=60,X=v=>26+268*v/100,base=164,bid=V*n/(n+1);
+  let s='<rect width="320" height="200" rx="14" fill="var(--soft)"/><rect x="74" y="6" width="172" height="44" rx="10" fill="var(--ink)"/>';
+  s+='<text x="160" y="21" text-anchor="middle" font-size="11" font-weight="700" fill="var(--card)" opacity=".8" letter-spacing=".5">'+(dutch?'FALLING CLOCK · DUTCH':'ENVELOPE · PAY YOUR BID')+'</text>';
+  s+='<text x="160" y="43" text-anchor="middle" font-size="18" font-weight="700" fill="var(--card)">'+(dutch?(stopped?'Tali stops it: ':'')+Math.round(clk):'Tali writes '+Math.round(bid))+'</text>';
+  s+='<path d="M26 '+base+'H294" stroke="var(--ink)" stroke-width="2.5"/>';
+  [0,20,40,60,80,100].forEach((v,j)=>s+='<text x="'+X(v)+'" y="'+(base+17)+'" text-anchor="'+(j===0?'start':j===5?'end':'middle')+'" font-size="11" fill="var(--muted)">'+v+'</text>');
+  for(let k=1;k<=n;k++){const v=V*k/(n+1),x=X(v);s+=abMini(x,base,'var(--h2)',.5)+'<text x="'+x+'" y="'+(base-50)+'" text-anchor="middle" font-size="11" font-weight="600" fill="var(--h2)">'+(Math.round(v*10)/10)+'</text>';}
+  s+=abMini(X(V),base,'var(--pri)',1)+'<text x="'+X(V)+'" y="'+(base-50)+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri-deep)">value 60</text>';
+  const bx=X(bid),tx=X(V);
+  s+='<path d="M'+tx+' 82H'+(bx+7)+'" stroke="var(--pri)" stroke-width="2.5" stroke-dasharray="5 4"/><path d="M'+(bx+9)+' 76L'+bx+' 82L'+(bx+9)+' 88" fill="none" stroke="var(--pri)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+  s+='<text x="'+((bx+tx)/2)+'" y="74" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri-deep)">bid '+Math.round(bid)+'</text>';
+  s+='<path d="M'+bx+' 90V'+(base-58)+'" stroke="var(--pri)" stroke-width="1.5" opacity=".5"/>';
+  return s;}
+/* the larger game: two linked pairs (the book’s Kodak and Fuji; the course’s flatmates) */
+function abLinkArt(){
+  const pair=(y,tag,a,b,c)=>'<text x="16" y="'+(y-8)+'" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">'+tag+'</text>'+
+    '<rect x="14" y="'+y+'" width="118" height="42" rx="9" fill="var(--card)" stroke="'+c+'" stroke-width="2"/>'+a.map((t,j)=>'<text x="73" y="'+(y+18+j*15)+'" text-anchor="middle" font-size="11.5" font-weight="'+(j?600:700)+'" fill="var(--ink)">'+t+'</text>').join('')+
+    '<rect x="188" y="'+y+'" width="118" height="42" rx="9" fill="var(--card)" stroke="'+c+'" stroke-width="2"/>'+b.map((t,j)=>'<text x="247" y="'+(y+18+j*15)+'" text-anchor="middle" font-size="11.5" font-weight="'+(j?600:700)+'" fill="var(--ink)">'+t+'</text>').join('')+
+    '<path d="M138 '+(y+21)+'H182" stroke="'+c+'" stroke-width="2.5"/><path d="M144 '+(y+15)+'L137 '+(y+21)+'L144 '+(y+27)+'M176 '+(y+15)+'L183 '+(y+21)+'L176 '+(y+27)+'" fill="none" stroke="'+c+'" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>'+
+    '<text x="160" y="'+(y+13)+'" text-anchor="middle" font-size="11" font-weight="700" fill="'+c+'">link</text>';
+  return '<rect width="320" height="150" rx="14" fill="var(--soft)"/>'+
+    pair(24,'THE BOOK · KODAK AND FUJI',['Game 1: the US','Fuji cuts prices'],['Game 2: Japan','Kodak can answer'],'var(--h2)')+
+    pair(98,'YOUR WEEK · FLATMATES',['Game 1: rooms','the bigger room'],['Game 2: rent','who pays more?'],'var(--pri)');}
+/* course rule of thumb for common values: how far to scale back (illustrative, not the book’s numbers) */
+function abScaleArt(){
+  const row=(y,title,xs,to,lab)=>{const me=xs[xs.length-1];let s='<text x="16" y="'+(y-30)+'" font-size="11.5" font-weight="700" fill="var(--ink)">'+title+'</text>';
+    s+='<path d="M24 '+y+'H296" stroke="var(--line2)" stroke-width="2"/>';
+    xs.forEach((x,j)=>{const top=j===xs.length-1;s+='<circle cx="'+x+'" cy="'+y+'" r="'+(top?7:5.5)+'" fill="var('+(top?'--pri':'--h2')+')" opacity="'+(top?1:.6)+'"/>';});
+    s+='<path d="M'+(me-9)+' '+(y-13)+'H'+(to+6)+'" stroke="var(--h4)" stroke-width="2.5"/><path d="M'+(to+12)+' '+(y-19)+'L'+to+' '+(y-13)+'L'+(to+12)+' '+(y-7)+'" fill="none" stroke="var(--h4)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>';
+    const short=me-to<60;
+    s+='<text x="'+(short?to-6:(me+to)/2)+'" y="'+(short?y-9:y-18)+'" text-anchor="'+(short?'end':'middle')+'" font-size="11" font-weight="700" fill="var(--h4)">'+lab+'</text>';
+    s+='<text x="'+me+'" y="'+(y+18)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--pri-deep)">your guess</text>';return s;};
+  let s='<rect width="320" height="160" rx="14" fill="var(--soft)"/>';
+  s+=row(66,'2 rivals, guesses close together',[176,198,236],196,'a little');
+  s+=row(136,'6 rivals, guesses all over the place',[42,78,116,150,184,224,280],160,'scale back a lot');
+  return s;}
+const abPp=m=>.05+.06*m,abPq=m=>.07*m,abPT=.95/.13;
+const abPwin=t=>t<=abPT?abPp(t):1-abPq(t);
+function abPreArt(t){const X=m=>40+20*m,B=170,H=90;
+  let s='<rect width="320" height="214" rx="14" fill="var(--soft)"/>';
+  s+='<rect x="14" y="9" width="12" height="12" rx="3" fill="var(--pri)"/><text x="32" y="19" font-size="11.5" font-weight="600" fill="var(--ink)">Plover’s chance its launch works</text>';
+  s+='<rect x="14" y="27" width="12" height="12" rx="3" fill="var(--h2)"/><text x="32" y="37" font-size="11.5" font-weight="600" fill="var(--ink)">Kittiwake’s chance, if it goes</text>';
+  s+='<path d="M30 '+(B-H)+'H306" stroke="var(--ink)" stroke-width="1.5" stroke-dasharray="5 4"/><text x="306" y="'+(B-H-5)+'" text-anchor="end" font-size="11" font-weight="700" fill="var(--ink)">100% together</text>';
+  const bar=(m,wd,op)=>{const p=abPp(m)*H,q=abPq(m)*H,x=X(m)-wd/2;return '<g opacity="'+op+'"><rect x="'+x+'" y="'+(B-p)+'" width="'+wd+'" height="'+p+'" fill="var(--pri)"/><rect x="'+x+'" y="'+(B-p-q)+'" width="'+wd+'" height="'+q+'" fill="var(--h2)"/></g>';};
+  for(let m=0;m<=12;m++)s+=bar(m,9,.22);
+  s+=bar(t,20,1);
+  const top=B-(abPp(t)+abPq(t))*H;s+='<text x="'+Math.min(296,X(t))+'" y="'+(top-6)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--ink)">launch</text>';
+  s+='<path d="M30 '+B+'H306" stroke="var(--ink)" stroke-width="2"/>';
+  for(let m=0;m<=12;m+=2)s+='<text x="'+X(m)+'" y="'+(B+16)+'" text-anchor="middle" font-size="11" fill="var(--muted)">'+m+'</text>';
+  s+='<text x="160" y="'+(B+36)+'" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">months from now →</text>';
+  return s;}
+function abBurnArt(k){
+  let s='<rect width="320" height="176" rx="14" fill="var(--soft)"/>';
+  s+='<rect x="104" y="10" width="112" height="44" rx="10" fill="var(--h3-bg)" stroke="var(--h3)" stroke-width="2"/><text x="160" y="28" text-anchor="middle" font-size="11" font-weight="700" fill="var(--h3)" letter-spacing=".5">THE PRIZE</text><text x="160" y="45" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">UK satellite TV</text>';
+  const firm=(x,lab,c)=>'<path d="M'+(x-14)+' 136A16 16 0 0 1 '+(x+10)+' 116" fill="none" stroke="'+c+'" stroke-width="3"/><path d="M'+(x-2)+' 128L'+(x+8)+' 120" stroke="'+c+'" stroke-width="2"/><circle cx="'+(x+9)+'" cy="119" r="3" fill="'+c+'"/>'+
+    '<rect x="'+(x-30)+'" y="140" width="60" height="26" rx="8" fill="'+c+'"/><text x="'+x+'" y="158" text-anchor="middle" font-size="12" font-weight="700" fill="var(--card)">'+lab+'</text>';
+  const pile=(x,h,c)=>h?'<rect x="'+(x+36)+'" y="'+(136-h)+'" width="22" height="'+h+'" rx="4" fill="var(--no-strong)" opacity=".75"/><text x="'+(x+47)+'" y="'+(130-h)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--no)">lost</text>':'';
+  const hs=[0,10,34,34][k];
+  s+=firm(60,'BSB','var(--h1)')+pile(60,hs,'');
+  if(k>=1)s+=firm(240,'Sky','var(--h2)')+pile(166,hs,'');
+  if(k===0)s+='<path d="M84 112L126 60" stroke="var(--h1)" stroke-width="2.5" stroke-dasharray="4 4"/><text x="180" y="100" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">wins the official licence</text>';
+  if(k===1)s+='<path d="M226 112L194 60" stroke="var(--h2)" stroke-width="2.5" stroke-dasharray="4 4"/><path d="M84 112L126 60" stroke="var(--h1)" stroke-width="2.5" stroke-dasharray="4 4"/><text x="160" y="84" text-anchor="middle" font-size="12" font-weight="700" fill="var(--no)">price wars, film wars</text>';
+  if(k>=2)s+='<text x="160" y="70" text-anchor="middle" font-size="12" font-weight="700" fill="var(--no)">£1.5bn lost between them</text><text x="160" y="85" text-anchor="middle" font-size="11" fill="var(--muted)">in one year</text>';
+  if(k===3)s+='<path d="M90 153H128M192 153H210" stroke="var(--ok-strong)" stroke-width="3"/><rect x="128" y="141" width="64" height="24" rx="12" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/><text x="160" y="157" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ok)">merger</text>';
+  return s;}
+function abWarArt(m){const k=2.6,lab=(y,t)=>'<text x="12" y="'+(y+13)+'" font-size="12" font-weight="600" fill="var(--ink)">'+t+'</text>',
+    val=(x,y,t)=>'<text x="'+x+'" y="'+(y+13)+'" font-size="11.5" font-weight="700" fill="var(--ink)">'+t+'</text>';
+  /* spent money drawn grey and dashed: sunk, gone whether you stay or quit */
+  const sunk=(y,t,c)=>{const v=8*m,w=Math.max(2,v*k);return lab(y,t)+'<rect x="114" y="'+y+'" width="'+w+'" height="18" rx="5" fill="var(--soft2)" stroke="'+c+'" stroke-width="1.5" stroke-dasharray="4 3"/>'+
+    (w>=64?'<text x="'+(114+w/2)+'" y="'+(y+13)+'" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)">sunk</text>':'')+val(120+w,y,'£'+v+'k');};
+  let s='<rect width="320" height="168" rx="14" fill="var(--soft)"/><text x="12" y="20" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">MONTH '+m+' OF FREE EXTRA WORK</text>';
+  s+=lab(30,'The prize')+'<rect x="114" y="30" width="'+(60*k)+'" height="18" rx="5" fill="var(--h3)"/>'+val(120+60*k,30,'£60k');
+  s+=sunk(56,'Plover spent','var(--pri)')+sunk(80,'Kittiwake spent','var(--h2)');
+  s+=lab(108,'Next month')+'<rect x="114" y="108" width="'+(8*k)+'" height="18" rx="5" fill="var(--h4)"/>'+val(120+8*k,108,'£8k each');
+  const over=16*m>=60;
+  s+='<text x="160" y="145" text-anchor="middle" font-size="12" font-weight="700" fill="var('+(over?'--no':'--ink')+')">Burned between them: £'+(16*m)+'k'+(over?', more than the prize':'')+'</text>';
+  s+='<text x="160" y="160" text-anchor="middle" font-size="11" font-weight="600" fill="var(--muted)">'+(m?'Grey is gone either way. Only £8k vs £60k counts.':'Each month: £8k more each, for a £60k prize')+'</text>';
+  return s;}
+function abSpecArt(ny,la,end){const card=(x,city,b)=>{const you=b[1]==='You',c=you?'var(--pri)':'var(--h2)';
+    return '<rect x="'+x+'" y="10" width="138" height="74" rx="10" fill="var(--card)" stroke="'+c+'" stroke-width="2.5"/><text x="'+(x+69)+'" y="28" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">'+city+' licence</text>'+
+      '<text x="'+(x+69)+'" y="45" text-anchor="middle" font-size="11" fill="var(--muted)">high bid</text><text x="'+(x+69)+'" y="72" text-anchor="middle" font-size="20" font-weight="700" fill="'+c+'">'+b[1]+' · '+b[0]+'</text>';};
+  let s='<rect width="320" height="160" rx="14" fill="var(--soft)"/>'+card(14,'New York',ny)+card(168,'Los Angeles',la);
+  s+='<text x="160" y="108" text-anchor="middle" font-size="12" font-weight="700" fill="var(--pri-deep)">Worth to you (AT&amp;T): NY 10 · LA 9</text><text x="160" y="128" text-anchor="middle" font-size="12" font-weight="700" fill="var(--h2)">Worth to MCI: NY 9 · LA 8</text>';
+  if(end)s+='<text x="160" y="150" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ink)">'+end+'</text>';
+  return s;}
+
+/* ---------- strategy-map strip (CANON “The strategy map”; built lesson by lesson) ---------- */
+const MP_T={look:['Look ahead',2],pd:['Dilemma',3],shoes:['Their shoes',5],mix:['Mix',6],commit:['Commit',7],cred:['Credible',8],sig:['Signals',9],coord:['Coordinate',10],bid:['Bid smart',11],batna:['BATNA',12],vote:['Vote',13],inc:['Incentives',14]};
+const MP_ROWS=[['Taking turns: you move, then they respond',['look','cred','commit']],['You both choose at once, without seeing the other',['shoes','pd','mix']],['Everyone’s tempted to grab or slack',['pd','coord','inc']],['You need everyone to land on the same choice',['shoes','coord','commit']],['Your pattern is being read, or you’re checking',['mix']],['You want to change someone’s behaviour',['commit','cred','look']],['They know something you don’t',['sig','shoes','bid']],['Splitting something or agreeing a price',['batna','cred','sig']],['Competing with several others for one prize',['bid','sig','pd']],['A group decides together',['vote','coord','batna']],['Getting good work you can’t watch',['inc','sig','cred']]];
+
+Course.lesson({
+  id:'0011', title:'Auctions, bidding and contests', minutes:20, icon:'pointer',
+  goals:['Decide whether to compete at all, and fix your walkaway number before the bidding starts',
+         'Pick the right bid for each kind of auction: rising, second-price or proxy, sealed or Dutch',
+         'Bid as if you’ve already won to dodge the winner’s curse, and spot contests where a deal beats fighting'],
+  parts:['Before you bid','Same winner, new rules','Bid as if you’ve won','Contests and your week'],
+  read:'Read chapter 10 of the book, “Auctions, Bidding, and Contests”, for the full Vickrey argument, the ACME puzzle, the T-bill auction, the preemption duel, Sky against BSB and the spectrum-auction case.',
+  glossary:{
+   walkaway:'Walkaway number: your value for the item, the most you’d pay and still be glad you won. At that price you no longer care whether you win or lose.',
+   procurement:'Procurement auction: an auction to buy rather than to sell. One buyer (a council, say) and many sellers; the lowest bid wins.',
+   vickrey:'Vickrey auction (second-price auction): sealed bids; the highest bid wins but pays only the second-highest bid. Bidding your true value is a dominant strategy.',
+   'revenue-equivalence':'Revenue equivalence: when values are private and bidders are alike, the seller expects the same money whether the auction is rising, clock, second-price, Dutch or sealed-bid, because bidders adapt to the rules.',
+   'common-value':'Common value: the item is worth the same to every bidder (an oil field, a lot to resell), though each has a different estimate. A private value is what it’s worth to you alone.',
+   proxy:'Proxy bid: the top amount you authorise an online auction site to bid for you. It raises your bid only as far as needed to stay ahead.',
+   sniping:'Sniping: entering your bid in the last moments of an online auction, so others have no time to react or to work out their own value.',
+   dutch:'Dutch auction: the price starts high and falls; the first bidder to stop the clock wins and pays that price.',
+   preemption:'Preemption game: a race to move first, where moving too early risks failure and moving too late lets a rival take the prize.',
+   attrition:'War of attrition: a contest of who gives in first. Both sides keep paying while they stay in, and only one gets the prize.'
+  },
+  cheatsheet:[
+   '<b>Before you bid:</b> decide whether to play at all, and fix your walkaway number: the price at which you’d no longer care whether you win. Bidding on emotion ends in regret.',
+   '<b>Rising or clock auction:</b> stay in up to your walkaway, then stop. The winner pays about where the second-to-last bidder dropped out.',
+   '<b>Second-price (Vickrey) or proxy bid:</b> write your walkaway itself. It’s a dominant strategy: your bid decides whether you win, not what you pay. Online, enter it late, so others don’t learn their own values.',
+   '<b>Rules change, bidders adapt:</b> the same person wins at about the same price under each rule (revenue equivalence). A 20% buyer’s premium just scales bids down, so the seller pays it.',
+   '<b>Bid as if you’ve won:</b> ask what a yes would tell you. ACME: the common guess, $10.5m, loses; the break-even cap is $6m. When the value is common, winning is bad news unless you adjust (winner’s curse).',
+   '<b>Pay-your-bid envelope or Dutch clock:</b> shade below your value, to what you expect the next-highest value to be, given you’re the highest. Value 60, one rival: bid 30.',
+   '<b>Contests:</b> launch when the two sides’ chances of success add up to 100% (preemption). In a war of attrition, look for a deal; don’t start an escalation you can’t see the end of.',
+   'One-minute move (how this course applies the book): enter at all? → walkaway → which rules? → bid as if you’ve won → a contest? look for a deal or the larger game.'
+  ],
+  steps:[
+/* ---------- PART 1: BEFORE YOU BID ---------- */
+{part:0,src:'Warm-up',pts:1,run(L){
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Sunday, 9:58 pm. The car Tali and Juno want is at £5,400 and climbing. Tali’s heart is racing, finger over “bid”. What would have protected Tali best?</h1>');
+  L.mc(L.card,['A top price, written down before the auction started','A faster internet connection for the last seconds','Watching the other bidders closely, to beat them'],0,
+   'A number set in calm can’t be moved by the heat of the moment. The book calls it your walkaway number, and it’s where this lesson starts.',
+   'Speed and watching rivals help you win, but winning isn’t the goal: paying no more than it’s worth is. A number set in calm protects you; the book calls it your walkaway number.');}},
+
+{part:0,src:'Chapter 10 · opening',
+ solve:async L=>{L.$('#sbs').click();L.$('#sbb').click();},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('learn','Auctions sell and buy')+'<h1 class="q">One prize, many rivals. Which way does the bidding run? Tap each.</h1>'+
+   '<div class="ab-ctl"><button class="chip" id="sbs">Selling: one car</button><button class="chip" id="sbb">Buying: one website</button></div>'+
+   '<svg class="ab-svg" id="sbv" viewBox="0 0 320 200" role="img" aria-label="One seller or buyer in the middle, five bidders around, the winning bid highlighted"></svg><p class="ab-cap" id="sbt">Most auctions sell. Some buy.</p>');
+  const T={sbs:[false,'One seller, many buyers: the <b>highest</b> bid wins. Paintings, ad spots next to web searches, even houses in Australia are sold this way.'],
+    sbb:[true,'One buyer, many sellers: the <b>lowest</b> bid wins, like the council’s website tender. The book calls it a '+L.g('procurement','procurement auction')+'. Harder: the cheapest offer isn’t always the best work.']};
+  L.$('#sbv').innerHTML=abSBArt(false);
+  ['sbs','sbb'].forEach(id=>L.$('#'+id).onclick=()=>{['sbs','sbb'].forEach(q=>L.$('#'+q).classList.toggle('sel',q===id));L.$('#sbv').innerHTML=abSBArt(T[id][0]);L.$('#sbt').innerHTML=T[id][1];seen.add(id);
+    if(seen.size===2&&!fin){fin=true;L.sheet('info','Same game, two directions','Selling or buying, you’re competing with several others for one prize. This lesson’s tool, <b>Bid smart</b>, covers both, plus contests that work like auctions: races to launch and battles over who lasts longest.');L.done();}});}},
+
+{part:0,src:'Chapter 10 · English and Japanese Auctions',
+ solve:async L=>{const i=L.$('#wks');for(const v of [4800,5500,6100]){abSet(i,v);await L.sleep(10);}},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('learn','Your walkaway number')+'<h1 class="q">Before Sunday, Tali and Juno agree one number: £5,500. Slide the price and see how winning at it would feel.</h1>'+
+   '<svg class="ab-svg" id="wkv" viewBox="0 0 320 172" role="img" aria-label="A price line with Tali’s walkaway card at £5,500 and a price marker; the gap between them is shaded green for a gain or red for a loss"></svg>'+
+   '<label class="ab-sl"><span class="h"><span>If Tali won at</span><b id="wkn"></b></span><input type="range" id="wks" min="4000" max="7000" step="100" value="4600"></label>'+
+   '<p class="ab-cap">The book’s definition: your '+L.g('walkaway','walkaway number')+' is the price at which you no longer care whether you win or lose. Resale value, keeping it from a rival, even the fun of winning: add it all in, before the bidding.</p>');
+  const i=L.$('#wks');
+  function draw(){const p=+i.value;L.$('#wkv').innerHTML=abWalkArt(p);L.$('#wkn').textContent=abFmt(p);seen.add(p<5500?'lo':p>5500?'hi':'eq');
+    if(seen.size===3&&!fin){fin=true;L.sheet('info','Decide it before you start','At a pound less, Tali would just about pay; at a pound more, Tali would rather pass. The book’s warning: people who bid on emotion and excitement live to regret it. And first ask whether to bid at all: what else could you buy instead?');L.done();}}
+  i.addEventListener('input',draw);draw();}},
+
+/* ---------- PART 2: SAME WINNER, NEW RULES ---------- */
+{part:1,src:'Chapter 10 · English and Japanese Auctions',
+ solve:async L=>{L.$('#rmr').children[0].click();L.$('#rmg').click();L.$('#rmg').click();L.$('#rmr').children[1].click();L.$('#rmg').click();L.$('#rmg').click();},
+ run(L){
+  const did=new Set();let fin=false;
+  L.h(L.kick('learn','The standing-bidders room')+'<h1 class="q">Six bidders, one car. Each sits down once the price passes their hidden card. Set where Tali sits, then start the bidding.</h1>'+
+   '<div class="ab-ctl" id="rmr"></div><div id="rmv"></div>'+
+   '<label class="ab-sl"><span class="h"><span>Tali sits down at</span><b id="rmn">£5,500</b></span><input type="range" id="rms" min="3000" max="6500" step="100" value="5500"></label>'+
+   '<div class="ab-ctl"><button class="btn pri" id="rmg">'+L.ic('play')+'Start the bidding</button></div>');
+  const rm=abRoom(L,L.$('#rmv'),{rule:'rise',idle:'Rivals’ cards are face down. Notice who wins, and where the price stops.'});
+  const cap={rise:'English: you hear bids, but you can’t see who is still in.',japan:'Japanese clock: every hand is up until it drops, so you see each exit.'};
+  abChips(L,L.$('#rmr'),['Rising (English)','Clock (Japanese)'],j=>{rm.set({rule:j?'japan':'rise',idle:cap[j?'japan':'rise']});});
+  L.$('#rmr').children[0].classList.add('sel');
+  L.$('#rms').addEventListener('input',()=>{const v=+L.$('#rms').value;L.$('#rmn').textContent=abFmt(v);rm.set({stop:v});});
+  L.$('#rmg').onclick=()=>rm.run(r=>{did.add(rm.o.rule);
+    if(did.size===2&&!fin){fin=true;L.sheet('info','The winner pays where the second-to-last sat','Bidding stops when the second-highest card drops out, so the highest card wins at about the second-highest value. English or Japanese, same winner, same price. Sit early and Tali can lose a car worth more to them; sit late and Tali risks paying over £5,500.');L.done();}});}},
+
+{part:1,src:'Chapter 10 · Vickrey Auction · Revenue Equivalence',pts:1,
+ solve:async L=>{L.$$('#vpo .opt')[1].click();},
+ run(L){
+  let a=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Same six bidders, new rules: sealed envelopes, and the winner pays the <b>second-highest</b> bid. Everyone writes their walkaway. What happens?</h1><div class="opts" id="vpo"></div><div id="vpv"></div>');
+  const rm=abRoom(L,L.$('#vpv'),{rule:'vick',idle:'Six envelopes, opened together.'});
+  ['Bidder E wins, because sealed bids hide Tali’s number','Tali wins and pays £4,900, as in the rising room','Tali wins and pays £5,500, the number Tali wrote'].forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';
+    b.onclick=()=>{if(a)return;a=true;const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');if(!ok)L.$$('#vpo .opt')[1].classList.add('ok');
+      rm.run(()=>{L.sheet(ok?'ok':'no',ok?'Same winner, same price, in one step':'It’s Tali, at £4,900','This is a '+L.g('vickrey','Vickrey auction')+'. The rising room got there by bidding up; the envelopes get there at once. With private values the seller earns the same either way. The book calls this '+L.g('revenue-equivalence','revenue equivalence')+'.');L.done();});};L.$('#vpo').appendChild(b);});}},
+
+{part:1,src:'Chapter 10 · Vickrey Auction',
+ solve:async L=>{const c=L.$('#vdc').children,s=L.$('#vds');c[0].click();abSet(s,5300);await L.sleep(10);c[2].click();abSet(s,5800);},
+ run(L){
+  let bid=5500,saw=new Set(),fin=false;
+  L.h(L.kick('learn','Why write your true value?')+'<h1 class="q">Second-price envelopes, and Tali’s value is £5,500. Should Tali write less, to save money, or more, to be safe? Test each against any top rival bid.</h1>'+
+   '<div class="ab-ctl" id="vdc"></div>'+
+   '<svg class="ab-svg" id="vdv" viewBox="0 0 320 150" role="img" aria-label="A price line with Tali’s value, Tali’s bid and the top rival bid; the zone between Tali’s bid and value is shaded"></svg>'+
+   '<label class="ab-sl"><span class="h"><span>Top rival bid</span><b id="vdn"></b></span><input type="range" id="vds" min="4000" max="7000" step="100" value="4600"></label>'+
+   '<div class="ab-res" id="vdr"></div>');
+  const X=v=>26+268*(v-4000)/3000,out=(b,rv)=>b>=rv?{w:1,t:'Wins, pays '+abFmt(rv)+' · '+(5500-rv>=0?'+':'−')+abFmt(Math.abs(5500-rv))}:{w:0,t:'Loses · £0'};
+  function draw(){const rv=+L.$('#vds').value,a=Math.min(bid,5500),z=Math.max(bid,5500);
+    const cl=x=>Math.max(44,Math.min(276,x));
+    let s='<rect width="320" height="150" rx="14" fill="var(--soft)"/>';
+    if(a!==z)s+='<rect x="'+X(a)+'" y="38" width="'+(X(z)-X(a))+'" height="38" fill="var(--h4-bg)"/>';
+    s+='<text x="'+cl(X(bid))+'" y="18" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri-deep)">Tali’s bid</text><path d="M'+(X(bid)-7)+' 23H'+(X(bid)+7)+'L'+X(bid)+' 35Z" fill="var(--pri)"/>';
+    s+='<path d="M26 56H294" stroke="var(--ink)" stroke-width="2.5"/>';
+    s+='<path d="M'+X(5500)+' 38V78" stroke="var(--pri)" stroke-width="2" stroke-dasharray="3 3"/>';
+    s+='<path d="M'+(X(rv)-7)+' 74H'+(X(rv)+7)+'L'+X(rv)+' 62Z" fill="var(--h2)"/><text x="'+cl(X(rv))+'" y="90" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h2)">top rival</text>';
+    [4000,5000,6000,7000].forEach((v,j)=>s+='<text x="'+X(v)+'" y="106" text-anchor="'+(j===0?'start':j===3?'end':'middle')+'" font-size="11" fill="var(--muted)">'+abFmt(v)+'</text>');
+    s+='<text x="'+X(5500)+'" y="123" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri-deep)">┊ Tali’s value £5,500</text>';
+    s+=a!==z?'<text x="160" y="141" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h4)">shaded: the only zone where your bid matters</text>':'<text x="160" y="141" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--ok)">bid = value: nothing to regret</text>';
+    L.$('#vdv').innerHTML=s;L.$('#vdn').textContent=abFmt(rv);
+    const A=out(5500,rv),B=out(bid,rv),diff=A.w!==B.w;
+    L.$('#vdr').innerHTML='<div><b>WRITE £5,500</b>'+A.t+'</div><div class="'+(diff?'diff':'')+'"><b>WRITE '+abFmt(bid)+'</b>'+B.t+(diff?(B.w?' — paid over value':' — missed a car worth it'):'')+'</div>';
+    if(diff)saw.add(bid<5500?'lo':'hi');
+    if(saw.size===2&&!fin){fin=true;L.sheet('info','Your bid only decides whether you win','Shading changes the result only when you lose a car you’d gladly have paid that price for. Overbidding changes it only when you win and pay more than it’s worth. So writing your true value is a '+L.g('dominant','dominant strategy')+'. You wouldn’t even pay to see the other bids first.');L.done();}}
+  abChips(L,L.$('#vdc'),['Write £5,000','Write £5,500','Write £6,000'],j=>{bid=[5000,5500,6000][j];draw();});
+  L.$('#vdc').children[1].classList.add('sel');
+  L.$('#vds').addEventListener('input',draw);draw();}},
+
+{part:1,src:'Chapter 10 · Vickrey Auction',pts:1,run(L){
+  const env=(x,who,v,win)=>{const c=win?'var(--ok-strong)':'var(--h2)';return '<rect x="'+(x-34)+'" y="34" width="68" height="44" rx="5" fill="var('+(win?'--ok-bg':'--card')+')" stroke="'+c+'" stroke-width="'+(win?2.5:1.8)+'"/><path d="M'+(x-34)+' 34L'+x+' 50L'+(x+34)+' 34" fill="none" stroke="'+c+'" stroke-width="1.5"/>'+
+    '<text x="'+x+'" y="70" text-anchor="middle" font-size="13" font-weight="700" fill="'+c+'">'+v+'</text>'+abMini(x,136,win?'var(--pri)':'var(--h2)',1)+'<text x="'+x+'" y="152" text-anchor="middle" font-size="11.5" font-weight="600" fill="var(--ink)">'+who+'</text>';};
+  L.h(L.kick('try','Build the rule')+'<h1 class="q">Plover’s charity auction uses second-price envelopes. Build the advice Tali gives colleagues. Tap each piece to change it.</h1>'+
+   '<svg class="ab-svg" viewBox="0 0 320 196" role="img" aria-label="Three envelopes: Tali £80 wins, bidder A £65, bidder B £50. Tali pays £65, the second-highest bid.">'+
+   '<rect width="320" height="196" rx="14" fill="var(--soft)"/><text x="160" y="22" text-anchor="middle" font-size="11" font-weight="700" fill="var(--muted)" letter-spacing=".4">THE SIGNED SHIRT · SECOND-PRICE ENVELOPES</text>'+
+   env(60,'Tali','£80',true)+env(160,'Bidder A','£65',false)+env(260,'Bidder B','£50',false)+
+   '<rect x="120" y="29" width="80" height="54" rx="8" fill="none" stroke="var(--ok-strong)" stroke-width="2" stroke-dasharray="5 3"/>'+
+   '<text x="160" y="180" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ok)">Tali wins, but pays £65: the second-highest bid</text></svg>'+
+   '<p class="ab-ill">Illustrative numbers</p>');
+  L.sentence(L.card,[
+    ['In a second-price auction,','In a sealed auction where you pay your bid,','In any auction at all,'],
+    ['write down your walkaway number,','write down a bit less than your walkaway,','write down a bit more than your walkaway,'],
+    ['because your bid decides whether you win, not what you pay.','because the others will shade their bids too.','because winning matters more than the price.']],[0,0,0],
+   [['When you pay your own bid, writing your full value wins you nothing. That’s the second-price rule’s special trick.','Not every auction: rising, second-price and pay-your-bid rules each call for a different bid.'],
+    ['Shading only matters when it makes you lose something you’d have gladly paid that price for.','Overbidding only matters when you win and pay more than it’s worth.'],
+    ['Others shading has nothing to do with it: your best bid here doesn’t depend on anyone else.','The price matters: a win that costs more than your value is a loss.']],
+   'Exactly. The book likes this design: be strategic when <i>designing</i> a game, so players don’t have to be strategic when they <i>play</i> it. Colleagues just write what the prize is worth to them.');}},
+
+{part:1,src:'Chapter 10 · Revenue Equivalence · Buyer’s Premium',pts:1,
+ solve:async L=>{abSet(L.$('#bps'),500);L.$('#bpg').click();},
+ run(L){
+  let a=false;
+  L.h(L.kick('pr','Set the bid')+'<h1 class="q">Juno wants a vintage lens at an auction house that adds a 20% buyer’s premium on top of the hammer price. Juno’s walkaway is £600, all in. Where should Juno sit down?</h1>'+
+   '<div id="bpv"></div><label class="ab-sl"><span class="h"><span>Juno sits down at (hammer price)</span><b id="bpn">£600</b></span><input type="range" id="bps" min="300" max="700" step="10" value="600"></label>'+
+   '<div class="ab-ctl"><button class="btn pri" id="bpg">'+L.ic('check')+'Lock it in and run</button></div>');
+  const rm=abRoom(L,L.$('#bpv'),{names:['Juno','A','B','C','D','E'],vals:[600,360,420,480,540,570],lo:300,hi:700,stop:600,prem:true,rule:'japan',tag:'Illustrative numbers · Juno’s lens · cards show each walkaway, all in',idle:'Every card is an all-in walkaway. The board shows the hammer price.'});
+  L.$('#bps').addEventListener('input',()=>{const v=+L.$('#bps').value;L.$('#bpn').textContent=abFmt(v);if(!a)rm.set({stop:v});});
+  L.$('#bpg').onclick=()=>{if(a){rm.finish();return;}a=true;const v=+L.$('#bps').value,ok=v===500;L.award(ok);L.$('#bps').disabled=true;
+    rm.run(()=>{L.$('#bpg').hidden=true;L.sheet(ok?'ok':'no',ok?'Saying £500 means paying £600':'Juno should sit at £500',
+      (ok?'':'You chose '+abFmt(v)+'. ')+'£500 plus 20% is £600. Every bidder scales back the same way, so Juno still pays £570 in all, just as with no premium, and the seller gets £475 instead of £570. The seller pays the premium. Rules change, bidders adapt.');L.done();});};}},
+
+{part:1,src:'Chapter 10 · Online Auctions · Sniping',
+ solve:async L=>{L.$('#snc').children[0].click();await L.sleep(20);L.$('#snc').children[0].click();L.$('#snc').children[1].click();await L.sleep(20);L.$('#snc').children[1].click();},
+ run(L){
+  const did=new Set();let fin=false;
+  L.h(L.kick('learn','Proxy bids and sniping')+'<h1 class="q">Online, Tali sets a '+L.g('proxy','proxy bid')+': “bid for me up to £5,500.” D and E haven’t worked out their own value yet (the “?”). Enter Tali’s proxy early, then late.</h1>'+
+   '<div class="ab-ctl" id="snc"></div><div id="snv"></div>');
+  const rm=abRoom(L,L.$('#snv'),{rule:'proxy',lazy:{4:3600,5:3500},idle:'D and E have typed a quick, lazy first bid. Tap a timing.',
+    say:(o,r)=>abSay(o,r)+'<br>'+(o.snipe?'D and E had no time to think again.':'D and E saw the price move, did their homework and raised.')});
+  abChips(L,L.$('#snc'),['Enter it on Thursday','Enter it in the last minute'],j=>{if(rm.busy&&rm.o.snipe===!!j){rm.finish();return;}rm.set({snipe:!!j});rm.run(()=>{did.add(j);
+    if(did.size===2&&!fin){fin=true;L.sheet('info','Sniping keeps others in the dark','Early, Tali’s proxy pushed the price up while D and E could still react. Late, it’s too late for them. The book’s best explanation of '+L.g('sniping','sniping')+': many bidders don’t know their own value, like a lazy $1,000 bid on a vintage Porsche. Tali still enters the full £5,500, just late.');L.done();}});});}},
+
+/* ---------- PART 3: BID AS IF YOU’VE WON ---------- */
+{part:2,src:'Chapter 10 · Bidding as If You’ve Won',
+ solve:async L=>{for(const b of L.$$('#mrc .chip')){b.click();await L.sleep(5);}},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('learn','Look in the mirror first')+'<h1 class="q">The book’s example: before you propose marriage, picture the answer. Tap each reply.</h1>'+
+   '<svg class="ab-svg" id="mrv" viewBox="0 0 320 176" role="img" aria-label="A person holding an offer card faces a mirror; the mirror shows what each reply would tell them"></svg><div class="ab-ctl" id="mrc"></div><p class="ab-cap" id="mrt"></p>');
+  L.$('#mrv').innerHTML=abMirArt(-1);
+  const T=['A “no” changes nothing. There’s nothing to go through with.','A “yes” is the case that counts. If it would make you want to back out, you shouldn’t have asked.','Same in a deal: the owners’ yes tells you something about the value. Assume the yes, then check you still want it.'];
+  abChips(L,L.$('#mrc'),['They say no','They say yes','ACME says yes'],j=>{L.$('#mrv').innerHTML=abMirArt(j);L.$('#mrt').innerHTML=T[j];seen.add(j);
+    if(seen.size===3&&!fin){fin=true;L.sheet('info','Bid as if you’ve won','Plan for the yes, because the no doesn’t matter. When a yes is news about the value, adjust your offer for it before you make it. That’s how the book avoids the '+L.g('winners-curse','winner’s curse')+'.');L.done();}});}},
+
+{part:2,src:'Chapter 10 · Bidding as If You’ve Won · ACME',pts:1,
+ solve:async L=>{L.$$('#apo .opt')[1].click();},
+ run(L){
+  let a=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The book’s ACME puzzle. Most people offer up to $10.5m. If the owners say yes to $10.5m, what is ACME worth to you, on average?</h1><div id="apv"></div>'+
+   '<p class="ab-cap">ACME is worth $2m to $12m today, all equally likely. You’d make it worth 50% more, and the owners accept any offer above today’s value.</p><div class="opts" id="apo"></div>');
+  const s=acStrip(L,L.$('#apv'),{x:10.5,hide:true,lock:true});
+  ['About $10.5m: you break even','About $9.4m: you lose over $1m','About $12m: a healthy profit'].forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';
+    b.onclick=()=>{if(a)return;a=true;const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');if(!ok)L.$$('#apo .opt')[1].classList.add('ok');
+      s.hide=false;s.x=2;s.draw();s.anim(10.5,900,()=>{L.sheet(ok?'ok':'no',ok?'A yes is bad news here':'It’s about $9.4m: a loss','A yes to $10.5m means today’s value is between $2m and $10.5m: $6.25m on average. Even 50% better, that’s $9.375m, well below the $10.5m paid. “Average × 1.5” forgot to ask what a yes would tell you.');L.done();});};L.$('#apo').appendChild(b);});}},
+
+{part:2,src:'Chapter 10 · Bidding as If You’ve Won · ACME',pts:1,
+ solve:async L=>{abSet(L.$('#acv input'),6);L.$('#acb').click();},
+ run(L){
+  let a=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Drag the offer to the <b>highest</b> price that still breaks even when the owners say yes.</h1><div id="acv"></div>'+
+   '<div class="ab-ctl"><button class="btn pri" id="acb">'+L.ic('check')+'This is my cap</button></div><p class="ab-ill">The book’s numbers</p>');
+  const s=acStrip(L,L.$('#acv'),{x:9});
+  L.$('#acb').onclick=()=>{if(a)return;a=true;const x=s.x,ok=Math.abs(x-6)<=.1;L.award(ok);s.lock=true;s.inp.disabled=true;L.$('#acb').hidden=true;
+    L.sheet(ok?'ok':'no',ok?'The cap is $6m':'The cap is $6m, not $'+x+'m','A yes to $6m means $2m–$6m today, $4m on average; 50% better makes $6m, so you break even. The book treats this as a ceiling, not a bid: offer less.<br><br><b>How this course applies the book:</b> a tender where the job’s true cost is uncertain and the same for every bidder runs in reverse. Winning the council’s tender would tell Plover it guessed the cost lowest, so price <i>above</i> its own estimate, as if it has already won.');L.done();};}},
+
+{part:2,src:'Chapter 10 · English and Japanese Auctions',
+ solve:async L=>{const c=L.$('#cvc').children;c[0].click();await L.sleep(20);c[0].click();c[1].click();await L.sleep(20);c[1].click();},
+ run(L){
+  const did=new Set();let fin=false;
+  L.h(L.kick('learn','When everyone values it the same')+'<h1 class="q">Juno bids for a box of used camera gear to resell. It will fetch the same for any dealer, but nobody knows how much: each card is a guess. Run it two ways.</h1>'+
+   '<div class="ab-ctl" id="cvc"></div><div id="cvv"></div>'+
+   '<svg class="ab-svg" viewBox="0 0 320 160" role="img" aria-label="Two rows of guesses. With two rivals and close guesses, your top guess scales back a little. With six rivals and widely spread guesses, it scales back a lot, toward the middle."></svg>'+
+   '<p class="ab-cap"><b>How far back? A rule of thumb (how this course applies the book):</b> if you win, yours was the top guess. Bid near a typical guess, not your own. More rivals or shakier guesses: scale back further.</p>');
+  L.card.querySelector('svg[viewBox="0 0 320 160"]').innerHTML=abScaleArt();
+  const rm=abRoom(L,L.$('#cvv'),{names:['Juno','A','B','C','D','E'],vals:[450,250,290,330,360,410],lo:200,hi:500,stop:450,common:320,rule:'japan',tag:'Illustrative numbers · each card is a guess at the resale value',idle:'Juno’s guess is the highest in the room.'});
+  abChips(L,L.$('#cvc'),['Juno bids up to their guess','Juno bids as if they’ve won'],j=>{if(rm.busy&&rm.o.stop===(j?330:450)){rm.finish();return;}rm.set({stop:j?330:450});rm.run(()=>{did.add(j);
+    if(did.size===2&&!fin){fin=true;L.sheet('info','Winning is bad news','With a '+L.g('common-value','common value')+', the winner is usually whoever guessed highest, so winning says you probably guessed too high: the winner’s curse. Bid as if you’ve won: assume your guess is the top one, and scale back. Juno’s £330 sits near the middle of the room’s guesses. Note the flip: with private values, more rivals push your bid up; here, more rivals make winning worse news. A car you’ll drive is mostly a private value; most things mix both.');L.done();}});});}},
+
+{part:2,src:'Chapter 10 · Sealed-Bid Auctions · Dutch Auctions',
+ solve:async L=>{const c=L.$('#gnc').children;c[0].click();c[1].click();L.$('#gnm').children[1].click();await L.sleep(1300);},
+ run(L){
+  let n=1,dutch=false,tm=0;const seen=new Set();let fin=false;
+  L.h(L.kick('learn','Shade below your value')+'<h1 class="q">When you pay what you write, writing your full value wins you nothing. So how far below? Assume you’ve won, then picture your rivals.</h1>'+
+   '<svg class="ab-svg" id="gnv" viewBox="0 0 320 200" role="img" aria-label="A line from 0 to 100 with Tali at 60 and faint rivals spread evenly below; an arrow points from Tali to the highest rival, which is the bid"></svg>'+
+   '<div class="ab-ctl" id="gnc"></div><div class="ab-ctl" id="gnm"></div>'+
+   '<p class="ab-cap">The book’s example: your value is 60; rivals’ values could be anything from 0 to 100. If you’ve won, they’re all below you, evenly spread. Bid where the highest one stands.</p>');
+  function draw(clk,stopped){L.$('#gnv').innerHTML=abGhostArt(n,dutch,clk==null?100:clk,stopped);}
+  function chk(){if(seen.size>=3&&seen.has('d')&&!fin){fin=true;L.sheet('info','Envelope and clock, same answer','In a '+L.g('dutch','Dutch auction')+' the first hand up wins, so the moment you bid you know you’ve won: the very assumption the envelope asks for. You bid the same in both. More rivals push your bid closer to your value, and on average the seller gets what a rising auction would bring.');L.done();}}
+  function play(){clearInterval(tm);if(!dutch){draw();return;}const bid=60*n/(n+1),t0=Date.now();
+    tm=setInterval(()=>{if(!L.$('#gnv')||!L.$('#gnv').isConnected){clearInterval(tm);return;}const k=Math.min(1,(Date.now()-t0)/1100);draw(100-(100-bid)*k,k>=1);if(k>=1){clearInterval(tm);seen.add('d');chk();}},30);}
+  abChips(L,L.$('#gnc'),['1 rival','2 rivals','3 rivals','5 rivals'],j=>{n=[1,2,3,5][j];seen.add('n'+n);play();chk();});
+  abChips(L,L.$('#gnm'),['Sealed envelope','Falling clock'],j=>{dutch=!!j;play();chk();});
+  L.$('#gnc').children[0].classList.add('sel');L.$('#gnm').children[0].classList.add('sel');seen.add('n1');draw();}},
+
+{part:2,src:'Chapter 10 · Sealed-Bid Auctions',pts:6,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Your walkaway, or below it?',['Write your walkaway','Shade below it'],[
+   ['Plover’s charity auction: sealed envelopes, and the winner pays the second-highest bid',0,'Second-price: your bid only decides whether you win. Write your value.'],
+   ['A sealed bid for a used bike, where the winner pays what they wrote',1,'Pay-your-bid: writing your value wins you nothing. Shade to what you expect the next-highest value to be.'],
+   ['An online proxy bid on a camera body for Juno',0,'A proxy works like second-price: enter your walkaway, and enter it late.'],
+   ['A plant sale where a price clock falls until someone stops it',1,'A Dutch clock bids like a pay-your-bid envelope: stop it below your value.'],
+   ['A box of returned laptops that every reseller values the same, though nobody knows how much',1,'Common value: winning means you guessed highest. Bid as if you’ve won, below your guess.'],
+   ['A rising auction that adds a 20% premium to the hammer price',1,'Scale back: with a £600 walkaway all in, sit down at £500 on the board.']]);}},
+
+/* ---------- PART 4: CONTESTS AND YOUR WEEK ---------- */
+{part:3,src:'Chapter 10 · The Preemption Game',
+ solve:async L=>{const i=L.$('#pms');for(const v of [2,11,7]){abSet(i,v);await L.sleep(10);}},
+ run(L){
+  let lo=false,hi=false,fin=false;
+  L.h(L.kick('learn','The race to launch')+'<h1 class="q">Plover wants to launch a new service before Kittiwake does. Too early, it flops; too late, Kittiwake gets there first. Slide the launch month.</h1>'+
+   '<svg class="ab-svg" id="pmv" viewBox="0 0 320 214" role="img" aria-label="Stacked bars by month: Plover’s chance its launch works, with Kittiwake’s chance on top, both growing over time, and a dashed 100% line"></svg>'+
+   '<label class="ab-sl"><span class="h"><span>Plover launches in month</span><b id="pmn"></b></span><input type="range" id="pms" min="0" max="12" step="0.5" value="4"></label>'+
+   '<p class="ab-ro" id="pmr" aria-live="polite"></p><p class="ab-ill">Illustrative numbers</p>');
+  const pc=v=>Math.round(v*100)+'%';
+  function draw(){const t=+L.$('#pms').value,p=abPp(t),q=abPq(t);L.$('#pmv').innerHTML=abPreArt(t);L.$('#pmn').textContent=t;
+    L.$('#pmr').innerHTML='Works: Plover <b>'+pc(p)+'</b> · Kittiwake <b>'+pc(q)+'</b> · together '+pc(p+q)+'<br>Plover ends up owning the market: <b>'+pc(abPwin(t))+'</b> · '+(t<=abPT?'if it flops, Kittiwake launches later and wins':'Kittiwake jumps in just before you');
+    if(t<=3)lo=true;if(t>=10)hi=true;
+    if(lo&&hi&&!fin){fin=true;L.sheet('info','Launch when the two chances add up to 100%','The book’s '+L.g('preemption','preemption game')+', like a duel. Before that point, firing first flops too often; after it, the rival goes just before you. Apple’s Newton launched before its technology was ready; USA Today raced in early and took twelve years to break even. The rule assumes you read the rival’s chance correctly, and that a flop costs no more than losing the race.');L.done();}}
+  L.$('#pms').addEventListener('input',draw);draw();}},
+
+{part:3,src:'Chapter 10 · The War of Attrition',
+ solve:async L=>{for(let k=0;k<4;k++){L.$('#wab').click();await L.sleep(5);}},
+ run(L){
+  let k=0;
+  L.h(L.kick('ex','The book’s story: Sky against BSB')+'<h1 class="q">Some contests are about who gives in first. Follow the book’s example.</h1>'+
+   '<svg class="ab-svg" id="wav" viewBox="0 0 320 176" role="img" aria-label="Two companies beside a prize, with piles of money lost growing between them"></svg>'+
+   '<div class="ab-say" id="wat" aria-live="polite"></div><div class="ab-ctl"><button class="btn pri" id="wab">'+L.ic('arrow')+'Next</button></div>');
+  const T=[['1986 · THE LICENCE','British Satellite Broadcasting wins the official UK licence for satellite TV: 21 million households with only four channels to watch, perhaps £2 billion a year up for grabs.'],
+    ['1988 · THE RIVAL','Rupert Murdoch beams four channels in from a satellite over the Netherlands. Bidding wars for films, price wars for adverts; viewers wait to see who wins before buying a dish.'],
+    ['ONE YEAR ON','£1.5 billion lost between them. Each stays because the survivor takes it all. Money already lost is lost either way: the only question is whether the next month is worth the prize.'],
+    ['THE DEAL','At the eleventh hour, Murdoch merges with BSB. How much each could stand to lose decides the split. The book’s verdict: a dangerous game, and the best move is a deal.']];
+  function show(){L.$('#wav').innerHTML=abBurnArt(k);L.$('#wat').innerHTML='<b class="t">'+T[k][0]+'</b>'+T[k][1];}
+  show();L.$('#wab').onclick=()=>{if(k<3){k++;show();if(k===3){L.$('#wab').hidden=true;L.sheet('info','Everyone pays, one wins','In a '+L.g('attrition','war of attrition')+' your “bid” is how long you’ll keep losing money, and every side pays it. The book notes it can even make sense to bid more than the prize is worth: money already lost is gone either way. There’s no best bid: it depends on what you think they think, with no way to check. So both can be overconfident and lose massively.');L.done();}}};}},
+
+{part:3,src:'Chapter 10 · Case Study: Spectrum Auctions',pts:1,
+ solve:async L=>{L.$$('#spo .opt')[1].click();},
+ run(L){
+  let a=false,tm=0;
+  L.h(L.kick('pr','Case study · spectrum auctions')+'<h1 class="q">Two licences go up at once, and bidding runs in rounds until nobody raises. You’re AT&amp;T. After round 1 you lead NY at 1; MCI leads LA at 1. Your move?</h1>'+
+   '<svg class="ab-svg" id="spv" viewBox="0 0 320 160" role="img" aria-label="Two licence cards, New York and Los Angeles, showing the high bidder and price, with each firm’s values below"></svg><div class="opts" id="spo"></div><div id="spq"></div>');
+  L.$('#spv').innerHTML=abSpecArt([1,'You'],[1,'MCI']);
+  ['Raise LA to 2, to win both licences','Stop bidding: keep NY at 1, let MCI have LA'].forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';
+    b.onclick=()=>{if(a)return;a=true;const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');if(!ok)L.$$('#spo .opt')[1].classList.add('ok');
+      const end=()=>{L.$('#spq').innerHTML=L.quote('If you don’t like the game you are playing, look for the larger game.','Avinash Dixit and Barry Nalebuff, <i>The Art of Strategy</i>, ch. 10')+
+          '<svg class="ab-svg" viewBox="0 0 320 150" role="img" aria-label="Two linked pairs of games. Book: Fuji cuts prices in the US, Kodak can answer in Japan. Everyday: flatmates fighting over the bigger room link it to the rent split.">'+abLinkArt()+'</svg>'+
+          '<p class="ab-cap">The book’s meaning: link two games, so a move in one can reward or punish in the other. <b>How this course applies it:</b> stuck over the bigger room? Link it to the rent, and a fight becomes a trade.</p>';
+        L.sheet(ok?'ok':'no',ok?'Stop: a profit of 9 beats 2':'Stopping earns 9; winning both earns 2','MCI won’t go home empty-handed, so it bids up to 9 and 8 before giving way. Winning both costs 17 for 19 of value; keeping NY at 1 makes 9. The true cost of the second licence is 16. No deal was needed: each acted in its own interest, and the seller lost out.');L.done();};
+      if(ok){L.$('#spv').innerHTML=abSpecArt([1,'You'],[1,'MCI'],'Nobody bids: auction over. You +9 · MCI +7');end();return;}
+      let ny=1,la=2,ho='You',hl='You';const fr=[[ny,ho,la,hl]];
+      while(true){if(ho==='You'&&hl==='You'){const pn=9-(ny+1),pl=8-(la+1);if(pn<0&&pl<0)break;if(pn>=pl){ny++;ho='MCI';}else{la++;hl='MCI';}}
+        else if(ho==='MCI'){ny++;ho='You';}else{la++;hl='You';}fr.push([ny,ho,la,hl]);}
+      let f=0;tm=setInterval(()=>{if(!L.$('#spv')||!L.$('#spv').isConnected){clearInterval(tm);return;}const q=fr[Math.min(f,fr.length-1)];
+        L.$('#spv').innerHTML=abSpecArt([q[0],q[1]],[q[2],q[3]],f>=fr.length-1?'You win both at '+q[0]+' and '+q[2]+': profit '+(10-q[0]+9-q[2]):'round '+(f+2)+'…');
+        if(f>=fr.length-1){clearInterval(tm);end();}f++;},70);};L.$('#spo').appendChild(b);});}},
+
+{part:3,src:'Course application · built on Chapter 10',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){L.$('#omb').click();await L.sleep(10);}abSet(L.$('#oms2'),5500);L.$('#omt2').children[1].click();L.$('#omg').click();},
+ run(L){
+  let s=-1,a=false,late=null;
+  L.h(L.kick('pr','One-minute move')+'<h1 class="q">The car auction ends Sunday night. Run “Bid smart” in about a minute.</h1>'+
+   L.note('How this course applies the book: a one-minute routine built only from the book’s advice on auctions and contests.','compass')+
+   '<div class="ab-steps" id="oms"><span>1 · Enter?</span><span>2 · Walkaway</span><span>3 · Rules</span><span>4 · As if won</span><span>5 · Contest?</span></div>'+
+   '<div class="ab-say" id="omt" aria-live="polite"></div><div id="omv"></div>'+
+   '<div id="omf" hidden><label class="ab-sl"><span class="h"><span>Tali’s proxy bid</span><b id="omn">£4,800</b></span><input type="range" id="oms2" min="3000" max="6500" step="100" value="4800"></label>'+
+   '<div class="ab-ctl" id="omt2"></div><div class="ab-ctl"><button class="btn pri" id="omg" disabled>'+L.ic('check')+'Place the bid</button></div></div>'+
+   '<div class="ab-ctl"><button class="btn pri" id="omb">'+L.ic('arrow')+'Start</button></div>');
+  const rm=abRoom(L,L.$('#omv'),{rule:'proxy',lazy:{4:3600,5:3500},hideMe:true,stop:4800,idle:'Tali’s card is still blank.',
+    say:(o,r)=>abSay(o,r)+'<br>'+(o.snipe?'Entered late: D and E had no time to think again.':'Entered early: D and E did their homework and raised.')});
+  const ST=[['STEP 1 · ENTER AT ALL?','Is this auction worth playing? The other options: a dealer car at £5,800 with a warranty, or next week’s auctions. Worth a try, and those options set the number.',()=>rm.set({hideMe:true,idle:'Tali’s card is still blank.'})],
+    ['STEP 2 · WALKAWAY','Written down before Sunday: the dealer car less what the warranty is worth to them, £5,500. Sunday-night nerves can’t move it.',()=>rm.set({hideMe:false,stop:5500,idle:'Tali’s card: £5,500, face up for Tali only.'})],
+    ['STEP 3 · WHICH RULES?','Online proxy bidding works like a second-price auction: enter the walkaway itself, and enter it late.',()=>rm.set({idle:'The board says it: online, proxy bids.'})],
+    ['STEP 4 · AS IF YOU’VE WON','If Tali wins, what does that say? That nobody else would go as high. Is something wrong with the car? A seller’s inspection report before Sunday settles it.',()=>rm.set({idle:'Ask what a win would tell you, before you bid.'})],
+    ['STEP 5 · A CONTEST?','Not a war of attrition: if the price passes £5,500, Tali stops. The dealer car is still there. Now set the bid.',()=>rm.set({idle:'Last step: set the proxy and the timing.'})]];
+  function go(n){s=n;L.$$('#oms span').forEach((p,j)=>p.className=j<n?'dn':j===n?'cur':'');L.$('#omt').innerHTML='<b class="t">'+ST[n][0]+'</b>'+ST[n][1];ST[n][2]();L.$('#omb').innerHTML=L.ic('arrow')+(n<4?'Next step':'Set the bid');}
+  L.$('#omt').innerHTML='<b class="t">TALI AND JUNO’S CAR</b>Five steps, about a minute.';
+  const chk=()=>{L.$('#omg').disabled=late===null;};
+  abChips(L,L.$('#omt2'),['Enter it now','Enter it in the last minute'],j=>{late=!!j;chk();});
+  L.$('#oms2').addEventListener('input',()=>{const v=+L.$('#oms2').value;L.$('#omn').textContent=abFmt(v);if(!a)rm.set({stop:v,idle:'Proxy set at '+abFmt(v)+'.'});});
+  L.$('#omb').onclick=()=>{if(s<4){go(s+1);return;}L.$('#omb').hidden=true;L.$$('#oms span').forEach(p=>p.className='dn');L.$('#omf').hidden=false;
+    rm.set({stop:+L.$('#oms2').value});L.$('#omt').innerHTML='<b class="t">SET THE BID</b>Set Tali’s proxy and when to enter it, then place it.';};
+  L.$('#omg').onclick=()=>{if(a){rm.finish();return;}a=true;const v=+L.$('#oms2').value,ok=v===5500&&late;L.award(ok);L.$('#oms2').disabled=true;
+    rm.set({stop:v,snipe:late});rm.run(()=>{L.$('#omg').hidden=true;L.sheet(ok?'ok':'no',ok?'£5,500, entered late':'The move: £5,500, entered late',
+      (v!==5500?'A proxy of '+abFmt(v)+' '+(v<5500?'can lose a car Tali would gladly buy at that price. ':'risks paying more than it’s worth. '):'')+(!late?'Entering early lets lazy bidders wake up and raise. ':'')+'Proxy = second-price, so enter the walkaway itself, and enter it late so others don’t learn their own values.');L.done();});};}},
+
+{part:3,src:'Chapter 10 · Online Auctions · T-Bills; Chapter 14 · What Price a Dollar?',
+ solve:async L=>{for(const b of L.$$('#lmc .chip')){b.click();await L.sleep(5);}},
+ run(L){
+  const seen=new Set();let fin=false;
+  L.h(L.kick('ex','Edge cases and limits')+'<h1 class="q">Where does “Bid smart” stop protecting you? Try each case.</h1><div class="ab-ctl" id="lmc"></div><div id="lmv"></div><div id="lmf"></div>');
+  const svg=(h,a)=>'<svg class="ab-svg" viewBox="0 0 320 '+h+'" role="img" aria-label="'+a+'">';
+  const PR=[['No walkaway number',()=>{const r=abRoom(L,L.$('#lmv'),{vals:[5500,3200,3700,4100,4500,6100],stop:6300,rule:'japan',idle:'',tag:'Illustrative numbers · a keen bidder E, and Tali with no number'});r.run();},
+      'Without a number written down, the heat decides. Tali “wins” at £6,100 a car worth £5,500 to them: the regret the book warns about. The tool only works if the number comes first.'],
+    ['Everyone values it the same',()=>{const r=abRoom(L,L.$('#lmv'),{names:['Juno','A','B','C','D','E'],vals:[450,250,290,330,360,410],lo:200,hi:500,stop:450,common:320,rule:'japan',idle:'',tag:'Illustrative numbers · the camera-gear box'});r.run();},
+      'With a common value, bidding your guess isn’t enough: the top guess wins and pays too much. Adjust down first, as if you’ve won. The course’s rule of thumb: bid near a typical guess, and scale back further with more rivals or shakier guesses.'],
+    ['The rival’s chance is a guess',()=>{const t=abPT;L.$('#lmv').innerHTML=svg(214,'The launch-race bars, with the rival’s part drawn faint and marked as a guess')+abPreArt(t)+
+       '<rect x="36" y="44" width="150" height="22" rx="8" fill="var(--card)" stroke="var(--h4)" stroke-width="2"/><text x="111" y="59" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h4)">their chance: only a guess</text></svg>';},
+      'The book’s launch rule assumes both sides read each other’s chances correctly, and that a flop costs no more than losing the race. Over-rate the rival and you launch too early. If a flop would cost far more (a damaged name), wait longer; if trying beats never trying, go sooner.'],
+    ['A better one next week',()=>{L.$('#lmv').innerHTML=svg(110,'Two car auctions a week apart')+'<rect width="320" height="110" rx="14" fill="var(--soft)"/><path d="M24 70H296" stroke="var(--ink)" stroke-width="2.5"/>'+
+       '<rect x="34" y="20" width="104" height="36" rx="8" fill="var(--card)" stroke="var(--h2)" stroke-width="2"/><text x="86" y="36" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h2)">this Sunday</text><text x="86" y="50" text-anchor="middle" font-size="11" fill="var(--ink)">a good car</text>'+
+       '<rect x="182" y="20" width="104" height="36" rx="8" fill="var(--card)" stroke="var(--pri)" stroke-width="2"/><text x="234" y="36" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--pri-deep)">next Sunday</text><text x="234" y="50" text-anchor="middle" font-size="11" fill="var(--ink)">a car they prefer</text>'+
+       '<circle cx="86" cy="70" r="5" fill="var(--h2)"/><circle cx="234" cy="70" r="5" fill="var(--pri)"/><text x="160" y="96" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">wait, and risk ending up with neither?</text></svg>';},
+      'Your value can depend on what else is for sale, now and later, like the book’s houses auctioned a week apart, or ten similar drum sets online. Then there’s no single walkaway number independent of the other auctions.'],
+    ['The rules change',()=>{const row=(y,lab,vals,c)=>'<text x="12" y="'+(y+15)+'" font-size="11.5" font-weight="600" fill="var(--ink)">'+lab+'</text>'+vals.map((v,j)=>'<rect x="'+(132+j*46)+'" y="'+y+'" width="40" height="22" rx="6" fill="var(--card)" stroke="'+c+'" stroke-width="1.8"/><text x="'+(152+j*46)+'" y="'+(y+15)+'" text-anchor="middle" font-size="11.5" font-weight="700" fill="'+c+'">'+v+'</text>').join('');
+       L.$('#lmv').innerHTML=svg(120,'Interest-rate bids before and after a rule that pays 1% less: every bid moves up by 1%')+'<rect width="320" height="120" rx="14" fill="var(--soft)"/>'+row(16,'Bids, old rule',['3.1%','3.25%','3.6%'],'var(--h2)')+row(52,'Pay 1% less? Bid:',['4.1%','4.25%','4.6%'],'var(--pri)')+'<text x="160" y="104" text-anchor="middle" font-size="12" font-weight="600" fill="var(--ink)">after the rule: 3.1%, 3.25%, 3.6%, the same as before</text></svg>';},
+      'The book’s T-bills: change the rules and bidders change their bids, often cancelling the change exactly. Pay everyone 1% less than they bid, and everyone bids 1% more. So check the rules before you bid, every time.'],
+    ['An escalation game',()=>{L.$('#lmv').innerHTML=svg(116,'A dollar note with two top bids, 55 cents and 60 cents, both of which must be paid')+'<rect width="320" height="116" rx="14" fill="var(--soft)"/><rect x="104" y="12" width="112" height="44" rx="6" fill="var(--ok-bg)" stroke="var(--ok-strong)" stroke-width="2"/><text x="160" y="40" text-anchor="middle" font-size="16" font-weight="700" fill="var(--ok)">$1</text>'+
+       '<text x="80" y="82" text-anchor="middle" font-size="13" font-weight="700" fill="var(--h2)">60¢ leads</text><text x="240" y="82" text-anchor="middle" font-size="13" font-weight="700" fill="var(--pri-deep)">55¢: raise?</text><text x="160" y="104" text-anchor="middle" font-size="12" font-weight="600" fill="var(--no)">the top two both pay their bids</text></svg>';},
+      'Chapter 14’s dollar auction: each raise looks sensible, because second place pays too, and the bidding can run past $1. The book: don’t take the first step unless you know where it leads. Lesson 0016 returns to it.']];
+  /* the first case is open by default, so the screen leads with a picture */
+  PR.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#lmc').children].forEach((x,q)=>x.classList.toggle('sel',q===j));L.$('#lmv').innerHTML='';p[1]();L.$('#lmf').innerHTML='';L.fb(L.$('#lmf'),p[2],'info');seen.add(j);
+      if(seen.size===PR.length&&!fin){fin=true;L.sheet('info','Know where the tool stops','Bid smart needs a number set in advance, an honest look at what winning tells you, and a fresh check of the rules. When values depend on other sales, when you can only guess a rival’s chances, or when second place pays too, step back before stepping in.');L.done();}};
+    L.$('#lmc').appendChild(b);});
+  L.$('#lmc').children[0].click();}},
+
+{part:3,src:'Chapter 10 · The War of Attrition',
+ solve:async L=>{L.$('#wcs').click();L.$('#wcs').click();L.$('#wcd').click();},
+ run(L){
+  let m=0,fin=false;
+  L.h(L.kick('learn','Where cooperation wins')+'<h1 class="q">Plover and Kittiwake each do more free extra work every month to win one big client. Play it out.</h1>'+
+   '<svg class="ab-svg" id="wcv" viewBox="0 0 320 168" role="img" aria-label="Bars comparing the prize with what Plover and Kittiwake have each spent so far, drawn grey as sunk, and the cost of one more month"></svg>'+
+   '<div class="ab-ctl"><button class="btn" id="wcs">'+L.ic('clock')+'Stay in another month</button><button class="btn pri" id="wcd" disabled>'+L.ic('people')+'Look for a deal</button></div>'+
+   '<p class="ab-cap" id="wct">Each month costs each agency about £8k; the client is worth about £60k a year. Illustrative numbers.</p>');
+  const draw=()=>{L.$('#wcv').innerHTML=abWarArt(m);};draw();
+  L.$('#wcs').onclick=()=>{if(fin||m>=8)return;m++;draw();if(m>=8)L.$('#wcs').disabled=true;L.$('#wcd').disabled=false;
+    L.$('#wct').innerHTML=m<2?'Tali guesses Kittiwake is about to fold. Kittiwake guesses the same about Plover. Neither can check.':'£'+(8*m)+'k each, gone either way. Next month’s £8k still looks small next to £60k, so both stay, until together they’ve burned more than the prize.';};
+  L.$('#wcd').onclick=()=>{if(fin)return;fin=true;L.$('#wcs').disabled=true;L.$('#wcd').disabled=true;
+    L.$('#wct').innerHTML='<b>The deal, in the open:</b> Tali calls Kittiwake’s head and proposes a joint offer the client can see, accept or refuse: Plover builds the website, Kittiwake runs the campaign. The free-work contest stops.';
+    L.sheet('info','Make a deal instead of bleeding','The book’s advice for a war of attrition: it’s a dangerous game, so work out a deal, as Murdoch did with BSB.<br><br><b>How this course applies the book:</b> keep the deal open and honest with the client. A secret agreement on prices is collusion, and it hurts customers.');L.done();};}},
+
+{part:3,src:'Course application · built on Chapter 10',pts:6,run(L){
+  L.h(L.kick('pr','Practice')+'<h1 class="q">Tali’s week of contests. What’s the move?</h1>'+
+   L.note('How this course applies the book: “adjust” means below your value when you buy, above your cost estimate when you sell.','compass'));
+  L.buckets(L.card,['Bid your true number','Adjust, as if you’ve won','Look for a deal','Don’t start'],[
+   ['Plover’s charity auction uses second-price envelopes. Tali values the signed shirt at £80.',0,'Second-price: write £80. Your bid decides whether you win, not what you pay.'],
+   ['The council’s sealed website tender: lowest price wins. Nobody knows the job’s true cost, and it’s the same for every agency. Plover estimates £40k.',1,'Winning would mean Plover guessed the cost lowest. So price above £40k, never below it, as if you’ve already won.'],
+   ['Juno’s online proxy for a camera body worth £450 to Juno.',0,'A proxy works like second-price: enter £450, late.'],
+   ['Plover and Kittiwake keep doing more free pitch work for one big client.',2,'A war of attrition: both pay while they stay in. Look for an open deal, or a larger game.'],
+   ['At the five-a-side social, someone auctions a £10 note, and the top two bidders both pay.',3,'An escalation game: once in, every raise looks sensible. Better not to take the first step.'],
+   ['Sealed envelopes for a holiday-cottage weekend; the winner pays their own bid.',1,'Pay-your-bid: writing your full value wins you nothing. Shade to your guess of the next-highest value.']],
+   'Write your true number when the rules make you pay someone else’s bid. Adjust when you pay your own, or when winning is bad news: down when buying, up when selling. For contests that burn both sides, look for a deal, or don’t start.');}},
+
+{part:3,src:'Course application · built on Chapter 10',
+ solve:async L=>{abSet(L.$('#yu1'),'A second-hand bike');abSet(L.$('#yu2'),'£300');L.$('#yur').children[0].click();L.$('#yue').children[0].click();L.$('#yub').click();},
+ run(L){
+  L.h(L.kick('pr','Your turn · ungraded')+'<h1 class="q">One thing you’re competing for: write its walkaway card before you start</h1>'+
+   L.note('How this course applies the book: the one-minute move on your own situation.','compass')+
+   '<label class="ab-fl" for="yu1">WHAT YOU’RE COMPETING FOR</label><input class="ab-in" id="yu1" maxlength="60" placeholder="e.g. a flat, a used bike, a contract, a festival ticket">'+
+   '<span class="ab-fl">1 · SHOULD YOU ENTER AT ALL?</span><div class="ab-chips" id="yue"></div>'+
+   '<label class="ab-fl" for="yu2">2 · YOUR WALKAWAY NUMBER</label><input class="ab-in" id="yu2" maxlength="20" placeholder="the price where you no longer care">'+
+   '<span class="ab-fl">3 · HOW IS THE PRICE SET?</span><div class="ab-chips" id="yur"></div>'+
+   '<div class="ab-ctl"><button class="btn pri" id="yub" disabled>'+L.ic('pencil')+'Write my walkaway card</button></div><div id="yuo"></div>');
+  let en=null,ru=null;
+  const RU=['Stay in up to it, then sit down.','Write this number itself. Online: enter it late.','Shade below it: bid as if you’ve already won.','Set a stop point now, and look for a deal first.','Ask how the price is set before you bid.'];
+  abChips(L,L.$('#yue'),['Yes, it’s worth it','Not sure yet','No: walk away'],j=>{en=j;chk();});
+  abChips(L,L.$('#yur'),['Rising price','Second-price or proxy','Sealed, pay your bid','Who lasts longest','Not sure'],j=>{ru=j;chk();});
+  const v=s=>L.$(s).value.trim();
+  function chk(){L.$('#yub').disabled=!(en!==null&&ru!==null&&v('#yu1').length>1&&v('#yu2').length>0);}
+  ['#yu1','#yu2'].forEach(s=>L.$(s).addEventListener('input',chk));
+  L.$('#yub').onclick=()=>{
+    L.$('#yuo').innerHTML='<div class="ab-wcard"><div class="k">MY WALKAWAY CARD</div><div class="i">'+L.esc(v('#yu1'))+'</div><div class="n">'+L.esc(v('#yu2'))+'</div>'+
+      '<div class="r">'+(en===2?'<b>Not entering.</b> Walking away is a strategy too.':(en===1?'<b>First:</b> list what else you could get instead; that sets the number. ':'')+'<b>The bid:</b> '+RU[ru])+'<br><b>Before bidding:</b> if I win, what does that tell me?</div></div>';
+    L.sheet('info','Your card is written','Keep it where you’ll see it when the bidding heats up. If the price passes it, sit down: winning at more than your walkaway is losing. And if it turns into a contest of who lasts longest, look for a deal.');L.done();};}},
+
+{part:3,src:'Course application · built on Chapter 10',run(L){
+  L.h(L.kick('learn','Your strategy map')+'<h1 class="q">“Bid smart” joins two rows of the map</h1>'+
+   L.note('How this course applies the book. Later lessons fill the dashed gaps.','compass')+
+   '<svg class="ab-svg" viewBox="0 0 320 96" role="img" aria-label="Tool picture: bidders under a rising price board, two of them sitting down at their walkaway lines, and a mirror asking what a win would tell you"><rect width="320" height="96" rx="12" fill="var(--soft)"/>'+
+   '<rect x="20" y="8" width="132" height="24" rx="6" fill="var(--ink)"/><text x="86" y="25" text-anchor="middle" font-size="12" font-weight="700" fill="var(--card)">£4,900 ↑</text>'+
+   abMiniSit(42,88,'var(--h2)')+abMini(86,88,'var(--pri)',1)+'<path d="M93 55L99 42" stroke="var(--pri)" stroke-width="3.5" stroke-linecap="round"/><rect x="94" y="32" width="11" height="12" rx="3" fill="var(--card)" stroke="var(--pri)" stroke-width="2"/>'+abMiniSit(134,88,'var(--h2)')+
+   '<ellipse cx="238" cy="50" rx="66" ry="40" fill="var(--h4-bg)" stroke="var(--h4)" stroke-width="4"/><text x="238" y="46" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h4)">if I win, what does</text><text x="238" y="61" text-anchor="middle" font-size="11.5" font-weight="700" fill="var(--h4)">that tell me?</text></svg>'+
+   '<div id="mp"></div>'+
+   '<p class="small">It’s the <b>first</b> tool when you’re competing with several others for one prize, and the third when they know something you don’t (is your win a winner’s curse?).</p>');
+  L.$('#mp').innerHTML='<div class="mp-row"><span class="n">0</span><b>Is it a game at all? Will the other side react?</b></div>'+MP_ROWS.map((r,j)=>{const hot=r[1].includes('bid');
+    return '<div class="mp-row'+(hot?' hot':'')+'"><span class="n">'+(j+1)+'</span><b>'+r[0]+'</b><div class="t">'+r[1].map((k,q)=>(q?'<span class="mp-ar">→</span>':'')+'<span class="mp-t'+(k==='bid'?' cur':MP_T[k][1]>11?' tbd':'')+'">'+(MP_T[k][1]>11?'?':MP_T[k][0])+'</span>').join('')+'</div></div>';}).join('');
+  L.done();}}
+  ]
+});
+</script>
+</body>
+</html>
