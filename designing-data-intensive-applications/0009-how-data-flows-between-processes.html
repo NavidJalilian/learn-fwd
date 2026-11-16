@@ -13,124 +13,417 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0009 only. Two hands-on models used across the lesson:
+   1. Ring – the record relay ring: Otterpost processes of different code
+             versions around the Parcel DB (or a broker), with a record
+             card travelling round. Old code may drop fields it doesn’t know.
+   2. Tree – the after-the-timeout outcome tree: what might have happened
+             to Bramble & Bolt’s booking, and what each client policy does.
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+let SPEED=1,BUSY=false;
+const ONCE=new WeakSet();function once(L){const k=L.card.firstElementChild;if(!k||ONCE.has(k))return false;ONCE.add(k);return true;}                                  /* solvers set this lower so autoplay is quick */
+const wait=ms=>new Promise(r=>setTimeout(r,ms*SPEED));
+const VC={v0:'var(--faint)',v1:'var(--h3)',v2:'var(--h2)',v3:'var(--h1)'};
+const VBG={v0:'var(--soft2)',v1:'var(--h3-bg)',v2:'var(--h2-bg)',v3:'var(--h1-bg)'};
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.df svg,svg.df-svg{width:100%;height:auto;display:block}svg.df-svg text,.df-ring text{font-family:var(--sans)}'+
+ '.df-cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:10px 0 6px;min-height:46px}'+
+ '.df-cap .st{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.df-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.df-row .btn,.df-row .chip{margin:0;min-height:42px}'+
+ '.df-tg[aria-pressed="true"]{border-color:var(--pri);background:var(--pri-bg);color:var(--pri-deep)}'+
+ '.btn[disabled],.chip[disabled]{opacity:.45;cursor:default}'+
+ '.df-rec{border:2px solid var(--line);border-radius:14px;padding:8px 12px;font-size:14px;margin:8px 0;background:var(--card)}'+
+ '.df-rh{font-size:12.5px;color:var(--muted);display:flex;justify-content:space-between;gap:6px;flex-wrap:wrap;margin-bottom:3px;font-weight:600}'+
+ '.df-f{display:flex;justify-content:space-between;gap:10px;padding:4px 0;border-top:1px solid var(--line)}'+
+ '.df-f span{color:var(--muted)}.df-f b{font-weight:600;text-align:right}'+
+ '.df-f.new b{color:var(--h2)}.df-f.lost b{color:var(--no);text-decoration:line-through}.df-f.null b{color:var(--faint);font-style:italic;font-weight:500}'+
+ '.df-tasks{margin:10px 0 0;padding:0;list-style:none}.df-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.df-tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none}'+
+ '.df-tasks li.done{color:var(--ok)}.df-tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.df-stat{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:14.5px;margin:8px 0;background:var(--soft);border-radius:12px;padding:8px 12px}.df-stat b{font-variant-numeric:tabular-nums}'+
+ '.df-rng{display:grid;grid-template-columns:1fr auto;gap:0 10px;align-items:center;font-size:14.5px;margin:6px 0}.df-rng input{grid-column:1/3;width:100%;accent-color:var(--pri);height:30px}.df-rng b{font-variant-numeric:tabular-nums}'+
+ '.df-ill{font-size:12.5px;color:var(--muted);font-style:italic}'+
+ '.df-root{display:flex;gap:10px;align-items:center;background:var(--soft);border:2px solid var(--line2);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.4}'+
+ '.df-leaf{display:grid;grid-template-columns:24px 1fr}.df-leaf svg{width:24px;height:100%;display:block}'+
+ '.df-lc{border:2px solid var(--line);border-radius:14px;padding:8px 10px;margin:6px 0;font-size:13.5px;line-height:1.4;background:var(--card);animation:in .3s}'+
+ '.df-lc.good{border-color:var(--ok-line);background:var(--ok-bg)}.df-lc.bad{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.df-lt{display:flex;justify-content:space-between;gap:8px;align-items:flex-start}.df-lt b{font-size:14px}'+
+ '.df-pc{white-space:nowrap;font-weight:700;font-size:13px;display:inline-flex;gap:1px;align-items:center}.df-pc svg.i{width:17px;height:17px}'+
+ '.df-bar{height:6px;border-radius:9px;background:var(--soft2);margin:6px 0 2px;overflow:hidden}.df-bar i{display:block;height:100%;background:var(--pri);transition:width .3s}'+
+ '.df-pct{font-size:12.5px;color:var(--muted)}.df-th{margin-top:3px}.df-th .w{color:var(--muted)}'+
+ '.df-sum{font-size:14px;line-height:1.5;margin:8px 0;background:var(--soft);border-radius:12px;padding:9px 12px}'+
+ '.df-cells{display:grid;grid-template-columns:repeat(6,1fr);gap:5px;margin:6px 0}'+
+ '.df-cell{height:34px;border-radius:8px;border:2px solid;font-size:12.5px;font-weight:700;padding:0;transition:background .35s,border-color .35s}'+
+ '.df-code{display:flex;align-items:center;justify-content:space-between;gap:10px;border-radius:14px;padding:9px 12px;background:var(--soft);font-size:14px;margin:6px 0}'+
+ '.df-code b{font-size:17px;border-radius:9px;padding:3px 12px;border:2px solid;transition:all .35s}'+
+ '.df-lg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:4px 0}.df-lg i{display:inline-block;width:12px;height:12px;border-radius:3px;border:2px solid;vertical-align:-2px;margin-right:4px}'+
+ '.df-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 2px}'+
+ '.df-pre{background:var(--soft);border-radius:12px;padding:10px 12px;margin:6px 0 4px;font:12.5px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre;overflow:hidden;color:var(--ink)}'+
+ '.df-ch{font-size:14px;font-weight:700;margin-top:12px}'+
+ '.df-tags{display:flex;flex-wrap:wrap;gap:5px}.df-tags span{font-size:12.5px;font-weight:600;border-radius:99px;padding:3px 9px}'+
+ '.df-cl{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}'+
+ '.df-cli{border:2px solid var(--line);border-radius:12px;padding:7px 8px;font-size:12.5px;line-height:1.35;min-width:0;transition:all .25s}'+
+ '.df-cli b{display:block;font-size:13px}.df-cli .r{display:block;margin-top:4px;font-weight:600}'+
+ '.df-cli.ok{border-color:var(--ok-line);background:var(--ok-bg)}.df-cli.no{border-color:var(--no-line);background:var(--no-bg)}.df-cli.ok .r{color:var(--ok)}.df-cli.no .r{color:var(--no)}'+
+ '.df-chg{border:2px solid var(--line2);border-radius:14px;padding:10px 12px;font-size:15px;line-height:1.45;margin:8px 0}.df-chg .n{font-size:12.5px;font-weight:700;color:var(--muted);display:block}'+
+ '.df-key{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}.df-key div{font-size:13px;line-height:1.35;background:var(--soft);border-radius:10px;padding:6px 8px}.df-key b{color:var(--h1)}'+
+ '.df-vs{display:grid;grid-template-columns:auto 1fr 1fr;gap:5px 8px;align-items:start;font-size:13.5px;line-height:1.35;margin:10px 0 4px}.df-vs>span{font-size:12.5px;font-weight:600;color:var(--muted);padding-top:7px}.df-vs>b{font-size:13.5px;padding:0 4px}.df-vs>div{background:var(--soft);border-radius:10px;padding:6px 8px;min-width:0}'+
+ '.df-st{cursor:pointer}.df-st:focus{outline:none}.df-st:focus-visible rect{stroke-width:3.5}'+
+ '</style>');
+
+/* ---------- small SVG helpers (strings) ---------- */
+const DEFS='<defs><marker id="dfa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>';
+function bx(x,y,w,h,t,sub,col,o){o=o||{};
+  return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="10" style="fill:'+(o.fill||'var(--card)')+';stroke:'+(col||'var(--line2)')+';stroke-width:2'+(o.dash?';stroke-dasharray:5 4':'')+'"/>'+
+   '<text x="'+(x+w/2)+'" y="'+(y+h/2+(sub?-3:4.5))+'" text-anchor="middle" font-size="12.5" font-weight="600" style="fill:var(--ink)">'+t+'</text>'+
+   (sub?'<text x="'+(x+w/2)+'" y="'+(y+h/2+13)+'" text-anchor="middle" font-size="11.5" style="fill:'+(o.subc||'var(--muted)')+'">'+sub+'</text>':'');}
+function cyl(cx,cy,label){return '<path d="M'+(cx-30)+' '+(cy-14)+'v28a30 8 0 0 0 60 0v-28" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/><ellipse cx="'+cx+'" cy="'+(cy-14)+'" rx="30" ry="8" style="fill:var(--soft2);stroke:var(--line2);stroke-width:1.5"/>'+
+  (label?'<text x="'+cx+'" y="'+(cy+9)+'" text-anchor="middle" font-size="12" font-weight="600" style="fill:var(--ink)">'+label+'</text>':'');}
+function arr(x1,y1,x2,y2,dash,col){return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" marker-end="url(#dfa)" style="stroke:'+(col||'var(--muted)')+';stroke-width:1.8'+(dash?';stroke-dasharray:4 4':'')+'"/>';}
+function stamp(x,y,k){const c=k==='E'?'h1':'h2';return '<circle cx="'+x+'" cy="'+y+'" r="10" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.5"/><text x="'+x+'" y="'+(y+4.5)+'" text-anchor="middle" font-size="12" font-weight="700" style="fill:var(--'+c+')">'+k+'</text>';}
+function txt(x,y,t,o){o=o||{};return '<text x="'+x+'" y="'+y+'" text-anchor="'+(o.a||'middle')+'" font-size="'+(o.s||12)+'" font-weight="'+(o.w||400)+'" style="fill:'+(o.c||'var(--muted)')+'">'+t+'</text>';}
+function pin(x,y,n,on){return '<circle cx="'+x+'" cy="'+y+'" r="11" style="fill:'+(on?'var(--pri)':'var(--card)')+';stroke:'+(on?'var(--pri)':'var(--line2)')+';stroke-width:2"/><text x="'+x+'" y="'+(y+4.5)+'" text-anchor="middle" font-size="12.5" font-weight="700" style="fill:'+(on?'var(--pri-ink)':'var(--ink)')+'">'+n+'</text>';}
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+function rng(id,label,min,max,val,unit){return '<div class="df-rng"><label for="'+id+'">'+label+'</label><b id="'+id+'-v">'+val+unit+'</b><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="1" value="'+val+'"></div>';}
+function tasks(id,items){return '<ul class="df-tasks" id="'+id+'">'+items.map((t,j)=>'<li data-k="'+j+'"><span class="bx"></span>'+t+'</li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+' li[data-k="'+j+'"]');if(li)li.classList.add('done');}
+
+/* ---------- element maker + tween for live SVG ---------- */
+function el(tag,attrs,parent,text){const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);if(text!=null)e.textContent=text;if(parent)parent.appendChild(e);return e;}
+function tween(g,a,b,ms){return new Promise(res=>{const t0=performance.now(),d=Math.max(1,ms*SPEED);
+  (function f(){if(!g.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/d),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+    g.setAttribute('transform','translate('+(a[0]+(b[0]-a[0])*e)+' '+(a[1]+(b[1]-a[1])*e)+')');if(p<1)setTimeout(f,16);else res();})();});}
+
+/* =====================================================================
+   1. THE RECORD RELAY RING
+   ===================================================================== */
+const RP=[[80,44],[240,44],[240,228],[80,228]],RC=[160,136];
+function Ring(host,o){
+  o=Object.assign({center:'db',label:'Parcel DB',sub:'',cells:0,stations:[],onTap:null},o);
+  const s=el('svg',{viewBox:'0 0 320 272',class:'df-ring df-svg',role:'img','aria-label':o.aria||('Otterpost processes around the '+o.label)});
+  s.style.width='100%';s.style.display='block';
+  el('circle',{cx:160,cy:136,r:122,style:'fill:none;stroke:var(--line);stroke-width:1.5;stroke-dasharray:3 6'},s);
+  const pos=o.stations.map((x,i)=>RP[x.pos!=null?x.pos:i]);
+  pos.forEach(p=>el('line',{x1:160,y1:136,x2:p[0],y2:p[1],style:'stroke:var(--line2);stroke-width:1.5;stroke-dasharray:2 4'},s));
+  if(o.center==='db'){const t=o.cells?96:112,b=o.cells?170:158;
+    el('path',{d:'M122 '+t+'V'+b+'a38 10 0 0 0 76 0V'+t,style:'fill:var(--soft);stroke:var(--line2);stroke-width:1.5'},s);
+    el('ellipse',{cx:160,cy:t,rx:38,ry:10,style:'fill:var(--soft2);stroke:var(--line2);stroke-width:1.5'},s);
+    el('text',{x:160,y:o.cells?b+28:141,'text-anchor':'middle','font-size':13,'font-weight':700,style:'fill:var(--ink)'},s,o.label);}
+  else{el('rect',{x:104,y:110,width:112,height:54,rx:12,style:'fill:var(--soft);stroke:var(--h1);stroke-width:2'},s);
+    el('text',{x:160,y:o.sub?133:142,'text-anchor':'middle','font-size':13,'font-weight':700,style:'fill:var(--ink)'},s,o.label);
+    if(o.sub)el('text',{x:160,y:151,'text-anchor':'middle','font-size':11.5,style:'fill:var(--muted)'},s,o.sub);}
+  const cells=[];for(let k=0;k<o.cells;k++)cells.push(el('rect',{x:131+(k%3)*20,y:112+Math.floor(k/3)*22,width:16,height:16,rx:3,style:'fill:var(--soft2);stroke:var(--line2);stroke-width:1'},s));
+  const G=o.stations.map(x=>{const g=el('g',o.onTap?{class:'df-st',tabindex:0,role:'button','aria-label':x.name+' '+(x.sub||'')}:{},s);return g;});
+  function draw(i){const x=o.stations[i],p=pos[i],g=G[i],col=x.col||VC[x.ver]||'var(--line2)';g.innerHTML='';
+    const fill=x.mark==='act'?'var(--pri-bg)':x.mark==='no'?'var(--no-bg)':x.mark==='ok'?'var(--ok-bg)':'var(--card)';
+    el('rect',{x:p[0]-50,y:p[1]-22,width:100,height:44,rx:12,style:'fill:'+fill+';stroke:'+col+';stroke-width:2.2'+(x.ghost?';stroke-dasharray:5 4':'')},g);
+    el('text',{x:p[0],y:p[1]-4,'text-anchor':'middle','font-size':12.5,'font-weight':700,style:'fill:'+(x.ghost?'var(--muted)':'var(--ink)')},g,x.name);
+    el('text',{x:p[0],y:p[1]+13,'text-anchor':'middle','font-size':12,'font-weight':600,style:'fill:'+col},g,x.sub||x.ver);}
+  G.forEach((g,i)=>{draw(i);if(o.onTap){g.addEventListener('click',()=>o.onTap(i));g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();o.onTap(i);}});}});
+  host.appendChild(s);
+  return {s,pos,
+    set(i,x){Object.assign(o.stations[i],x);draw(i);},
+    mark(i,k){o.stations[i].mark=k;draw(i);},
+    stop(i){const p=pos[i];return [160+(p[0]-160)*.64,136+(p[1]-136)*.64];},
+    cell(k,col){cells[k].setAttribute('style','fill:'+col+';stroke:var(--line2);stroke-width:1');},
+    tok(dot,at){const g=el('g',{style:'pointer-events:none'},s);at=at||RC;
+      el('rect',{x:-14,y:-10,width:28,height:20,rx:4,style:'fill:var(--card);stroke:var(--pri);stroke-width:2'},g);
+      el('path',{d:'M-9 -3h11M-9 3h8',style:'stroke:var(--pri);stroke-width:1.8;stroke-linecap:round;fill:none'},g);
+      const c=el('circle',{cx:7.5,cy:0,r:4.5,style:'fill:'+(dot||'var(--soft2)')},g);
+      g.dot=v=>c.setAttribute('style','fill:'+v);g.setAttribute('transform','translate('+at[0]+' '+at[1]+')');return g;}};
+}
+/* the record card under the ring: rows [key, value, cls] */
+function recCard(title,by,rows){
+  return '<div class="df-rh"><span>'+title+'</span>'+(by?'<span style="color:'+(VC[by]||'var(--muted)')+'">last written by '+by+'</span>':'')+'</div>'+
+    rows.map(r=>'<div class="df-f '+(r[2]||'')+'"><span>'+r[0]+'</span><b>'+r[1]+'</b></div>').join('');}
+function okoroRows(r){
+  const safe=r.noslot?['safePlace','no slot in v1’s object','lost']:r.lost?['safePlace','lost','lost']:r.safe?['safePlace',r.safe,'new']:['safePlace','not set','null'];
+  return [['phone',r.phone],['doorbell',r.door],safe];}
+const DOT=r=>r.lost?'var(--no)':r.safe?'var(--h2)':'var(--soft2)';
+const OK_ST=()=>[{name:'Dashboard',ver:'v2',sub:'v2 · new code'},{name:'Support tool',ver:'v1',sub:'v1 · old code'},{name:'Nightly job',ver:'v1',sub:'v1 · reads'},{name:'First app',ver:'v0',sub:'v0 · retired',ghost:true}];
+
+/* =====================================================================
+   2. THE AFTER-THE-TIMEOUT OUTCOME TREE
+   ===================================================================== */
+function Tree(L,host,id){
+  host.insertAdjacentHTML('beforeend','<div class="df-tree"><div class="df-root" id="'+id+'-root"></div><div id="'+id+'-lv" aria-live="polite"></div><div class="df-sum" id="'+id+'-sum"></div></div>');
+  const T={loss:5,slow:5,retry:false,key:false,dedup:false,mode:'rpc',shown:4,neutral:false,sum:true};
+  const LBL={rpc:[['A','Request lost on the way'],['B','Booked, but the reply was lost'],['C','Still waiting in a busy queue'],['D','Booked, but the reply is slow']],
+    broker:[['A','Booking service down a while'],['B','Booking service overloaded'],['C','Crashed after booking, before confirming'],['D','Delivered and booked']]};
+  T.w=()=>{const l=T.loss/100,s=T.slow/100;return {A:l,B:(1-l)*l,C:(1-l)*(1-l)*s/2,D:(1-l)*(1-l)*s/2};};
+  T.out=k=>{
+    const ok2=T.key&&T.dedup;
+    if(T.mode==='broker'){const th='“Sent. The answer comes later.”';
+      if(k==='A')return {n:1,ok:true,th,why:'The message waits in the broker and is delivered when the service is back.'};
+      if(k==='B')return {n:1,ok:true,th,why:'The message waits its turn in the buffer.'};
+      if(k==='C')return ok2?{n:1,ok:true,th,why:'The broker redelivers it; the ID shows it’s already booked.'}:{n:2,ok:false,th,why:'No confirmation reached the broker, so it redelivers the message, and it’s booked again.'};
+      return {n:1,ok:true,th,why:'Delivered once, booked once.'};}
+    if(!T.retry){
+      if(k==='A')return {n:0,ok:false,th:'“It failed.”',why:'Right, but nothing is booked. Someone must notice and book again.'};
+      return {n:1,ok:false,mis:true,th:'“It failed.”',why:k==='C'?'Wrong: it will still be booked, and charged (say $4.20).':'Wrong: it was booked and charged (say $4.20).'};}
+    if(k==='A')return {n:1,ok:true,th:'“Booked.”',why:'The retry gets through and books it.'};
+    if(ok2)return {n:1,ok:true,th:'“Booked.”',why:'Same ID: the server spots the repeat and returns OP-48213 again.'};
+    return {n:2,ok:false,mis:true,th:'“Booked once.”',why:T.key?'The ID is sent but never checked: two parcels, charged twice.':'The retry books a second parcel: charged twice.'};};
+  T.render=()=>{
+    const root=L.$('#'+id+'-root'),lv=L.$('#'+id+'-lv'),sm=L.$('#'+id+'-sum');if(!root)return;
+    root.innerHTML=T.mode==='rpc'?L.ic('clock')+'<div><b>Bramble & Bolt → Otterpost: “book a parcel”</b><br>Ten seconds pass. No reply.</div>':L.ic('arrow')+'<div><b>Bramble & Bolt → broker: “book a parcel”</b><br>Message sent. Bramble & Bolt moves on.</div>';
+    const w=T.w(),tot=w.A+w.B+w.C+w.D,n=Math.min(T.shown,4);let h='';
+    LBL[T.mode].forEach(([k,t],j)=>{if(j>=n)return;
+      const o=T.out(k),pct=T.mode==='rpc'?(tot?Math.round(w[k]/tot*100):0):null,sw=T.mode==='rpc'?1.5+(tot?w[k]/tot:0)*10:3,last=j===n-1;
+      const pc=o.n===0?'<span class="df-pc" style="color:var(--no)">'+L.ic('x')+' 0 parcels</span>':'<span class="df-pc" style="color:'+(o.n===2?'var(--no)':'var(--ok)')+'">'+L.ic('box').repeat(o.n)+' '+o.n+' parcel'+(o.n>1?'s':'')+'</span>';
+      h+='<div class="df-leaf" data-k="'+k+'"><svg viewBox="0 0 24 100" preserveAspectRatio="none" aria-hidden="true"><path d="M7 0V'+(last?50:100)+'" vector-effect="non-scaling-stroke" style="stroke:var(--line2);stroke-width:2;fill:none"/><path d="M7 50H24" vector-effect="non-scaling-stroke" style="stroke:var(--pri);stroke-width:'+sw.toFixed(1)+';fill:none"/></svg>'+
+        '<div class="df-lc '+(T.neutral?'':(o.ok?'good':'bad'))+'"><div class="df-lt"><b>'+t+'</b>'+pc+'</div>'+
+        (pct!=null?'<div class="df-bar"><i style="width:'+pct+'%"></i></div><div class="df-pct">'+pct+'% of timeouts <span class="df-ill">(illustrative)</span></div>':'')+
+        '<div class="df-th">'+(T.neutral?'Bramble & Bolt sees: <b>a timeout</b>':'Thinks <b>'+o.th+'</b> <span class="w">'+o.why+'</span>')+'</div></div></div>';});
+    lv.innerHTML=h;
+    if(!T.sum||T.neutral){sm.hidden=true;return;}sm.hidden=false;
+    if(T.mode==='broker'){sm.innerHTML='No reply comes back on this call: messaging is usually one-way. If Otterpost answers, it does so later, on a separate reply queue.';return;}
+    let ex=0,mi=0,wr=0;['A','B','C','D'].forEach(k=>{const c=w[k]*1000,o=T.out(k);if(o.n===2)ex+=c;if(o.n===0)mi+=c;if(o.mis)wr+=c;});
+    sm.innerHTML=tot?'Out of 1,000 bookings, about <b>'+Math.round(tot*1000)+'</b> time out. Extra parcels: <b>'+Math.round(ex)+'</b> · never booked: <b>'+Math.round(mi)+'</b> · merchant believes the wrong thing: <b>'+Math.round(wr)+'</b> <span class="df-ill">(illustrative)</span>':'At these settings nothing times out, so there’s nothing to decide.';};
+  return T;
+}
+
+/* =====================================================================
+   STATIC PICTURES
+   ===================================================================== */
+function modesSVG(){
+  return '<svg class="df-svg" viewBox="0 0 320 258" role="img" aria-label="Three ways data travels: through a database, a service call, a message broker. E marks encoding, D decoding.">'+DEFS+
+   txt(4,14,'1 · Through a database',{a:'start',s:12.5,w:700,c:'var(--h1)'})+
+   bx(4,24,78,42,'Writer','today')+cyl(160,46,'')+txt(160,50,'DB',{s:12,w:700,c:'var(--ink)'})+bx(238,24,78,42,'Reader','later')+
+   arr(82,45,128,45)+arr(192,45,236,45)+stamp(104,45,'E')+stamp(214,45,'D')+
+   txt(4,98,'2 · Through a service',{a:'start',s:12.5,w:700,c:'var(--h2)'})+
+   bx(4,108,78,48,'Client')+bx(238,108,78,48,'Server')+
+   arr(82,120,236,120)+arr(238,146,84,146)+stamp(104,120,'E')+stamp(214,120,'D')+stamp(214,146,'E')+stamp(104,146,'D')+
+   txt(160,114,'request',{s:11.5})+txt(160,162,'response',{s:11.5})+
+   txt(4,190,'3 · Through a message broker',{a:'start',s:12.5,w:700,c:'var(--h4)'})+
+   bx(4,202,78,44,'Sender')+bx(122,202,76,44,'Broker','',  'var(--h1)',{fill:'var(--soft)'})+bx(238,196,78,26,'Receiver')+bx(238,228,78,26,'Receiver')+
+   arr(82,224,120,224)+arr(198,218,236,210)+arr(198,230,236,240)+stamp(101,224,'E')+stamp(222,224,'D')+
+   '</svg>';}
+
+/* =====================================================================
+   THE LESSON
+   ===================================================================== */
 Course.lesson({
-  id:'0009', title:'How data flows between processes', minutes:20, icon:'arrow',
-  goals:['Say who encodes and who decodes in databases, service calls and message brokers','Explain why a network call is not a local function call, and what a timeout really tells you','Plan an API or message change that old and new code can both survive'],
-  parts:['Through databases','Through services','Remote calls','Through messages'],
-  read:'Read chapter 4 of the book, from “Modes of Dataflow” to the end of the chapter, for the full discussion of REST, RPC and message brokers.',
+  id:'0009', title:'How data flows between processes', minutes:22, icon:'arrow',
+  goals:['Say who encodes and who decodes when data flows through a database, a service call or a message broker','Explain why old code must keep fields it doesn’t know, and why a timeout leaves you not knowing what happened','Pick a retry, versioning or messaging approach that old and new code can both survive'],
+  parts:['Through databases','Through services','After a timeout','Through messages'],
+  read:'Read chapter 4 of the book, from “Modes of Dataflow” to the end of the chapter, for the full discussion of databases, REST, RPC and message brokers.',
   glossary:{
     'encoding':'Encoding: turning data held in memory (objects, lists, pointers) into a self-contained sequence of bytes that can be saved or sent over the network. Also called serialization or marshalling. Decoding is the reverse.',
-    'backward-compat':'Backward compatibility: newer code can read data that was written by older code.',
-    'forward-compat':'Forward compatibility: older code can read data that was written by newer code, by ignoring the parts it doesn’t know.',
+    'backward-compat':'Backward compatibility: new code still reads old data.',
+    'forward-compat':'Forward compatibility: old code still reads new data, by skipping the parts it doesn’t know.',
     'rolling-upgrade':'Rolling upgrade: updating a system one machine at a time, so the whole system never has to go down.',
     'service':'Service: the API a server offers over the network. Clients send it requests and get responses, but can only ask for what the service’s code allows.',
     'rest':'REST: a design style for web APIs built on HTTP’s own ideas: URLs name resources, and HTTP features handle caching, authentication and content types. An API built this way is called RESTful.',
     'rpc':'Remote procedure call (RPC): a way of making a request to a service on another machine look like an ordinary function call in your code.',
+    'location-transparency':'Location transparency: making a call or message to another machine look the same as one inside your own process.',
     'idempotence':'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
     'broker':'Message broker (or message queue): an intermediary that receives messages from senders, stores them for a while, and delivers them to one or more recipients.',
     'actor':'Actor: a unit of program logic with its own private state that talks to other actors only by sending and receiving messages, one message at a time.'
   },
   cheatsheet:[
-    'Data that leaves a process gets <b>encoded</b> by one process and <b>decoded</b> by another. Compatibility is about that pair.',
-    '<b>Databases</b>: the writer encodes, a later reader decodes. Need backward (your future self reads it) and forward (old code during a rolling upgrade). Old code must keep fields it doesn’t understand.',
-    '<b>Data outlives code</b>: rows from years ago keep their old encoding. Snapshots usually re-encode everything with the latest schema.',
-    '<b>Services</b>: client encodes request, server decodes it and encodes a response, client decodes. REST builds on HTTP; SOAP is a heavy XML protocol.',
-    '<b>RPC</b> pretends a network call is a local one. It isn’t: lost messages, timeouts that tell you nothing, retries that run twice (need <b>idempotence</b>), wild latency, encoded arguments.',
-    'Servers usually upgrade first: <b>backward</b> compatibility on requests, <b>forward</b> on responses. Across organizations, keep old API versions alive, with the version in the URL, a header or a per-key setting.',
-    '<b>Message brokers</b>: buffer, redeliver, no addresses needed, one-to-many, decoupled. Usually one-way. The broker just moves bytes, so use a compatible encoding.',
-    '<b>Actors</b> assume messages can be lost, so location transparency fits better. Rolling upgrades still need forward and backward compatibility.'
+    'Data that leaves a process is <b>encoded</b> by one process and <b>decoded</b> by another. Compatibility is about that pair.',
+    '<b>Databases</b>: writing is a message to your future self (backward). During a rolling upgrade old code reads new rows too (forward). Old code must <b>keep fields it doesn’t know</b> when it writes back, even through its own model objects.',
+    '<b>Data outlives code</b>: old rows keep their old encoding, and the database fills in nulls for missing columns. A snapshot is usually re-encoded with the latest schema.',
+    '<b>Services</b>: the client packs up a request, the server unpacks it and packs a reply, and the client unpacks that. REST is a design style built on HTTP; SOAP is an XML protocol that leans on tools.',
+    'A <b>network call is not a local call</b>: messages get lost, latency swings, arguments become bytes, types get translated, and after a <b>timeout you don’t know what happened</b>.',
+    'Retrying is safe only with <b>idempotence</b>: an ID the server checks, so a repeat does nothing new.',
+    'Servers upgrade first: <b>backward</b> on requests, <b>forward</b> on responses. Add, don’t remove. A breaking change means running API versions side by side, maybe for years.',
+    '<b>Brokers</b> buffer, redeliver, need no addresses, fan out and decouple, but are one-way and only move bytes. <b>Actors</b> still need both directions of compatibility for rolling upgrades.'
   ],
   steps:[
 /* ---------- PART 1: THROUGH DATABASES ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s oldest parcel rows were written six years ago by Femi’s first version of the app. Which code reads them today?</h1>');
   L.mc(L.card,['Today’s code, many versions later','Only the version that wrote them'],0,
-   'The first version of the code is long gone, but its data is still in the Parcel DB. Today’s code has to understand it.',
+   'The first version is long gone, but its rows are still in the Parcel DB. Today’s code has to understand them.',
    'That version stopped running years ago. The rows are still there, so today’s code must read them.');}},
+
 {part:0,src:'Chapter 4 · Modes of Dataflow',run(L){
-  L.h(L.kick('learn','Modes of dataflow')+'<h1 class="q">Who encodes, and who decodes?</h1>'+
-   L.prose('Whenever data goes to a process you don’t share memory with, such as over the network or into a file, it must be '+L.g('encoding','encoded')+' as bytes. Compatibility is a relationship between two processes: the one that encodes the data and the one that decodes it.')+
-   L.prose('The book looks at the three most common ways data travels between processes:')+
-   L.flow([['layers','Through databases','one process writes, another reads later','',1],['chat','Through services','REST and RPC: request, then response','',2],['arrow','Through messages','sent via a broker, without waiting','',3]],false)+
-   '<p class="small" style="margin-top:10px">Each one asks for compatibility in a slightly different way.</p>');
+  L.h(L.kick('learn','Modes of dataflow')+'<h1 class="q">Who encodes, and who decodes?</h1>'+modesSVG()+
+   '<div class="df-lg"><span><i style="background:var(--h1-bg);border-color:var(--h1)"></i>E = '+L.g('encoding','encode')+' into bytes</span><span><i style="background:var(--h2-bg);border-color:var(--h2)"></i>D = decode from bytes</span></div>'+
+   '<div class="df-cap">Data that leaves a process is encoded by one process and decoded by another. Compatibility is a relationship between that pair. Here are three of the most common routes.</div>');
   L.done();}},
+
 {part:0,src:'Chapter 4 · Dataflow Through Databases',run(L){
   L.h(L.kick('learn','Through databases')+'<h1 class="q">Writing to a database is a message to your future self</h1>'+
-   L.prose('The process that writes to the database encodes the data; the process that reads it decodes it. If only one program uses the database, the reader is just a later version of the same program. It must read what its earlier self wrote, so '+L.g('backward-compat','<b>backward compatibility</b>')+' is clearly needed.')+
-   L.prose('Usually many processes share a database: different services, or several copies of one service. During a '+L.g('rolling-upgrade','rolling upgrade')+', some run new code and some run old code. So a row written by new code may be read by old code: '+L.g('forward-compat','<b>forward compatibility</b>')+' is often needed too.')+
-   L.note('There’s one more snag: old code that reads a record, changes it and writes it back must not wipe out fields it doesn’t understand.','alert'));
+   '<svg class="df-svg" viewBox="0 0 320 244" role="img" aria-label="Top: app v1 writes, app v2 reads a year later. Bottom: an old and a new server both read and write the same database.">'+DEFS+
+   txt(4,14,'One program',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   bx(4,26,80,42,'App v1','today',VC.v1)+cyl(160,47,'')+txt(160,51,'Parcel DB',{s:11.5,w:700,c:'var(--ink)'})+bx(236,26,80,42,'App v2','next year',VC.v2)+
+   arr(84,47,128,47)+arr(192,47,234,47)+
+   txt(160,92,'New code reads old data: backward',{s:12,w:700,c:'var(--h2)'})+
+   txt(4,128,'Many processes, mid-upgrade',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   bx(4,160,80,42,'Server A','v1 · old',VC.v1,{subc:VC.v1})+cyl(160,181,'')+txt(160,185,'Parcel DB',{s:11.5,w:700,c:'var(--ink)'})+bx(236,160,80,42,'Server B','v2 · new',VC.v2,{subc:VC.v2})+
+   arr(84,174,128,174)+arr(128,190,86,190)+arr(236,174,192,174)+arr(192,190,234,190)+
+   txt(160,232,'Old code reads new rows too: forward',{s:12,w:700,c:'var(--h3)'})+
+   '</svg>'+
+   '<div class="df-cap">With one program, the reader is a later version of the writer, so you need '+L.g('backward-compat','backward compatibility')+'. But many processes share a database, and during a '+L.g('rolling-upgrade','rolling upgrade')+' old and new code run together: '+L.g('forward-compat','forward compatibility')+' too.</div>');
   L.done();}},
-{part:0,src:'Chapter 4 · Dataflow Through Databases',run(L){
-  L.h(L.kick('ex','A bug at Otterpost')+'<h1 class="q">The safe place that disappeared</h1>');
-  L.beats(L.card,[
-   ['The record','Each parcel’s delivery preferences (phone number, doorbell note and so on) are stored in the Parcel DB as one encoded record.'],
-   ['A new field','The new merchant dashboard adds <code>safePlace</code>. Mrs. Okoro sets theirs to “behind the green bin”.'],
-   ['Old code','Signe’s support tool still runs the older code. An agent updates Mrs. Okoro’s phone number.'],
-   ['Decode','The tool decodes the record into its own model object. That object has no slot for <code>safePlace</code>, so the value is dropped right there.'],
-   ['Write back','The tool encodes the object and writes the whole record back. The safe place is gone, and the next parcel is left on the doorstep.']],
-   'The encoding format could have kept the unknown field. It was lost when the app turned the record into its own objects and back. Not hard to fix, but you have to know about it.');}},
-{part:0,src:'Chapter 4 · Dataflow Through Databases',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame is rolling out a new dashboard version, a few servers at a time. All of them read and write the Parcel DB. Which compatibility do its records need?</h1>');
-  L.mc(L.card,['Backward only: new code reads old rows','Both: old servers also read new rows','Forward only: old code reads new rows'],1,
-   'New servers read rows old servers wrote, and old servers read rows new ones wrote. During a rolling upgrade you need both.',
-   'Mid-rollout, old and new servers share the same rows, so data flows both ways. You need backward and forward compatibility.');}},
+
 {part:0,src:'Chapter 4 · Dataflow Through Databases',pts:1,
- solve:async L=>{const g=L.$('#mode').children;g[0].click();g[1].click();},
+ solve:async L=>{SPEED=.15;L.$('#p4pd').children[1].click();await L.sleep(30);L.$('#p4go').click();},
  run(L){
-  const M=['Old tool rebuilds the record from its model','Old tool keeps fields it doesn’t know'],seen=new Set();
-  const R=['phone <b>07700 900123</b> · doorbell “ring twice” · <span style="color:var(--no)"><b>safePlace: gone</b></span>',
-           'phone <b>07700 900123</b> · doorbell “ring twice” · <span style="color:var(--ok)"><b>safePlace: behind the green bin</b></span>'];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">The old support tool changes Mrs. Okoro’s phone number. Try both ways of writing the record back.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0"><div class="small" style="margin-bottom:4px">Before (written by the new dashboard)</div><div class="small">phone 07700 900456 · doorbell “ring twice” · safePlace: behind the green bin</div></div>'+
-   '<div id="mode"></div><div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:64px"><div class="small" style="margin-bottom:4px">After the old tool saves</div><div id="out" class="small">Pick a way above.</div></div><div id="mq"></div>');
-  M.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{[...L.$('#mode').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);L.$('#out').innerHTML=R[j];
-    if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">What should the support tool’s code do?</h2>';
-      L.mc(q,['Refuse to save records that have new fields','Strip unknown fields before saving a record','Keep fields it doesn’t know and write them back'],2,
-       'Old code should carry unknown fields through untouched. The encoding formats support this; the app’s own model objects must not throw them away.',
-       'Refusing to save would block support work, and stripping fields is the bug itself. The fix is to keep unknown fields and write them back unchanged.');}};L.$('#mode').appendChild(b);});}},
-{part:0,src:'Chapter 4 · Different values written at different times',pts:1,run(L){
-  L.h(L.kick('learn','Data outlives code')+'<h1 class="q">A new deploy replaces the code, not the data</h1>'+
-   L.quote('Data outlives code.','a saying the book cites in chapter 4')+
-   L.prose('One database can hold values written five milliseconds ago and values written five years ago. You can replace all the code in minutes, but old rows keep their original encoding unless someone rewrites them. Rewriting (migrating) a big dataset is expensive, so most databases avoid it.')+
-   L.prose('For example, most relational databases can add a column with a null default without touching old rows: they fill in null when an old row is read. So the database <i>looks</i> as if it uses one schema, though its storage holds many past versions.')+
-   L.note('<b>Snapshots are different.</b> A backup or a copy for the warehouse is usually written all at once with the <b>latest</b> schema. It never changes afterwards, so formats like Avro files, or column-oriented Parquet, fit well.','layers')+
-   '<div id="aq"><h2 class="sub">Kwame takes a monthly snapshot of the Parcel DB, whose rows span six years of schema versions. How is it usually encoded?</h2></div>');
-  L.mc(L.$('#aq'),['All rows in the latest schema','Each row in its original encoding','As plain text with no schema'],0,
-   'You’re copying everything anyway, so you might as well encode the copy consistently with the latest schema.',
-   'The snapshot is written in one go, so it is usually re-encoded consistently with the latest schema, not left in a mix of old encodings.');}},
+  let p=null,busy=false;
+  let rec={phone:'07700 900456',door:'ring twice',safe:'behind the green bin',lost:false};
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The new dashboard (v2) saved Mrs. Okoro’s safe place. Now the old support tool (v1) changes their phone number. Does the safe place survive?</h1>'+
+   '<div id="p4r"></div><div class="df-rec" id="p4rec"></div>'+
+   '<div class="df-cap" id="p4cap"><span class="st">How v1 saves</span>It decodes the record into its own Recipient object, changes the phone, encodes that object and writes it back.</div>'+
+   '<div class="df-row" id="p4pd"></div><div id="p4w" hidden><button class="btn pri" id="p4go">'+L.ic('play')+'Watch v1 save the record</button></div>');
+  const R=Ring(L.$('#p4r'),{stations:OK_ST()});
+  const show=(r,by)=>{L.$('#p4rec').innerHTML=recCard('Mrs. Okoro · OP-48213',by,okoroRows(r));};show(rec,'v2');
+  const cap=(st,t)=>{L.$('#p4cap').innerHTML='<span class="st">'+st+'</span>'+t;};
+  ['It survives','It’s lost','v1 refuses to save'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#p4w').hidden=false;};L.$('#p4pd').appendChild(b);});
+  L.$('#p4go').onclick=async()=>{if(busy)return;busy=true;L.$('#p4go').disabled=true;
+    const tok=R.tok(DOT(rec));
+    cap('1 of 4','v1 reads Mrs. Okoro’s record from the Parcel DB.');await tween(tok,RC,R.stop(1),500);R.mark(1,'act');
+    cap('2 of 4','It decodes the bytes into its Recipient object. That object has slots for phone and doorbell only, so <b>safePlace</b> has nowhere to go.');
+    show({phone:rec.phone,door:rec.door,noslot:true},'');tok.dot('var(--no)');await wait(1000);
+    cap('3 of 4','An agent changes the phone number to 07700 900123.');show({phone:'07700 900123',door:rec.door,noslot:true},'');await wait(700);
+    cap('4 of 4','v1 encodes its object and writes the whole record back. The safe place is gone from the Parcel DB.');
+    await tween(tok,R.stop(1),RC,500);R.mark(1,null);tok.remove();rec={phone:'07700 900123',door:rec.door,safe:null,lost:true};show(rec,'v1');
+    if(!L.$('#p4r'))return;L.award(p===1);
+    L.sheet(p===1?'ok':'no',p===1?'Right: it’s lost':'It’s lost',
+     'The bytes could have carried the unknown field: the encoding formats from the last lesson can keep fields they don’t know. It was dropped in the app’s own translation, from record to model object and back. The next parcel is left on the doorstep. Not hard to fix, but you have to know about it.');L.done();};}},
+
+{part:0,src:'Chapter 4 · Dataflow Through Databases',
+ solve:async L=>{SPEED=.15;const c=id=>L.$('#'+id).click(),idle=async()=>{await L.sleep(40);while(BUSY)await L.sleep(30);};
+   c('x5a');await idle();c('x5b');await idle();c('x5k');c('x5a');await idle();c('x5b');await idle();c('x5c');await idle();},
+ run(L){
+  let rec={phone:'07700 900456',door:'ring twice',safe:null,lost:false},by='v1',keep=false,busy=false,lost=0,ph=0;const got=new Set();
+  L.h(L.kick('ex','Explore the ring')+'<h1 class="q">Send Mrs. Okoro’s record round the ring. Tap a process, or use the buttons.</h1>'+
+   '<div id="x5r"></div>'+
+   '<div class="df-row"><button class="btn" id="x5a">v2 sets safe place</button><button class="btn" id="x5b">v1 changes phone</button><button class="btn" id="x5c">Job reads</button></div>'+
+   '<div class="df-row"><button class="chip df-tg" id="x5k" aria-pressed="false">v1 keeps fields it doesn’t know: <b>off</b></button></div><div class="df-rec" id="x5rec"></div><div class="df-cap" id="x5cap">Notice which step loses data: reading, or reading, changing and writing back.</div>'+
+   '<div class="df-stat">Safe places lost so far: <b id="x5l">0</b></div>'+
+   tasks('x5t',['Lose the safe place in a v1 edit','Keep it through a v1 edit','Let the nightly job read a record that has a safe place']));
+  const show=()=>{L.$('#x5rec').innerHTML=recCard('Mrs. Okoro · OP-48213',by,okoroRows(rec));};show();
+  const cap=t=>{L.$('#x5cap').innerHTML=t;};
+  const R=Ring(L.$('#x5r'),{stations:OK_ST(),onTap:i=>act(i)});
+  async function act(i){if(busy||!L.$('#x5r'))return;
+    if(i===3){cap('Femi’s first version stopped running years ago. Its code is gone, but rows it wrote are still in the Parcel DB.');return;}
+    busy=true;BUSY=true;const tok=R.tok(DOT(rec));await tween(tok,RC,R.stop(i),420);if(!L.$('#x5r')){busy=false;BUSY=false;return;}R.mark(i,'act');
+    if(i===0){rec.safe='behind the green bin';rec.lost=false;by='v2';tok.dot(DOT(rec));cap('<b>v2</b> knows the new field and writes it: safePlace = “behind the green bin”.');}
+    else if(i===1){ph=1-ph;rec.phone=ph?'07700 900123':'07700 900456';by='v1';
+      if(rec.safe&&!keep){rec.safe=null;rec.lost=true;lost++;got.add(0);tick(L,'x5t',0);tok.dot(DOT(rec));R.mark(1,'no');cap('<b>v1</b> rebuilt the record from its own object, which has no slot for safePlace. Written back without it: lost.');}
+      else if(rec.safe){got.add(1);tick(L,'x5t',1);R.mark(1,'ok');cap('<b>v1</b> carried the field it doesn’t understand straight through. The new phone is saved, and so is the safe place.');}
+      else cap('<b>v1</b> changed the phone. There was no safe place to lose this time: let v2 set one first.');}
+    else{if(rec.safe){got.add(2);tick(L,'x5t',2);}
+      cap('The nightly job (v1) reads phone and doorbell and skips the field it doesn’t know. It writes nothing back, so nothing is lost: old code reading new data is fine.');
+      await wait(500);tok.remove();R.mark(i,null);show();L.$('#x5l').textContent=lost;busy=false;BUSY=false;fin();return;}
+    show();L.$('#x5l').textContent=lost;await wait(350);await tween(tok,R.stop(i),RC,420);tok.remove();R.mark(i,null);busy=false;BUSY=false;fin();}
+  function fin(){if(got.size===3&&L.$('#x5r')&&once(L)){
+    L.sheet('info','The snag is read, change, write back','Reading new data with old code is harmless. The danger is old code that reads a record, updates it and writes it back. It should carry the new field through untouched, even though it can’t make sense of it.');L.done();}}
+  L.$('#x5a').onclick=()=>act(0);L.$('#x5b').onclick=()=>act(1);L.$('#x5c').onclick=()=>act(2);
+  L.$('#x5k').onclick=function(){keep=!keep;this.setAttribute('aria-pressed',keep);this.querySelector('b').textContent=keep?'on':'off';};}},
+
+{part:0,src:'Chapter 4 · Dataflow Through Databases',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame rolls a new dashboard version out a few servers at a time. All of them read and write the Parcel DB. Which compatibility do the records need?</h1>');
+  L.mc(L.card,['Backward only: new code reads old rows','Both: old servers also read new rows','Forward only: old code reads new rows'],1,
+   'Mid-rollout, new servers read rows old servers wrote, and old servers read rows new ones wrote. You need both directions.',
+   'Mid-rollout, old and new servers share the same rows, so data flows both ways. You need backward and forward compatibility.');}},
+
+{part:0,src:'Chapter 4 · Different values written at different times',
+ solve:async L=>{L.$('#e7d').click();await L.sleep(20);L.$('#e7cells').children[0].click();L.$('#e7s').click();},
+ run(L){
+  const ERA=[0,0,1,0,0,1, 0,1,1,0,2,1, 1,0,2,1,2,2, 2,1,2,2,1,2],WHEN=['six years ago, by Femi’s first version','about three years ago','last year'];const got=new Set();let deployed=false;
+  L.h(L.kick('learn','Data outlives code')+'<h1 class="q">A deploy replaces the code, not the data</h1>'+
+   '<div class="df-code"><span>Code running on every server</span><b id="e7v" style="color:'+VC.v2+';border-color:'+VC.v2+';background:'+VBG.v2+'">v2</b></div>'+
+   '<div class="df-lbl">Parcel DB rows, colored by the version that wrote them</div><div class="df-cells" id="e7cells"></div>'+
+   '<div class="df-lg">'+['v0','v1','v2','v3'].map(v=>'<span><i style="background:'+VBG[v]+';border-color:'+VC[v]+'"></i>'+v+'</span>').join('')+'</div>'+
+   '<div id="e7snap"></div>'+
+   '<div class="df-cap" id="e7cap">Deploy v3, tap an old v0 row, then take the monthly snapshot.</div>'+
+   '<div class="df-row"><button class="btn pri" id="e7d">'+L.ic('play')+'Deploy v3</button><button class="btn" id="e7s">'+L.ic('layers')+'Take a snapshot</button></div>'+
+   L.quote('Data outlives code.','a saying the book cites'));
+  const box=L.$('#e7cells');
+  const paint=(b,v)=>{b.style.background=VBG['v'+v];b.style.borderColor=VC['v'+v];b.style.color=VC['v'+v]==='var(--faint)'?'var(--muted)':VC['v'+v];b.textContent='v'+v;b.dataset.v=v;};
+  ERA.forEach((v,k)=>{const b=document.createElement('button');b.className='df-cell';b.setAttribute('aria-label','row written by v'+v);paint(b,v);
+    b.onclick=()=>{const v=+b.dataset.v;
+      if(v===0){got.add(1);L.$('#e7cap').innerHTML='Written '+WHEN[0]+', still in its original encoding. It has no doorbell or safePlace column. When today’s code reads it, the database fills in <b>null</b> for them. Nobody rewrote it.';}
+      else L.$('#e7cap').innerHTML='Written by v'+v+' '+(v===3?'just now, after the deploy':WHEN[v])+'.';fin();};box.appendChild(b);});
+  L.$('#e7d').onclick=function(){if(deployed)return;deployed=true;this.disabled=true;got.add(0);
+    const v=L.$('#e7v');v.textContent='v3';v.style.color=VC.v3;v.style.borderColor=VC.v3;v.style.background=VBG.v3;
+    [4,15,22].forEach(k=>paint(box.children[k],3));
+    L.$('#e7cap').innerHTML='Every server runs v3 within minutes. The rows didn’t change: only the 3 edited since the deploy use v3’s encoding. The database now holds data from <b>four</b> versions of the code.';fin();};
+  L.$('#e7s').onclick=function(){if(got.has(2))return;got.add(2);this.disabled=true;const cur=deployed?3:2;
+    L.$('#e7snap').innerHTML='<div class="df-lbl">Monthly snapshot for backup and the warehouse</div><div class="df-cells">'+ERA.map(()=>'<span class="df-cell" style="display:block;background:'+VBG['v'+cur]+';border-color:'+VC['v'+cur]+';color:'+VC['v'+cur]+';text-align:center;line-height:30px">v'+cur+'</span>').join('')+'</div>';
+    L.$('#e7cap').innerHTML='You’re copying everything anyway, so the snapshot is encoded with the <b>latest</b> schema. Written once and never changed, it suits Avro object container files, or column-oriented Parquet for analytics.';fin();};
+  function fin(){if(got.size===3&&once(L)){
+    L.sheet('info','Many encodings, one schema on the surface','Rewriting (migrating) a big dataset is possible but expensive, so most databases avoid it. Adding a column with a null default doesn’t touch old rows. The database looks as if it uses one schema, while storage holds many past versions.');L.done();}}}},
+
+{part:0,src:'Chapter 4 · Dataflow Through Databases',pts:1,
+ solve:async L=>{SPEED=.1;L.$('#r8k').click();for(let n=0;n<4;n++){L.$('#r8u').click();await L.sleep(40);while(BUSY)await L.sleep(30);}},
+ run(L){
+  const st=()=>[0,1,2,3].map(k=>({name:'Server '+(k+1),ver:'v1',sub:'v1 · old'}));
+  let ver,recs,keep,down,graded=false,busy=false,R;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame upgrades the four dashboard servers from v1 to v2. v2 lets recipients set a safe place. Finish with <b>zero downtime</b> and <b>no record losing its safe place</b>.</h1>'+
+   '<div id="r8r"></div><div class="df-stat" id="r8s"></div>'+
+   '<div class="df-lg"><span><i style="background:var(--soft2);border-color:var(--line2)"></i>no safe place yet</span><span><i style="background:var(--h2);border-color:var(--h2)"></i>has a safe place</span><span><i style="background:var(--no);border-color:var(--no)"></i>safe place lost</span></div>'+
+   '<div class="df-row"><button class="chip df-tg" id="r8k" aria-pressed="false">Before you start, patch v1 to keep unknown fields: <b>no</b></button></div>'+
+   '<div class="df-row"><button class="btn pri" id="r8u">'+L.ic('cycle')+'Upgrade the next server</button><button class="btn" id="r8b">'+L.ic('alert')+'Stop all, upgrade at once</button></div>'+
+   '<div class="df-cap" id="r8c">After each upgrade, six parcel records get edited by two servers each, as merchants and recipients use the dashboard.</div><div id="r8x"></div>');
+  function reset(){ver=[1,1,1,1];recs=[0,1,2,3,4,5].map(()=>({safe:false,lost:false}));keep=false;down=0;
+    L.$('#r8r').innerHTML='';R=Ring(L.$('#r8r'),{cells:6,stations:st(),aria:'Four dashboard servers around the Parcel DB, which holds six records'});
+    const k=L.$('#r8k');k.disabled=false;k.setAttribute('aria-pressed','false');k.querySelector('b').textContent='no';L.$('#r8u').disabled=false;L.$('#r8b').disabled=false;draw();}
+  function draw(){if(!L.$('#r8s'))return;recs.forEach((r,k)=>R.cell(k,DOT(r)));
+    L.$('#r8s').innerHTML='<span>Servers on v2: <b>'+ver.filter(v=>v===2).length+'/4</b></span><span>Safe places lost: <b>'+recs.filter(r=>r.lost).length+'</b></span><span>Downtime: <b>'+down+' min</b></span>';}
+  async function round(){const jobs=recs.map((r,k)=>(async()=>{await wait(k*90);const tok=R.tok(DOT(r));
+      for(const e of [k%4,(k+1)%4]){await tween(tok,RC,R.stop(e),260);
+        if(ver[e]===2){r.safe=true;}else if(r.safe&&!keep){r.safe=false;r.lost=true;}
+        tok.dot(DOT(r));await tween(tok,R.stop(e),RC,260);R.cell(k,DOT(r));}
+      tok.remove();})());await Promise.all(jobs);draw();}
+  async function step(all){if(busy||ver.every(v=>v===2))return;busy=true;BUSY=true;L.$('#r8k').disabled=true;
+    if(all){down=20;ver=[2,2,2,2];[0,1,2,3].forEach(k=>R.set(k,{ver:'v2',sub:'v2 · new'}));draw();L.$('#r8c').innerHTML='All servers stop, switch to v2 together and restart. Merchants can’t book for about 20 minutes <span class="df-ill">(illustrative)</span>.';}
+    else{const k=ver.indexOf(1);ver[k]=2;R.set(k,{ver:'v2',sub:'v2 · new'});L.$('#r8c').innerHTML='Server '+(k+1)+' now runs v2. '+(ver.includes(1)?'Old and new code now share the same rows.':'The rollout is complete.');}
+    await round();busy=false;BUSY=false;if(!L.$('#r8r'))return;
+    if(ver.every(v=>v===2)){L.$('#r8u').disabled=true;L.$('#r8b').disabled=true;check();}}
+  function check(){const lost=recs.filter(r=>r.lost).length,ok=lost===0&&down===0;
+    if(!graded){graded=true;L.award(ok);}
+    L.$('#r8x').innerHTML='<button class="btn" id="r8again">'+L.ic('cycle')+'Start over</button>';L.$('#r8again').onclick=()=>{L.clearSheet();reset();L.$('#r8x').innerHTML='';};
+    if(ok)L.sheet('ok','Zero downtime, nothing lost','Patching v1 first made the old servers keep fields they don’t know. So old and new code could share rows during the rollout: forward and backward compatibility, which every rolling upgrade needs.');
+    else if(lost)L.sheet('no','The rollout lost '+lost+' safe place'+(lost>1?'s':''),'While v1 and v2 servers shared rows, v1 servers rewrote v2’s records and dropped safePlace. Ship a v1 that keeps unknown fields before rolling out v2. Try it with “Start over”.');
+    else L.sheet('no','Nothing lost, but booking went down','Upgrading all at once avoids mixed versions, at the cost of downtime. Rolling upgrades let you release without downtime and catch a bad release early, but they need both directions of compatibility. Try it with “Start over”.');
+    L.done();}
+  reset();
+  L.$('#r8k').onclick=function(){if(this.disabled)return;keep=!keep;this.setAttribute('aria-pressed',keep);this.querySelector('b').textContent=keep?'yes':'no';};
+  L.$('#r8u').onclick=()=>step(false);L.$('#r8b').onclick=()=>step(true);}},
 
 /* ---------- PART 2: THROUGH SERVICES ---------- */
-{part:1,src:'Chapter 4 · Dataflow Through Services: REST and RPC',run(L){
-  L.h(L.kick('learn','Clients and servers')+'<h1 class="q">A service is an API with rules</h1>'+
-   L.prose('Servers expose an API over the network, and clients make requests to it. That API is a '+L.g('service','<b>service</b>')+'. Browsers are clients, but so are phone apps and JavaScript apps in a web page, which usually get JSON back rather than HTML.')+
-   L.flow([['person','Courier app','client','',1],['chat','Scan service','server, and also a client…','',2],['layers','Parcel DB','…of the database','',3]])+
-   L.prose('A server can itself be a client of another service. Splitting an app into services this way is called service-oriented architecture, or more recently <b>microservices</b>. Unlike a database, which accepts any query, a service allows only the inputs and outputs its code allows.')+
-   L.note('The goal: each team can release its service often, without waiting for other teams. So old and new versions of clients and servers <b>will</b> run at the same time, and their encodings must be compatible.','cycle'));
-  L.done();}},
+{part:1,src:'Chapter 4 · Dataflow Through Services: REST and RPC',
+ solve:async L=>{[...L.$('#s9b').children].forEach(b=>b.click());},
+ run(L){
+  const seen=new Set();
+  const CAP=['<b>Phone to server.</b> The courier app calls Otterpost’s API over the public internet. Apps like this get data such as JSON back, not HTML for a person to read.',
+    '<b>Service to service.</b> Dispatch asks the ETA service for a delivery window, inside one datacenter. Dispatch is a server and a client at once. Building an app this way is called service-oriented architecture, or microservices; software for it is sometimes called middleware.',
+    '<b>Between organizations.</b> Bramble & Bolt’s server books parcels through the merchant API. When a status changes, Otterpost calls Bramble & Bolt’s webhook. Each side releases on its own schedule.'];
+  const draw=on=>{const hl=k=>on===k?'var(--pri)':'var(--muted)';
+    return '<svg class="df-svg" viewBox="0 0 320 236" role="img" aria-label="Otterpost services: courier app to API, dispatch to ETA service, Bramble and Bolt to the merchant API">'+DEFS+
+     '<rect x="108" y="4" width="210" height="228" rx="16" style="fill:var(--soft)"/>'+txt(118,22,'Otterpost',{a:'start',s:12.5,w:700})+
+     bx(4,32,92,44,'Courier app','client')+bx(132,32,118,44,'Otterpost API','server','var(--h2)')+
+     bx(116,110,86,44,'Dispatch','server + client','var(--h2)')+bx(224,110,88,44,'ETA service','server','var(--h2)')+
+     bx(4,176,92,48,'Bramble & Bolt','server')+bx(132,176,118,48,'Merchant API','server','var(--h2)')+
+     arr(96,54,130,54,0,hl(0))+arr(202,132,222,132,0,hl(1))+arr(96,192,130,192,0,hl(2))+arr(132,210,98,210,0,hl(2))+
+     pin(113,40,1,on===0)+pin(213,100,2,on===1)+pin(113,166,3,on===2)+'</svg>';};
+  L.h(L.kick('learn','Clients and servers')+'<h1 class="q">A service is an API that allows only what its code allows</h1><div id="s9p">'+draw(-1)+'</div>'+
+   '<div class="df-cap" id="s9c">A server exposes an API over the network: a '+L.g('service','service')+'. A database accepts any query; a service accepts only the inputs its code allows. Tap each numbered link.</div><div class="df-row" id="s9b"></div>');
+  ['1 · Phone app','2 · Inside Otterpost','3 · Another company'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
+    b.onclick=()=>{[...L.$('#s9b').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);L.$('#s9p').innerHTML=draw(j);L.$('#s9c').innerHTML=CAP[j];
+      if(seen.size===3&&once(L)){L.sheet('info','All three are web services','Each one talks HTTP, so each is called a web service, even when no browser is involved. Services aim to let each team release often without waiting for others, so old and new clients and servers will run side by side. Their encodings must stay compatible.');L.done();}};
+    L.$('#s9b').appendChild(b);});}},
+
 {part:1,src:'Chapter 4 · Web services',run(L){
-  L.h(L.kick('learn','Web services: REST and SOAP')+'<h1 class="q">Two very different philosophies</h1>'+
-   L.prose('When a service talks HTTP, it’s called a <b>web service</b>, even when it has nothing to do with the web. Two approaches are popular, and their fans argue a lot:')+
-   L.lanes([['leaf','REST','Not a protocol but a <b>design style</b> built on HTTP: simple data formats, URLs to name resources, and HTTP’s own caching, authentication and content types. Common for APIs between organizations. OpenAPI (Swagger) can describe it.',2],
-            ['box','SOAP','An <b>XML-based protocol</b> that tries to be independent of HTTP, with a sprawling family of standards (WS-*). Described in WSDL, which generates code. Hard without tools, and different vendors don’t always work together.',4]])+
-   '<p class="small" style="margin-top:12px">SOAP is still used in many large enterprises but has fallen out of favor in smaller companies. Despite the name, SOAP is not required for service-oriented architecture (SOA).</p>');
+  L.h(L.kick('learn','Web services: REST and SOAP')+'<h1 class="q">The same question, asked two very different ways</h1>'+
+   '<div class="df-ch" style="color:var(--h2);margin-top:4px">'+L.g('rest','REST')+' · a design style on top of HTTP</div>'+
+   '<div class="df-pre">GET /v1/parcels/OP-48213\nAccept: application/json\n\n{"status": "out for delivery"}</div>'+
+   '<div class="df-tags"><span style="background:var(--h2-bg);color:var(--h2)">URL names the parcel</span><span style="background:var(--h2-bg);color:var(--h2)">HTTP handles caching and format</span></div>'+
+   '<div class="df-ch" style="color:var(--h4)">SOAP · an XML protocol</div>'+
+   '<div class="df-pre">POST /ParcelService\n&lt;soap:Envelope&gt;\n &lt;soap:Body&gt;\n  &lt;GetStatus&gt;\n   &lt;code&gt;OP-48213&lt;/code&gt;\n  &lt;/GetStatus&gt;\n &lt;/soap:Body&gt;\n&lt;/soap:Envelope&gt;</div>'+
+   '<div class="df-tags"><span style="background:var(--h4-bg);color:var(--h4)">described in WSDL</span><span style="background:var(--h4-bg);color:var(--h4)">tool-generated code</span></div>'+
+   '<div class="df-cap">REST uses HTTP’s own features. SOAP avoids most of them and leans on vendor tools; it lives on mainly in large enterprises.</div>');
   L.done();}},
-{part:1,src:'Chapter 4 · Web services',run(L){
-  L.h(L.kick('ex','Otterpost’s web services')+'<h1 class="q">The same HTTP, three different settings</h1>');
-  L.beats(L.card,[
-   ['Phone to server','The courier app sends scans to Otterpost’s API over the public internet.'],
-   ['Service to service','Inside Otterpost’s Westport datacenter, the dispatch service asks the ETA service for a delivery window. Software for this is sometimes called middleware.'],
-   ['Between organizations','When a parcel is delivered, Otterpost calls Bramble & Bolt’s server with a status webhook. Bramble & Bolt’s own systems call Otterpost’s merchant API to book parcels.'],
-   ['What they share','All three are web services, since they use HTTP. In each, the two sides are released separately, so the encoding must survive version mismatches.']],
-   'A “web service” is any service spoken over HTTP: phone apps, internal services and other companies all use them.');}},
-{part:1,src:'Chapter 4 · Web services',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which description fits REST?</h1>');
-  L.mc(L.card,['An XML protocol described with WSDL','A design style built on HTTP’s features','A binary encoding that uses field tags'],1,
-   'REST isn’t a protocol at all. It’s a philosophy that leans on HTTP: URLs, caching, authentication, content types.',
-   'The XML protocol with WSDL is SOAP, and field tags belong to Thrift and Protocol Buffers. REST is a design style built on HTTP.');}},
-{part:1,src:'Chapter 4 · Summary',pts:1,run(L){
-  L.h(L.kick('pr','Follow the bytes')+'<h1 class="q">Bramble & Bolt’s server asks Otterpost’s merchant API for a parcel’s status. Tap the steps in order.</h1>');
-  L.order(L.card,['Client encodes the request','Server decodes the request','Server encodes the response','Client decodes the response'],
-   'One service call means two encodings and two decodings. Both the request and the response must stay compatible across versions.');}},
+
 {part:1,src:'Chapter 4 · Web services',pts:6,run(L){
   L.h(L.kick('pr','REST or SOAP?')+'<h1 class="q">Sort each trait.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['REST','SOAP'],[
@@ -140,101 +433,289 @@ Course.lesson({
    ['Comes with the WS-* family of standards',1,'SOAP’s many add-on standards are known as WS-*.'],
    ['Hard to use from a language its vendors don’t support',1,'SOAP relies heavily on vendor tools and generated code.'],
    ['Can be described with OpenAPI (Swagger)',0,'OpenAPI is a way to describe RESTful APIs and produce documentation.']],
-   'REST stays close to HTTP and needs little tooling. SOAP is a large XML protocol that leans on tools and code generation.');}},
+   'REST stays close to HTTP and needs little tooling. SOAP is a large XML protocol that leans on tools and code generation, and different vendors’ versions don’t always work together.');}},
 
-/* ---------- PART 3: REMOTE CALLS ---------- */
-{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',run(L){
-  L.h(L.kick('learn','The problem with RPC')+'<h1 class="q">A network call only looks like a function call</h1>'+
-   L.prose('Since the 1970s, '+L.g('rpc','remote procedure calls')+' have tried to make a request to another machine look like calling a local function. The book argues the idea is deeply flawed, because a network request differs from a local call in six ways:')+
-   L.list([['Unpredictable','The request or reply can be lost, or the other machine can be slow or down. None of that is in your control.'],
-     ['Timeouts tell you nothing','If no reply comes, you can’t know whether the request got through.'],
-     ['Retries can run twice','If only the reply was lost, a retry does the work again, unless you build in deduplication ('+L.g('idempotence','idempotence')+').'],
-     ['Latency varies wildly','Under a millisecond at good times; many seconds when the network or service is overloaded.'],
-     ['Arguments must be encoded','You can’t pass pointers. Numbers are fine; large objects get awkward.'],
-     ['Languages differ','Types must be translated between languages, like JavaScript’s trouble with numbers above 2<sup>53</sup>.']],1)+
-   '<p class="small" style="margin-top:8px">Older RPC systems (Java’s RMI, Microsoft’s DCOM, CORBA) also had other limits. Part of REST’s appeal is that it doesn’t pretend the network isn’t there.</p>');
+{part:1,src:'Chapter 4 · Data encoding and evolution for RPC',run(L){
+  L.h(L.kick('learn','Evolving an API')+'<h1 class="q">Servers upgrade first, clients second</h1>'+
+   '<svg class="df-svg" viewBox="0 0 320 196" role="img" aria-label="An old merchant client sends a request to an upgraded server and reads its response">'+DEFS+
+   bx(4,30,96,140,'Bramble & Bolt','',VC.v1)+txt(52,124,'old code (v1)',{s:11.5,c:VC.v1,w:600})+
+   bx(220,30,96,140,'Otterpost API','',VC.v2)+txt(268,124,'upgraded (v2)',{s:11.5,c:VC.v2,w:600})+
+   arr(100,70,218,70)+txt(160,62,'request',{s:12,c:'var(--ink)',w:600})+txt(160,90,'new reads old:',{s:11.5})+txt(160,106,'backward',{s:12.5,w:700,c:'var(--h2)'})+
+   arr(220,138,102,138)+txt(160,130,'response',{s:12,c:'var(--ink)',w:600})+txt(160,158,'old reads new:',{s:11.5})+txt(160,174,'forward',{s:12.5,w:700,c:'var(--h3)'})+
+   '</svg>'+
+   '<div class="df-lbl">How a client picks its API version (no agreed standard)</div>'+
+   '<div class="df-tags"><span style="background:var(--h1-bg);color:var(--h1)">/v2/ in the URL</span><span style="background:var(--h1-bg);color:var(--h1)">HTTP Accept header</span><span style="background:var(--h1-bg);color:var(--h1)">a setting per API key</span></div>'+
+   '<div class="df-cap">An API inherits its compatibility rules from its encoding: Thrift, gRPC and Avro follow their format’s rules. In JSON REST APIs, adding optional request parameters or new response fields is usually safe.</div>');
   L.done();}},
-{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',pts:1,
- solve:async L=>{L.$('#pd').children[2].click();L.$('#rp').click();},
+
+{part:1,src:'Chapter 4 · Data encoding and evolution for RPC',pts:5,
+ solve:async L=>{const RIGHT=[0,0,1,1,1];for(let i=0;i<5;i++){L.$('#a13o').children[RIGHT[i]].click();await L.sleep(10);L.$('#a13nx').click();await L.sleep(10);}L.$('#a13rt').click();},
  run(L){
-  let p=null;const P=['Yes, the parcel was booked','No, the booking failed','There’s no way to tell'];
-  const S=[['arrow','The request reaches Otterpost.'],['check','Otterpost books parcel OP-48213 and takes $4.20 from Bramble & Bolt’s credit.'],['x','The reply is lost on the way back.'],['clock','Bramble & Bolt’s server sees only a timeout.']];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt’s server calls Otterpost’s merchant API to book a parcel. Ten seconds pass with no reply: timeout. Did the booking happen?</h1><div id="pd"></div>'+
-   '<div id="tl" hidden><button class="btn pri" id="rp" style="margin-top:12px">'+L.ic('play')+'Replay what really happened</button><div id="lines" style="margin-top:12px"></div></div>');
-  P.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#tl').hidden=false;};L.$('#pd').appendChild(b);});
-  L.$('#rp').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const box=L.$('#lines');if(!box){clearInterval(t);return;}
-      box.insertAdjacentHTML('beforeend','<div class="small" style="display:flex;gap:8px;align-items:center;margin:6px 0">'+L.ic(S[k][0])+'<span>'+S[k][1]+'</span></div>');k++;
-      if(k>=S.length){clearInterval(t);L.award(p===2);
-        L.sheet(p===2?'ok':'no',p===2?'Exactly: you can’t tell':'From their side, you can’t tell','This time the booking happened; another time the request itself might have been lost. A timeout looks the same either way. If Bramble & Bolt simply retries, Otterpost books a second parcel and charges twice, unless the API can spot the repeat (idempotence). The book returns to this in later chapters.');L.done();}},450);};}},
+  const CH=[['Add an <code>etaWindow</code> field to status responses',1,'ignores the new field','Old clients ignore response fields they don’t know: forward compatibility on responses.'],
+    ['Add an optional <code>parcelSize</code> to booking requests',1,'doesn’t send it: fine','Old requests without it still work: backward compatibility on requests.'],
+    ['Remove the <code>eta</code> field from status responses',0,'reads <code>eta</code>: breaks','Old clients still read eta, so removing it breaks them. Keep /v1/ as it is; drop eta only in /v2/.'],
+    ['Make a new <code>customsCode</code> required on every booking',0,'never sends it: rejected','Old clients never send it, so their bookings would be rejected. Requests need backward compatibility.'],
+    ['Rename the request field <code>postcode</code> to <code>postalCode</code>',0,'sends <code>postcode</code>: ignored','Old clients keep sending postcode, which the renamed server no longer reads.']];
+  const CL=[['Bramble & Bolt','old v1 code'],['Small shop plugin','never updated'],['Otterpost dashboard','new code']];
+  let i=0,n=0,picked=false;
+  L.h(L.kick('pr','Version tester')+'<h1 class="q">Femi lists five changes to the merchant API. Ship each in <b>/v1/</b>, or does it need a new <b>/v2/</b>?</h1>'+
+   '<div class="df-cl" id="a13c"></div><div id="a13q"></div>');
+  const clients=(st)=>{L.$('#a13c').innerHTML=CL.map((c,k)=>'<div class="df-cli '+(st?st[k][0]:'')+'"><b>'+c[0]+'</b>'+c[1]+(st?'<span class="r">'+st[k][1]+'</span>':'')+'</div>').join('');};
+  function ask(){picked=false;clients(null);const c=CH[i];
+    L.$('#a13q').innerHTML='<div class="df-chg"><span class="n">Change '+(i+1)+' of 5</span>'+c[0]+'</div><div class="df-row" id="a13o"><button class="btn">Ship in /v1/</button><button class="btn">Needs /v2/</button></div><div id="a13f"></div>';
+    [...L.$('#a13o').children].forEach((b,j)=>b.onclick=()=>pick(j));}
+  function pick(j){if(picked)return;picked=true;const c=CH[i],safe=c[1]===1,ok=(j===0)===safe;if(ok)n++;
+    [...L.$('#a13o').children].forEach((b,k)=>{b.disabled=true;if(k===j){if(ok)b.classList.add('pri');};});
+    if(j===0&&!safe)clients([['no',c[2]],['no',c[2]],['ok','updated: fine']]);
+    else if(j===0)clients([['ok',c[2]],['ok',c[2]],['ok','uses it']]);
+    else clients([['ok','stays on /v1/'],['ok','stays on /v1/'],['ok','moves to /v2/']]);
+    L.fb(L.$('#a13f'),(ok?'<b>Right.</b> ':'<b>Not quite.</b> ')+(j===1&&safe?'It works, but you’d now run two versions for no reason. ':'')+c[3],ok?'ok':'no');
+    L.$('#a13f').insertAdjacentHTML('beforeend','<div class="df-row"><button class="btn pri" id="a13nx">'+(i<4?'Next change':'Finish')+'</button></div>');
+    L.$('#a13nx').onclick=()=>{i++;if(i<5)ask();else end();};}
+  function end(){L.awardMany(n,5);
+    L.$('#a13q').innerHTML='<div class="df-chg"><span class="n">'+n+' of 5 right · edge case</span>Femi wants to switch <b>/v1/</b> off next month to save running two versions.</div><div class="df-row"><button class="btn" id="a13rt">'+L.ic('x')+'Retire /v1/</button></div>';
+    clients([['ok','on /v1/'],['ok','on /v1/'],['ok','on /v2/']]);
+    L.$('#a13rt').onclick=function(){this.disabled=true;clients([['no','/v1/ gone: breaks'],['no','/v1/ gone: breaks'],['ok','on /v2/']]);
+      L.sheet('info','You can’t force merchants to upgrade','Otterpost doesn’t control merchants’ code. Across organizations, compatibility may be needed for a very long time, perhaps forever. That’s why providers end up running several API versions side by side.');L.done();};}
+  ask();}},
+
+/* ---------- PART 3: AFTER A TIMEOUT ---------- */
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',
+ solve:async L=>{[...L.$('#h14b').children].forEach(b=>b.click());},
+ run(L){
+  const seen=new Set();
+  const CAP=['<b>Messages get lost.</b> A local call succeeds or fails on things you control. Over a network, the request or the reply can vanish, or the other machine can be slow or down.',
+    '<b>A timeout tells you nothing.</b> A local call returns, throws or never returns. A network call can also time out, and then you can’t know whether the request got through.',
+    '<b>Retries can run twice.</b> If requests arrive but replies are lost, each retry repeats the action, unless deduplication ('+L.g('idempotence','idempotence')+') is built into the protocol.',
+    '<b>Latency swings wildly.</b> A local call takes about the same time each run. A network request can take under a millisecond, or many seconds when things are congested or overloaded.',
+    '<b>Arguments become bytes.</b> Locally you can pass a pointer to an object. Over the network every argument must be encoded: fine for numbers and strings, awkward for big objects.',
+    '<b>Types get translated.</b> Client and server may be written in different languages, so types are converted, which can get ugly. Recall JavaScript and numbers above 2<sup>53</sup>.'];
+  const draw=on=>'<svg class="df-svg" viewBox="0 0 320 252" role="img" aria-label="A local call inside one process compared with a network call between Bramble and Bolt and Otterpost, with six numbered trouble spots">'+DEFS+
+   txt(4,14,'Local call: inside one process',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   '<rect x="4" y="22" width="312" height="52" rx="12" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+txt(16,52,'Dispatch code',{a:'start',s:12.5,w:600,c:'var(--ink)'})+
+   bx(188,30,118,36,'etaFor(parcel)','','var(--h2)')+arr(112,48,186,48)+
+   txt(160,92,'predictable · same time each call · pass pointers',{s:11.5})+
+   txt(4,120,'Network call: across a network',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   bx(4,132,84,88,'Bramble','& Bolt',VC.v1,{subc:'var(--ink)'})+bx(232,132,84,88,'Otterpost','API',VC.v2,{subc:'var(--ink)'})+
+   '<path d="M104 176c-8-20 14-30 26-20c6-16 30-18 40-4c12-12 34-6 34 10c14 2 16 26 0 30c2 14-22 18-30 8c-10 12-32 10-38-2c-14 6-34-6-26-18c-10 0-12-4-6-4z" style="fill:var(--soft2);opacity:.75"/>'+
+   arr(88,150,230,150,1)+arr(232,204,90,204,1)+
+   pin(112,150,5,on===4)+pin(146,150,1,on===0)+pin(180,150,3,on===2)+pin(160,177,4,on===3)+pin(46,236,2,on===1)+pin(274,236,6,on===5)+
+   '</svg>';
+  L.h(L.kick('learn','The problem with RPC')+'<h1 class="q">A network call only looks like a function call</h1><div id="h14p">'+draw(-1)+'</div>'+
+   '<div class="df-cap" id="h14c">'+L.g('rpc','RPC')+' (since the 1970s) makes a remote call look like a local one: '+L.g('location-transparency','location transparency')+'. The book calls the idea fundamentally flawed. Tap each numbered spot.</div><div class="df-row" id="h14b"></div>');
+  ['1 Lost','2 Timeout','3 Retries','4 Latency','5 Arguments','6 Languages'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
+    b.onclick=()=>{[...L.$('#h14b').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);L.$('#h14p').innerHTML=draw(j);L.$('#h14c').innerHTML=CAP[j];
+      if(seen.size===6&&once(L)){L.sheet('info','So don’t pretend it’s local','Older RPC systems had more limits too: Enterprise JavaBeans and Java’s RMI work only in Java, DCOM only on Microsoft platforms, and CORBA is very complex with no backward or forward compatibility. Part of REST’s appeal is that it doesn’t hide the network.');L.done();}};
+    L.$('#h14b').appendChild(b);});}},
+
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',pts:1,
+ solve:async L=>{SPEED=.15;L.$('#p15pd').children[2].click();await L.sleep(20);L.$('#p15go').click();},
+ run(L){
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt’s server asks Otterpost’s merchant API to book a parcel. Ten seconds pass with no reply. Did the booking happen?</h1>'+
+   '<div class="df-row" id="p15pd"></div><div id="p15w" hidden><button class="btn pri" id="p15go">'+L.ic('play')+'Show what could have happened</button></div><div id="p15t" style="margin-top:10px"></div>');
+  const T=Tree(L,L.$('#p15t'),'t15');T.neutral=true;T.shown=0;T.loss=8;T.slow=8;T.render();
+  ['Yes, it was booked','No, the booking failed','There’s no way to tell'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#p15w').hidden=false;};L.$('#p15pd').appendChild(b);});
+  L.$('#p15go').onclick=async function(){this.disabled=true;for(let k=1;k<=4;k++){await wait(380);if(!L.$('#p15t'))return;T.shown=k;T.render();}
+    L.award(p===2);
+    L.sheet(p===2?'ok':'no',p===2?'Exactly: you can’t tell':'From Bramble & Bolt’s side, you can’t tell','Four different stories, one identical silence. In two of them the parcel is already booked and charged (say $4.20, illustrative); in one it never arrived; in one it’s still coming. A timeout tells you nothing about which.');L.done();};}},
+
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',
+ solve:async L=>{setRange(L,'x16l',20);L.$('#x16r').click();L.$('#x16r').click();},
+ run(L){
+  const got=new Set();
+  L.h(L.kick('ex','Explore the tree')+'<h1 class="q">Tobias’s plan: “If it times out, just retry.” Move the sliders and switch retry on and off.</h1>'+
+   rng('x16l','The network loses a message',0,30,5,'%')+rng('x16s','The server is too slow to reply in time',0,30,5,'%')+
+   '<div class="df-row"><button class="chip df-tg" id="x16r" aria-pressed="false">Retry after a timeout: <b>off</b></button></div>'+
+   '<div id="x16t"></div>'+tasks('x16k',['Move a slider','Switch retry on','Switch it back off and compare']));
+  const T=Tree(L,L.$('#x16t'),'t16');T.render();
+  const fin=()=>{if(got.size===3&&once(L)){L.sheet('info','Retrying trades one failure for another','Giving up leaves parcels unbooked and misleads the merchant about the rest. Retrying fixes the lost requests but doubles every booking whose reply went missing. The sliders change how often each leaf happens, never whether it can.');L.done();}};
+  const up=()=>{T.loss=+L.$('#x16l').value;T.slow=+L.$('#x16s').value;L.$('#x16l-v').textContent=T.loss+'%';L.$('#x16s-v').textContent=T.slow+'%';T.render();got.add(0);tick(L,'x16k',0);fin();};
+  L.$('#x16l').oninput=up;L.$('#x16s').oninput=up;
+  L.$('#x16r').onclick=function(){T.retry=!T.retry;this.setAttribute('aria-pressed',T.retry);this.querySelector('b').textContent=T.retry?'on':'off';T.render();const k=T.retry?1:2;if(k===1||got.has(1)){got.add(k);tick(L,'x16k',k);}fin();};}},
+
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',
+ solve:async L=>{SPEED=.15;const nx=async()=>{L.$('#i17nx').click();await L.sleep(30);while(BUSY)await L.sleep(30);};await nx();await nx();await nx();await nx();},
+ run(L){
+  let stepN=0,busy=false;
+  L.h(L.kick('learn','Idempotence')+'<h1 class="q">Give each booking an ID the server remembers</h1>'+
+   '<svg class="df-svg" id="i17s" viewBox="0 0 320 196" role="img" aria-label="Bramble and Bolt sends a booking with an ID; Otterpost records seen IDs in a ledger">'+DEFS+
+   bx(4,22,84,52,'Bramble','& Bolt',VC.v1,{subc:'var(--ink)'})+bx(232,22,84,52,'Otterpost','API',VC.v2,{subc:'var(--ink)'})+
+   '<line x1="88" y1="48" x2="232" y2="48" style="stroke:var(--line2);stroke-width:1.5;stroke-dasharray:3 5"/>'+
+   '<rect x="4" y="96" width="150" height="92" rx="12" style="fill:var(--soft)"/>'+txt(14,116,'Parcels booked',{a:'start',s:12,w:600})+
+   '<text id="i17n" x="14" y="160" font-size="32" font-weight="700" style="fill:var(--ink)">0</text>'+'<text id="i17m" x="56" y="158" font-size="12.5" font-weight="600" style="fill:var(--muted)">$0.00 charged</text>'+
+   '<rect id="i17lb" x="166" y="96" width="150" height="92" rx="12" style="fill:var(--soft)"/>'+txt(176,116,'Seen booking IDs',{a:'start',s:12,w:600})+
+   '<rect id="i17hl" x="172" y="128" width="138" height="24" rx="6" style="fill:none"/>'+
+   '<text id="i17l" x="178" y="145" font-size="12.5" font-weight="600" style="fill:var(--ink)"></text>'+
+   '<text id="i17l2" x="178" y="174" font-size="12" style="fill:var(--muted)"></text>'+
+   '</svg>'+
+   '<div class="df-cap" id="i17c"><span class="st">Step 0 of 4</span>Bramble & Bolt gives this booking its own ID, <b>bk-7f3a</b>, and sends it with the request.</div>'+
+   '<div class="df-row"><button class="btn pri" id="i17nx">'+L.ic('play')+'Next</button></div>');
+  const S=L.$('#i17s'),T=t=>L.$('#i17'+t)||{style:{}};
+  const env=(label,x)=>{const g=el('g',{},S);el('rect',{x:-32,y:-12,width:64,height:24,rx:5,style:'fill:var(--card);stroke:var(--pri);stroke-width:2'},g);el('text',{x:0,y:4.5,'text-anchor':'middle','font-size':12,'font-weight':700,style:'fill:var(--pri)'},g,label);g.setAttribute('transform','translate('+x+' 48)');return g;};
+  const env0=env('bk-7f3a',122);
+  const cap=(t)=>{const c=L.$('#i17c');if(c)c.innerHTML='<span class="st">Step '+stepN+' of 4</span>'+t;};
+  const set=(n,m,warn)=>{T('n').textContent=n;T('m').textContent='$'+m+' charged';T('n').style.fill=warn?'var(--no)':'var(--ink)';};
+  L.$('#i17nx').onclick=async function(){if(busy||stepN>=4)return;busy=true;BUSY=true;stepN++;this.disabled=true;
+    if(stepN===1){env0.remove();const g=env('bk-7f3a',122);await tween(g,[122,48],[198,48],600);g.remove();set(1,'4.20');T('l').textContent='bk-7f3a → OP-48213';
+      cap('Otterpost books OP-48213, charges a $4.20 fee <span class="df-ill">(illustrative)</span> and writes the ID in its ledger.');}
+    else if(stepN===2){const g=env('OP-48213',198);await tween(g,[198,48],[160,48],450);g.remove();
+      const x=el('path',{d:'M152 40l16 16m0-16l-16 16',style:'stroke:var(--no);stroke-width:3;stroke-linecap:round'},S);await wait(450);x.remove();
+      cap('The reply is lost. After ten seconds Bramble & Bolt times out, not knowing what happened.');}
+    else if(stepN===3){const g=env('bk-7f3a',122);await tween(g,[122,48],[198,48],600);g.remove();
+      T('hl').style.fill='var(--ok-bg)';T('l2').textContent='seen it: book nothing new';
+      const r=env('OP-48213',198);await tween(r,[198,48],[122,48],600);r.remove();
+      cap('The retry carries the <b>same ID</b>. The ledger has seen it, so Otterpost books nothing new and replies OP-48213 again. Still one parcel.');}
+    else{T('lb').style.opacity='.35';T('l').textContent='(no ledger)';T('l2').textContent='';T('hl').style.fill='none';set(2,'8.40',true);
+      cap('Compare: without the ledger, the same retry books a second parcel and charges twice: $8.40 <span class="df-ill">(illustrative price)</span>. The ID only helps if the server checks it.');}
+    busy=false;BUSY=false;
+    if(stepN<4){this.disabled=false;if(stepN===3)this.innerHTML=L.ic('eye')+'Compare: no ledger';}
+    else{L.sheet('info','That’s idempotence','An operation is '+L.g('idempotence','idempotent')+' if doing it twice has the same effect as doing it once. The deduplication has to be built into the protocol, on both sides. Chapter 11 of the book returns to it.');L.done();}};}},
+
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',pts:1,
+ solve:async L=>{L.$('#c18r').click();L.$('#c18k').click();L.$('#c18d').click();await L.sleep(10);L.$('#c18go').click();},
+ run(L){
+  let graded=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Build Bramble & Bolt and Otterpost a policy where <b>every leaf</b> books exactly one parcel and the merchant believes the right thing.</h1>'+
+   '<div class="df-row"><button class="chip df-tg" id="c18r" aria-pressed="false">Retry after a timeout: <b>off</b></button><button class="chip df-tg" id="c18k" aria-pressed="false">Send a booking ID: <b>off</b></button><button class="chip df-tg" id="c18d" aria-pressed="false">Server checks IDs: <b>off</b></button></div>'+
+   '<div class="df-row"><button class="btn pri" id="c18go">'+L.ic('check')+'Check every leaf</button></div><div id="c18t"></div>');
+  const T=Tree(L,L.$('#c18t'),'t18');T.loss=10;T.slow=10;T.render();
+  [['c18r','retry'],['c18k','key'],['c18d','dedup']].forEach(([id,k])=>{L.$('#'+id).onclick=function(){T[k]=!T[k];this.setAttribute('aria-pressed',T[k]);this.querySelector('b').textContent=T[k]?'on':'off';T.render();};});
+  L.$('#c18go').onclick=()=>{const all=['A','B','C','D'].every(k=>T.out(k).ok);
+    if(!graded){graded=true;L.award(all);}
+    if(all){L.$('#c18go').disabled=true;L.sheet('ok','Every leaf is green','Retry so a lost request still gets booked, and make the retry idempotent: the client sends an ID and the server remembers it. Leave out any one of the three and some leaf goes red.');L.done();}
+    else{const bad=['A','B','C','D'].filter(k=>!T.out(k).ok).length;L.sheet('no',bad+' leaf'+(bad>1?'s are':' is')+' still red',!T.retry?'Without a retry, a lost request never gets booked and the merchant is misled in the other leaves.':'A retry without a checked ID books twice whenever only the reply was lost. Both sides must take part.');L.done();}};}},
+
+{part:2,src:'Chapter 4 · The problems with remote procedure calls (RPCs)',
+ solve:async L=>{const b=L.$('#e19b').children;for(let k=0;k<4;k++)b[k].click();},
+ run(L){
+  const seen=new Set();
+  const P=[['Perfect network',{loss:0,slow:0,retry:true,key:false,dedup:false},'No timeouts, so nothing to decide. But you don’t get to choose your network: problems are common and entirely outside your control, so you have to plan for them.'],
+    ['Server still working',{loss:0,slow:30,retry:true,key:false,dedup:false},'Nothing was lost: every timeout is a booking that did or will happen. Retrying without an ID doubles <b>every one</b>. A timeout doesn’t mean failure.'],
+    ['Lossy network, give up',{loss:30,slow:0,retry:false,key:false,dedup:false},'Giving up never doubles anything, but many parcels are never booked, and the merchant wrongly thinks the rest failed.'],
+    ['ID sent, but not checked',{loss:10,slow:10,retry:true,key:true,dedup:false},'Bramble & Bolt sends an ID, but Otterpost’s server ignores it, so the repeats still book twice. Deduplication must be built into the protocol on both sides.']];
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does each policy stop protecting you? Try at least three cases.</h1>'+
+   '<div class="df-row" id="e19b"></div><div class="df-cap" id="e19c">Pick a case. Each one sets the network and the policy for you.</div><div class="df-stat" id="e19s"></div><div id="e19t"></div>');
+  const T=Tree(L,L.$('#e19t'),'t19');T.render();
+  const stat=()=>{L.$('#e19s').innerHTML='<span>Lost messages: <b>'+T.loss+'%</b></span><span>Too slow: <b>'+T.slow+'%</b></span><span>Retry: <b>'+(T.retry?'on':'off')+'</b></span><span>ID: <b>'+(T.key?(T.dedup?'checked':'sent, not checked'):'none')+'</b></span>';};stat();
+  P.forEach((x,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=x[0];
+    b.onclick=()=>{[...L.$('#e19b').children].forEach(y=>y.classList.remove('sel'));b.classList.add('sel');Object.assign(T,x[1]);T.render();stat();L.$('#e19c').innerHTML=x[2];seen.add(j);
+      if(seen.size>=3&&once(L)){L.sheet('info','The limits','No policy can tell you what happened. The best you can do is make the outcome the same whichever leaf you’re in: retry, with an ID the server checks.');L.done();}};
+    L.$('#e19b').appendChild(b);});}},
+
 {part:2,src:'Chapter 4 · Current directions for RPC',run(L){
   L.h(L.kick('learn','RPC today')+'<h1 class="q">RPC isn’t going away, but it’s more honest now</h1>'+
-   L.prose('RPC frameworks exist for every encoding from the last lesson: gRPC uses Protocol Buffers, Thrift and Avro have RPC built in, and others use JSON over HTTP. The newer ones admit that a remote call is different:')+
-   L.list([['clock','Futures (promises)','wrap a call that may fail later, and make it easy to call several services in parallel and combine the results.'],
-     ['cycle','Streams','in gRPC, one call can be a series of requests and responses over time.'],
-     ['compass','Service discovery','lets a client find out at which address and port a service lives.']],2)+
-   L.lanes([['flame','Custom binary RPC','Can be faster. Mostly used between services of the <b>same</b> organization, in one datacenter.',3],
-            ['leaf','REST','Easy to try from a browser or curl, works in every language, huge ecosystem of tools. The usual choice for <b>public</b> APIs.',2]]));
+   '<svg class="df-svg" viewBox="0 0 320 206" role="img" aria-label="Three features of newer RPC frameworks: futures, streams and service discovery">'+DEFS+
+   txt(4,16,'Futures',{a:'start',s:13,w:700,c:'var(--h1)'})+txt(4,32,'a call that may fail later',{a:'start',s:11.5})+
+   bx(4,40,72,28,'Dispatch','',VC.v2)+bx(130,36,62,22,'ETA','','var(--line2)')+bx(130,64,62,22,'Prices','','var(--line2)')+
+   arr(76,50,128,47)+arr(76,58,128,75)+arr(192,47,232,56)+arr(192,75,232,60)+txt(240,62,'combine',{a:'start',s:12,w:600,c:'var(--ink)'})+
+   txt(4,112,'Streams (gRPC)',{a:'start',s:13,w:700,c:'var(--h2)'})+txt(4,128,'one call, many messages over time',{a:'start',s:11.5})+
+   bx(4,136,86,28,'Courier app','',VC.v2)+bx(244,136,72,28,'Server','',VC.v2)+
+   '<line x1="90" y1="150" x2="244" y2="150" style="stroke:var(--line2);stroke-width:1.5"/>'+[116,152,188,224].map(x=>'<rect x="'+(x-9)+'" y="143" width="18" height="14" rx="3" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>').join('')+
+   txt(4,186,'Service discovery',{a:'start',s:13,w:700,c:'var(--h3)'})+txt(132,186,'“Where is the ETA service?”',{a:'start',s:11.5,c:'var(--ink)'})+txt(132,202,'→ 10.0.4.7, port 9000',{a:'start',s:11.5,w:700,c:'var(--h3)'})+
+   '</svg>'+
+   '<div class="df-vs"><span></span><b style="color:var(--h2)">REST + JSON</b><b style="color:var(--h3)">RPC frameworks</b>'+
+   '<span>Best for</span><div><b>public</b> APIs</div><div>services in the <b>same</b> organization</div>'+
+   '<span>Wins on</span><div>any language; test in a browser or curl</div><div>binary protocol, can be faster</div>'+
+   '<span>e.g.</span><div>JSON over HTTP</div><div>gRPC, Thrift, Avro, Finagle, Rest.li</div></div>'+
+   '<div class="df-cap">Newer RPC frameworks are more open that a remote call isn’t a local one. REST still suits public APIs; RPC frameworks mostly link services inside one organization.</div>');
   L.done();}},
-{part:2,src:'Chapter 4 · Current directions for RPC',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Otterpost’s merchant API is used by about 2,000 shops, written in many languages. Which style fits it best?</h1>');
-  L.mc(L.card,['Java RMI, so calls look like local ones','A custom binary RPC protocol for speed','A RESTful API that sends JSON'],2,
-   'Public APIs favour REST: any language can call it, merchants can try it from a browser or curl, and the tools are everywhere.',
-   'RMI is Java-only, and custom binary RPC suits services inside one organization. For a public API, REST’s reach and easy debugging matter more than raw speed.');}},
-{part:2,src:'Chapter 4 · Data encoding and evolution for RPC',run(L){
-  L.h(L.kick('learn','Evolving an API')+'<h1 class="q">Servers first, clients second</h1>'+
-   L.prose('It’s reasonable to assume all servers are updated before all clients. That simplifies things: you need '+L.g('backward-compat','<b>backward</b>')+' compatibility on <b>requests</b> (new servers read old clients’ requests) and '+L.g('forward-compat','<b>forward</b>')+' compatibility on <b>responses</b> (old clients read new servers’ responses).')+
-   L.prose('An API inherits its rules from its encoding. For JSON REST APIs, adding an optional request parameter or a new response field usually keeps compatibility.')+
-   L.note('Across organizations it gets harder: the provider can’t force clients to upgrade, so compatibility may be needed for years. A breaking change often means running <b>several API versions side by side</b>.','alert')+
-   L.prose('There’s no agreed way to pick a version. Common choices: a version number in the URL, in the HTTP Accept header, or a version stored per API key on the server, changed in an admin page.'));
-  L.done();}},
-{part:2,src:'Chapter 4 · Data encoding and evolution for RPC',run(L){
-  L.h(L.kick('ex','Otterpost versions its merchant API')+'<h1 class="q">Some changes ride along; one needs a new version</h1>');
-  L.beats(L.card,[
-   ['The wish','Femi wants status responses to show a delivery window (from–to) instead of a single <code>eta</code> time, and bookings to include the parcel’s size.'],
-   ['Who upgrades','Otterpost updates its servers in an afternoon. Bramble & Bolt takes months to change its code, and some small shops never will.'],
-   ['Safe','Adding <code>etaWindow</code> to responses while keeping <code>eta</code> is fine: old merchant code ignores the new field (forward compatibility on responses).'],
-   ['Also safe','Adding <code>parcelSize</code> as an <b>optional</b> booking parameter is fine: old requests without it still work (backward compatibility on requests).'],
-   ['Breaking','Dropping <code>eta</code> would break every old client that reads it. So Zainab puts that change in <code>/v2/</code>, keeps <code>/v1/</code> running alongside, and merchants move when they’re ready.']],
-   'Add, don’t take away. When something must be taken away, run the old version alongside the new one.');}},
-{part:2,src:'Chapter 4 · Data encoding and evolution for RPC',pts:5,run(L){
+
+{part:2,src:'Chapter 4 · Current directions for RPC',pts:3,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Safe in v2, or v3 needed?',['Safe to add to v2','Needs a new version'],[
-   ['Add a <code>courierFirstName</code> field to the parcel-status response.',0,'Old clients ignore fields they don’t know. New response fields keep compatibility.'],
-   ['Add an optional <code>giftMessage</code> parameter to the booking request.',0,'Old clients simply don’t send it. Optional request parameters keep compatibility.'],
-   ['Remove the <code>labelUrl</code> field that old clients read from booking responses.',1,'Old clients expect it in the response, so removing it breaks forward compatibility.'],
-   ['Make a new <code>customsCode</code> parameter required on every booking.',1,'Old clients never send it, so new servers would reject their requests. That breaks backward compatibility on requests.'],
-   ['Rename the request parameter <code>postcode</code> to <code>postalCode</code>.',1,'Old clients keep sending <code>postcode</code>, which the new server no longer reads.']]);}},
+  L.quick(L.$('#qk'),'REST or an RPC framework?',['REST + JSON','RPC framework'],[
+   ['Otterpost’s public merchant API, used by about 2,000 shops <span class="df-ill">(illustrative)</span> written in many languages.',0,'Public APIs favour REST: any language can call it, the tools are everywhere, and merchants can try it from a browser or curl. Java RMI would lock them into Java.'],
+   ['Dispatch asks Otterpost’s own ETA service for a delivery window, inside one datacenter.',1,'Both sides belong to Otterpost, in one datacenter. A custom binary protocol can be faster than JSON over REST.'],
+   ['A merchant’s developer wants to try a booking call by hand, before writing any code.',0,'REST is easy to experiment with and debug: a browser or curl is enough, no code generation needed.']]);}},
 
 /* ---------- PART 4: THROUGH MESSAGES ---------- */
 {part:3,src:'Chapter 4 · Message-Passing Dataflow',run(L){
-  L.h(L.kick('learn','Message brokers')+'<h1 class="q">Halfway between a phone call and a letter in a database</h1>'+
-   L.prose('Asynchronous message passing sits between RPC and databases. Like RPC, a message reaches another process quickly. Like a database, it doesn’t go directly: it goes through a '+L.g('broker','<b>message broker</b>')+' (message queue) that stores it for a while.')+
-   L.list([['shield','A buffer','If the recipient is down or overloaded, messages wait.'],['cycle','Redelivery','A message is redelivered to a process that crashed, so it isn’t lost.'],['compass','No addresses','The sender needn’t know the recipient’s IP address and port.'],['people','One to many','One message can reach several recipients.'],['leaf','Decoupled','The sender just publishes and doesn’t care who consumes.']],3)+
-   '<p class="small" style="margin-top:8px">The catch: it’s usually <b>one-way</b>. The sender sends and forgets. A reply, if any, goes on a separate channel.</p>');
+  L.h(L.kick('learn','Message brokers')+'<h1 class="q">Halfway between a phone call and a letter left in a database</h1>'+
+   '<svg class="df-svg" viewBox="0 0 320 214" role="img" aria-label="The scan service sends status messages to a broker, which delivers them to the notification sender and Linh’s zone counter">'+DEFS+
+   bx(4,86,84,44,'Scan service','producer',VC.v2)+
+   '<rect x="114" y="62" width="94" height="92" rx="12" style="fill:var(--soft);stroke:var(--h1);stroke-width:2"/>'+txt(161,82,'Broker',{s:13,w:700,c:'var(--ink)'})+txt(161,98,'topic: status',{s:11.5})+
+   [124,150,176].map(x=>'<rect x="'+x+'" y="112" width="22" height="16" rx="3" style="fill:var(--card);stroke:var(--pri);stroke-width:1.5"/><path d="M'+x+' 112l11 8l11-8" style="fill:none;stroke:var(--pri);stroke-width:1.2"/>').join('')+
+   bx(232,28,84,44,'Notifications','consumer',VC.v2)+bx(232,144,84,44,'Zone counter','Linh’s',VC.v2)+
+   arr(88,108,112,108)+arr(208,92,230,58)+arr(208,124,230,160)+
+   pin(126,62,1)+pin(222,74,2)+pin(100,92,3)+pin(222,142,4)+pin(46,146,5)+
+   '</svg>'+
+   '<div class="df-key"><div><b>1</b> Buffers while a receiver is down or busy</div><div><b>2</b> Redelivers to a process that crashed</div><div><b>3</b> Sender needs no IP address or port</div><div><b>4</b> One message, many receivers</div><div style="grid-column:1/3"><b>5</b> Sender just publishes; it doesn’t care who reads</div></div>'+
+   '<div class="df-ill" style="margin:4px 0">Open-source brokers include RabbitMQ, ActiveMQ, HornetQ, NATS and Kafka. Many producers and consumers can share one topic.</div>'+
+   '<div class="df-cap">A message arrives quickly, like a call, but goes through a '+L.g('broker','broker')+' that stores it, like a database. Usually one-way: send and forget. A reply needs a separate queue.</div>');
   L.done();}},
-{part:3,src:'Chapter 4 · Message brokers',run(L){
-  L.h(L.kick('ex','Otterpost’s notification queue')+'<h1 class="q">A day in the life of a status message</h1>');
-  L.beats(L.card,[
-   ['Publish','A courier scans a parcel “out for delivery”. The scan service sends a message to the <b>topic</b> for status changes and moves on. Many producers and consumers can share one topic.'],
-   ['A buffer','The notification sender is restarted for ten minutes. Messages wait in the broker and go out when it’s back.'],
-   ['Redelivery','The sender crashes halfway through one message. The broker hands that message to the restarted process.'],
-   ['A second consumer','Linh adds a consumer that counts deliveries per zone. The scan service doesn’t change at all.'],
-   ['Just bytes','The broker doesn’t care about the data: a message is bytes plus a little metadata. Otterpost uses its scan-event schema, so producers and consumers can upgrade in any order.'],
-   ['Re-publishing','One consumer adds the recipient’s language and re-publishes to another topic. Like the support tool, it must keep fields it doesn’t understand.']],
-   'A broker buffers, redelivers and fans out, but it only moves bytes. Compatibility is still your encoding’s job.');}},
-{part:3,src:'Chapter 4 · Message brokers',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias asks why the scan service never gets an answer back from the notification sender. What’s the answer?</h1>');
-  L.mc(L.card,['Messaging is usually one-way; replies go on a separate queue','The broker deletes replies to save space and time','The notification sender is broken and needs fixing'],0,
-   'Message passing is asynchronous: the sender sends and forgets. If a reply is needed, the recipient publishes it to a reply queue.',
-   'Nothing is broken and nothing is deleted. Messages flow one way; a reply would need its own queue that the sender reads.');}},
+
+{part:3,src:'Chapter 4 · Message brokers',pts:1,
+ solve:async L=>{SPEED=.15;L.$('#b23pd').children[0].click();await L.sleep(20);L.$('#b23go').click();},
+ run(L){
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Back to the booking. Suppose Bramble & Bolt sends it as a message through a broker instead of calling and waiting. What changes?</h1>'+
+   '<div id="b23pd"></div><div id="b23w" hidden><button class="btn pri" id="b23go">'+L.ic('play')+'Grow the new tree</button></div><div id="b23t" style="margin-top:10px"></div><div id="b23k"></div>');
+  const T=Tree(L,L.$('#b23t'),'t23');T.mode='broker';T.shown=0;T.render();
+  const opts=['No booking is lost while the service is down, but there’s no instant answer','The broker replies at once, so Bramble & Bolt knows it’s booked','Nothing can be booked twice any more'];
+  opts.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.style.textAlign='left';b.textContent=n;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#b23w').hidden=false;};L.$('#b23pd').appendChild(b);});
+  L.$('#b23go').onclick=async function(){this.disabled=true;for(let k=1;k<=4;k++){await wait(380);if(!L.$('#b23t'))return;T.shown=k;T.render();}
+    L.$('#b23k').innerHTML='<div class="df-row"><button class="chip df-tg" id="b23id" aria-pressed="false">ID the service checks: <b>off</b></button></div>';
+    L.$('#b23id').onclick=function(){T.key=T.dedup=!T.key;this.setAttribute('aria-pressed',T.key);this.querySelector('b').textContent=T.key?'on':'off';T.render();};
+    L.award(p===0);
+    L.sheet(p===0?'ok':'no',p===0?'Right':'Not quite','The broker buffers and redelivers, so a down or busy service doesn’t lose the booking. But messaging is one-way: no answer comes on this call. And a redelivery after a crash can book twice unless the message carries an ID (chapter 11 returns to this). Try the ID switch.');L.done();};}},
+
+{part:3,src:'Chapter 4 · Message brokers',
+ solve:async L=>{SPEED=.1;const b=L.$('#e24b').children;for(let k=0;k<4;k++){b[k].click();await L.sleep(30);while(BUSY)await L.sleep(30);}},
+ run(L){
+  const seen=new Set();let busy=false;
+  L.h(L.kick('ex','Edge cases on the ring')+'<h1 class="q">The ring isn’t only a database. Run at least three cases and watch what happens to the data.</h1>'+
+   '<div class="df-row" id="e24b"></div><div id="e24r"></div><div class="df-rec" id="e24rec"></div><div class="df-cap" id="e24c">Pick a case.</div>');
+  const cap=t=>{const c=L.$('#e24c');if(c)c.innerHTML=t;},card=(t,by,rows)=>{const c=L.$('#e24rec');if(c)c.innerHTML=recCard(t,by,rows);};
+  const ring=(o)=>{L.$('#e24r').innerHTML='';return Ring(L.$('#e24r'),o);};
+  const CASES=[
+   ['Object round trip',async()=>{const R=ring({stations:[{name:'Dashboard',ver:'v2',sub:'v2 · new code'},{name:'Support tool',ver:'v1',sub:'v1 · old code'}]});
+     let r={phone:'07700 900456',door:'ring twice',safe:null};card('Mrs. Okoro · OP-48213','v1',okoroRows(r));cap('v2 sets the safe place, then v1 edits the phone through its model object.');
+     let t=R.tok(DOT(r));await tween(t,RC,R.stop(0),400);r.safe='behind the green bin';t.dot(DOT(r));card('Mrs. Okoro · OP-48213','v2',okoroRows(r));await tween(t,R.stop(0),RC,400);
+     await tween(t,RC,R.stop(1),400);R.mark(1,'no');r={phone:'07700 900123',door:'ring twice',lost:true};t.dot(DOT(r));await tween(t,R.stop(1),RC,400);t.remove();
+     card('Mrs. Okoro · OP-48213','v1',okoroRows(r));cap('Lost in the app’s own translation: the format could carry the unknown field, the model object couldn’t. Fix: keep unknown fields when decoding and re-encoding.');}],
+   ['Six-year-old row',async()=>{const R=ring({stations:[{name:'Dashboard',ver:'v2',sub:'v2 · new code'},{name:'First app',ver:'v0',sub:'v0 · retired',ghost:true,pos:3}]});
+     card('Mr. Hale · OP-10442','v0',[['phone','07700 900311'],['doorbell','not in this row','null'],['safePlace','not in this row','null']]);cap('This row was written six years ago by Femi’s first version, and never touched since.');
+     const t=R.tok('var(--soft2)');await tween(t,RC,R.stop(0),500);R.mark(0,'ok');
+     card('Mr. Hale · OP-10442','v0',[['phone','07700 900311'],['doorbell','null (filled in on read)','null'],['safePlace','null (filled in on read)','null']]);await wait(300);await tween(t,R.stop(0),RC,450);t.remove();R.mark(0,null);
+     cap('v2 reads it fine: the database fills in null for columns the old row lacks. New code reads old data: backward compatibility. The row keeps its old encoding.');}],
+   ['Consumer re-publishes',async()=>{const R=ring({center:'box',label:'Broker',sub:'two topics',stations:[{name:'Scan service',ver:'v2',sub:'v2 · producer'},{name:'Translator',ver:'v1',sub:'v1 · re-publishes'},{name:'Notifications',ver:'v2',sub:'v2 · consumer'}]});
+     let rows=[['status','out for delivery'],['safePlace','behind the green bin','new'],['language','not yet','null']];card('Message about OP-48213','v2',rows);cap('A v1 consumer adds the recipient’s language and re-publishes the message to another topic.');
+     const t=R.tok('var(--h2)',R.stop(0));await tween(t,R.stop(0),RC,420);await tween(t,RC,R.stop(1),420);R.mark(1,'no');t.dot('var(--no)');
+     rows=[['status','out for delivery'],['safePlace','lost','lost'],['language','English','new']];card('Message about OP-48213','v1',rows);
+     await tween(t,R.stop(1),RC,420);await tween(t,RC,R.stop(2),420);t.remove();R.mark(2,'no');
+     cap('The broker only moves bytes; it didn’t lose anything. The v1 consumer did, by re-encoding without the field it didn’t know. Re-publishers must keep unknown fields too.');}],
+   ['Actors mid-upgrade',async()=>{const R=ring({center:'box',label:'Network',sub:'actor messages',stations:[{name:'Node A',ver:'v2',sub:'v2 · new'},{name:'Node B',ver:'v1',sub:'v1 · old'}]});
+     card('Message from parcel actor OP-48213','v2',[['encoding','Java’s built-in serialization'],['sent by','Node A (v2)'],['received by','Node B (v1)']]);cap('An Akka cluster mid-upgrade, still on its default encoding.');
+     const t=R.tok('var(--h2)',R.stop(0));await tween(t,R.stop(0),RC,450);await tween(t,RC,R.stop(1),450);R.mark(1,'no');t.dot('var(--no)');await wait(300);t.remove();
+     card('Message from parcel actor OP-48213','v2',[['encoding','Java’s built-in serialization'],['sent by','Node A (v2)'],['Node B','can’t decode it','lost']]);
+     cap('Akka’s default, Java’s built-in serialization, has no forward or backward compatibility. Swap in Protocol Buffers to allow rolling upgrades. Orleans’s default format doesn’t support rolling upgrades either.');}]];
+  CASES.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=c[0];
+    b.onclick=async()=>{if(busy)return;busy=true;BUSY=true;[...L.$('#e24b').children].forEach(y=>y.classList.remove('sel'));b.classList.add('sel');
+      await c[1]();busy=false;BUSY=false;if(!L.$('#e24r'))return;seen.add(j);
+      if(seen.size>=3&&once(L)){L.sheet('info','Same rule everywhere','Whatever carries the data, a database, a broker or an actor framework, it only moves bytes. Compatibility is your encoding’s job: make it work both ways and you can deploy each side in any order. Any code that decodes and re-encodes must keep what it doesn’t understand.');L.done();}};
+    L.$('#e24b').appendChild(b);});}},
+
 {part:3,src:'Chapter 4 · Distributed actor frameworks',run(L){
   L.h(L.kick('learn','Distributed actors')+'<h1 class="q">Messages all the way down</h1>'+
-   L.prose('The <b>actor model</b> handles concurrency in one program without threads and locks. Logic lives in '+L.g('actor','actors')+': each has its own private state, handles one message at a time, and talks to others only by asynchronous messages, which may be lost.')+
-   L.prose('A <b>distributed</b> actor framework spreads actors over many nodes. Sending works the same either way; a message to another node is encoded, sent and decoded behind the scenes. Making remote look local fits better here than in RPC, because actors already expect lost messages.')+
-   L.note('Rolling upgrades still need both directions of compatibility. Akka uses Java’s built-in encoding by default (no compatibility; swap in Protocol Buffers). Orleans’s default format can’t do rolling upgrades at all. In Erlang OTP, changing record schemas is surprisingly hard.','alert'));
+   '<svg class="df-svg" viewBox="0 0 320 350" role="img" aria-label="Actors on two nodes send each other messages; a message to another node is encoded, sent and decoded; one message is lost. Below, how Akka, Orleans and Erlang OTP handle rolling upgrades.">'+DEFS+
+   txt(160,13,'encode → decode',{s:12,w:700,c:'var(--h1)'})+
+   '<rect x="4" y="22" width="146" height="134" rx="14" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+txt(14,41,'Node A',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   '<rect x="170" y="22" width="146" height="134" rx="14" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+txt(180,41,'Node B',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   '<line x1="160" y1="19" x2="160" y2="80" style="stroke:var(--h1);stroke-width:1.5;stroke-dasharray:2 3"/>'+
+   [[42,90,'parcel'],[112,90,'courier'],[208,90,'zone W1'],[278,90,'van 7']].map(a=>'<circle cx="'+a[0]+'" cy="'+a[1]+'" r="22" style="fill:var(--card);stroke:var(--h1);stroke-width:2"/>'+txt(a[0],a[1]+4,'state',{s:11.5})+txt(a[0],a[1]+40,a[2],{s:12.5,w:600,c:'var(--ink)'})).join('')+
+   arr(64,84,88,84)+arr(136,86,184,86,0,'var(--h1)')+
+   '<line x1="232" y1="90" x2="254" y2="90" style="stroke:var(--muted);stroke-width:1.8;stroke-dasharray:3 3"/><path d="M237 84l12 12m0-12l-12 12" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>'+
+   txt(160,176,'same send call, local or remote · messages may be lost',{s:11.5})+
+   txt(4,204,'Rolling upgrades in three frameworks',{a:'start',s:12.5,w:700,c:'var(--ink)'})+
+   [['Akka','Java serialization by default:','no compatibility → use Protobuf'],['Orleans','Default format: no rolling','upgrades → new cluster each time'],['Erlang OTP','Record schema changes are hard:','rolling upgrades need planning']].map((f,k)=>{const y=212+k*46;
+     return '<rect x="4" y="'+y+'" width="312" height="40" rx="10" style="fill:var(--soft)"/>'+txt(14,y+25,f[0],{a:'start',s:12.5,w:700,c:'var(--h1)'})+txt(96,y+17,f[1],{a:'start',s:11.5,c:'var(--ink)'})+txt(96,y+32,f[2],{a:'start',s:11.5,c:'var(--muted)'});}).join('')+
+   '</svg>'+
+   '<div class="df-cap">Each '+L.g('actor','actor')+' keeps private state and talks only by asynchronous messages, one at a time. Loss is expected anyway, so '+L.g('location-transparency','location transparency')+' fits actors better than RPC. Rolling upgrades still need forward and backward compatibility.</div>');
   L.done();}},
-{part:3,src:'Chapter 4 · Modes of Dataflow',pts:5,run(L){
+
+{part:3,src:'Chapter 4 · Summary',pts:5,run(L){
   L.h(L.kick('pr','Name the dataflow')+'<h1 class="q">How does the data travel in each case?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Database','Service call','Message'],[
    ['The courier app asks the server for today’s route and waits for the answer.',1,'A request with a response it waits for: a service call.'],
@@ -242,16 +723,7 @@ Course.lesson({
    ['The scan service publishes “delivered” and moves on; the notification sender picks it up.',2,'Sent through a broker without waiting: message passing.'],
    ['Otterpost calls Bramble & Bolt’s webhook URL when a parcel’s status changes.',1,'An HTTP request to another organization’s server: a web service call.'],
    ['Signe’s support tool reads a parcel row the dashboard wrote last year.',0,'Written once, read much later: through the database.']],
-   'Waiting for a reply means a service call. Writing for someone to read later means a database. Sending and moving on means a message.');}},
-{part:3,src:'Chapter 4 · Summary',pts:6,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which compatibility is needed?',['Backward','Forward','Both directions'],[
-   ['A program reads back records it wrote to its own database last year.',0,'Today’s code reads its earlier self’s data: new code, old data.'],
-   ['Servers upgrade first. An old merchant integration reads a response from a new server.',1,'Old client code reads data written by new server code.'],
-   ['Servers upgrade first. A new server reads a request from an old merchant integration.',0,'New server code reads data written by old client code.'],
-   ['Mid-rollout, old and new dashboard servers read and write the same Parcel DB rows.',2,'Each side reads the other’s rows, so both directions are needed.'],
-   ['Producers and consumers on a broker topic are upgraded in any order.',2,'Any version may read any other version’s messages, so you need both.'],
-   ['During a rolling upgrade, actors on old and new nodes send each other messages.',2,'Messages go from new to old nodes and back, so both directions matter.']]);}}
+   'Waiting for a reply means a service call. Writing for someone to read later means a database. Sending and moving on means a message. In all three, one side encodes and the other decodes, so all three need compatible encodings.');}}
   ]
 });
 </script>

@@ -13,6 +13,262 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0028 only. Two hands-on models used across the lesson:
+   1. Tank – a classic broker’s queue as a tank: producers pour in,
+             workers drain it, and a policy decides what happens when
+             it fills (drop, buffer in memory, buffer on disk, backpressure).
+   2. Ring – one partition of Otterpost’s event log as a ring buffer on
+             disk: a write head adds scans, consumers are read heads at
+             their own offsets, and a head that is lapped loses events.
+   ===================================================================== */
+const CSS='<style>'+
+ '.es-fig svg{width:100%;display:block}.es-fig svg text{font-family:var(--sans)}'+
+ '.es-cap{font-size:15.5px;line-height:1.5;margin:10px 0 4px}'+
+ '.es-foot{font-size:13px;color:var(--muted);line-height:1.45;margin:6px 0 0}'+
+ '.es-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.es-row .chip{margin:0;min-height:40px}.es-row .btn{min-height:42px;padding:8px 12px;flex:0 0 auto}'+
+ '.es-rng{display:grid;grid-template-columns:112px 1fr 70px;gap:8px;align-items:center;font-size:14.5px;margin:2px 0}.es-rng input{width:100%;accent-color:var(--pri);height:32px;margin:0}.es-rng b{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}'+
+ '.es-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:24px}'+
+ '.es-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 2px}'+
+ '.es-q{display:flex;gap:10px;align-items:center;background:var(--soft);border-radius:14px;padding:10px 12px;margin:6px 0;font-size:15px;line-height:1.4}'+
+ '.es-q .n{flex:none;width:28px;height:28px;border-radius:99px;background:var(--h3-bg);color:var(--h3);font-weight:700;display:flex;align-items:center;justify-content:center}'+
+ '.es-cards{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}'+
+ '.es-card{text-align:left;border:2px solid var(--line);background:var(--card);color:var(--ink);border-radius:14px;padding:10px;font:inherit;font-size:14.5px;line-height:1.35;cursor:pointer;min-height:96px;display:flex;flex-direction:column;gap:6px}'+
+ '.es-card .t{font-size:11.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted)}'+
+ '.es-card.ok{border-color:var(--ok-line);background:var(--ok-bg);color:var(--ok)}.es-card.no{border-color:var(--no-line);background:var(--no-bg);color:var(--no)}'+
+ '.es-card[disabled]{cursor:default}'+
+ '.es-phone{background:var(--soft);border-radius:16px;padding:10px 12px;margin-top:8px}.es-phone .h{font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:6px}'+
+ '.es-phone .chip{margin:3px 4px 3px 0}'+
+ '.es-tbl{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;font-size:14px;align-items:center}.es-tbl .d{width:12px;height:12px;border-radius:99px;display:inline-block}'+
+ '.es-meter{height:10px;border-radius:99px;background:var(--line);overflow:hidden;position:relative;margin:4px 0}.es-meter i{display:block;height:100%;border-radius:99px}'+
+ '.es-res{list-style:none;padding:0;margin:8px 0}.es-res li{display:flex;gap:8px;align-items:flex-start;font-size:14.5px;line-height:1.4;margin:5px 0}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '@keyframes es-flow{to{stroke-dashoffset:-24}}@keyframes es-drop{0%{transform:translateY(0);opacity:1}100%{transform:translateY(34px);opacity:0}}'+
+ '.es-drip{animation:es-drop .6s linear infinite}'+
+ '</style>';
+
+/* ---------- small shared helpers (this lesson only) ---------- */
+const T=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+const R1=n=>Math.round(n*10)/10;
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+/* scans are counted in thousands (k) */
+const fk=k=>k>=1000?(Math.round(k/100)/10)+' M':Math.round(k)+'k';
+function pol(cx,cy,r,a){const t=(a-90)*Math.PI/180;return R1(cx+r*Math.cos(t))+' '+R1(cy+r*Math.sin(t));}
+function sector(cx,cy,r1,r2,a0,a1){if(a1-a0>=359.9)a1=a0+359.9;const lg=a1-a0>180?1:0;
+  return 'M'+pol(cx,cy,r2,a0)+'A'+r2+' '+r2+' 0 '+lg+' 1 '+pol(cx,cy,r2,a1)+'L'+pol(cx,cy,r1,a1)+'A'+r1+' '+r1+' 0 '+lg+' 0 '+pol(cx,cy,r1,a0)+'Z';}
+function arc(cx,cy,r,a0,a1){if(a1-a0>=359.9)a1=a0+359.9;if(a1-a0<0.8)return '';const lg=a1-a0>180?1:0;return 'M'+pol(cx,cy,r,a0)+'A'+r+' '+r+' 0 '+lg+' 1 '+pol(cx,cy,r,a1);}
+function rng(id,label,min,max,val,step){return '<label class="es-rng"><span>'+label+'</span><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'"><b id="'+id+'-v"></b></label>';}
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+async function waitFor(L,sel,ms){for(let i=0;i<(ms||4000)/30&&!L.$(sel);i++)await L.sleep(30);}
+function chips(L,host,items,onPick,sel){host.innerHTML='';items.forEach((it,j)=>{const b=document.createElement('button');b.className='chip'+(j===sel?' sel':'');b.innerHTML=it;b.onclick=()=>{[...host.children].forEach(x=>x.classList.toggle('sel',x===b));onPick(j,b);};host.appendChild(b);});}
+const box=(x,y,w,h,f,s,extra)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(extra&&extra.rx!=null?extra.rx:10)+'" style="fill:'+f+(s?';stroke:'+s+';stroke-width:'+((extra&&extra.sw)||1.5):'')+(extra&&extra.dash?';stroke-dasharray:'+extra.dash:'')+'"/>';
+const arrowDefs='<defs><marker id="es-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>';
+const line=(x1,y1,x2,y2,col,extra)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:'+(col||'var(--muted)')+';stroke-width:'+((extra&&extra.sw)||1.6)+(extra&&extra.dash?';stroke-dasharray:'+extra.dash:'')+'"'+(extra&&extra.noArrow?'':' marker-end="url(#es-ah)"')+'/>';
+
+/* ---------- Figure: bounded vs unbounded input ---------- */
+let seedB=5;const rndB=()=>(seedB=seedB*16807%2147483647)/2147483647;
+const SCANS_B=[...Array(46)].map(()=>rndB()*60).sort((a,b)=>a-b);
+function figBound(mode){
+  const X=h=>R1(12+h*4.75);
+  let s='<svg viewBox="0 0 320 178" role="img" aria-label="Top: a file with a clear end. Bottom: a timeline of scans that keeps going, with output marks for the chosen processing style.">'+arrowDefs;
+  s+=T(4,14,'Batch input: bounded','font-size:12px;font-weight:700;fill:var(--muted)');
+  s+=box(4,22,176,30,'var(--soft2)','var(--line2)',{rx:6});
+  for(let k=0;k<14;k++)s+='<rect x="'+(10+k*12)+'" y="29" width="7" height="16" rx="2" style="fill:var(--h1);opacity:.55"/>';
+  s+=box(182,20,34,34,'var(--h4-bg)','var(--h4)',{rx:6})+T(199,41,'END','font-size:11px;font-weight:700;fill:var(--h4);text-anchor:middle');
+  s+=line(220,37,246,37)+box(248,22,68,30,'var(--ok-bg)','var(--ok-line)',{rx:6})+T(282,41,'sort, output','font-size:11px;font-weight:600;fill:var(--ok);text-anchor:middle');
+  s+=T(4,82,'Otterpost’s scans: unbounded','font-size:12px;font-weight:700;fill:var(--muted)');
+  s+='<line x1="8" y1="118" x2="300" y2="118" style="stroke:var(--line2);stroke-width:2"/>'+T(304,122,'…','font-size:16px;font-weight:700;fill:var(--muted)');
+  [0,24,48].forEach((h,j)=>{s+='<line x1="'+X(h)+'" y1="112" x2="'+X(h)+'" y2="124" style="stroke:var(--line2);stroke-width:1.5"/>'+T(X(h)+3,138,['Mon','Tue','Wed'][j],'font-size:11px;fill:var(--muted)');});
+  SCANS_B.forEach(t=>{s+='<circle cx="'+X(t)+'" cy="104" r="3.2" style="fill:var(--h2)"/>';});
+  const out=[];
+  if(mode===0)out.push(24,48);else if(mode===1){for(let h=1;h<=60;h++)out.push(h);}else SCANS_B.forEach(t=>out.push(t+0.15));
+  out.forEach(h=>{if(h>60)return;const x=X(h);s+=mode===0?'<path d="M'+x+' 142l6 7l-6 7l-6 -7z" style="fill:var(--h3)"/>':'<line x1="'+x+'" y1="144" x2="'+x+'" y2="'+(mode===1?154:156)+'" style="stroke:var(--h3);stroke-width:'+(mode===1?1.6:1.4)+'"/>';});
+  s+=T(4,174,['Output nightly: a scan waits up to a day','Output hourly: a scan waits up to an hour','Each scan is handled as it arrives'][mode],'font-size:12px;font-weight:600;fill:var(--h3)');
+  return s+'</svg>';
+}
+
+/* ---------- Figure: event, producer, topic, consumers ---------- */
+function figEvent(){
+  let s='<svg viewBox="0 0 320 216" role="img" aria-label="The courier app produces an event into the parcel-scans topic, which three consumers read. Below, the event card with its fields.">'+arrowDefs;
+  s+=box(4,16,84,46,'var(--h1-bg)')+T(46,36,'Courier app','font-size:12.5px;font-weight:700;fill:var(--h1);text-anchor:middle')+T(46,52,'producer','font-size:11px;fill:var(--h1);text-anchor:middle');
+  s+=line(90,39,112,39);
+  s+=box(114,20,94,38,'var(--soft2)','var(--line2)',{rx:19})+T(161,37,'parcel-scans','font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle')+T(161,51,'topic','font-size:11px;fill:var(--muted);text-anchor:middle');
+  ['Notifications','ETA model','Billing'].forEach((n,j)=>{const y=6+j*30;s+=line(209,39,230,y+13)+box(232,y,84,26,'var(--h2-bg)','',{rx:8})+T(274,y+17,n,'font-size:11.5px;font-weight:600;fill:var(--h2);text-anchor:middle');});
+  s+=T(274,106,'consumers','font-size:11px;fill:var(--muted);text-anchor:middle');
+  s+='<line x1="161" y1="60" x2="161" y2="112" style="stroke:var(--h3);stroke-width:1.6;stroke-dasharray:4 4"/>'+T(168,92,'one event','font-size:11px;fill:var(--h3)');
+  s+=box(36,112,250,100,'var(--card)','var(--h3)',{rx:12});
+  s+='<path d="M36 136V124a12 12 0 0 1 12 -12h226a12 12 0 0 1 12 12v12z" style="fill:var(--h3-bg)"/>';
+  s+=T(50,129,'EVENT','font-size:11.5px;font-weight:700;letter-spacing:.08em;fill:var(--h3)')+T(272,129,'never changes','font-size:11.5px;font-weight:600;fill:var(--h3);text-anchor:end');
+  [['parcel','OP-48213'],['what','scanned at a hub'],['where','Westport North'],['when','09:14:07 (timestamp)']].forEach((f,j)=>{const y=155+j*16;s+=T(50,y,f[0],'font-size:12px;fill:var(--muted)')+T(104,y,f[1],'font-size:12.5px;font-weight:600;fill:var(--ink)');});
+  return s+'</svg>';
+}
+
+/* ---------- Figure: pipe vs publish/subscribe ---------- */
+function figPubSub(){
+  let s='<svg viewBox="0 0 320 150" role="img" aria-label="Left: a pipe links one sender to one receiver. Right: several producers send to a topic that several consumers read.">'+arrowDefs;
+  s+=T(58,14,'Pipe or TCP','font-size:12px;font-weight:700;fill:var(--muted);text-anchor:middle');
+  s+=box(4,50,50,32,'var(--h1-bg)','',{rx:8})+T(29,70,'sender','font-size:11px;font-weight:600;fill:var(--h1);text-anchor:middle');
+  s+=line(56,66,66,66)+box(68,50,50,32,'var(--h2-bg)','',{rx:8})+T(93,70,'receiver','font-size:11px;font-weight:600;fill:var(--h2);text-anchor:middle');
+  s+=T(60,136,'1 → 1','font-size:15px;font-weight:700;fill:var(--ink);text-anchor:middle');
+  s+='<line x1="126" y1="8" x2="126" y2="142" style="stroke:var(--line);stroke-width:1.5"/>';
+  s+=T(228,14,'Messaging system','font-size:12px;font-weight:700;fill:var(--muted);text-anchor:middle');
+  ['Courier app','Hub scanner','Merchant API'].forEach((n,j)=>{const y=26+j*32;s+=box(132,y,70,24,'var(--h1-bg)','',{rx:7})+T(167,y+16,n,'font-size:11px;font-weight:600;fill:var(--h1);text-anchor:middle')+line(203,y+12,216,62);});
+  s+=box(218,48,40,28,'var(--soft2)','var(--line2)',{rx:14})+T(238,66,'topic','font-size:11px;font-weight:700;fill:var(--ink);text-anchor:middle');
+  ['Notify','ETA','Billing'].forEach((n,j)=>{const y=26+j*32;s+=line(259,62,268,y+12)+box(270,y,46,24,'var(--h2-bg)','',{rx:7})+T(293,y+16,n,'font-size:11px;font-weight:600;fill:var(--h2);text-anchor:middle');});
+  s+=T(228,136,'many → many','font-size:15px;font-weight:700;fill:var(--ink);text-anchor:middle');
+  return s+'</svg>';
+}
+
+/* ---------- Tank: a classic broker queue ---------- */
+function Tank(L,host,o){
+  o=Object.assign({id:'tk',inR:40,outR:20,pol:'mem',auto:true,controls:true,on:()=>{}},o||{});
+  const ID=o.id,SMALL=20,MEM=200,DISK=1000,TX=124,TY=74,TW=80,TH=112;
+  const S={in:o.inR,out:o.outR,pol:o.pol,q:0,lost:0,held:0,acc:0,srv:0,crash:0,crashTxt:'',dropping:false};
+  const POL=[['drop','Drop'],['mem','Buffer in memory'],['disk','Buffer on disk'],['back','Backpressure']];
+  host.insertAdjacentHTML('beforeend','<div class="es-fig"><svg id="'+ID+'-svg" viewBox="0 0 320 206" role="img" aria-label="A tank: producers pour messages in at the top left, workers drain them at the bottom right. The water level is the queue."></svg></div>'+
+    (o.controls?'<div class="es-lbl">When the queue fills up, the broker will…</div><div class="es-row" id="'+ID+'-p"></div>'+rng(ID+'-in','Producers send',10,60,S.in,5)+rng(ID+'-out','Workers handle',10,60,S.out,5)+
+      '<div class="es-row"><button class="btn" id="'+ID+'-cr">'+L.ic('alert')+'Crash the broker</button><button class="btn" id="'+ID+'-rs">'+L.ic('cycle')+'Empty it</button></div>':'')+
+    '<div class="es-read" id="'+ID+'-rd" aria-live="polite"></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  /* static parts once, dynamic parts by id */
+  let s='';
+  s+=box(4,18,92,50,'var(--h1-bg)')+T(50,38,'Producers','font-size:12.5px;font-weight:700;fill:var(--h1);text-anchor:middle')+'<text id="'+ID+'-pin" x="50" y="56" style="font-size:12px;fill:var(--h1);text-anchor:middle"></text>';
+  s+='<path d="M96 43H164V'+TY+'" style="fill:none;stroke:var(--line2);stroke-width:9;stroke-linejoin:round"/>';
+  s+='<path id="'+ID+'-fi" d="M96 43H164V'+TY+'" style="fill:none;stroke:var(--pri);stroke-width:3;stroke-dasharray:4 8;animation:es-flow .5s linear infinite"/>';
+  s+='<path d="M'+(TX+TW)+' '+(TY+TH-14)+'H236" style="fill:none;stroke:var(--line2);stroke-width:9"/>';
+  s+='<path id="'+ID+'-fo" d="M'+(TX+TW)+' '+(TY+TH-14)+'H236" style="fill:none;stroke:var(--ok-strong);stroke-width:3;stroke-dasharray:4 8;animation:es-flow .5s linear infinite"/>';
+  s+=box(232,146,84,50,'var(--h2-bg)')+T(274,166,'Workers','font-size:12.5px;font-weight:700;fill:var(--h2);text-anchor:middle')+'<text id="'+ID+'-pout" x="274" y="184" style="font-size:12px;fill:var(--h2);text-anchor:middle"></text>';
+  s+='<rect x="'+TX+'" y="'+TY+'" width="'+TW+'" height="'+TH+'" rx="6" style="fill:var(--card);stroke:var(--line2);stroke-width:2"/>';
+  s+='<rect id="'+ID+'-lvA" x="'+(TX+2)+'" width="'+(TW-4)+'" rx="4" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1"/>';
+  s+='<rect id="'+ID+'-lvB" x="'+(TX+2)+'" width="'+(TW-4)+'" rx="4" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1"/>';
+  s+='<line id="'+ID+'-ml" x1="'+(TX-4)+'" x2="'+(TX+TW+4)+'" style="stroke:var(--h3);stroke-width:1.5;stroke-dasharray:4 3"/>';
+  s+='<text id="'+ID+'-qt" x="'+(TX+TW/2)+'" style="font-size:12.5px;font-weight:700;fill:var(--ink);text-anchor:middle"></text>';
+  s+='<text id="'+ID+'-l1" x="'+(TX-6)+'" style="font-size:11px;font-weight:600;text-anchor:end"></text><text id="'+ID+'-l2" x="'+(TX-6)+'" style="font-size:11px;font-weight:600;text-anchor:end"></text>';
+  s+='<g id="'+ID+'-va"><circle cx="130" cy="43" r="10" style="fill:var(--no-bg);stroke:var(--no);stroke-width:2"/><path d="M125 43h10" style="stroke:var(--no);stroke-width:3;stroke-linecap:round"/>'+T(130,66,'wait','font-size:11px;font-weight:700;fill:var(--no);text-anchor:middle')+'</g>';
+  s+='<g id="'+ID+'-sp">'+[0,1,2].map(k=>'<circle class="es-drip" cx="'+(TX+TW+8+k*7)+'" cy="'+(TY+4)+'" r="3" style="fill:var(--no);animation-delay:'+(k*.2)+'s"/>').join('')+T(TX+TW+6,TY+50,'dropped','font-size:11px;font-weight:700;fill:var(--no)')+'</g>';
+  s+='<g id="'+ID+'-x"><rect x="'+(TX-2)+'" y="'+(TY-2)+'" width="'+(TW+4)+'" height="'+(TH+4)+'" rx="8" style="fill:var(--no-bg);stroke:var(--no);stroke-width:2"/><text id="'+ID+'-x1" x="'+(TX+TW/2)+'" y="'+(TY+46)+'" style="font-size:12.5px;font-weight:700;fill:var(--no);text-anchor:middle"></text><text id="'+ID+'-x2" x="'+(TX+TW/2)+'" y="'+(TY+64)+'" style="font-size:12px;fill:var(--no);text-anchor:middle"></text></g>';
+  svg.innerHTML=s;
+  const E=id=>svg.querySelector('#'+ID+'-'+id);
+  const show=(id,on)=>{E(id).style.display=on?'':'none';};
+  const cap=()=>S.pol==='drop'||S.pol==='back'?SMALL:S.pol==='mem'?MEM:DISK;
+  const dur=r=>r>0?(Math.max(.18,6/r)).toFixed(2)+'s':'0s';
+  function draw(){
+    if(!svg.isConnected)return;
+    const c=cap(),bottom=TY+TH-2,full=TH-4;
+    const memQ=S.pol==='disk'?Math.min(S.q,MEM):Math.min(S.q,c),diskQ=S.pol==='disk'?Math.max(0,Math.min(S.q,DISK)-MEM):0;
+    const hA=full*memQ/c,hB=full*diskQ/c;
+    E('lvA').setAttribute('y',R1(bottom-hA));E('lvA').setAttribute('height',R1(Math.max(0,hA)));
+    E('lvB').setAttribute('y',R1(bottom-hA-hB));E('lvB').setAttribute('height',R1(Math.max(0,hB)));
+    const my=R1(bottom-full*MEM/DISK);E('ml').setAttribute('y1',my);E('ml').setAttribute('y2',my);show('ml',S.pol==='disk');
+    E('qt').setAttribute('y',R1(Math.max(TY+18,Math.min(TY+TH-8,bottom-hA-hB-6))));
+    E('qt').textContent=(S.q>=DISK&&S.pol==='disk'?'1,000+':fmt(S.q))+' queued';
+    const l1=E('l1'),l2=E('l2');
+    if(S.pol==='disk'){l1.setAttribute('y',R1((TY+my)/2+4));l1.textContent='on disk';l1.style.fill='var(--h3)';l2.setAttribute('y',R1((my+bottom)/2+4));l2.textContent='in memory';l2.style.fill='var(--h2)';}
+    else if(S.pol==='mem'){l1.setAttribute('y',TY+12);l1.textContent='full =';l1.style.fill='var(--no)';l2.setAttribute('y',TY+26);l2.textContent='crash';l2.style.fill='var(--no)';}
+    else{l1.setAttribute('y',TY+12);l1.textContent='small';l1.style.fill='var(--muted)';l2.setAttribute('y',TY+26);l2.textContent='buffer';l2.style.fill='var(--muted)';}
+    E('pin').textContent=S.in+' msg/s'+(S.pol==='back'&&S.held>0.5?' → '+Math.round(S.acc):'');
+    E('pout').textContent=Math.round(S.out*(S.pol==='disk'&&S.q>MEM?.6:1))+' msg/s';
+    E('fi').style.animationDuration=dur(S.crash?0:S.acc||S.in);E('fi').style.opacity=S.crash?0:1;
+    E('fo').style.animationDuration=dur(S.srv);E('fo').style.opacity=S.srv>0?1:0;
+    show('va',S.pol==='back'&&S.held>0.5&&!S.crash);show('sp',S.pol==='drop'&&S.dropping&&!S.crash);show('x',S.crash>0);
+    E('x1').textContent=S.crashTxt;E('x2').textContent=S.crashSub||'';
+    const delay=S.out?S.q/S.out:0;
+    $('#'+ID+'-rd').innerHTML='<div class="es-tbl"><span>'+L.ic('x')+'</span><span>Messages lost</span><b class="'+(S.lost?'no-t':'')+'">'+fmt(S.lost)+'</b>'+
+      '<span>'+L.ic('clock')+'</span><span>Wait in the queue</span><b>'+(delay<1?'none':'≈ '+Math.round(delay)+' s')+'</b>'+
+      '<span>'+L.ic('lock')+'</span><span>Producers held back</span><b class="'+(S.held>0.5?'no-t':'')+'">'+(S.held>0.5?Math.round(S.held/S.in*100)+'%':'no')+'</b></div>';
+  }
+  function crash(reason){
+    const lostNow=S.pol==='disk'?0:Math.round(S.q);S.lost+=lostNow;if(S.pol!=='disk')S.q=0;S.crash=6;
+    S.crashTxt=reason||'Crashed!';S.crashSub=S.pol==='disk'?'nothing lost':fmt(lostNow)+' lost';S.acc=0;S.srv=0;draw();o.on({type:'crash',lost:lostNow});
+  }
+  function step(){
+    if(S.crash>0){S.crash--;S.acc=0;S.srv=0;draw();return;}
+    const outCap=S.out*(S.pol==='disk'&&S.q>MEM?.6:1);
+    let acc=S.in;
+    if(S.pol==='back'){acc=Math.min(S.in,Math.max(0,SMALL-S.q+outCap));S.held=S.in-acc;}else S.held=0;
+    S.q+=acc;const srv=Math.min(S.q,outCap);S.q-=srv;S.acc=acc;S.srv=srv;S.dropping=false;
+    if(S.pol==='drop'&&S.q>SMALL){S.lost+=S.q-SMALL;S.q=SMALL;S.dropping=true;}
+    if(S.pol==='mem'&&S.q>MEM){crash('Out of memory');return;}
+    draw();o.on({type:'tick'});
+  }
+  function setPol(p){S.pol=p;S.q=Math.min(S.q,p==='drop'||p==='back'?SMALL:S.q);S.crash=0;draw();o.on({type:'pol',pol:p});}
+  if(o.controls){
+    chips(L,$('#'+ID+'-p'),POL.map(p=>p[1]),j=>setPol(POL[j][0]),POL.findIndex(p=>p[0]===S.pol));
+    const upd=()=>{S.in=+$('#'+ID+'-in').value;S.out=+$('#'+ID+'-out').value;$('#'+ID+'-in-v').textContent=S.in+'/s';$('#'+ID+'-out-v').textContent=S.out+'/s';draw();o.on({type:'rate'});};
+    $('#'+ID+'-in').oninput=upd;$('#'+ID+'-out').oninput=upd;upd();
+    $('#'+ID+'-cr').onclick=()=>crash('Broker crashed');
+    $('#'+ID+'-rs').onclick=()=>{S.q=0;S.lost=0;S.crash=0;S.held=0;draw();};
+  }
+  draw();
+  if(o.auto){const tm=setInterval(()=>{if(!svg.isConnected){clearInterval(tm);return;}step();},200);}
+  async function run(n,ms){for(let k=0;k<n;k++){if(!svg.isConnected)return false;step();await L.sleep(ms||170);}return svg.isConnected;}
+  return {S,draw,step,crash,setPol,run,alive:()=>svg.isConnected,reset(){S.q=0;S.lost=0;S.crash=0;S.held=0;S.acc=0;S.srv=0;draw();}};
+}
+
+/* ---------- Ring: one partition of the event log on disk ---------- */
+const R0=100; /* normal Otterpost rate: 100k scans an hour (illustrative) */
+function Ring(L,host,o){
+  o=Object.assign({id:'rg',hours:72,mult:1,auto:true,sliders:true,on:()=>{}},o||{});
+  const ID=o.id,C=o.hours*R0,cx=160,cy=116,RI=76,RO=100;
+  const S={w:0,mult:o.mult,clock:56,play:o.auto,busy:false,cons:[]};
+  function reset(cfg){cfg=cfg||{};S.mult=cfg.mult||o.mult;S.w=3.4*C;S.clock=56;
+    S.cons=o.cons.map((c,i)=>({name:c.name,ab:c.ab,col:c.col,cap:(cfg.caps&&cfg.caps[i]!=null)?cfg.caps[i]:c.cap,c:0,missed:0,flash:0}));
+    S.cons.forEach((c,i)=>{const lag=(cfg.lags&&cfg.lags[i]!=null)?cfg.lags[i]:o.cons[i].lag;c.c=S.w-lag*R0*S.mult;});}
+  reset();
+  host.insertAdjacentHTML('beforeend','<div class="es-fig"><svg id="'+ID+'-svg" viewBox="0 0 320 228" style="touch-action:none" role="img" aria-label="A ring of 12 disk segments. The amber line is where new scans are written; each coloured dot is a consumer’s offset, with an arc showing how far behind it is."></svg></div>'+
+    '<div class="es-row" id="'+ID+'-ctl"><button class="btn" id="'+ID+'-pp"></button><button class="btn" id="'+ID+'-sk">'+L.ic('clock')+'Skip 12 hours</button></div>'+
+    (o.sliders?rng(ID+'-m','New scans',R0,3*R0,S.mult*R0,50)+S.cons.map((c,i)=>rng(ID+'-c'+i,c.name,0,400,c.cap,25)).join(''):'')+
+    '<div class="es-read" id="'+ID+'-rd" aria-live="polite"></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  const ang=x=>(((x%C)+C)%C)/C*360;
+  function draw(){
+    if(!svg.isConnected)return;
+    const aw=ang(S.w),ws=Math.floor(aw/30),old=(ws+1)%12;let s='';
+    const day=Math.floor(S.clock/24)+1,hr=Math.floor(S.clock%24);
+    s+=T(4,16,'Day '+day+', '+String(hr).padStart(2,'0')+':00','font-size:12.5px;font-weight:700;fill:var(--ink)');
+    s+=T(316,16,'Partition 0','font-size:12px;font-weight:600;fill:var(--muted);text-anchor:end');
+    for(let k=0;k<12;k++){const od=k===old;s+='<path d="'+sector(cx,cy,RI,RO,k*30+.8,k*30+29.2)+'" style="fill:'+(od?'var(--no-bg)':'var(--soft2)')+';stroke:'+(od?'var(--no)':'var(--line2)')+';stroke-width:1.2'+(od?';stroke-dasharray:3 3':'')+'"/>';}
+    s+='<path d="'+sector(cx,cy,RI+3,RO-3,ws*30+.8,Math.max(ws*30+1.2,aw))+'" style="fill:var(--h3-bg)"/>';
+    S.cons.forEach((c,i)=>{const r=64-12*i,ac=ang(c.c),lag=S.w-c.c,fr=Math.min(1,lag/C);
+      s+='<circle cx="'+cx+'" cy="'+cy+'" r="'+r+'" style="fill:none;stroke:var(--line);stroke-width:1"/>';
+      if(fr>.003)s+='<path d="'+arc(cx,cy,r,ac,ac+fr*360)+'" style="fill:none;stroke:'+c.col+';stroke-width:5;stroke-linecap:round;opacity:.5"/>';});
+    s+='<line x1="'+pol(cx,cy,RI-4,aw).replace(' ','" y1="')+'" x2="'+pol(cx,cy,RO+8,aw).replace(' ','" y2="')+'" style="stroke:var(--h3);stroke-width:4;stroke-linecap:round"/>';
+    S.cons.forEach((c,i)=>{const r=64-12*i,p=pol(cx,cy,r,ang(c.c)).split(' ');
+      s+='<g data-i="'+i+'" style="cursor:grab"><circle cx="'+p[0]+'" cy="'+p[1]+'" r="16" style="fill:transparent"/><circle cx="'+p[0]+'" cy="'+p[1]+'" r="9" style="fill:'+c.col+';stroke:'+(c.flash?'var(--no)':'var(--card)')+';stroke-width:'+(c.flash?3.5:2)+'"/>'+
+        T(p[0],R1(+p[1]+4),c.ab,'font-size:11px;font-weight:700;fill:var(--card);text-anchor:middle;pointer-events:none')+'</g>';});
+    const kept=C/(R0*S.mult);
+    s+=T(cx,cy+2,Math.round(kept)+' h','font-size:15px;font-weight:700;fill:var(--ink);text-anchor:middle')+T(cx,cy+16,'kept','font-size:11px;fill:var(--muted);text-anchor:middle');
+    svg.innerHTML=s;
+    $('#'+ID+'-pp').innerHTML=S.play?L.ic('clock')+'Pause':L.ic('play')+'Play';
+    const rate=R0*S.mult;
+    $('#'+ID+'-rd').innerHTML='<div class="small" style="margin-bottom:6px"><span style="display:inline-block;width:14px;height:4px;background:var(--h3);border-radius:2px;vertical-align:middle"></span> new scans written here · <span style="display:inline-block;width:12px;height:10px;border:1.5px dashed var(--no);background:var(--no-bg);vertical-align:middle"></span> oldest segment, deleted next</div>'+
+      '<div class="es-tbl">'+S.cons.map(c=>{const lag=S.w-c.c;return '<span class="d" style="background:'+c.col+'"></span><span><b>'+c.name+'</b><br><span class="small">'+(lag<5?'up to date':R1(lag/rate)+' h behind · '+fk(lag)+' scans')+'</span></span><b class="'+(c.missed?'no-t':'ok-t')+'">'+(c.missed?'lost '+fk(c.missed):'lost 0')+'</b>';}).join('')+'</div>';
+  }
+  function adv(h){const rate=R0*S.mult;S.w+=rate*h;S.clock+=h;
+    S.cons.forEach((c,i)=>{c.c=Math.min(S.w,c.c+c.cap*h);if(S.w-c.c>C){c.missed+=S.w-C-c.c;c.c=S.w-C;c.flash=4;o.on({type:'lost',i});}else if(c.flash>0)c.flash--;});}
+  async function skip(h){if(S.busy)return;S.busy=true;const n=8;for(let k=0;k<n;k++){adv(h/n);draw();await L.sleep(55);if(!svg.isConnected)return;}S.busy=false;o.on({type:'skip'});}
+  $('#'+ID+'-pp').onclick=()=>{S.play=!S.play;draw();};
+  $('#'+ID+'-sk').onclick=()=>skip(12);
+  if(o.sliders){
+    const um=()=>{S.mult=+$('#'+ID+'-m').value/R0;$('#'+ID+'-m-v').textContent=fk(S.mult*R0)+'/h';draw();o.on({type:'rate'});};
+    $('#'+ID+'-m').oninput=um;um();
+    S.cons.forEach((c,i)=>{const u=()=>{c.cap=+$('#'+ID+'-c'+i).value;$('#'+ID+'-c'+i+'-v').textContent=fk(c.cap)+'/h';draw();o.on({type:'speed',i});};$('#'+ID+'-c'+i).oninput=u;u();});
+  }
+  /* drag a consumer head round the ring (only within the data still kept) */
+  let drag=-1;
+  const pt=e=>{const p=svg.createSVGPoint();p.x=e.clientX;p.y=e.clientY;return p.matrixTransform(svg.getScreenCTM().inverse());};
+  svg.addEventListener('pointerdown',e=>{const g=e.target.closest('g[data-i]');if(!g)return;drag=+g.dataset.i;try{svg.setPointerCapture(e.pointerId);}catch(_){}e.preventDefault();});
+  svg.addEventListener('pointermove',e=>{if(drag<0)return;const p=pt(e);let a=Math.atan2(p.x-cx,-(p.y-cy))*180/Math.PI;a=(a+360)%360;
+    const pos=a/360*C,wm=((S.w%C)+C)%C,back=((wm-pos)%C+C)%C;S.cons[drag].c=S.w-back;draw();});
+  const end=()=>{if(drag<0)return;const i=drag;drag=-1;o.on({type:'drag',i});};
+  svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
+  draw();
+  const tm=setInterval(()=>{if(!svg.isConnected){clearInterval(tm);return;}if(S.play&&!S.busy&&drag<0){adv(.5);draw();}},200);
+  return {S,draw,adv,skip,C,reset(cfg){reset(cfg);draw();},alive:()=>svg.isConnected,
+    rewind(i,h){const c=S.cons[i];c.c=Math.max(S.w-C,S.w-h*R0*S.mult);draw();}};
+}
+const RING_CONS=[{name:'Notifications',ab:'N',col:'var(--h1)',cap:300,lag:.3},{name:'ETA model',ab:'E',col:'var(--h2)',cap:200,lag:1},{name:'Billing',ab:'B',col:'var(--h4)',cap:125,lag:4}];
+
 Course.lesson({
   id:'0028', title:'Transmitting event streams', minutes:20, icon:'arrow',
   goals:['Explain what an event stream is and why polling falls short','Choose between dropping, buffering and backpressure, and between load balancing and fan-out','Decide when a log-based broker beats a classic message queue'],
@@ -23,7 +279,9 @@ Course.lesson({
     topic:'Topic (or stream): a named group of related events, such as all parcel scans. Producers write events to a topic and consumers read from it.',
     backpressure:'Backpressure (also called flow control): when the receiver is full, the sender is blocked from sending more until there is room. Nothing is lost; the sender just slows down.',
     broker:'Message broker (or message queue): an intermediary that receives messages from senders, stores them for a while, and delivers them to one or more recipients.',
-    offset:'Offset: the position number of a message inside one partition of a log. A consumer remembers the offset it has reached, like a reader remembers a page number.'
+    offset:'Offset: the position number of a message inside one partition of a log. A consumer remembers the offset it has reached, like a reader remembers a page number.',
+    ack:'Acknowledgment: a consumer’s message to the broker saying “I’ve finished processing this message”, so the broker can remove it.',
+    'head-of-line':'Head-of-line blocking: a few slow requests at the front of a queue hold up the fast requests behind them.'
   },
   cheatsheet:[
     'A <b>stream</b> is input that never ends. An <b>event</b> is a small, immutable record of something that happened, with a timestamp.',
@@ -32,7 +290,7 @@ Course.lesson({
     '<b>Direct messaging</b> (UDP multicast, webhooks) assumes both ends stay online. A <b>broker</b> holds messages so clients can come and go.',
     '<b>Load balancing</b>: each message to one consumer. <b>Fan-out</b>: each message to every consumer. Consumer groups combine both.',
     'Acknowledgments stop messages being lost, but <b>redelivery plus load balancing reorders</b> messages.',
-    '<b>Log-based brokers</b> append to partitioned logs and consumers move an <b>offset</b>. Order holds within a partition, reading deletes nothing, and old messages can be <b>replayed</b>.',
+    '<b>Log-based brokers</b> append to partitioned logs and consumers move an <b>offset</b>. Order holds within a partition, reading deletes nothing, and the disk is a huge <b>ring buffer</b> you can <b>replay</b>.',
     'Classic queue: slow, independent tasks where order doesn’t matter. Log: high throughput, quick messages, order matters.'
   ],
   steps:[
@@ -43,68 +301,144 @@ Course.lesson({
    'A daily batch can only show today’s deliveries tomorrow. This lesson is about handling each event as it happens instead.',
    'The dashboard shows exactly what the job produced. The trouble is timing: a job that runs once a night can only reflect today’s deliveries tomorrow.');}},
 {part:0,src:'Chapter 11 · Stream Processing',run(L){
-  L.h(L.kick('learn','Bounded and unbounded input')+'<h1 class="q">Batch jobs need the input to end. Real data never does.</h1>'+
-   L.prose('The batch jobs of the last chapter assume their input is <b>bounded</b>: a known, finite size, so the job knows when it has read everything. Sorting depends on this. The very last record might have the smallest key, so no output can start until all the input is in.')+
-   L.prose('But most data is <b>unbounded</b>. Parcels were scanned yesterday and today, and more will be scanned tomorrow. Unless Otterpost goes out of business, the dataset is never “complete.” So a batch system has to chop it into artificial slices, such as one day at a time.')+
-   L.flow([['cal','Daily batch','Process a day of scans each night','changes show up a day late'],['clock','Smaller slices','Every hour, or every second','less delay'],['play','Stream','Handle each event as it happens','no fixed slices at all']])+
-   '<p class="small" style="margin-top:10px">“Stream” just means data that becomes available bit by bit over time, like Unix stdin, a TCP connection or a video playing online.</p>');
+  L.h(L.kick('learn','Bounded and unbounded input')+'<h1 class="q">Batch needs an end. Real data never ends.</h1>'+CSS+
+   '<div class="es-fig" id="b2f"></div><div class="es-row" id="b2c"></div>'+
+   '<p class="es-cap">A sort can’t output anything until the last record is in. Otterpost’s scans never stop, so batch chops them into days or hours. A <b>stream</b> handles each event as it arrives, like Unix stdin or a TCP connection.</p>');
+  const show=m=>{L.$('#b2f').innerHTML=figBound(m);};
+  chips(L,L.$('#b2c'),['Nightly batch','Every hour','Each event'],show,0);show(0);
   L.done();}},
 {part:0,src:'Chapter 11 · Transmitting Event Streams',run(L){
-  L.h(L.kick('learn','Events, producers and topics')+'<h1 class="q">In a stream, each record is an event</h1>'+
-   L.prose('A batch job parses a file into records. In streaming, a record is called an '+L.g('event','event')+': a small, self-contained, immutable record of something that happened. It usually carries a timestamp from a time-of-day clock.')+
-   L.flow([['pointer','Producer','Courier app scans parcel 88','also: publisher, sender',1],['list','Topic','“parcel-scans”','related events, grouped',2],['people','Consumers','Notifications, ETA model, billing','also: subscribers',3]])+
-   L.prose('An event can be encoded as text, JSON or a binary format, so it can be stored or sent over the network. Just as one batch input file can feed several jobs, one event is written once by a <b>producer</b> and may be processed by many <b>consumers</b>. Related events are grouped into a '+L.g('topic','topic')+'.'));
+  L.h(L.kick('learn','Events, producers and topics')+'<h1 class="q">In a stream, each record is an event</h1>'+CSS+
+   '<div class="es-fig">'+figEvent()+'</div>'+
+   '<p class="es-cap">An '+L.g('event','event')+' is a small, immutable record of something that happened, with a timestamp. A <b>producer</b> (publisher) writes it once; many <b>consumers</b> (subscribers) can read it. Related events form a '+L.g('topic','topic')+'.</p>'+
+   '<p class="es-foot">Sent or stored as text, JSON or binary.</p>');
   L.done();}},
-{part:0,src:'Chapter 11 · Transmitting Event Streams',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these is an event?</h1>');
-  L.mc(L.card,['The current status shown on the tracking page','Parcel 88 was scanned at Eastvale hub at 14:02','Deliver parcel 88 before noon tomorrow'],1,
-   'It records something that already happened, at a certain time, and it will never change.',
-   'An event records something that already happened, with a time. The 14:02 scan is one. “Deliver before noon” is an instruction, and the current status is state that keeps changing.');}},
 {part:0,src:'Chapter 11 · Transmitting Event Streams',pts:1,
- solve:async L=>{const c=L.$('#pc').children;c[0].click();c[2].click();},
+ solve:async L=>{L.$('#t4 [data-k="1"]').click();},
  run(L){
-  const P=[['Every 10 minutes','6','about 6',100,'up to 10 minutes'],['Every minute','60','about 38',63,'up to 1 minute'],['Every second','3,600','about 60',2,'up to 1 second']];const seen=new Set();
-  L.h(L.kick('pr','Turn the dial')+'<h1 class="q">Tobias’s first notification sender keeps asking the Parcel DB “any new scans?” On a quiet night about 60 scans arrive per hour, at random. Try at least two polling speeds.</h1><div id="pc"></div>'+
-   '<div id="pr" style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:110px"><div class="small">Pick a polling speed above.</div></div><div id="pq"></div>');
-  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('clock')+p[0];
-    b.onclick=()=>{[...L.$('#pc').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#pr').innerHTML='<div class="small">Polls per hour: <b>'+p[1]+'</b> · polls that find a new scan: <b>'+p[2]+'</b></div>'+
-       '<div class="meterrow"><div class="lb">Useful polls</div><div class="meter"><div style="width:'+Math.max(p[3],3)+'%;background:var(--ok-strong)"></div></div><b>'+(p[3]<5?'under 2%':p[3]+'%')+'</b></div>'+
-       '<div class="small">A new scan waits <b>'+p[4]+'</b> before anyone notices it.</div>';
-      if(seen.size===2&&!L.$('#pq').innerHTML){const q=L.$('#pq');q.innerHTML='<h2 class="sub">What gives a short wait without all the wasted polls?</h2>';
-        L.mc(q,['Poll every 100 milliseconds instead','Notify the consumer when a scan arrives','Poll less often, but fetch more rows'],1,
-         'The faster you poll, the smaller the share of polls that find anything, so the overhead climbs. Databases’ triggers can react to new rows but are limited, so special tools were built to notify consumers instead.',
-         'Polling faster shortens the wait but wastes even more requests. Polling slower makes the wait longer. The fix is to have consumers notified when new events appear.');}};
-    L.$('#pc').appendChild(b);});}},
+  const C4=[['Tracking page','Status shown right now: “Out for delivery”',0],['Courier app','OP-48213 scanned at Eastvale Depot at 14:02',1],['Dispatch','Deliver OP-48213 before noon tomorrow',0],['Courier C-0017','Van currently holds 9 parcels',0]];
+  L.h(L.kick('try','Spot the event')+'<h1 class="q">Which card is an event? Tap it.</h1>'+CSS+'<div class="es-cards" id="t4"></div>');
+  let done=false;
+  C4.forEach((c,k)=>{const b=document.createElement('button');b.className='es-card';b.dataset.k=k;b.innerHTML='<span class="t">'+c[0]+'</span><span>'+c[1]+'</span>';
+    b.onclick=()=>{if(done)return;done=true;const ok=!!c[2];L.award(ok);[...L.$('#t4').children].forEach((x,j)=>{x.disabled=true;if(C4[j][2])x.classList.add('ok');});if(!ok)b.classList.add('no');
+      L.sheet(ok?'ok':'no',ok?'That’s an event':'Not that one','The 14:02 scan already happened, at a set time, and will never change. The status and the van load are <b>state</b> that keeps changing, and “deliver before noon” is an instruction about the future.');L.done();};
+    L.$('#t4').appendChild(b);});}},
+{part:0,src:'Chapter 11 · Transmitting Event Streams',
+ solve:async L=>{setRange(L,'p5',0);await L.sleep(60);setRange(L,'p5',5);await L.sleep(60);L.$('#p5n').click();},
+ run(L){
+  let seed=11;const rnd=()=>(seed=seed*16807%2147483647)/2147483647;
+  const SC=[...Array(60)].map(()=>rnd()*3600).sort((a,b)=>a-b);
+  const IV=[1,5,15,60,300,600],IVL=['1 s','5 s','15 s','1 min','5 min','10 min'];
+  const seen={fast:false,slow:false,note:false};let notify=false,idx=3;
+  L.h(L.kick('pr','Turn the dial')+'<h1 class="q">Tobias’s first notification sender keeps asking the Parcel DB “any new scans?” About 60 scans arrive per hour.</h1>'+CSS+
+   '<p class="small" id="p5h">Try a fast poll and a slow one, then switch to notifications.</p>'+
+   '<div class="es-fig" id="p5f"></div>'+rng('p5','Poll every',0,5,idx)+
+   '<div class="es-row"><button class="btn" id="p5n">'+L.ic('chat')+'Notify me instead</button></div><div class="es-read" id="p5r"></div><p class="es-foot">Numbers are illustrative.</p>');
+  const X=t=>R1(10+t/3600*300);
+  function draw(){
+    const I=IV[idx];let s='<svg viewBox="0 0 320 112" role="img" aria-label="One hour: scans on the top row, polls on the bottom row; green polls found a new scan, grey ones found nothing.">';
+    s+=T(4,12,'Scans (one hour)','font-size:11.5px;font-weight:600;fill:var(--muted)');
+    SC.forEach(t=>{s+='<circle cx="'+X(t)+'" cy="26" r="3" style="fill:var(--h2)"/>';});
+    s+=T(4,50,notify?'Notifications':'Polls','font-size:11.5px;font-weight:600;fill:var(--muted)');
+    let n=0,useful=0,wait=0;
+    if(notify){SC.forEach(t=>{s+='<line x1="'+X(t)+'" y1="58" x2="'+X(t)+'" y2="84" style="stroke:var(--ok-strong);stroke-width:1.6"/>';});n=60;useful=60;wait=0;}
+    else{n=Math.floor(3600/I);const hit=new Set(SC.map(t=>Math.floor(t/I)));useful=hit.size;SC.forEach(t=>{wait+=(Math.floor(t/I)+1)*I-t;});wait/=SC.length;
+      if(n>150){s+='<rect x="10" y="58" width="300" height="26" style="fill:var(--line2)"/>';hit.forEach(k=>{const x=X(Math.min(3600,(k+1)*I));s+='<line x1="'+x+'" y1="58" x2="'+x+'" y2="84" style="stroke:var(--ok-strong);stroke-width:1.6"/>';});}
+      else for(let k=0;k<n;k++){const x=X((k+1)*I),ok=hit.has(k);s+='<line x1="'+x+'" y1="'+(ok?58:64)+'" x2="'+x+'" y2="84" style="stroke:'+(ok?'var(--ok-strong)':'var(--line2)')+';stroke-width:'+(n>40?1.4:2.4)+'"/>';}}
+    s+=T(10,104,'0 min','font-size:11px;fill:var(--muted)')+T(160,104,'30 min','font-size:11px;fill:var(--muted);text-anchor:middle')+T(310,104,'60 min','font-size:11px;fill:var(--muted);text-anchor:end');
+    L.$('#p5f').innerHTML=s+'</svg>';
+    L.$('#p5-v').textContent=notify?'—':IVL[idx];
+    const pct=Math.round(useful/n*100);
+    L.$('#p5r').innerHTML='<div class="es-tbl"><span>'+L.ic('cycle')+'</span><span>Requests per hour</span><b>'+fmt(n)+'</b>'+
+      '<span>'+L.ic('check')+'</span><span>Found a new scan</span><b class="'+(pct<20?'no-t':'ok-t')+'">'+(pct<2?'under 2%':pct+'%')+'</b>'+
+      '<span>'+L.ic('clock')+'</span><span>A scan waits, on average</span><b class="'+(wait>60?'no-t':'')+'">'+(notify?'no time':wait<60?R1(wait)+' s':R1(wait/60)+' min')+'</b></div>'+
+      '<div class="es-meter" aria-hidden="true"><i style="width:'+Math.max(2,pct)+'%;background:var(--ok-strong)"></i></div>';
+  }
+  function check(){if(seen.fast&&seen.slow&&seen.note&&!L.$('#p5ok')){L.$('#p5h').insertAdjacentHTML('beforeend','<span id="p5ok"></span>');
+    L.sheet('info','Polling can’t win','Polling faster shortens the wait, but a smaller share of polls finds anything, so the overhead climbs. Polling slower wastes less and makes scans wait. Better: <b>notify</b> consumers when an event appears. Database triggers can react to a new row, but they’re limited, so special tools were built for this.');L.done();}}
+  L.$('#p5').oninput=()=>{idx=+L.$('#p5').value;notify=false;if(IV[idx]<=5)seen.fast=true;if(IV[idx]>=300)seen.slow=true;L.$('#p5n').classList.remove('pri');draw();check();};
+  L.$('#p5n').onclick=()=>{notify=true;seen.note=true;L.$('#p5n').classList.add('pri');draw();check();};
+  draw();}},
 
 /* ---------- PART 2: MESSAGING SYSTEMS ---------- */
 {part:1,src:'Chapter 11 · Messaging Systems',run(L){
-  L.h(L.kick('learn','Messaging systems')+'<h1 class="q">Two questions to ask any messaging system</h1>'+
-   L.prose('A <b>messaging system</b> pushes events from producers to consumers. A Unix pipe or a TCP connection is the simplest kind, but it links exactly one sender to one receiver. A messaging system lets many producers and many consumers share one topic. This is the <b>publish/subscribe</b> model, and there is no one right design for it.')+
-   L.list([['Producers faster than consumers?','Three choices: <b>drop</b> messages, <b>buffer</b> them in a queue, or apply '+L.g('backpressure','backpressure')+' (block the sender). Unix pipes and TCP use backpressure with a small buffer. If you buffer, ask what happens as the queue grows: does it crash when memory is full, or spill to disk, and how slow is that?'],
-     ['Nodes crash or go offline?','Are messages lost? Durability needs writing to disk, replication or both, and that costs something. If you can afford to lose some messages, the same hardware gives more throughput and lower latency.']],1));
+  L.h(L.kick('learn','Publish/subscribe')+'<h1 class="q">From one-to-one pipes to many-to-many topics</h1>'+CSS+
+   '<div class="es-fig">'+figPubSub()+'</div>'+
+   '<p class="es-cap">A pipe links one sender to one receiver. A <b>messaging system</b> lets many producers and consumers share a topic. Ask each one two questions:</p>'+
+   '<div class="es-q"><span class="n">1</span><span>Producers faster than consumers: <b>drop</b>, <b>buffer</b> or '+L.g('backpressure','backpressure')+'?</span></div>'+
+   '<div class="es-q"><span class="n">2</span><span>A node crashes: are messages <b>lost</b>? Not losing them costs disk or replicas.</span></div>');
   L.done();}},
-{part:1,src:'Chapter 11 · Messaging Systems',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Is losing a message OK? Kwame and Linh decide for two kinds of data.</h1>');
-  L.beats(L.card,[
-   ['GPS pings','Couriers’ phones send their position every few seconds. If one ping is lost, the next arrives a moment later with a newer position. An occasional gap hardly matters.'],
-   ['But watch the volume','If <b>many</b> pings are dropped quietly, the live map and the metrics built from it can go wrong without anyone noticing. The book warns that heavy loss isn’t always obvious.'],
-   ['Delivery scans','Billing counts “delivered” scans per merchant. Here every lost message is a wrong count, and a wrong invoice for Bramble & Bolt.'],
-   ['The decision','Pings can take a faster path that tolerates some loss. Delivery scans need durable, reliable delivery, even if it costs some throughput.']],
-   'Whether loss is acceptable depends on the application. Readings that are resent soon can live with a gap. Anything you count can’t.');}},
-{part:1,src:'Chapter 11 · Messaging Systems',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame’s dashboard counts failed delivery attempts per zone from events. Under heavy load, which choice makes those counts wrong?</h1>');
-  L.mc(L.card,['Buffering the extra messages in a queue','Dropping messages the consumer can’t keep up with','Backpressure that slows the producers down'],1,
-   'Dropping loses events, and each lost event is missing from the count. Buffering and backpressure only add delay.',
-   'Buffering and backpressure make things slower but lose nothing. Dropping is what breaks a counter: each lost event is one missing from the count.');}},
+{part:1,src:'Chapter 11 · Messaging Systems',
+ solve:async L=>{setRange(L,'k7-in',50);setRange(L,'k7-out',20);const c=L.$('#k7-p').children;c[0].click();await L.sleep(250);c[1].click();await L.sleep(250);c[3].click();await L.sleep(250);},
+ run(L){
+  const tried=new Set();let tk=null;
+  L.h(L.kick('pr','Explore the tank')+'<h1 class="q">Otterpost’s notification queue is a tank. Make producers faster than the workers, then try each policy.</h1>'+CSS+
+   '<div id="k7"></div><p class="es-foot">Rates and sizes are illustrative. Tried with an overload: <b id="k7n">0</b> of 3 policies needed.</p>');
+  tk=Tank(L,L.$('#k7'),{id:'k7',inR:20,outR:30,pol:'mem',on:e=>{
+    if((e.type==='pol'||e.type==='rate')&&tk&&tk.S.in>tk.S.out){tried.add(tk.S.pol);L.$('#k7n').textContent=Math.min(3,tried.size);
+      if(tried.size>=3&&!L.$('#k7ok')){L.$('#k7n').insertAdjacentHTML('afterend','<span id="k7ok"></span>');
+        L.sheet('info','Four answers to one question','<b>Drop</b> loses messages. <b>Memory</b> holds them until it runs out, then the broker crashes. <b>Disk</b> keeps going, but each message gets slower. <b>Backpressure</b> loses nothing and holds the producers back; Unix pipes and TCP do this with a small buffer.');L.done();}}}});}},
+{part:1,src:'Chapter 11 · Messaging Systems',
+ solve:async L=>{L.$('#e8c').children[2].click();},
+ run(L){
+  const PTS=[[18,120],[30,104],[44,98],[56,84],[70,80],[84,68],[96,72],[108,58],[118,48],[128,52],[138,40],[146,34]];
+  const LOST=[[],[5],[1,2,4,5,7,8,10]];
+  L.h(L.kick('ex','Is losing a message OK?')+'<h1 class="q">Kwame and Linh compare two streams. Turn up the loss.</h1>'+CSS+
+   '<div class="es-fig" id="e8f"></div><div class="es-row" id="e8c"></div>'+
+   '<p class="es-cap">A lost GPS ping hardly matters: a newer one arrives seconds later. A count is wrong by every event it loses. And heavy loss is easy to miss: nothing flags that the numbers are off.</p><p class="es-foot">Numbers are illustrative.</p>');
+  function draw(m){
+    const lost=new Set(LOST[m]);let s='<svg viewBox="0 0 320 170" role="img" aria-label="Left: a courier’s trail drawn from GPS pings. Right: Bramble and Bolt’s delivered count.">';
+    s+=T(78,12,'GPS pings → live map','font-size:12px;font-weight:700;fill:var(--muted);text-anchor:middle');
+    s+=box(4,20,148,120,'var(--soft)','',{rx:10});
+    for(let k=1;k<4;k++)s+='<line x1="4" y1="'+(20+k*30)+'" x2="152" y2="'+(20+k*30)+'" style="stroke:var(--line);stroke-width:1"/><line x1="'+(4+k*37)+'" y1="20" x2="'+(4+k*37)+'" y2="140" style="stroke:var(--line);stroke-width:1"/>';
+    const kept=PTS.filter((p,k)=>!lost.has(k));
+    s+='<polyline points="'+kept.map(p=>p.join(',')).join(' ')+'" style="fill:none;stroke:var(--h2);stroke-width:2.5;stroke-linejoin:round"/>';
+    PTS.forEach((p,k)=>{s+=lost.has(k)?'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="4" style="fill:var(--card);stroke:var(--no);stroke-width:1.5;stroke-dasharray:2 2"/>':'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="4" style="fill:var(--h2)"/>';});
+    s+=T(78,160,m===2?'jumpy, and no alarm fires':'trail still about right','font-size:11.5px;font-weight:600;fill:'+(m===2?'var(--no)':'var(--ok)')+';text-anchor:middle');
+    s+=T(242,12,'Delivered scans → invoice','font-size:12px;font-weight:700;fill:var(--muted);text-anchor:middle');
+    s+=box(168,20,148,120,'var(--card)','var(--line2)',{rx:10});
+    s+=T(242,42,'Bramble & Bolt','font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle')+T(242,58,'delivered today: 1,000','font-size:11px;fill:var(--muted);text-anchor:middle');
+    const counted=[1000,900,400][m];
+    s+=T(242,96,fmt(counted),'font-size:26px;font-weight:700;fill:'+(m?'var(--no)':'var(--ok)')+';text-anchor:middle')+T(242,116,'counted and billed','font-size:11px;fill:var(--muted);text-anchor:middle');
+    s+=T(242,160,m?fmt(1000-counted)+' deliveries never billed':'every event counted','font-size:11.5px;font-weight:600;fill:'+(m?'var(--no)':'var(--ok)')+';text-anchor:middle');
+    L.$('#e8f').innerHTML=s+'</svg>';
+  }
+  chips(L,L.$('#e8c'),['Lose none','Lose 1 in 10','Lose 6 in 10'],m=>{draw(m);if(m===2&&!L.$('#e8ok')){L.$('#e8c').insertAdjacentHTML('beforeend','<span id="e8ok"></span>');
+    L.sheet('info','The decision','GPS pings can take a faster path that sometimes loses messages. Delivery scans are counted, so they need reliable, durable delivery, even if it costs some throughput.<br><br>Batch jobs had this for free: failed tasks are retried and their partial output thrown away, so the result is as if nothing failed. Streams must earn a similar guarantee; later lessons show how.');L.done();}},0);draw(0);}},
+{part:1,src:'Chapter 11 · Messaging Systems',pts:1,
+ solve:async L=>{L.$('#p9c').children[1].click();await waitFor(L,'#p9rp',5000);L.$('#p9rp').click();await waitFor(L,'#p9d',5000);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Flash sale: 40 messages a second arrive, workers handle 20. The broker buffers <b>in memory</b>. After 8 seconds its machine restarts. How many messages are lost?</h1>'+CSS+
+   '<div class="es-row" id="p9c"></div><div id="p9t"></div><div id="p9x"></div>');
+  const tk=Tank(L,L.$('#p9t'),{id:'p9',inR:40,outR:20,pol:'mem',auto:false,controls:false});
+  ['None: the broker said “stored”','About 160: the whole backlog','About 20: one second’s worth'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      if(!await tk.run(8))return;tk.crash('Restarted');await L.sleep(500);if(!tk.alive())return;
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: 160 gone':'160 were lost','Each second, 20 more messages piled up than the workers could take: 8 × 20 = 160 in the queue. They lived only in memory, so the restart wiped them, even though every producer had been told “stored”.');
+      L.$('#p9x').innerHTML='<button class="btn pri" id="p9rp" style="margin-top:8px">'+L.ic('play')+'Replay with the buffer on disk</button>';
+      L.$('#p9rp').onclick=async function(){this.remove();tk.reset();tk.S.pol='disk';tk.draw();if(!await tk.run(8))return;tk.crash('Restarted');await L.sleep(400);if(!tk.alive())return;
+        L.$('#p9x').innerHTML='<div class="fb ok" id="p9d">Same crash, nothing lost: the backlog was on disk. That’s why the broker’s own durability matters. Producers stop waiting once the broker confirms “stored”.</div>';L.done();};};
+    L.$('#p9c').appendChild(b);});}},
 {part:1,src:'Chapter 11 · Direct messaging from producers to consumers',run(L){
-  L.h(L.kick('learn','No middleman')+'<h1 class="q">Direct messaging: producer straight to consumer</h1>'+
-   L.prose('Some messaging systems skip any server in between:')+
-   L.list([['trend','UDP multicast','Used for stock-market feeds, where low latency matters. UDP can lose packets, so the producer keeps what it sent and resends on request.'],
-     ['layers','Brokerless libraries','Tools such as ZeroMQ do publish/subscribe directly over TCP or multicast.'],
-     ['eye','Metrics over UDP','StatsD-style collectors accept some loss, so their counters are approximate at best.'],
-     ['chat','Webhooks','One service registers a callback URL with another, which calls it whenever an event happens. Otterpost’s status webhooks to merchants work this way.']],2)+
-   L.note('The catch: these designs usually assume producers and consumers are <b>always online</b>. An offline consumer misses what was sent meanwhile. And if a producer crashes while retrying, its buffer of messages to retry is gone.','alert'));
+  L.h(L.kick('learn','No middleman')+'<h1 class="q">Direct messaging: producer straight to consumer</h1>'+CSS+
+   '<div class="es-fig" id="d10f"></div><div class="es-row" id="d10c"></div>'+
+   '<p class="es-cap">Some systems skip any server in between. Protocols may resend lost packets, but they assume both ends stay online. An offline consumer misses messages, and a producer that crashes loses the messages it meant to retry.</p>');
+  function draw(m){
+    let s='<svg viewBox="0 0 320 160" role="img" aria-label="Four kinds of direct messaging, and Otterpost’s webhook sender calling Bramble and Bolt’s server directly.">'+arrowDefs;
+    [['UDP multicast: stock feeds',4,4],['ZeroMQ, nanomsg: pub/sub',162,4],['StatsD: metrics over UDP',4,30],['Webhooks: callback URLs',162,30]].forEach(p=>{s+=box(p[1],p[2],154,22,'var(--soft)','',{rx:11})+T(p[1]+77,p[2]+15,p[0],'font-size:11px;font-weight:600;fill:var(--muted);text-anchor:middle');});
+    const pc=m===2;s+=box(4,70,104,82,pc?'var(--no-bg)':'var(--h1-bg)',pc?'var(--no)':'',{rx:10});
+    s+=T(56,88,'Webhook sender','font-size:11.5px;font-weight:700;fill:'+(pc?'var(--no)':'var(--h1)')+';text-anchor:middle');
+    for(let k=0;k<3;k++)s+='<rect x="'+(22+k*24)+'" y="100" width="20" height="14" rx="2" style="fill:var(--card);stroke:'+(pc?'var(--no)':'var(--h1)')+';stroke-width:1.2;opacity:'+(pc?.35:1)+'"/>';
+    s+=T(56,132,pc?'crashed:':'retry buffer','font-size:11px;fill:'+(pc?'var(--no)':'var(--h1)')+';text-anchor:middle;font-weight:600')+(pc?T(56,146,'retries gone','font-size:11px;fill:var(--no);text-anchor:middle;font-weight:600'):'');
+    const off=m>0;
+    s+=box(212,70,104,82,off?'var(--soft)':'var(--h2-bg)',off?'var(--line2)':'',{rx:10,dash:off?'5 4':''});
+    s+=T(264,98,'Bramble & Bolt','font-size:11.5px;font-weight:700;fill:'+(off?'var(--muted)':'var(--h2)')+';text-anchor:middle')+T(264,114,'server','font-size:11.5px;fill:'+(off?'var(--muted)':'var(--h2)')+';text-anchor:middle')+T(264,136,off?'offline (deploy)':'online','font-size:11px;font-weight:600;fill:'+(off?'var(--no)':'var(--ok)')+';text-anchor:middle');
+    if(off){s+='<line x1="110" y1="111" x2="176" y2="111" style="stroke:var(--muted);stroke-width:1.6;stroke-dasharray:4 4"/><path d="M182 104l12 14m0 -14l-12 14" style="stroke:var(--no);stroke-width:3;stroke-linecap:round"/>'+T(160,134,'missed','font-size:11px;font-weight:700;fill:var(--no);text-anchor:middle');}
+    else s+=line(110,111,208,111,'var(--ok-strong)')+T(160,102,'status update','font-size:11px;fill:var(--ok);text-anchor:middle');
+    L.$('#d10f').innerHTML=s+'</svg>';}
+  chips(L,L.$('#d10c'),['Both online','Merchant offline','…and sender crashes'],draw,0);draw(0);
   L.done();}},
 {part:1,src:'Chapter 11 · Messaging Systems',pts:5,run(L){
   L.h(L.kick('pr','Drop, buffer or backpressure?')+'<h1 class="q">Sort each behavior.</h1><div id="bk"></div>');
@@ -115,29 +449,52 @@ Course.lesson({
    ['In a flash sale, the broker refuses new booking events until consumers catch up, so the merchant API has to wait.',2,'The producer is held back instead of losing data. That’s backpressure.'],
    ['A courier app keeps scans on the phone while there’s no signal in a basement, and sends them later.',1,'The scans wait in a local buffer. Nothing is dropped, and nobody is blocked from scanning.']],
    'Only dropping loses data. Buffering spends memory or disk and adds delay; backpressure slows the producer.');}},
-{part:1,src:'Chapter 11 · Direct messaging from producers to consumers',pts:1,run(L){
-  L.h(L.kick('pr','Webhook trouble')+'<h1 class="q">Bramble & Bolt’s server is down for a 20-minute deploy. Otterpost’s webhook sender keeps failed calls in memory to retry, but it crashes and restarts during those 20 minutes. What happens to the status updates?</h1>');
-  L.mc(L.card,['They all arrive once the merchant’s server is back','Some are lost, because the retry buffer died in the crash','They are refused, because webhooks need a broker'],1,
-   'Direct messaging assumes both sides stay online. The retries lived only in the crashed sender’s memory, so those updates never arrive.',
-   'Retries only work while the producer survives. When the sender crashed, its in-memory retry buffer went with it, so some updates are lost for good.');}},
 
 /* ---------- PART 3: MESSAGE BROKERS ---------- */
 {part:2,src:'Chapter 11 · Message brokers',run(L){
-  L.h(L.kick('learn','Message brokers')+'<h1 class="q">A broker is a database for messages in transit</h1>'+
-   L.prose('A '+L.g('broker','message broker')+' runs as a server. Producers write messages to it, and consumers read from it. Because the data sits in one place, clients can connect, disconnect and crash freely, and durability becomes the broker’s job. Some keep messages only in memory; others write them to disk.')+
-   L.prose('Faced with slow consumers, brokers usually let the queue grow without limit. So consumers are <b>asynchronous</b>: the producer only waits for the broker to confirm it has stored the message, not for anyone to process it.')+
-   '<h2 class="sub">Some brokers can even join two-phase commit, like a database. How else do they differ? Tap each card.</h2>');
-  L.flips(L.card,[
-   ['Keeping data','A database keeps data until you delete it. Most brokers delete a message once it’s delivered, so they don’t suit long-term storage.'],
-   ['Queue length','Brokers assume queues are short. If many messages pile up and spill to disk, each takes longer and throughput can drop.'],
-   ['Finding data','Databases offer secondary indexes and search. Brokers let you subscribe to topics that match a pattern. Both let a client choose the data it wants.'],
-   ['Staying current','A query answers once, from a snapshot; you don’t hear if the answer changes. A broker can’t answer arbitrary queries, but it tells you when new messages arrive.']],
-   'This is the traditional broker of the JMS and AMQP standards (RabbitMQ and ActiveMQ are examples). Otterpost’s notification queue works this way.');}},
+  let s='<svg viewBox="0 0 320 170" role="img" aria-label="Producers send to a broker server, which stores messages and answers stored. One consumer is connected, another is offline and its messages wait.">'+arrowDefs;
+  [['Courier app',24],['Merchant API',96]].forEach(p=>{s+=box(4,p[1],84,32,'var(--h1-bg)','',{rx:8})+T(46,p[1]+20,p[0],'font-size:11.5px;font-weight:600;fill:var(--h1);text-anchor:middle')+line(90,p[1]+12,118,p[1]+12);});
+  [[52],[124]].forEach(p=>{s+='<line x1="120" y1="'+p[0]+'" x2="92" y2="'+p[0]+'" style="stroke:var(--ok-strong);stroke-width:1.6;stroke-dasharray:4 3" marker-end="url(#es-ah)"/>';});
+  s+=T(104,70,'“stored”','font-size:11px;font-weight:700;fill:var(--ok);text-anchor:middle');
+  s+=box(122,10,92,150,'var(--pri-bg)','var(--pri)',{rx:14});
+  s+=T(168,30,'Broker','font-size:13px;font-weight:700;fill:var(--pri);text-anchor:middle')+T(168,44,'a server','font-size:11px;fill:var(--pri);text-anchor:middle');
+  for(let k=0;k<5;k++)s+='<rect x="138" y="'+(56+k*16)+'" width="60" height="12" rx="3" style="fill:var(--card);stroke:var(--pri);stroke-width:1"/>';
+  s+=T(168,150,'memory or disk','font-size:11px;fill:var(--pri);text-anchor:middle');
+  s+=line(216,40,234,40)+box(236,24,80,32,'var(--h2-bg)','',{rx:8})+T(276,44,'Notifications','font-size:11px;font-weight:600;fill:var(--h2);text-anchor:middle');
+  s+='<line x1="216" y1="112" x2="234" y2="112" style="stroke:var(--line2);stroke-width:1.6;stroke-dasharray:3 3"/>'+box(236,96,80,32,'var(--soft)','var(--line2)',{rx:8,dash:'4 3'})+T(276,116,'Billing','font-size:11px;font-weight:600;fill:var(--muted);text-anchor:middle')+T(276,144,'offline: waits','font-size:11px;font-weight:600;fill:var(--muted);text-anchor:middle');
+  s+='</svg>';
+  L.h(L.kick('learn','Message brokers')+'<h1 class="q">A broker is a database for messages in transit</h1>'+CSS+'<div class="es-fig">'+s+'</div>'+
+   '<p class="es-cap">A '+L.g('broker','message broker')+' is a server. Clients connect, disconnect and crash; the broker holds the messages. Producers wait only for “stored”, not for processing, so consumers are <b>asynchronous</b>.</p>'+
+   '<p class="es-foot">With slow consumers, most brokers just let the queue grow.</p>');
+  L.done();}},
+{part:2,src:'Chapter 11 · Message brokers compared to databases',run(L){
+  const R=[['After a read',['still there'],['deleted once','delivered']],['Lots of data',['normal'],['expects short queues;','long ones slow it']],['Picking data',['indexes, search'],['subscribe to topics','matching a pattern']],['Data changes',['you aren’t told','(a snapshot)'],['you’re notified','of new messages']]];
+  let s='<svg viewBox="0 0 320 232" role="img" aria-label="Table comparing a database and a classic broker on four points.">';
+  s+=box(78,2,108,30,'var(--h2-bg)','',{rx:8})+T(132,22,'Database','font-size:12.5px;font-weight:700;fill:var(--h2);text-anchor:middle');
+  s+=box(190,2,128,30,'var(--pri-bg)','',{rx:8})+T(254,22,'Classic broker','font-size:12.5px;font-weight:700;fill:var(--pri);text-anchor:middle');
+  R.forEach((r,j)=>{const y=40+j*48;s+='<line x1="2" y1="'+(y-3)+'" x2="318" y2="'+(y-3)+'" style="stroke:var(--line);stroke-width:1"/>';
+    s+=T(4,y+24,r[0],'font-size:11.5px;font-weight:700;fill:var(--muted)');
+    const cell=(x,lines,col)=>lines.map((t,k)=>T(x,y+(lines.length===1?24:17+k*15),t,'font-size:12px;fill:'+col+';text-anchor:middle')).join('');
+    s+=cell(132,r[1],'var(--ink)')+cell(254,r[2],'var(--ink)');});
+  s+='</svg>';
+  L.h(L.kick('learn','Brokers and databases')+'<h1 class="q">Close cousins, different habits</h1>'+CSS+'<div class="es-fig">'+s+'</div>'+
+   '<p class="es-cap">Some brokers even join two-phase commit, like a database. This is the classic broker of the JMS and AMQP standards, such as RabbitMQ and ActiveMQ. Otterpost’s notification queue is one.</p>');
+  L.done();}},
 {part:2,src:'Chapter 11 · Multiple consumers',run(L){
-  L.h(L.kick('learn','Multiple consumers')+'<h1 class="q">Several consumers on one topic: share the work, or copy it?</h1>'+
-   L.lanes([['people','Load balancing','Each message goes to <b>one</b> of the consumers. They share the work, so you can add consumers when messages are expensive to process.',1],
-            ['layers','Fan-out','Each message goes to <b>every</b> consumer. Each one “tunes in” without affecting the others, like several batch jobs reading the same file.',2]])+
-   L.prose('You can combine the two. Otterpost’s scan topic can feed two <b>groups</b>: notifications and billing. Each group gets every message (fan-out), but inside a group only one machine handles each message (load balancing).'));
+  const COL=['h1','h2','h3','h4','h1','h2'];
+  const MODES=[{boxes:[['Machine 1',[1,4]],['Machine 2',[2,5]],['Machine 3',[3,6]]],cap:'<b>Load balancing:</b> each message goes to <b>one</b> consumer. Add consumers to share work that is expensive to process.'},
+    {boxes:[['Notifications',[1,2,3,4,5,6]],['ETA model',[1,2,3,4,5,6]],['Billing',[1,2,3,4,5,6]]],cap:'<b>Fan-out:</b> each message goes to <b>every</b> consumer. Each tunes in without affecting the others, like several batch jobs reading one input file.'},
+    {boxes:[['Notifications A',[1,3,5]],['Notifications B',[2,4,6]],['Billing',[1,2,3,4,5,6]]],grp:true,cap:'<b>Both at once:</b> each <b>group</b> gets every message; inside a group, only one machine handles each one.'}];
+  L.h(L.kick('learn','Multiple consumers')+'<h1 class="q">Share the work, or copy it?</h1>'+CSS+'<div class="es-fig" id="m14f"></div><div class="es-row" id="m14c"></div><p class="es-cap" id="m14p"></p>');
+  function draw(m){const M=MODES[m];let s='<svg viewBox="0 0 320 172" role="img" aria-label="A scan topic with six messages and three consumers; each consumer box shows which messages it receives.">'+arrowDefs;
+    s+=box(4,56,96,62,'var(--soft2)','var(--line2)',{rx:12})+T(52,74,'scan topic','font-size:11.5px;font-weight:700;fill:var(--ink);text-anchor:middle');
+    for(let k=0;k<6;k++){const x=12+k*14.5;s+='<rect x="'+x+'" y="84" width="12" height="20" rx="3" style="fill:var(--'+COL[k]+'-bg);stroke:var(--'+COL[k]+')"/>'+T(x+6,98,k+1,'font-size:11px;font-weight:700;fill:var(--'+COL[k]+');text-anchor:middle');}
+    M.boxes.forEach((b,j)=>{const y=6+j*56;s+=line(102,87,152,y+22)+box(156,y,160,46,'var(--card)',M.grp&&j<2?'var(--h1)':'var(--line2)',{rx:10,dash:M.grp&&j<2?'':''});
+      s+=T(164,y+16,b[0],'font-size:11.5px;font-weight:700;fill:var(--ink)');
+      b[1].forEach((n,k)=>{const x=164+k*24;s+='<rect x="'+x+'" y="'+(y+22)+'" width="20" height="18" rx="4" style="fill:var(--'+COL[n-1]+'-bg);stroke:var(--'+COL[n-1]+')"/>'+T(x+10,y+35,n,'font-size:11px;font-weight:700;fill:var(--'+COL[n-1]+');text-anchor:middle');});});
+    if(M.grp)s+='<rect x="151" y="2" width="168" height="110" rx="13" style="fill:none;stroke:var(--h1);stroke-width:1.5;stroke-dasharray:5 4"/>';
+    L.$('#m14f').innerHTML=s+'</svg>';L.$('#m14p').innerHTML=M.cap;}
+  chips(L,L.$('#m14c'),['Load balancing','Fan-out','Two groups'],draw,0);draw(0);
   L.done();}},
 {part:2,src:'Chapter 11 · Multiple consumers',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Inside the notification group, three machines share the work. Each scan should trigger exactly one push message. Which pattern is that?</h1>');
@@ -145,28 +502,66 @@ Course.lesson({
    'Each message goes to one of the three machines, so they split the work between them.',
    'Fan-out would give every machine a copy, so the recipient would get three pushes. Splitting the messages between machines is load balancing.');}},
 {part:2,src:'Chapter 11 · Acknowledgments and redelivery',run(L){
-  L.h(L.kick('learn','Acknowledgments')+'<h1 class="q">How a broker makes sure a message isn’t lost</h1>'+
-   L.prose('A consumer may crash after receiving a message but before finishing it. So brokers use <b>acknowledgments</b>: the consumer tells the broker when it has finished, and only then does the broker remove the message.')+
-   L.flow([['box','Deliver','Broker sends m3 to worker B'],['check','Process','B sends the push'],['shield','Acknowledge','B says “done,” and m3 is removed']])+
-   L.note('If the connection closes or times out with no acknowledgment, the broker assumes the message wasn’t processed and <b>delivers it again</b> to another consumer. But maybe it <i>was</i> processed and only the acknowledgment got lost. Handling that case needs an atomic commit protocol, from chapter 9.','alert'));
+  L.h(L.kick('learn','Acknowledgments')+'<h1 class="q">A message is removed only when the consumer says “done”</h1>'+CSS+
+   '<div class="es-fig" id="a16f"></div><div class="es-row" id="a16c"></div>'+
+   '<p class="es-cap">Brokers use '+L.g('ack','acknowledgments')+'. If the connection closes or times out with no ack, the broker delivers the message again to another consumer. If the work was done and only the ack got lost, it runs twice; fixing that needs atomic commit (chapter 9).</p>');
+  function draw(m){let s='<svg viewBox="0 0 320 156" role="img" aria-label="A broker holding message m3, worker 1 and worker 2, with numbered arrows for delivery, acknowledgment and redelivery.">'+arrowDefs;
+    s+=box(4,8,96,140,'var(--pri-bg)','var(--pri)',{rx:12})+T(52,26,'Broker','font-size:12.5px;font-weight:700;fill:var(--pri);text-anchor:middle');
+    const gone=m===0;
+    s+=box(24,62,56,26,gone?'var(--soft)':'var(--h3-bg)',gone?'var(--line2)':'var(--h3)',{rx:6,dash:gone?'3 3':''})+T(52,80,'m3','font-size:12.5px;font-weight:700;fill:'+(gone?'var(--muted)':'var(--h3)')+';text-anchor:middle');
+    s+=T(52,110,gone?'removed':'kept: no ack','font-size:11px;font-weight:600;fill:'+(gone?'var(--ok)':'var(--h3)')+';text-anchor:middle');
+    const w1x=214;s+=box(w1x,8,102,58,m===1?'var(--no-bg)':'var(--h2-bg)',m===1?'var(--no)':'',{rx:10})+T(w1x+51,28,'Worker 1','font-size:12px;font-weight:700;fill:'+(m===1?'var(--no)':'var(--h2)')+';text-anchor:middle');
+    s+=T(w1x+51,48,m===1?'crashes':'sends the push','font-size:11px;fill:'+(m===1?'var(--no)':'var(--h2)')+';text-anchor:middle');
+    const tag=(x,y,n,col)=>'<circle cx="'+x+'" cy="'+y+'" r="9" style="fill:'+col+'"/>'+T(x,y+4,n,'font-size:11px;font-weight:700;fill:var(--card);text-anchor:middle');
+    s+=line(102,30,210,30,'var(--muted)')+tag(156,30,'1','var(--muted)')+T(156,18,'deliver m3','font-size:11px;fill:var(--muted);text-anchor:middle');
+    if(m===0){s+=line(212,52,104,52,'var(--ok-strong)')+tag(158,52,'2','var(--ok-strong)')+T(158,70,'ack: done','font-size:11px;font-weight:600;fill:var(--ok);text-anchor:middle');}
+    else{if(m===2){s+='<line x1="212" y1="52" x2="168" y2="52" style="stroke:var(--no);stroke-width:1.6;stroke-dasharray:4 3"/><path d="M156 46l10 12m0 -12l-10 12" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>'+T(170,70,'ack lost','font-size:11px;font-weight:600;fill:var(--no)');}
+      s+=box(w1x,92,102,56,'var(--h2-bg)','',{rx:10})+T(w1x+51,112,'Worker 2','font-size:12px;font-weight:700;fill:var(--h2);text-anchor:middle')+T(w1x+51,130,m===2?'sends it again':'sends the push','font-size:11px;fill:var(--h2);text-anchor:middle');
+      s+=line(102,120,210,120,'var(--h3)')+tag(156,120,m===2?'3':'2','var(--h3)')+T(156,140,'redeliver m3','font-size:11px;font-weight:600;fill:var(--h3);text-anchor:middle');}
+    L.$('#a16f').innerHTML=s+'</svg>';}
+  chips(L,L.$('#a16c'),['All goes well','Worker crashes','Ack gets lost'],draw,0);draw(0);
   L.done();}},
 {part:2,src:'Chapter 11 · Acknowledgments and redelivery',pts:1,
- solve:async L=>{L.$('#run').click();},
+ solve:async L=>{L.$('#r17go').click();await waitFor(L,'#r17c .chip',5000);L.$('#r17c').children[2].click();await waitFor(L,'#r17ok',5000);},
  run(L){
-  const S=[['Worker A takes m1 “Picked up”, sends the push, acknowledges','Picked up'],['Worker B takes m2 “At hub”, sends the push, acknowledges','At hub'],['Worker B takes m3 “Out for delivery”…',''],
-   ['Worker A takes m4 “Delivered”, sends the push, acknowledges','Delivered'],['Worker B crashes before acknowledging m3','!'],['Broker redelivers m3 to worker A, which sends the push','Out for delivery']];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Parcel 88’s four status events go through the notification queue to two load-balanced workers. Run it and watch worker B crash mid-message.</h1>'+
-   '<button class="btn pri" id="run">'+L.ic('play')+'Run the queue</button><div id="tl" style="margin-top:10px"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin-top:10px"><div class="small" style="margin-bottom:6px">Mrs. Okoro’s phone</div><div id="pp" class="small">No pushes yet.</div></div><div id="rq"></div>');
-  let n=0;
-  L.$('#run').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}const s=S[k];
-      tl.insertAdjacentHTML('beforeend','<div class="small" style="padding:3px 0;'+(s[1]==='!'?'color:var(--no);font-weight:600':'')+'">'+(k+1)+'. '+s[0]+'</div>');
-      if(s[1]&&s[1]!=='!'){n++;const pp=L.$('#pp');if(n===1)pp.innerHTML='';pp.insertAdjacentHTML('beforeend','<span class="chip static'+(n===4?' no':'')+'">'+n+'. '+s[1]+'</span>');}
-      k++;if(k===S.length){clearInterval(t);const q=L.$('#rq');q.innerHTML='<h2 class="sub">Mrs. Okoro saw “Delivered” before “Out for delivery.” Which change prevents this?</h2>';
-        L.mc(q,['Add a third worker to share the load','Give each worker its own queue, no load balancing','Have workers acknowledge before processing'],1,
-         'That’s the book’s fix. Even when a broker tries to keep order, load balancing plus redelivery will reorder messages. That matters here because the messages depend on each other.',
-         'More workers means more chances to reorder. Acknowledging before processing would lose m3 entirely if a worker crashed. The fix is a separate queue per consumer, without load balancing.');}},380);};}},
+  const MSG={1:['Picked up','h1'],2:['At hub','h2'],3:['Out for delivery','h3'],4:['Delivered','h4']};
+  const SC={base:{lanes:['A','B'],ev:[['A',0,1,'ok'],['B',0,2,'ok'],['B',1,3,'crash'],['A',1,4,'ok'],['A',2,3,'re']]},
+    third:{lanes:['A','B','C'],ev:[['A',0,1,'ok'],['B',0,2,'ok'],['C',0,3,'crash'],['A',1,4,'ok'],['B',2,3,'re']]},
+    ackfirst:{lanes:['A','B'],ev:[['A',0,1,'ok'],['B',0,2,'ok'],['B',1,3,'ackcrash'],['A',1,4,'ok']]},
+    own:{lanes:['A'],note:'Fix: this queue has one worker, A',ev:[['A',0,1,'ok'],['A',1,2,'ok'],['A',2,3,'crash'],['A',3,3,'re'],['A',4,4,'ok']]}};
+  let tried=0,graded=false;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Mrs. Okoro’s parcel OP-48213 sends four status messages through the notification queue to two load-balanced workers. Worker B will crash.</h1>'+CSS+
+   '<div class="es-fig" id="r17f"></div><div class="es-phone"><div class="h">Mrs. Okoro’s phone</div><div id="r17p" class="small">No pushes yet.</div></div>'+
+   '<div id="r17x"><button class="btn pri" id="r17go" style="margin-top:10px">'+L.ic('play')+'Run the queue</button></div>');
+  function lanes(sc,shown){const n=sc.lanes.length,H=24+n*50;let s='<svg viewBox="0 0 320 '+H+'" role="img" aria-label="Timeline: each lane is a worker, each pill a message it handled.">';
+    s+=T(62,14,'time →','font-size:11px;font-weight:600;fill:var(--muted)');
+    if(sc.note)s+=T(316,14,sc.note,'font-size:11px;font-weight:700;fill:var(--h2);text-anchor:end');
+    sc.lanes.forEach((ln,j)=>{const y=24+j*50;s+='<line x1="58" y1="'+(y+16)+'" x2="316" y2="'+(y+16)+'" style="stroke:var(--line);stroke-width:1.5"/>'+T(2,y+20,'Worker '+ln,'font-size:11.5px;font-weight:700;fill:var(--ink)');});
+    sc.ev.slice(0,shown).forEach(e=>{const j=sc.lanes.indexOf(e[0]),y=24+j*50,x=62+e[1]*51,m=MSG[e[2]],bad=e[3]==='crash'||e[3]==='ackcrash';
+      s+='<rect x="'+x+'" y="'+(y+3)+'" width="44" height="26" rx="8" style="fill:'+(bad?'var(--no-bg)':'var(--'+m[1]+'-bg)')+';stroke:'+(bad?'var(--no)':'var(--'+m[1]+')')+';stroke-width:1.5'+(bad?';stroke-dasharray:4 3':'')+'"/>';
+      s+=T(x+22,y+21,'m'+e[2]+(bad?' ✗':' ✓'),'font-size:12px;font-weight:700;fill:'+(bad?'var(--no)':'var(--'+m[1]+')')+';text-anchor:middle');
+      const sub={crash:'crash',ackcrash:'acked, crash',re:'redelivered'}[e[3]];
+      if(sub)s+=T(x+22,y+43,sub,'font-size:11px;font-weight:600;fill:'+(bad?'var(--no)':'var(--h3)')+';text-anchor:middle');});
+    L.$('#r17f').innerHTML=s+'</svg>';}
+  async function play(key){const sc=SC[key],out=[];L.$('#r17p').innerHTML='No pushes yet.';
+    for(let k=0;k<=sc.ev.length;k++){if(!L.$('#r17f'))return null;lanes(sc,k);
+      const e=sc.ev[k-1];if(e&&(e[3]==='ok'||e[3]==='re')){out.push(e[2]);
+        L.$('#r17p').innerHTML=out.map((n,j)=>{const wrong=j>0&&n<out[j-1];return '<span class="chip static'+(wrong?' no':' ok')+'">'+(j+1)+'. '+MSG[n][0]+'</span>';}).join('');}
+      await L.sleep(360);}
+    return out;}
+  lanes(SC.base,0);
+  L.$('#r17go').onclick=async function(){this.remove();const out=await play('base');if(!out)return;
+    L.$('#r17x').innerHTML='<h2 class="sub" style="margin-top:12px">“Delivered” arrived before “Out for delivery”. Pick a fix and replay.</h2><div class="es-row" id="r17c"></div>';
+    const FX=[['Add a third worker','third'],['Acknowledge before processing','ackfirst'],['One queue per consumer, no load balancing','own']];
+    FX.forEach((f,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=f[0];
+      b.onclick=async()=>{if(b.dataset.busy)return;[...L.$('#r17c').children].forEach(x=>x.dataset.busy=1);b.classList.add('sel');tried++;
+        const o=await play(f[1]);if(!o)return;[...L.$('#r17c').children].forEach(x=>delete x.dataset.busy);
+        const ok=f[1]==='own';if(!graded){graded=true;L.award(ok);}
+        if(ok){L.$('#r17x').insertAdjacentHTML('beforeend','<span id="r17ok"></span>');
+          L.sheet('ok','In order','With one consumer per queue, there’s no Worker B to hand m3 to. Worker A crashes on m3, restarts, and gets m3 back before m4. Even when a broker tries to keep order, <b>load balancing plus redelivery</b> reorders messages. That matters when messages depend on each other, as these do.');L.done();}
+        else{b.classList.remove('sel');b.classList.add('no');
+          L.sheet('no',f[1]==='third'?'Still out of order':'Now a message is lost',f[1]==='third'?'Worker C crashed on m3, and its redelivery came after m4. More workers just mean more chances to reorder. Try another fix.':'Worker B acknowledged m3, then crashed, so the broker deleted it. Mrs. Okoro never hears “Out for delivery”. Try another fix.');}};
+      L.$('#r17c').appendChild(b);});};}},
 {part:2,src:'Chapter 11 · Multiple consumers',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Load balancing or fan-out?',['Load balancing','Fan-out'],[
@@ -177,73 +572,187 @@ Course.lesson({
 
 /* ---------- PART 4: PARTITIONED LOGS ---------- */
 {part:3,src:'Chapter 11 · Partitioned Logs',run(L){
-  L.h(L.kick('learn','Two mindsets')+'<h1 class="q">Why not keep the messages, the way a database does?</h1>'+
-   L.prose('Networks and classic brokers have a <b>transient</b> mindset: a message passes through and leaves no trace. Even brokers that write to disk delete messages soon after delivery. Databases and files have the opposite, <b>permanent</b> mindset: data stays until someone deletes it.')+
-   L.lanes([['x','Classic broker','Receiving and acknowledging <b>deletes</b> the message, so rerunning a consumer won’t give the same result. A new consumer only sees messages sent after it signed up.',4],
-            ['check','Files and databases','Reading changes nothing, so a job can be rerun safely, just like a batch job. A new client can read data written long ago.',2]])+
-   L.prose('A <b>log-based message broker</b> combines both: durable storage like a database, with the low-latency notifications of messaging.'));
-  L.done();}},
+  let qA=[5,6,7,8,9],pB=5;
+  L.h(L.kick('learn','Two mindsets')+'<h1 class="q">Reading deletes, or reading just moves a bookmark</h1>'+CSS+
+   '<div class="es-fig" id="m19f"></div><div class="es-row"><button class="btn" id="m19b">'+L.ic('play')+'Read one message</button></div>'+
+   '<p class="es-cap">In a classic broker, acknowledging a message deletes it, so a rerun can’t give the same result. Files and databases keep data. A <b>log-based broker</b> combines both: durable storage plus fast notification.</p>');
+  function draw(){let s='<svg viewBox="0 0 320 196" role="img" aria-label="Top: a classic queue loses each message once read. Bottom: a log keeps every message and the consumer’s pointer moves along.">';
+    s+=T(4,14,'Classic broker: a message passes through','font-size:12px;font-weight:700;fill:var(--pri)');
+    qA.forEach((m,k)=>{const x=8+k*36;s+=box(x,24,32,28,'var(--pri-bg)','var(--pri)',{rx:6})+T(x+16,43,'m'+m,'font-size:11.5px;font-weight:700;fill:var(--pri);text-anchor:middle');});
+    s+=box(236,22,80,32,'var(--h2-bg)','',{rx:8})+T(276,42,'Consumer','font-size:11.5px;font-weight:700;fill:var(--h2);text-anchor:middle');
+    s+=T(4,74,'New consumers get only new messages','font-size:11.5px;fill:var(--muted)');if(qA[0]>5)s+=T(276,74,'m'+(qA[0]-1)+' deleted','font-size:11.5px;font-weight:700;fill:var(--no);text-anchor:middle');
+    s+='<line x1="0" y1="88" x2="320" y2="88" style="stroke:var(--line);stroke-width:1"/>';
+    s+=T(4,108,'Log: messages stay, like a file','font-size:12px;font-weight:700;fill:var(--h2)');
+    for(let k=0;k<10;k++){const x=6+k*31,rd=k<pB;s+=box(x,118,27,28,rd?'var(--soft2)':'var(--card)','var(--line2)',{rx:5})+T(x+13.5,137,k,'font-size:11.5px;font-weight:600;fill:'+(rd?'var(--muted)':'var(--ink)')+';text-anchor:middle');}
+    const px=6+pB*31+13.5;s+='<path d="M'+px+' 150l-7 10h14z" style="fill:var(--h2)"/>'+T(Math.min(px,250),174,'consumer at offset '+pB,'font-size:11.5px;font-weight:600;fill:var(--h2);text-anchor:middle');
+    s+='<path d="M19.5 150l-7 10h14z" style="fill:none;stroke:var(--h4);stroke-width:1.5;stroke-dasharray:3 2"/>'+T(4,192,'a new consumer can start at 0','font-size:11.5px;font-weight:600;fill:var(--h4)');
+    L.$('#m19f').innerHTML=s+'</svg>';}
+  L.$('#m19b').onclick=()=>{if(qA.length>1){qA=qA.slice(1);qA.push(qA[qA.length-1]+1);}if(pB<9)pB++;draw();};
+  draw();L.done();}},
 {part:3,src:'Chapter 11 · Using logs for message storage',run(L){
-  L.h(L.kick('learn','How a log-based broker works')+'<h1 class="q">Append, partition, number</h1>'+
-   L.list([['Append','A producer sends a message by adding it to the end of a '+L.g('log','log')+'. A consumer reads the log in order; at the end, it waits to be told about new messages, much like the Unix tool <code>tail -f</code>.'],
-     ['Partition','To go beyond what one disk can handle, the log is split into '+L.g('partition','partitions')+' on different machines. A topic is a group of partitions carrying the same kind of message.'],
-     ['Number','Inside each partition, every message gets an increasing '+L.g('offset','offset')+'. Messages in one partition are totally ordered. Across partitions there is <b>no</b> ordering guarantee.']],2)+
-   '<p class="small" style="margin-top:10px">The book’s examples are Apache Kafka, Amazon Kinesis Streams and Twitter’s DistributedLog. They write every message to disk yet handle millions of messages per second by partitioning, and survive faults by replicating.</p>');
+  const LEN=[8,6,9];
+  let s='<svg viewBox="0 0 320 220" role="img" aria-label="The parcel-scans topic as three partitions, each a row of numbered messages with new ones appended at the right end. Below, the systems that work this way.">'+arrowDefs;
+  s+=T(4,14,'Topic “parcel-scans”','font-size:12px;font-weight:700;fill:var(--ink)');
+  LEN.forEach((n,p)=>{const y=26+p*44;s+=T(4,y+18,'P'+p,'font-size:12px;font-weight:700;fill:var(--muted)');
+    for(let k=0;k<n;k++){const x=28+k*28;s+=box(x,y,25,26,k===n-1?'var(--h3-bg)':'var(--card)',k===n-1?'var(--h3)':'var(--line2)',{rx:5})+T(x+12.5,y+18,k,'font-size:11.5px;font-weight:600;fill:var(--ink);text-anchor:middle');}
+    const ex=28+n*28;s+='<line x1="'+(ex+22)+'" y1="'+(y+13)+'" x2="'+(ex+3)+'" y2="'+(y+13)+'" style="stroke:var(--h3);stroke-width:2" marker-end="url(#es-ah)"/>';});
+  s+=T(316,14,'append →','font-size:11.5px;font-weight:700;fill:var(--h3);text-anchor:end');
+  s+='<path d="M'+(28+5*28+12.5)+' 54l-6 8h12z" style="fill:var(--h1)"/>'+T(28+5*28+24,63,'a consumer’s offset','font-size:11px;font-weight:700;fill:var(--h1)');
+  s+=T(4,172,'Order holds inside a partition, not across them.','font-size:12px;font-weight:600;fill:var(--h2)');
+  s+='<line x1="2" y1="182" x2="318" y2="182" style="stroke:var(--line);stroke-width:1"/>';
+  s+=T(4,198,'Kafka · Kinesis Streams · DistributedLog','font-size:11.5px;font-weight:600;fill:var(--muted)');
+  s+=T(4,214,'Google Cloud Pub/Sub: log-like inside, JMS-style API','font-size:11px;fill:var(--muted)');
+  s+='</svg>';
+  L.h(L.kick('learn','How a log-based broker works')+'<h1 class="q">Append, partition, number</h1>'+CSS+'<div class="es-fig">'+s+'</div>'+
+   '<p class="es-cap">Producers append to the end of a '+L.g('log','log')+'; a consumer reads it in order and waits at the end, like <code>tail -f</code>. Each '+L.g('partition','partition')+' can sit on its own machine; every message gets an increasing '+L.g('offset','offset')+'.</p>'+
+   '<p class="es-foot">All on disk, yet millions of messages a second by partitioning; replicas survive faults.</p>');
   L.done();}},
-{part:3,src:'Chapter 11 · Logs compared to traditional messaging',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh builds Otterpost’s event log</h1>');
-  L.beats(L.card,[
-   ['The topic','Linh creates a <b>parcel-scans</b> topic with 8 partitions. Every scan of the same parcel goes to the same partition, so each parcel’s events stay in order.'],
-   ['Fan-out for free','Notifications, billing and the ETA model each read the whole topic at their own pace. Reading deletes nothing, so they never get in each other’s way.'],
-   ['Load balancing by partition','The notification group has 4 machines. The broker doesn’t hand out single messages: it gives each machine whole partitions, 2 each. Each machine reads its partitions one message at a time.'],
-   ['Light bookkeeping','No acknowledgment per message. The broker just records each consumer’s offset now and then: everything below it is done, everything above it is not seen yet.'],
-   ['A crash','Machine 3 dies after handling partition 6 up to offset 5,119, but its last recorded offset was 5,100. Another machine takes over partition 6 from 5,100, so messages 5,100 to 5,119 are processed a second time.']],
-   'The offset works like the log sequence number a database follower uses to reconnect to its leader. The broker acts like the leader, the consumer like the follower.');}},
-{part:3,src:'Chapter 11 · Logs compared to traditional messaging',run(L){
-  L.h(L.kick('learn','The trade-off')+'<h1 class="q">Handing out whole partitions has a price</h1>'+
-   L.list([['people','At most one consumer per partition','A topic with 8 partitions can spread its work over at most 8 machines in a group. To get more parallelism, use more partitions.'],
-     ['clock','Head-of-line blocking','One slow message holds up every message behind it in that partition.']],4)+
-   '<h2 class="sub">So which broker when?</h2>'+
-   L.lanes([['list','Classic JMS/AMQP queue','Messages are expensive to process, you want to spread them one by one across workers, and order doesn’t matter much.',1],
-            ['layers','Log-based broker','Very high throughput, each message is quick to process, and order matters.',2]]));
-  L.done();}},
-{part:3,src:'Chapter 11 · Logs compared to traditional messaging',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Otterpost turns booking events into PDF shipping labels. Each label takes about two seconds to render, and the order they come out in doesn’t matter. Which broker style fits best?</h1>');
-  L.mc(L.card,['A log-based broker with partitions','A classic JMS/AMQP-style queue'],1,
-   'Slow, independent tasks are what a classic queue is for: each message goes to whichever worker is free, and one slow label doesn’t block the rest.',
-   'In a log, one slow label holds up its whole partition, and you can’t have more workers than partitions. Slow tasks with no ordering needs suit a classic queue.');}},
-{part:3,src:'Chapter 11 · Disk space usage',run(L){
-  L.h(L.kick('learn','Disk space')+'<h1 class="q">The log is a huge ring buffer on disk</h1>'+
-   L.prose('If you only ever append, the disk fills up. So the log is split into <b>segments</b>, and from time to time the oldest segments are deleted or moved to archive storage.')+
-   L.prose('In effect the log is a fixed-size buffer that throws away its oldest messages when full (a <b>circular</b> or <b>ring buffer</b>). Because it lives on disk, it can be very large. The book’s rough sum: a 6 TB drive written at its full 150 MB/s fills in about 11 hours. Real systems rarely write that fast, so a log often holds days or weeks of messages.')+
-   L.note('A log’s throughput stays about the same however long you keep messages, because every message goes to disk anyway. Brokers that keep messages in memory are fast while queues are short, then slow down once they spill to disk.','trend'));
-  L.done();}},
-{part:3,src:'Chapter 11 · When consumers cannot keep up',pts:1,run(L){
-  L.h(L.kick('learn','Slow consumers')+'<h1 class="q">When a consumer can’t keep up</h1>'+
-   L.prose('In the drop, buffer or backpressure choice, a log is <b>buffering with a large but fixed-size buffer</b>. If a consumer falls so far behind that the messages it needs have already been deleted, it misses them.')+
-   L.list([['eye','Watch the lag','Monitor how far each consumer is behind the end of the log and alert if it grows. The buffer is big, so a person has time to fix the slow consumer.'],
-     ['shield','Only the slow one suffers','A consumer that falls behind doesn’t disrupt the others. You can even point a test consumer at the production log with little risk.'],
-     ['x','A stopped consumer costs nothing','A crashed or shut-down consumer leaves only its offset behind. With a classic broker, a forgotten queue keeps filling up and eats memory.']],3)+
-   '<div id="lq"><h2 class="sub">Linh’s log disks hold 6 TB each and take about 15 MB/s, a tenth of full speed. Roughly how far behind can a consumer fall before it misses messages?</h2></div>');
-  L.mc(L.$('#lq'),['About 11 hours','About 4 to 5 days','About 6 weeks'],1,
-   '6,000,000 MB ÷ 15 MB/s = 400,000 seconds, about 111 hours or 4.6 days. Writing at a tenth of full speed buys ten times the 11 hours.',
-   '11 hours is the figure at full speed. At a tenth of the speed the disk lasts ten times longer: 6,000,000 MB ÷ 15 MB/s ≈ 400,000 seconds, about 4.6 days.');}},
-{part:3,src:'Chapter 11 · Replaying old messages',pts:1,run(L){
-  L.h(L.kick('learn','Replaying old messages')+'<h1 class="q">Reading a log is like reading a file</h1>'+
-   L.prose('With a classic broker, processing and acknowledging a message deletes it. In a log-based broker, consuming is <b>read-only</b>. Apart from the consumer’s own output, the only effect is that its offset moves forward, and the consumer controls that offset.')+
-   L.prose('So you can start a copy of a consumer at yesterday’s offsets, write its output somewhere new, and reprocess the whole day, as often as you like, with different code each time. That makes a log much like batch input: derived data stays separate from the input, so experiments and recovery from bugs get easier.')+
-   '<div id="rq"><h2 class="sub">Tobias’s new ETA consumer wrote wrong delivery windows into its table all day yesterday. The bug is fixed now. What can Linh do?</h2></div>');
-  L.mc(L.$('#rq'),['Nothing: those scans were consumed and are gone','Rerun the fixed consumer from yesterday’s offsets','Ask the courier apps to resend yesterday’s scans'],1,
-   'The scans are still in the log. A copy of the consumer started at yesterday’s offsets recomputes the windows with the fixed code.',
-   'Consuming a log deletes nothing. Linh can start the fixed consumer at yesterday’s offsets, write to a fresh table and reprocess the day. Nobody needs to resend anything.');}},
-{part:3,src:'Chapter 11 · Summary',pts:5,run(L){
+{part:3,src:'Chapter 11 · When consumers cannot keep up',
+ solve:async L=>{setRange(L,'g21-m',300);setRange(L,'g21-c2',0);for(let k=0;k<4&&!L.$('#g21ok');k++){await L.sleep(80);L.$('#g21-sk').click();await L.sleep(650);}await waitFor(L,'#g21ok',2000);},
+ run(L){
+  L.h(L.kick('pr','Explore the ring')+'<h1 class="q">One partition of Otterpost’s event log is a ring of disk segments. Make one consumer fall so far behind that it loses events.</h1>'+CSS+
+   '<p class="small">Slow a consumer, speed up new scans, or skip ahead. You can drag a dot backwards to re-read old scans.</p><div id="g21"></div><p class="es-foot">Rates are illustrative: 100k scans an hour on a normal day.</p>');
+  const rg=Ring(L,L.$('#g21'),{id:'g21',cons:RING_CONS,on:e=>{
+    if(e.type==='lost'&&!L.$('#g21ok')){L.$('#g21').insertAdjacentHTML('beforeend','<span id="g21ok"></span>');const c=rg.S.cons[e.i];const others=rg.S.cons.filter(x=>x!==c&&!x.missed).map(x=>x.name);
+      L.sheet('info',c.name+' was lapped','The write head came all the way round and the segments '+c.name+' still needed were deleted, so it skipped to the oldest kept scan. '+(others.length?others.join(' and ')+' didn’t notice a thing. ':'')+'A log is <b>buffering with a big but fixed-size buffer</b>: a ring.');L.done();}}});}},
+{part:3,src:'Chapter 11 · Disk space usage',pts:1,
+ solve:async L=>{L.$('#d22c').children[1].click();await waitFor(L,'#d22s',5000);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">A typical large disk (when the book was written) holds 6 TB and writes 150 MB per second. Writing flat out, how long until the ring is full and starts deleting?</h1>'+CSS+
+   '<div class="es-row" id="d22c"></div><div class="es-fig" id="d22f"></div><div id="d22x"></div>');
+  function draw(fr,big,sub){let s='<svg viewBox="0 0 320 196" role="img" aria-label="A ring of disk segments filling up as messages are written.">';const cx=160,cy=98;
+    for(let k=0;k<12;k++)s+='<path d="'+sector(cx,cy,62,88,k*30+.8,k*30+29.2)+'" style="fill:var(--card);stroke:var(--line2);stroke-width:1.2"/>';
+    if(fr>0)s+='<path d="'+sector(cx,cy,64,86,0,Math.min(359.9,fr*360))+'" style="fill:var(--h2-bg)"/>';
+    const a=Math.min(359.9,fr*360);s+='<line x1="'+pol(cx,cy,58,a).replace(' ','" y1="')+'" x2="'+pol(cx,cy,94,a).replace(' ','" y2="')+'" style="stroke:var(--h3);stroke-width:4;stroke-linecap:round"/>';
+    s+=T(cx,cy+4,big,'font-size:19px;font-weight:700;fill:var(--ink);text-anchor:middle')+T(cx,cy+20,sub,'font-size:11px;fill:var(--muted);text-anchor:middle');
+    s+=T(4,190,'6 TB disk','font-size:12px;font-weight:600;fill:var(--muted)')+T(316,190,'written in order','font-size:12px;font-weight:600;fill:var(--muted);text-anchor:end');
+    L.$('#d22f').innerHTML=s+'</svg>';}
+  draw(0,'0 h','written');
+  ['About 1 hour','About 11 hours','About 4 days'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      for(let k=1;k<=30;k++){if(!L.$('#d22f'))return;draw(k/30,R1(11.1*k/30)+' h','at 150 MB/s');await L.sleep(50);}
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: about 11 hours':'About 11 hours','6,000,000 MB ÷ 150 MB/s = 40,000 seconds, about 11 hours. After that, each new segment overwrites the oldest one. The ratio stays the same with more disks and machines.');
+      L.$('#d22x').innerHTML=rng('d22s','Write speed',15,150,150,15)+'<div class="es-read" id="d22r"></div>';
+      const u=()=>{const v=+L.$('#d22s').value,h=6e6/v/3600;L.$('#d22s-v').textContent=v+' MB/s';draw(1,h<48?R1(h)+' h':R1(h/24)+' days','kept at '+v+' MB/s');
+        L.$('#d22r').innerHTML='Real logs rarely write at full speed, so the ring often holds <b>days or weeks</b> of messages. And the log’s throughput stays about the same however much it keeps, because every message goes to disk anyway.';};
+      L.$('#d22s').oninput=u;u();L.done();};
+    L.$('#d22c').appendChild(b);});}},
+{part:3,src:'Chapter 11 · Consumer offsets',
+ solve:async L=>{setRange(L,'o23m',5);await L.sleep(60);L.$('#o23x').click();await L.sleep(60);L.$('#o23s').click();await waitFor(L,'#o23ok',3000);},
+ run(L){
+  const S0=1; /* saved offset sits at cell 1 of each row */
+  const st={n:2,k:3,crash:false,slow:false},seen={many:false,crash:false,slow:false};
+  L.h(L.kick('pr','Consumer groups and offsets')+'<h1 class="q">Linh’s notification group reads a topic with four partitions. Add machines, crash M2, and slow a message.</h1>'+CSS+
+   '<div class="es-fig" id="o23f"></div>'+
+   '<div class="small" style="margin:2px 0 6px"><span style="display:inline-block;width:3px;height:12px;background:var(--ok-strong);vertical-align:middle"></span> saved offset · <span style="display:inline-block;width:12px;height:10px;background:var(--h1-bg);border:1.5px solid var(--h1);vertical-align:middle"></span> reading now · <span style="display:inline-block;width:12px;height:10px;background:var(--h3-bg);border:1.5px solid var(--h3);vertical-align:middle"></span> ×2 processed twice</div>'+
+   rng('o23m','Machines',1,6,st.n)+rng('o23k','Not yet saved',0,5,st.k)+
+   '<div class="es-row"><button class="btn" id="o23x"></button><button class="btn" id="o23s"></button></div>'+
+   '<div class="es-read" id="o23r" aria-live="polite"></div>'+
+   '<p class="es-cap">The broker hands each machine <b>whole partitions</b>, read in order. It doesn’t track acks per message; now and then it saves each partition’s <b>offset</b>.</p>'+
+   '<p class="small" id="o23h"></p><p class="es-foot">Offsets and counts are illustrative.</p>');
+  /* split partitions over the first min(n,4) machines in blocks: 2 machines → P0,P1 | P2,P3 */
+  function assign(){const k=Math.min(st.n,4),own=[0,1,2,3].map(p=>Math.floor(p*k/4));
+    let orphan=[];if(st.crash&&st.n>=2){orphan=[0,1,2,3].filter(p=>own[p]===1);
+      orphan.forEach(p=>{let best=-1,cnt=9;for(let m=0;m<st.n;m++){if(m===1)continue;const c=own.filter((o,q)=>o===m&&!orphan.includes(q)).length;if(c<cnt){cnt=c;best=m;}}own[p]=best;});}
+    return {own,orphan};}
+  function draw(){
+    const {own,orphan}=assign(),r=S0+st.k,n=st.n;
+    let s='<svg viewBox="0 0 320 188" role="img" aria-label="Four partitions as rows of messages on the left, the machines of the notification group on the right, with a line from each partition to the machine reading it.">';
+    const mh=Math.min(40,(176-(n-1)*6)/n),my=m=>R1(6+m*(mh+6));
+    for(let p=0;p<4;p++){const y=8+p*44,orph=orphan.includes(p),cur=orph?S0:r,slowHere=st.slow&&p===1;
+      s+=T(4,y+19,'P'+p,'font-size:12px;font-weight:700;fill:var(--muted)');
+      for(let i=0;i<7;i++){const x=30+i*27;let f=i<cur?'var(--soft2)':'var(--card)',sk='var(--line2)',dash='',lab='';
+        if(orph&&i>=S0&&i<r){f='var(--h3-bg)';sk='var(--h3)';lab='×2';}
+        if(i===cur){f=slowHere?'var(--no-bg)':orph&&i<r?'var(--h3-bg)':'var(--h1-bg)';sk=slowHere?'var(--no)':'var(--h1)';if(slowHere)lab='2 s';}
+        else if(slowHere&&i>cur){sk='var(--no)';dash='3 2';}
+        s+=box(x,y,24,28,f,sk,{rx:5,dash,sw:i===cur?2.2:1.5});
+        if(lab)s+=T(x+12,y+19,lab,'font-size:11px;font-weight:700;fill:'+(lab==='2 s'?'var(--no)':'var(--h3)')+';text-anchor:middle');}
+      s+='<rect x="'+(30+S0*27-2.5)+'" y="'+(y-3)+'" width="3" height="34" rx="1.5" style="fill:var(--ok-strong)"/>';
+      const m=own[p];s+='<line x1="220" y1="'+(y+14)+'" x2="238" y2="'+R1(my(m)+mh/2)+'" style="stroke:var(--muted);stroke-width:1.4"/>';}
+    for(let m=0;m<n;m++){const y=my(m),dead=st.crash&&m===1,mine=[0,1,2,3].filter(p=>own[p]===m),idle=!dead&&!mine.length;
+      const col=dead?'var(--no)':idle?'var(--muted)':'var(--h2)';
+      s+=box(240,y,76,mh,dead?'var(--no-bg)':idle?'var(--soft)':'var(--h2-bg)',dead?'var(--no)':idle?'var(--line2)':'',{rx:8,dash:dead||idle?'4 3':''});
+      s+=T(278,R1(y+mh/2+4),'M'+(m+1)+' · '+(dead?'down':idle?'idle':mine.map(p=>'P'+p).join(',')),'font-size:11.5px;font-weight:700;fill:'+col+';text-anchor:middle');}
+    L.$('#o23f').innerHTML=s+'</svg>';
+    L.$('#o23m-v').textContent=n;L.$('#o23k-v').textContent=st.k;
+    const x=L.$('#o23x');x.disabled=n<2;x.innerHTML=n<2?L.ic('alert')+'Crash M2 (needs 2)':st.crash?L.ic('cycle')+'Restart M2':L.ic('alert')+'Crash M2';
+    L.$('#o23s').innerHTML=L.ic('clock')+(st.slow?'Make P1 fast again':'Slow label in P1');
+    const alive=n-(st.crash&&n>=2?1:0),working=Math.min(alive,4),twice=orphan.length*st.k,wait=st.slow?6-(orphan.includes(1)?S0:r):0;
+    L.$('#o23r').innerHTML='<div class="es-tbl"><span>'+L.ic('people')+'</span><span>Machines doing work</span><b class="'+(working<alive?'no-t':'')+'">'+working+' of '+alive+'</b>'+
+      '<span>'+L.ic('cycle')+'</span><span>Messages processed twice</span><b class="'+(twice?'no-t':'')+'">'+twice+'</b>'+
+      '<span>'+L.ic('clock')+'</span><span>Stuck behind P1’s slow label</span><b class="'+(wait?'no-t':'')+'">'+(st.slow?wait:'none')+'</b></div>'+
+      '<div class="small" style="margin-top:6px">'+(st.crash&&n>=2?(orphan.length?'M2’s '+orphan.map(p=>'P'+p).join(' and ')+' restart from the saved offset (5,100), so '+st.k+' message'+(st.k===1?'':'s')+' each, up to 5,'+(100+st.k)+', run again.':'M2 had no partition, so nothing is redone.'):working<alive?'Only one machine per partition: the rest sit idle.':'Each machine reads its partitions one message at a time.')+'</div>';
+    const tick=b=>b?'<b class="ok-t">✓</b>':'○';
+    L.$('#o23h').innerHTML=tick(seen.many)+' more than 4 machines · '+tick(seen.crash)+' crash M2 · '+tick(seen.slow)+' slow label';
+    if(seen.many&&seen.crash&&seen.slow&&!L.$('#o23ok')){L.$('#o23h').insertAdjacentHTML('beforeend','<span id="o23ok"></span>');
+      L.sheet('info','Whole partitions, saved offsets','At most <b>one machine per partition</b>: more parallelism needs more partitions. After a crash, the next machine starts at the <b>saved offset</b>, so anything read since then is processed twice; a database follower reconnects by log position the same way. One slow message holds up its partition: '+L.g('head-of-line','head-of-line blocking')+'. In return, one machine reads each partition in order, so if every scan of a parcel lands in the same partition, its scans stay in order.');L.done();}
+  }
+  L.$('#o23m').oninput=()=>{st.n=+L.$('#o23m').value;if(st.n>4)seen.many=true;if(st.n<2)st.crash=false;draw();};
+  L.$('#o23k').oninput=()=>{st.k=+L.$('#o23k').value;draw();};
+  L.$('#o23x').onclick=()=>{if(st.n<2)return;st.crash=!st.crash;if(st.crash)seen.crash=true;draw();};
+  L.$('#o23s').onclick=()=>{st.slow=!st.slow;if(st.slow)seen.slow=true;draw();};
+  draw();}},
+{part:3,src:'Chapter 11 · When consumers cannot keep up',
+ solve:async L=>{const b=L.$('#e24c').children;for(const k of [0,1,2]){b[k].click();await waitFor(L,'#e24d'+k,3000);}},
+ run(L){
+  const PRE=[
+   ['One slow consumer',{caps:[300,200,80]},12,'Billing reads 80k an hour but 100k arrive, so it falls further behind every hour. Notifications and the ETA model don’t notice. Watch each consumer’s lag and alert: the ring is big, so someone has time to fix it.'],
+   ['Consumer shut down',{caps:[300,0,125]},12,'A stopped consumer costs nothing but its saved offset. In a classic broker, a queue whose consumer is gone keeps filling and takes memory from the others, so you must remember to delete it.'],
+   ['Replay yesterday',{caps:[300,200,150]},12,'Billing jumped back 24 hours and re-reads the day. Reading deletes nothing, so a copy of a consumer can reprocess old messages into a new table, as often as needed. A classic broker can’t: acknowledged messages are gone.'],
+   ['Peak Week ×3',{mult:3,caps:[300,200,125]},12,'The disk didn’t shrink, but at three times the rate it holds a third of the hours: 24 instead of 72. Consumers slower than the new rate now fall behind, with less time to spare.'],
+   ['Stopped at Peak',{mult:3,caps:[300,200,0]},24,'Billing fell more than a whole ring behind. The segments it needed were deleted, so it lost those scans. Only billing is affected.']];
+  const seen=new Set();
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Push the log to its limits. Try at least three presets.</h1>'+CSS+'<div class="es-row" id="e24c"></div><div class="fb info" id="e24t" style="margin-bottom:6px">Pick a preset.</div><div id="e24"></div>');
+  const rg=Ring(L,L.$('#e24'),{id:'e24',cons:RING_CONS,sliders:false,auto:false});
+  PRE.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];
+    b.onclick=async()=>{if(rg.S.busy)return;[...L.$('#e24c').children].forEach(x=>x.classList.toggle('sel',x===b));
+      rg.reset(Object.assign({lags:[.3,1,4]},p[1]));if(j===2)rg.rewind(2,24);L.$('#e24t').innerHTML=p[3];
+      await rg.skip(p[2]);if(!rg.alive())return;seen.add(j);L.$('#e24t').insertAdjacentHTML('beforeend','<span id="e24d'+j+'"></span>');
+      if(seen.size>=3&&!L.$('#e24ok')){L.$('#e24c').insertAdjacentHTML('beforeend','<span id="e24ok"></span>');L.done();}};
+    L.$('#e24c').appendChild(b);});}},
+{part:3,src:'Chapter 11 · Logs compared to traditional messaging',pts:1,
+ solve:async L=>{setRange(L,'c25p',6);setRange(L,'c25h',36);L.$('#c25go').click();await waitFor(L,'#c25ok',5000);},
+ run(L){
+  const ARR=300,PER=70,MACH=6,BUDGET=48;let graded=false,busy=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Plan the log for Peak Week: 300k scans an hour. Six ETA machines read 70k an hour each. Linh must be able to replay yesterday; the disks hold 48 hours.</h1>'+CSS+
+   rng('c25p','Partitions',1,8,3)+rng('c25h','Keep scans for',6,96,12,6)+'<div class="es-read" id="c25r"></div>'+
+   '<button class="btn pri" id="c25go">'+L.ic('play')+'Run a Peak Week day</button><div class="es-fig" id="c25f" style="margin-top:8px"></div><ul class="es-res" id="c25s"></ul><p class="es-foot">Numbers are illustrative.</p>');
+  const P=()=>+L.$('#c25p').value,H=()=>+L.$('#c25h').value;
+  function rings(t){const p=P(),h=H(),arr=ARR/p,cap=PER*Math.min(p,MACH)/p,grow=Math.max(0,arr-cap),lagH=grow*t/arr;
+    let s='<svg viewBox="0 0 320 '+(p>4?186:100)+'" role="img" aria-label="'+p+' small rings, one per partition, each showing how far the ETA model is behind.">';
+    for(let k=0;k<p;k++){const cx=42+(k%4)*78,cy=46+Math.floor(k/4)*86,lost=lagH>h,fr=Math.min(1,lagH/h);
+      s+='<circle cx="'+cx+'" cy="'+cy+'" r="28" style="fill:none;stroke:'+(lost?'var(--no-bg)':'var(--soft2)')+';stroke-width:10"/>';
+      if(fr>.004)s+='<path d="'+arc(cx,cy,28,360-fr*360,360)+'" style="fill:none;stroke:var(--no);stroke-width:10;opacity:.6"/>';
+      s+='<line x1="'+cx+'" y1="'+(cy-36)+'" x2="'+cx+'" y2="'+(cy-20)+'" style="stroke:var(--h3);stroke-width:3.5;stroke-linecap:round"/>';
+      const hp=pol(cx,cy,28,360-fr*360).split(' ');s+='<circle cx="'+hp[0]+'" cy="'+hp[1]+'" r="6" style="fill:var(--h2);stroke:var(--card);stroke-width:2"/>';
+      s+=T(cx,cy+4,'P'+k,'font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle');
+      s+=T(cx,cy+46,lagH<.05?'up to date':R1(lagH)+' h behind','font-size:11px;font-weight:600;fill:'+(lagH<.05?'var(--ok)':'var(--no)')+';text-anchor:middle');}
+    L.$('#c25f').innerHTML=s+'</svg>';return {lagH,grow};}
+  function info(){const p=P(),h=H(),busyM=Math.min(p,MACH);L.$('#c25p-v').textContent=p;L.$('#c25h-v').textContent=h+' h';
+    L.$('#c25r').innerHTML='<div class="es-tbl"><span>'+L.ic('people')+'</span><span>ETA machines with a partition</span><b>'+busyM+' of '+MACH+'</b>'+
+      '<span>'+L.ic('layers')+'</span><span>Disk used</span><b class="'+(h>BUDGET?'no-t':'')+'">'+h+' of '+BUDGET+' h</b></div>'+
+      '<div class="es-meter" aria-hidden="true"><i style="width:'+Math.min(100,h/96*100)+'%;background:'+(h>BUDGET?'var(--no-strong)':'var(--h2)')+'"></i><span style="position:absolute;left:50%;top:0;bottom:0;width:2px;background:var(--ink)"></span></div>';
+    rings(0);L.$('#c25s').innerHTML='';}
+  L.$('#c25p').oninput=info;L.$('#c25h').oninput=info;info();
+  L.$('#c25go').onclick=async()=>{if(busy)return;busy=true;let r;for(let t=1;t<=24;t++){if(!L.$('#c25f'))return;r=rings(t);await L.sleep(60);}busy=false;
+    const p=P(),h=H(),a=r.grow===0,b=h>=24,c=h<=BUDGET,ok=a&&b&&c;
+    const li=(g,t)=>'<li><span class="'+(g?'ok-t':'no-t')+'">'+L.ic(g?'check':'x')+'</span><span>'+t+'</span></li>';
+    L.$('#c25s').innerHTML=li(a,a?'The ETA model keeps up: lag stays near zero.':'The ETA model falls behind: '+Math.min(p,MACH)+' machines read '+(Math.min(p,MACH)*PER)+'k an hour, but 300k arrive. At most one machine per partition.')+
+      li(b,b?'Yesterday’s scans are still there to replay.':'Only '+h+' hours are kept, so part of yesterday is already deleted.')+
+      li(c,c?'It fits on the disks.':'Keeping '+h+' hours needs more disk than the 48 hours there is.');
+    if(!graded){graded=true;L.award(ok);}
+    if(ok){L.$('#c25s').insertAdjacentHTML('beforeend','<span id="c25ok"></span>');L.sheet('ok','Peak Week is covered','At least 5 partitions let 5 or more ETA machines work in parallel (5 × 70k = 350k an hour), and keeping 24 to 48 hours lets Linh replay yesterday without running out of disk.');L.done();}
+    else L.sheet('no','Not yet','Adjust the sliders and run the day again.');};}},
+{part:3,src:'Chapter 11 · Replaying old messages',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Classic queue or log?',['Classic JMS/AMQP queue','Log-based broker'],[
    ['A new analytics consumer must read the last week of scans, not just new ones.',1,'A log keeps messages on disk, so a new consumer can start from an old offset. A classic queue only delivers what’s sent after it subscribes.'],
-   ['Each message is a slow, independent job: resize a courier’s profile photo.',0,'Slow, independent tasks suit a classic queue, where any free worker takes the next message.'],
+   ['Each message is a slow, independent job: render a two-second PDF shipping label.',0,'Slow, independent tasks suit a classic queue: any free worker takes the next message, and one slow label doesn’t hold up a whole partition.'],
    ['Tens of millions of GPS pings a day, each handled very quickly, and each courier’s pings must stay in order.',1,'High throughput, quick messages and ordering are where logs shine.'],
    ['After a bug, Linh wants to reprocess yesterday’s messages with fixed code.',1,'Reading a log is non-destructive, so you can move the offset back and replay.'],
-   ['A task queue where nobody ever needs to go back and reread old messages.',0,'The book calls the classic broker a good fit for task queues where exact order and rereading don’t matter.']]);}}
+   ['A task queue where nobody ever needs to go back and reread old messages, and order doesn’t matter.',0,'When messages are expensive to process one by one and order doesn’t matter much, the classic broker fits.']]);}}
   ]
 });
 </script>

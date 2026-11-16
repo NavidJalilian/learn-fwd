@@ -13,6 +13,415 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0013 only. Two hands-on models used across the lesson:
+   1. Ruler   – the key space of Otterpost’s bookings table cut into four
+                partitions: draggable key-range boundaries or fixed hash
+                ranges, bookings raining onto their keys, a live load bar
+                per partition, range queries that light the partitions
+                they must read, and Bramble & Bolt’s hot key with an
+                optional random suffix.
+   2. Pillars – eight partitions of parcels with a local or a global
+                postcode index: Signe’s search fans out or goes to one
+                pillar; a booking writes one pillar or several, later.
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const PC=['h1','h2','h3','h4'];
+const pct=v=>Math.round(v*100)+'%';
+const CSS='<style>'+
+ '.pz svg{width:100%;display:block}.pz svg text,.pzv text{font-family:var(--sans)}'+
+ '.pzv{width:100%;display:block;margin:2px 0 12px}'+
+ '.pz-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.pz-row .chip{margin:0;min-height:40px}.pz-row .btn{min-height:42px;padding:8px 12px}'+
+ '.pz-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:12px 0 0}'+
+ '.pz-read{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14px;line-height:1.5;margin:6px 0 4px}'+
+ '.pz-read .pp{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 6px}'+
+ '.pz-read .pp span{font-size:13px;font-weight:700;border-radius:8px;padding:2px 6px;font-variant-numeric:tabular-nums}'+
+ '.pz-sm .chip{font-size:13.5px;padding:6px 10px;min-height:38px}'+
+ '.pz-hot{color:var(--no);font-weight:700}.pz-ok{color:var(--ok);font-weight:700}'+
+ '.pz-q{margin-top:6px;padding-top:6px;border-top:1px solid var(--line2)}'+
+ '.pz-leg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:4px 0 2px}.pz-leg i{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:5px;vertical-align:-1px}'+
+ '.pz-tasks{list-style:none;margin:6px 0 8px;padding:0}.pz-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.pz-tasks .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}'+
+ '.pz-tasks li.done{color:var(--ok)}.pz-tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}'+
+ '.pz-goal{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0}.pz-goal b{width:18px;text-align:center}'+
+ '</style>';
+
+/* ---------- small shared bits for this lesson ---------- */
+function tasks(id,items){return '<ul class="pz-tasks" id="'+id+'">'+items.map((t,k)=>'<li data-k="'+k+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,k){const li=L.$('#'+id+' li[data-k="'+k+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').textContent='✓';}}
+function allDone(L,id){const ul=L.$('#'+id);return !!ul&&[...ul.children].every(li=>li.classList.contains('done'));}
+function chipRow(host,items,pick,sel){host.innerHTML='';items.forEach((it,j)=>{const b=document.createElement('button');b.className='chip'+(j===sel?' sel':'');b.id=it[0];b.innerHTML=it[1];
+  b.onclick=()=>{[...host.children].forEach(x=>x.classList.toggle('sel',x===b));pick(j,b);};host.appendChild(b);});}
+function arrowLine(x1,y1,x2,y2,col,dash,w){const a=Math.atan2(y2-y1,x2-x1),h=7,ax=x2-h*Math.cos(a-.42),ay=y2-h*Math.sin(a-.42),bx=x2-h*Math.cos(a+.42),by=y2-h*Math.sin(a+.42);
+  return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:'+col+';stroke-width:'+(w||1.6)+(dash?';stroke-dasharray:4 3':'')+'"/><path d="M'+x2+' '+y2+'L'+ax.toFixed(1)+' '+ay.toFixed(1)+'L'+bx.toFixed(1)+' '+by.toFixed(1)+'Z" style="fill:'+col+'"/>';}
+const T=(x,y,t,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+t+'</text>';
+
+/* =====================================================================
+   1. The key-space ruler
+   ===================================================================== */
+const RX=10,RW=300,BB=100,BH=84,RY=112,RH=22,HOT=.4;
+const PHI=.6180339887;
+const SLV=Array.from({length:100},(_,i)=>((i+1)*PHI+.13)%1);   // Bramble & Bolt’s 100 split keys, hashed
+const SLVP=Array.from({length:100},(_,i)=>((i+1)*PHI+.41)%1);  // Pip & Thistle’s 100 split keys, hashed
+const BBH=.585;                                                 // hash of M-17 (illustrative)
+const RKEY={
+  time:{name:'booked-at time',ends:['1 Dec','31 Dec'],lab:p=>Math.min(31,Math.floor(p*31)+1)+' Dec',
+    comps:()=>[{a:.2765,b:.2775,w:1}]},
+  code:{name:'region letter + tracking code',ends:['E-0','W-9'],lab:p=>{const z=Math.min(2,Math.floor(p*3));return 'ENW'[z]+'-'+Math.min(9,Math.floor((p*3-z)*10));},
+    comps:()=>[{a:0,b:1/3,w:.25},{a:1/3,b:2/3,w:.05},{a:2/3,b:1,w:.7}]},
+  mkey:{name:'merchant ID + booked-at',ends:['M-1','M-999'],lab:p=>'M-'+Math.max(1,Math.round(p*999)),
+    comps:S=>{const bb=S.sale?.6:.15;return [{a:.017,b:.0172,w:bb,hot:1},{a:0,b:1,w:1-bb}];}}
+};
+const RQ={hour:'Every booking in the last hour',bb:'Bramble & Bolt’s bookings, last week',mr:'Merchants M-100 to M-200',pip:'Pip & Thistle’s bookings, last week'};
+const pIdx=(B,x)=>{for(let k=0;k<4;k++)if(x<B[k+1])return k;return 3;};
+const rBounds=S=>S.mode==='hash'?[0,.25,.5,.75,1]:[0].concat(S.b,[1]);
+function rLoads(S){const B=rBounds(S),out=[0,0,0,0];
+  RKEY[S.key].comps(S).forEach(c=>{
+    if(S.mode==='hash'){
+      if(c.hot&&!S.split)out[pIdx(B,BBH)]+=c.w;
+      else if(c.hot)SLV.forEach(x=>{out[pIdx(B,x)]+=c.w/100;});
+      else for(let k=0;k<4;k++)out[k]+=c.w*(B[k+1]-B[k]);
+    }else for(let k=0;k<4;k++){const ov=Math.max(0,Math.min(c.b,B[k+1])-Math.max(c.a,B[k]));out[k]+=c.w*ov/(c.b-c.a);}
+  });return out;}
+function rQuery(S,q){
+  const B=rBounds(S),H=S.mode==='hash',K=S.key,all=[0,1,2,3];
+  const span=(a,b)=>all.filter(k=>B[k]<b&&B[k+1]>a);
+  const r={parts:all,scans:0,band:null,ticks:null,txt:''};
+  if(q==='hour'){
+    if(K==='time'&&!H){r.band=[.2765,.2775];r.parts=span(.2765,.2775);r.scans=1;r.txt='The keys are times, kept in order, so the last hour is one short range.';}
+    else if(K==='time')r.txt='Hashing scattered neighbouring times over every partition.';
+    else if(K==='code')r.txt='Time isn’t in this key, so every partition must be searched.';
+    else{r.scans='many';r.txt='Time comes second in the key: one range query per merchant, on every partition.';}
+  }else if(q==='bb'||q==='pip'){
+    const pip=q==='pip';
+    if(K==='mkey'){
+      if(H&&(pip?S.split===2:S.split)){r.ticks=pip?SLVP:SLV;r.parts=[...new Set(r.ticks.map(x=>pIdx(B,x)))].sort();r.scans=100;
+        r.txt=pip?'Pip & Thistle is a small shop, but its key was split too: 100 reads for nothing.':'The key is split into 100 keys: read all 100, then combine them.';}
+      else{const x=H?(pip?.21:BBH):(pip?.44:.017);r.parts=[pIdx(B,x)];r.scans=1;if(H)r.ticks=[x];else r.band=[x,x+.0004];
+        r.txt='The merchant picks the partition; inside it, that merchant’s bookings sit in time order.';}
+    }else if(K==='time'&&!H){r.band=[.0645,.2775];r.parts=span(.0645,.2775);r.scans=1;r.txt='Last week is one range, but it holds every merchant’s bookings: read them all to find one shop’s.';}
+    else r.txt='The merchant isn’t first in this key, so every partition must be searched.';
+  }else if(q==='mr'){
+    if(K==='mkey'&&!H){r.band=[.1,.2];r.parts=span(.1,.2);r.scans=1;r.txt='Merchant IDs are kept in order: one range scan.';}
+    else if(K==='mkey')r.txt='Hashing scattered the merchant IDs over every partition.';
+    else r.txt='The merchant isn’t first in this key, so every partition must be searched.';
+  }
+  return r;}
+
+function Ruler(L,host,o){
+  o=Object.assign({id:'r',key:'time',mode:'range',b:[.25,.5,.75],drag:false,rain:true,show:true,sale:false,split:0,q:null,on:()=>{}},o||{});
+  const S={key:o.key,mode:o.mode,b:o.b.slice(),sale:o.sale,split:o.split,rain:o.rain,show:o.show,q:o.q,drag:o.drag};
+  const ID=o.id,x=p=>RX+p*RW;
+  host.insertAdjacentHTML('beforeend','<div class="pz"><svg id="'+ID+'-svg" viewBox="0 0 320 194" role="img" aria-label="Key-space ruler: the key space cut into four partitions, with a bar above each partition for its share of new bookings"'+(o.drag?' style="touch-action:none"':'')+
+    '><g id="'+ID+'-bars"></g><g id="'+ID+'-st"></g><g id="'+ID+'-dots" style="pointer-events:none"></g><g id="'+ID+'-lb" style="pointer-events:none"></g></svg>'+
+    '<div class="pz-leg"><span><i style="background:var(--h1);border-radius:99px"></i>a new booking</span><span><i style="background:var(--h2-bg);border:1.5px solid var(--h2)"></i>share of writes</span><span>dashed line: fair share (25%)</span></div>'+
+    '<div class="pz-read" id="'+ID+'-rd" aria-live="polite"></div></div>');
+  const svg=host.querySelector('#'+ID+'-svg'),st=host.querySelector('#'+ID+'-st'),dg=host.querySelector('#'+ID+'-dots'),bars=host.querySelector('#'+ID+'-bars'),lb=host.querySelector('#'+ID+'-lb'),rd=host.querySelector('#'+ID+'-rd');
+  bars.innerHTML=[0,1,2,3].map(k=>'<rect id="'+ID+'-br'+k+'" rx="3"/>').join('');
+  lb.innerHTML=[0,1,2,3].map(k=>'<text id="'+ID+'-bt'+k+'"></text>').join('');   // share labels sit above the falling dots, with a halo
+  const disp=rLoads(S).map(v=>S.show?v:0),dots=[];
+  function paintBars(){
+    const B=rBounds(S),tg=rLoads(S);
+    for(let k=0;k<4;k++){const x0=x(B[k]),w=(B[k+1]-B[k])*RW,bw=Math.max(3,w*.7),h=disp[k]>.004?Math.max(2,disp[k]*BH):0,hot=S.show&&tg[k]>HOT;
+      const r=bars.children[k],t=lb.children[k];
+      r.setAttribute('x',(x0+(w-bw)/2).toFixed(1));r.setAttribute('y',(BB-h).toFixed(1));r.setAttribute('width',bw.toFixed(1));r.setAttribute('height',h.toFixed(1));
+      r.setAttribute('style','fill:var(--'+(hot?'no':PC[k])+'-bg);stroke:var(--'+(hot?'no':PC[k])+');stroke-width:1.5');
+      t.setAttribute('x',(x0+w/2).toFixed(1));t.setAttribute('y',(BB-h-4).toFixed(1));t.setAttribute('style','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--'+(hot?'no':PC[k])+');paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round');
+      t.textContent=S.show&&w>=26?pct(disp[k]):'';}
+  }
+  function draw(){
+    if(!svg.isConnected)return;
+    const B=rBounds(S),H=S.mode==='hash',K=RKEY[S.key],qr=S.q?rQuery(S,S.q):null;
+    let s='<line x1="'+RX+'" x2="'+(RX+RW)+'" y1="'+(BB-.25*BH)+'" y2="'+(BB-.25*BH)+'" style="stroke:var(--muted);stroke-width:1;stroke-dasharray:4 4"/>'+
+      '<line x1="'+RX+'" x2="'+(RX+RW)+'" y1="'+BB+'" y2="'+BB+'" style="stroke:var(--line2)"/>';
+    for(let k=0;k<4;k++){const x0=x(B[k]),x1=x(B[k+1]),hit=qr&&qr.parts.includes(k);
+      s+='<rect x="'+x0.toFixed(1)+'" y="'+RY+'" width="'+(x1-x0).toFixed(1)+'" height="'+RH+'" style="fill:var(--'+PC[k]+'-bg);stroke:'+(hit?'var(--pri)':'var(--'+PC[k]+')')+';stroke-width:'+(hit?3:1.2)+'"/>';
+      if(x1-x0>=22)s+=T(((x0+x1)/2).toFixed(1),RY+15.5,'P'+(k+1),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--'+PC[k]+')');}
+    if(S.key==='code'&&!H){[1/3,2/3].forEach(p=>{s+='<line x1="'+x(p)+'" x2="'+x(p)+'" y1="'+(RY+2)+'" y2="'+(RY+RH-2)+'" style="stroke:var(--ink);opacity:.35;stroke-dasharray:2 2"/>';});
+      [[1/6,'E codes · 25%'],[.5,'N · 5%'],[5/6,'W codes · 70%']].forEach(z=>{s+=T(x(z[0]),RY+RH+14,z[1],'font-size:11px;fill:var(--muted);text-anchor:middle');});}
+    if(S.key==='time'&&!H){const nx=x(.277);s+='<path d="M'+(nx-5)+' '+(RY-9)+'h10l-5 7z" style="fill:var(--ink)"/>'+T(nx,RY+RH+14,'now: 9 Dec','font-size:11px;font-weight:600;fill:var(--ink);text-anchor:middle');}
+    if(S.key==='mkey'){
+      if(H&&S.split){SLV.forEach(p=>{s+='<line x1="'+x(p).toFixed(1)+'" x2="'+x(p).toFixed(1)+'" y1="'+(RY+1)+'" y2="'+(RY+6)+'" style="stroke:var(--h4);stroke-width:1"/>';});
+        s+=T(160,RY+RH+14,'B&amp;B split into 100 keys'+(S.split===2?' (and every other shop too)':''),'font-size:11px;font-weight:600;fill:var(--h4);text-anchor:middle');}
+      else{const bx=x(H?BBH:.017);s+='<path d="M'+(bx-5)+' '+(RY-9)+'h10l-5 7z" style="fill:var(--h4)"/>'+T(Math.max(bx,40),RY+RH+14,'B&amp;B (M-17)','font-size:11px;font-weight:700;fill:var(--h4);text-anchor:middle');}}
+    if(qr&&qr.band){const a=x(qr.band[0]),w=Math.max(4,x(qr.band[1])-a);s+='<rect x="'+a.toFixed(1)+'" y="'+(RY-4)+'" width="'+w.toFixed(1)+'" height="'+(RH+8)+'" rx="2" style="fill:var(--pri);opacity:.45"/>';}
+    if(qr&&qr.ticks)qr.ticks.forEach(p=>{s+='<line x1="'+x(p).toFixed(1)+'" x2="'+x(p).toFixed(1)+'" y1="'+(RY-7)+'" y2="'+(RY+1)+'" style="stroke:var(--pri);stroke-width:1.6"/>';});
+    const lab=H?(p=>(p*4.29).toFixed(1)+' bn'):K.lab;
+    // Ends and boundary keys share one row; a label drops to a second row only when it would touch its neighbour.
+    const its=[{x:RX,t:H?'hash 0':K.ends[0],a:'start'}].concat([1,2,3].map(i=>({x:x(B[i]),t:lab(B[i]),a:'middle',b:1})),[{x:RX+RW,t:H?'4.3 bn':K.ends[1],a:'end'}]);
+    const last=[-1e9,-1e9];
+    its.forEach(it=>{const w=it.t.length*6.4;let l=it.a==='start'?it.x:it.a==='end'?it.x-w:it.x-w/2;
+      if(it.a==='middle'){l=Math.max(RX,Math.min(RX+RW-w,l));it.x=l+w/2;}
+      const row=l>=last[0]+8?0:l>=last[1]+8?1:0;last[row]=l+w;
+      s+=T(it.x.toFixed(1),row?182:167,it.t,'font-size:11px;'+(it.b?'font-weight:600;fill:var(--ink)':'fill:var(--muted)')+';text-anchor:'+it.a);});
+    if(!H&&S.drag)S.b.forEach((p,i)=>{const hx=x(p).toFixed(1);
+      s+='<g data-h="'+i+'" tabindex="0" role="slider" aria-label="Boundary between P'+(i+1)+' and P'+(i+2)+'" aria-valuetext="'+K.lab(p)+'" style="cursor:ew-resize;outline:none">'+
+        '<rect x="'+(hx-17)+'" y="'+(RY-16)+'" width="34" height="'+(RH+32)+'" style="fill:transparent"/>'+
+        '<line x1="'+hx+'" x2="'+hx+'" y1="'+(RY-8)+'" y2="'+(RY+RH+3)+'" style="stroke:var(--ink);stroke-width:2.5"/>'+
+        '<circle cx="'+hx+'" cy="'+(RY+RH/2)+'" r="8.5" style="fill:var(--card);stroke:var(--ink);stroke-width:2"/>'+
+        '<path d="M'+(hx-2.5)+' '+(RY+RH/2-4)+'v8M'+(+hx+2.5)+' '+(RY+RH/2-4)+'v8" style="stroke:var(--ink);stroke-width:1.5"/></g>';});
+    st.innerHTML=s;paintBars();readout();
+  }
+  function readout(){
+    const ld=rLoads(S),mx=ld.indexOf(Math.max(...ld)),H=S.mode==='hash';
+    let h='<div class="small" style="line-height:1.4">Key: <b>'+RKEY[S.key].name+'</b> · '+(H?'hash of key, four equal hash ranges':'key ranges, cut at <b>'+S.b.map(RKEY[S.key].lab).join(' · ')+'</b>')+(S.sale?' · <b>flash sale</b>':'')+'</div>';
+    if(!S.show)h+='No bookings yet today.';
+    else{h+='<div class="pp">'+ld.map((v,k)=>'<span style="background:var(--'+(v>HOT?'no':PC[k])+'-bg);color:var(--'+(v>HOT?'no':PC[k])+')">P'+(k+1)+' '+pct(v)+'</span>').join('')+'</div>';
+      h+=ld[mx]>HOT?'<span class="pz-hot">Hot spot:</span> P'+(mx+1)+' takes '+pct(ld[mx])+' of the writes.':'<span class="pz-ok">Even enough:</span> the busiest, P'+(mx+1)+', takes '+pct(ld[mx])+'.';}
+    if(S.q){const r=rQuery(S,S.q);h+='<div class="pz-q"><b>'+RQ[S.q]+'</b> asks <b>'+r.parts.length+' of 4</b> partitions'+(r.scans?' · '+r.scans+' range scan'+(r.scans===1?'':'s'):'')+'. '+r.txt+'</div>';}
+    rd.innerHTML=h;
+  }
+  function spawn(){
+    const cs=RKEY[S.key].comps(S),tot=cs.reduce((a,c)=>a+c.w,0);let u=Math.random()*tot,c=cs[0];
+    for(const k of cs){if(u<k.w){c=k;break;}u-=k.w;}
+    let p;if(S.mode==='hash')p=c.hot?(S.split?SLV[Math.floor(Math.random()*100)]:BBH):Math.random();else p=c.a+Math.random()*(c.b-c.a);
+    const k=pIdx(rBounds(S),p),el=document.createElementNS(NS,'circle');el.setAttribute('r','2.7');el.setAttribute('cx',x(p).toFixed(1));el.setAttribute('style','fill:var(--'+PC[k]+')');
+    dg.appendChild(el);dots.push({el,y:2+Math.random()*12});
+  }
+  const iv=setInterval(()=>{
+    if(!svg.isConnected){clearInterval(iv);return;}
+    const tg=rLoads(S);for(let k=0;k<4;k++){const t=S.show?tg[k]:0;disp[k]=Math.abs(disp[k]-t)>.003?disp[k]+(t-disp[k])*.2:t;}
+    paintBars();
+    if(S.rain&&S.show){spawn();if(Math.random()<.5)spawn();}
+    for(let j=dots.length-1;j>=0;j--){const d=dots[j];d.y+=5;if(d.y>=RY){d.el.remove();dots.splice(j,1);}else d.el.setAttribute('cy',d.y.toFixed(1));}
+  },40);
+  function setB(i,p){const lo=(i?S.b[i-1]:0)+.03,hi=(i<2?S.b[i+1]:1)-.03;S.b[i]=Math.max(lo,Math.min(hi,p));draw();o.on({type:'drag',i});}
+  let dragI=-1;
+  svg.addEventListener('pointerdown',e=>{const g=e.target.closest('[data-h]');if(!g)return;dragI=+g.dataset.h;try{svg.setPointerCapture(e.pointerId);}catch(_){};e.preventDefault();});
+  svg.addEventListener('pointermove',e=>{if(dragI<0)return;const r=svg.getBoundingClientRect();setB(dragI,((e.clientX-r.left)/r.width*320-RX)/RW);});
+  const up=()=>{if(dragI>=0){dragI=-1;o.on({type:'dragend'});}};
+  svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
+  svg.addEventListener('keydown',e=>{const g=e.target.closest&&e.target.closest('[data-h]');if(!g)return;const i=+g.dataset.h;
+    const d=e.key==='ArrowLeft'||e.key==='ArrowDown'?-.01:e.key==='ArrowRight'||e.key==='ArrowUp'?.01:0;if(!d)return;e.preventDefault();
+    setB(i,S.b[i]+d);const ng=svg.querySelector('[data-h="'+i+'"]');if(ng)ng.focus();});
+  draw();
+  return {S,draw,setB,loads:()=>rLoads(S),max:()=>Math.max(...rLoads(S)),
+    set(p){Object.assign(S,p);draw();o.on(Object.assign({type:'set'},p));},
+    query(q){S.q=q;draw();const r=rQuery(S,q);o.on({type:'query',q,r});return r;},
+    alive:()=>svg.isConnected};
+}
+
+/* =====================================================================
+   2. The index pillars
+   ===================================================================== */
+const PLX=k=>8+k*38,PLW=34,PLY=80,PLH=136,pcx=k=>PLX(k)+PLW/2;
+const WPOS=[[1,4],[],[2],[0,5],[],[3],[1,2],[4]];   // which of each partition’s 6 parcels go to WP4 (9 in all)
+const TERMS=['A–B','C–E','F–H','I–K','L–N','O–R','S–V','W–Z'];
+const LAT=[12,9,14,11,10,13,9,12];                  // illustrative reply times, ms
+const HOME=2,PCI=7,MCI=0;                            // new parcel → P3; “WP4” term → P8; “Bramble & Bolt” term → P1
+function Pillars(L,host,o){
+  o=Object.assign({id:'pl',mode:'local',shelf:true,lines:[],read:true,on:()=>{}},o||{});
+  const S={mode:o.mode,slow:-1,booked:0,applied:0,pending:false,busy:false,delay:1100,ls:null,lb:null,lines:o.lines.slice(),ep:0};
+  const ID=o.id;
+  host.insertAdjacentHTML('beforeend','<div class="pz"><svg id="'+ID+'-svg" viewBox="0 0 320 222" role="img" aria-label="Eight partitions of parcels. Signe’s postcode search starts top left; a new booking starts top right."><g id="'+ID+'-b"></g><g id="'+ID+'-ln"></g><g id="'+ID+'-fx" style="pointer-events:none"></g></svg>'+
+    '<div class="pz-leg"><span><i style="background:var(--h4-bg);border:1.5px solid var(--h4)"></i>parcel to WP4</span><span><i style="background:var(--card);border:1.5px solid var(--line2)"></i>other parcel</span>'+(o.shelf?'<span><i style="background:var(--card);border:1.5px solid var(--ink)"></i>index shelf</span>':'')+'</div>'+
+    (o.read?'<div class="pz-read" id="'+ID+'-rd" aria-live="polite"></div>':'')+'</div>');
+  const svg=host.querySelector('#'+ID+'-svg'),base=host.querySelector('#'+ID+'-b'),ln=host.querySelector('#'+ID+'-ln'),fx=host.querySelector('#'+ID+'-fx'),rd=host.querySelector('#'+ID+'-rd');
+  const alive=()=>svg.isConnected;
+  const client=(x,f,s,a,b)=>'<rect x="'+x+'" y="4" width="146" height="36" rx="10" style="fill:'+f+';stroke:'+s+';stroke-width:1.5"/>'+T(x+73,19,a,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:'+s)+T(x+73,33,b,'font-size:11.5px;text-anchor:middle;fill:'+s);
+  function draw(){
+    if(!alive())return;
+    const G=S.mode==='global';
+    let s=client(8,'var(--h2-bg)','var(--h2)','Signe searches','postcode WP4')+client(166,'var(--h1-bg)','var(--h1)','Bramble &amp; Bolt','books a parcel to WP4');
+    for(let k=0;k<8;k++){const x=PLX(k),slow=S.slow===k;
+      s+='<rect x="'+x+'" y="'+PLY+'" width="'+PLW+'" height="'+PLH+'" rx="8" style="fill:var(--soft);stroke:'+(slow?'var(--no)':'var(--line2)')+';stroke-width:'+(slow?2:1.2)+(slow?';stroke-dasharray:4 3':'')+'"/>';
+      s+=T(x+17,PLY+14,'P'+(k+1),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+(slow?'var(--no)':'var(--ink)'));
+      if(slow)s+=T(x+17,PLY+PLH-5,'slow','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--no)');
+      if(o.shelf){
+        s+='<rect x="'+(x+3)+'" y="'+(PLY+20)+'" width="28" height="44" rx="5" style="fill:var(--card);stroke:var(--ink);stroke-width:1"/>';
+        s+=T(x+17,PLY+33,G?TERMS[k]:'own','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--muted)');
+        const n=G?(k===PCI?9+S.applied:0):WPOS[k].length+(k===HOME?S.booked:0),bb=G&&k===MCI?S.applied:0;
+        const cells=[];for(let j=0;j<n;j++)cells.push('h4');for(let j=0;j<bb;j++)cells.push('h1');
+        if(G&&S.pending&&(k===PCI||k===MCI))cells.push('wait');
+        cells.slice(0,12).forEach((c,j)=>{const cx=x+5+(j%4)*6.5,cy=PLY+38+Math.floor(j/4)*7.5;
+          s+='<rect x="'+cx+'" y="'+cy+'" width="5.5" height="5.5" rx="1" style="'+(c==='wait'?'fill:none;stroke:var(--h3);stroke-width:1.2;stroke-dasharray:1.5 1':'fill:var(--'+c+')')+'"/>';});
+      }
+      const extra=k===HOME?Math.min(2,S.booked):0;
+      for(let j=0;j<6+extra;j++){const wp=j>=6||WPOS[k].includes(j),px=x+5+(j%2)*13,py=PLY+70+Math.floor(j/2)*14;
+        s+='<rect x="'+px+'" y="'+py+'" width="11" height="11" rx="2.5" style="fill:var(--'+(wp?'h4-bg':'card')+');stroke:'+(j>=6?'var(--pri)':wp?'var(--h4)':'var(--line2)')+';stroke-width:'+(j>=6?2:1.3)+'"/>';}
+    }
+    base.innerHTML=s;drawLines();readout();
+  }
+  function drawLines(){if(!alive())return;ln.innerHTML=S.lines.map(l=>arrowLine(l.f==='s'?81:239,40,pcx(l.k),PLY-1,l.col,l.dash)).join('');}
+  function readout(){
+    if(!rd)return;
+    const G=S.mode==='global';
+    let h='<div class="small" style="line-height:1.4">Index: <b>'+(G?'global, split by term':'local, one per partition')+'</b>'+(S.slow>=0?' · P'+(S.slow+1)+' is slow':'')+'</div>';
+    if(S.ls)h+='<div><b>Search:</b> asked <b>'+S.ls.asked+' of 8</b> partitions · waited <b>'+S.ls.ms+' ms</b>'+(S.ls.asked>1?' (the slowest)':'')+' · found <b>'+S.ls.found+'</b> WP4 parcels'+(S.ls.missing?' <span class="pz-hot">· the new one isn’t listed yet</span>':'')+'.</div>';
+    if(S.lb)h+='<div><b>Booking:</b> '+(S.lb.writes===1?'wrote to <b>1</b> partition, P3: the parcel and its index entry together.':'wrote to <b>3</b> partitions: the parcel on P3, the postcode index on P8, the merchant index on P1. '+(S.pending?'<span class="pz-hot">Index updates still on their way…</span>':'<span class="pz-ok">Index updates applied.</span>'))+'</div>';
+    if(!S.ls&&!S.lb)h+='Run a search or a booking.';
+    if(S.ls)h+='<div class="small">Reply times are illustrative.</div>';
+    rd.innerHTML=h;
+  }
+  function fly(x1,y1,x2,y2,col,ms){return new Promise(res=>{
+    if(!alive()){res();return;}
+    const c=document.createElementNS(NS,'circle');c.setAttribute('r','4.5');c.setAttribute('style','fill:'+col);c.setAttribute('cx',x1);c.setAttribute('cy',y1);fx.appendChild(c);
+    const t0=performance.now();
+    (function step(){if(!c.isConnected){res();return;}
+      const p=Math.min(1,(performance.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+      c.setAttribute('cx',(x1+(x2-x1)*e).toFixed(1));c.setAttribute('cy',(y1+(y2-y1)*e).toFixed(1));
+      if(p<1){setTimeout(step,16);return;}c.remove();res();})();});}
+  async function search(){
+    if(S.busy||!alive())return null;S.busy=true;
+    const G=S.mode==='global',asked=G?[PCI]:[0,1,2,3,4,5,6,7],lat=k=>S.slow===k?180:LAT[k];
+    S.lines=asked.map(k=>({f:'s',k,col:'var(--h2)'}));drawLines();
+    await Promise.all(asked.map(k=>fly(81,40,pcx(k),PLY,'var(--h2)',380)));
+    if(!alive())return null;
+    let found=0,missing=0;
+    await Promise.all(asked.map(k=>L.sleep(lat(k)*5).then(()=>{
+      if(k===PCI||!G){found=G?9+S.applied:9+S.booked;missing=G?S.booked-S.applied:0;}
+      return fly(pcx(k),PLY,81,40,'var(--h2)',340);})));
+    if(!alive())return null;
+    S.ls={asked:asked.length,ms:Math.max(...asked.map(lat)),found,missing};S.busy=false;readout();
+    o.on(Object.assign({type:'search',mode:S.mode,slow:S.slow},S.ls));return S.ls;
+  }
+  async function book(){
+    if(S.busy||!alive())return null;S.busy=true;
+    const G=S.mode==='global',ep=S.ep;
+    S.lines=[{f:'b',k:HOME,col:'var(--h1)'}];
+    if(G)S.lines.push({f:'b',k:PCI,col:'var(--h3)',dash:1},{f:'b',k:MCI,col:'var(--h3)',dash:1});
+    drawLines();
+    await fly(239,40,pcx(HOME),PLY,'var(--h1)',420);
+    if(!alive())return null;
+    S.booked++;
+    if(G){S.pending=true;const n=S.booked;
+      Promise.all([fly(239,40,pcx(PCI),PLY,'var(--h3)',S.delay),fly(239,40,pcx(MCI),PLY,'var(--h3)',S.delay)]).then(()=>{
+        if(!alive()||ep!==S.ep)return;S.applied=n;S.pending=S.applied<S.booked;draw();o.on({type:'applied'});});}
+    S.lb={writes:G?3:1};S.busy=false;draw();o.on({type:'book',mode:S.mode,writes:S.lb.writes});return S.lb;
+  }
+  async function idle(){for(let i=0;i<150&&(S.busy||S.pending)&&alive();i++)await L.sleep(40);}
+  function setMode(m){S.ep++;S.mode=m;S.booked=0;S.applied=0;S.pending=false;S.lines=[];S.ls=null;S.lb=null;fx.innerHTML='';draw();}
+  draw();
+  return {S,draw,search,book,idle,setMode,alive,setSlow(k){S.slow=k;draw();}};
+}
+
+/* =====================================================================
+   Pictures for the teaching screens
+   ===================================================================== */
+function svgCopySplit(){
+  const C=['h1','h2','h3','h4','ok','no'],P='ABCDEF';
+  const sq=(x,y,j)=>'<rect x="'+x+'" y="'+y+'" width="15" height="15" rx="4" style="fill:var(--'+C[j]+'-bg);stroke:var(--'+C[j]+')"/>'+T(x+7.5,y+11.5,P[j],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--'+C[j]+')');
+  const node=(x,y,n,js,s0)=>'<rect x="'+x+'" y="'+y+'" width="150" height="38" rx="9" style="fill:var(--soft);stroke:var(--line2)"/>'+T(x+10,y+23,'Node '+n,'font-size:11.5px;font-weight:700;fill:var(--ink)')+js.map((j,q)=>sq(x+s0+q*16,y+11,j)).join('');
+  let s='<svg class="pzv" viewBox="0 0 320 176" role="img" aria-label="Left: replication, three nodes each hold parcels A to F. Right: partitioning, node 1 holds A and B, node 2 C and D, node 3 E and F.">';
+  s+=T(79,14,'Replication','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h2)')+T(79,28,'every node: all parcels','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  s+=T(241,14,'Partitioning','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h1)')+T(241,28,'each node: its own slice','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  [0,1,2].forEach(i=>{s+=node(4,38+i*46,i+1,[0,1,2,3,4,5],56)+node(166,38+i*46,i+1,[2*i,2*i+1],78);});
+  return s+'</svg>';
+}
+function svgRepl(){
+  const N=[['A',[[1,1],[3,0]]],['B',[[2,1],[1,0]]],['C',[[3,1],[2,0]]]];
+  let s='<svg class="pzv" viewBox="0 0 320 112" role="img" aria-label="Three nodes. Node A leads P1 and follows P3. Node B leads P2 and follows P1. Node C leads P3 and follows P2.">';
+  N.forEach(([n,ps],i)=>{const x=4+i*106;
+    s+='<rect x="'+x+'" y="4" width="100" height="100" rx="12" style="fill:var(--soft);stroke:var(--line2)"/>'+T(x+50,24,'Node '+n,'font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+    ps.forEach(([p,l],j)=>{const c=PC[p-1],y=36+j*32;
+      s+='<rect x="'+(x+8)+'" y="'+y+'" width="84" height="25" rx="8" style="fill:var(--'+(l?c+'-bg':'card')+');stroke:var(--'+c+');stroke-width:1.6'+(l?'':';stroke-dasharray:4 3')+'"/>'+
+        T(x+50,y+16.5,'P'+p+' · '+(l?'leader':'follower'),'font-size:12px;font-weight:'+(l?700:500)+';text-anchor:middle;fill:var(--'+c+')');});});
+  return s+'</svg>';
+}
+function svgNames(){
+  const tag=(x,y,w,h,name,lines)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="10" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5"/>'+T(x+w/2,y+18,name,'font-size:13.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+    lines.map((t,j)=>T(x+w/2,y+33+j*13,t,'font-size:11px;text-anchor:middle;fill:var(--muted)')).join('');
+  let s='<svg class="pzv" viewBox="0 0 320 196" role="img" aria-label="One partition, five product names: shard in MongoDB, Elasticsearch and SolrCloud; region in HBase; tablet in Bigtable; vnode in Cassandra and Riak; vBucket in Couchbase.">';
+  const ln=(a,b,c,d)=>'<line x1="'+a+'" y1="'+b+'" x2="'+c+'" y2="'+d+'" style="stroke:var(--line2);stroke-width:1.5"/>';
+  s+=ln(160,50,81,78)+ln(160,50,239,78)+ln(160,50,160,141)+ln(160,141,55,146)+ln(160,141,265,146);
+  s+='<rect x="100" y="6" width="120" height="44" rx="12" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.6"/>'+T(160,26,'partition','font-size:15px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+T(160,41,'the book’s word','font-size:11px;text-anchor:middle;fill:var(--pri-deep)');
+  s+=tag(6,78,150,58,'shard',['MongoDB, Elasticsearch,','SolrCloud'])+tag(164,78,150,58,'region',['HBase','(a key range, not a place)']);
+  s+=tag(6,146,98,46,'tablet',['Bigtable'])+tag(111,146,98,46,'vnode',['Cassandra, Riak'])+tag(216,146,98,46,'vBucket',['Couchbase']);
+  return s+'</svg>';
+}
+function svgFair(){
+  let s='<svg class="pzv" viewBox="0 0 320 192" role="img" aria-label="Left: ten equal bars, a fair split. Right: one tall bar and nine nearly empty ones, a hot spot. Bottom: random placement means a read must ask all ten nodes.">';
+  s+=T(80,14,'Fair split','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ok)')+T(240,14,'Skewed','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--no)');
+  for(let j=0;j<10;j++){s+='<rect x="'+(11+j*14)+'" y="62" width="10" height="32" rx="2" style="fill:var(--ok-bg);stroke:var(--ok)"/>';
+    const h=j?3:68;s+='<rect x="'+(171+j*14)+'" y="'+(94-h)+'" width="10" height="'+h+'" rx="2" style="fill:var(--'+(j?'soft2':'no-bg')+');stroke:var(--'+(j?'line2':'no')+')"/>';}
+  s+='<line x1="6" x2="154" y1="94" y2="94" style="stroke:var(--line2)"/><line x1="166" x2="314" y1="94" y2="94" style="stroke:var(--line2)"/>';
+  s+=T(80,110,'10 nodes, 10× the work','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+T(240,110,'1 hot spot, 9 nodes idle','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  s+='<rect x="4" y="122" width="312" height="66" rx="12" style="fill:var(--soft)"/>'+T(14,140,'Random placement: even, but reads ask all 10','font-size:12px;font-weight:700;fill:var(--ink)');
+  s+='<rect x="14" y="152" width="74" height="26" rx="7" style="fill:var(--card);stroke:var(--h2)"/>'+T(51,169,'OP-48213?','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--h2)');
+  for(let j=0;j<10;j++){const cx=118+j*19;s+='<line x1="88" y1="165" x2="'+cx+'" y2="165" style="stroke:var(--h2);stroke-width:1;opacity:.5"/><circle cx="'+cx+'" cy="165" r="6.5" style="fill:var(--card);stroke:var(--h2);stroke-width:1.5"/>';}
+  return s+'</svg>';
+}
+function svgShelf(){
+  const V=['A–B','C','D','E','F–G','H–I','J–L','M','N–O','P','Q–S','T–Z'];
+  let s='<svg class="pzv" viewBox="0 0 320 172" role="img" aria-label="Twelve encyclopedia volumes of the same size. Volume 1 covers A and B, volume 12 covers T to Z. A pointer shows the word hash in volume 6.">';
+  s+=T(146,14,'look up “hash” → volume 6','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--pri)')+arrowLine(146,19,146,32,'var(--pri)');
+  V.forEach((v,i)=>{const x=10+i*25,c=PC[i%4],hl=i===5;
+    s+='<rect x="'+x+'" y="34" width="22" height="100" rx="3" style="fill:var(--'+c+'-bg);stroke:'+(hl?'var(--pri)':'var(--'+c+')')+';stroke-width:'+(hl?2.5:1.2)+'"/>'+
+      T(x+11,48,String(i+1),'font-size:11px;text-anchor:middle;fill:var(--muted)')+
+      '<text transform="translate('+(x+15.5)+',96) rotate(-90)" style="font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--'+c+')">'+v+'</text>';});
+  s+='<line x1="4" x2="316" y1="136" y2="136" style="stroke:var(--ink);stroke-width:3"/>';
+  s+=T(10,152,'vol 1: 2 letters','font-size:11px;fill:var(--muted)')+T(310,152,'vol 12: 6 letters','font-size:11px;text-anchor:end;fill:var(--muted)');
+  s+=T(160,168,'same-size volumes, uneven key ranges','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)');
+  return s+'</svg>';
+}
+function svgHash(){
+  const K=[['OP-48213',.71,'3.0 bn'],['OP-48214',.09,'0.4 bn'],['OP-48215',.44,'1.9 bn']];
+  let s='<svg class="pzv" viewBox="0 0 320 172" role="img" aria-label="Three neighbouring tracking codes go through a hash function and land far apart on the hash range 0 to 4.3 billion, in partitions P3, P1 and P2.">';
+  const x=p=>10+p*300;
+  K.forEach((k,i)=>{s+='<line x1="'+(56+i*104)+'" y1="34" x2="'+x(k[1])+'" y2="128" style="stroke:var(--h'+(i+1)+');stroke-width:1.8"/>';});
+  s+='<rect x="8" y="56" width="304" height="24" rx="8" style="fill:var(--soft2);opacity:.93"/>'+T(160,72,'32-bit hash function','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  K.forEach((k,i)=>{s+='<rect x="'+(8+i*104)+'" y="8" width="96" height="26" rx="8" style="fill:var(--card);stroke:var(--h'+(i+1)+');stroke-width:1.5"/>'+T(56+i*104,25.5,k[0],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h'+(i+1)+')');
+    s+='<circle cx="'+x(k[1])+'" cy="128" r="4.5" style="fill:var(--h'+(i+1)+')"/>'+T(x(k[1])+(k[1]<.2?18:0),118,k[2],'font-size:11px;font-weight:600;text-anchor:middle;fill:var(--h'+(i+1)+');paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round');});
+  for(let k=0;k<4;k++)s+='<rect x="'+x(k/4)+'" y="132" width="75" height="20" style="fill:var(--'+PC[k]+'-bg);stroke:var(--'+PC[k]+')"/>'+T(x(k/4)+37.5,146,'P'+(k+1),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--'+PC[k]+')');
+  s+=T(10,166,'0','font-size:11px;fill:var(--muted)')+T(310,166,'4.3 bn','font-size:11px;text-anchor:end;fill:var(--muted)')+T(160,166,'equal hash ranges','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  return s+'</svg>';
+}
+function svgConsistent(){
+  let s='<svg class="pzv" viewBox="0 0 320 178" role="img" aria-label="The word consistent means three different things: consistent hashing for web caches, replica consistency from chapter 5, and ACID consistency from chapter 7. Just say hash partitioning.">';
+  s+=T(160,18,'“consistent” …','font-size:15px;font-weight:700;font-style:italic;text-anchor:middle;fill:var(--ink)');
+  const card=(x,f,st,lines)=>'<rect x="'+x+'" y="40" width="92" height="88" rx="10" style="fill:'+f+';stroke:'+st+';stroke-width:1.5"/>'+lines.map((l,j)=>T(x+46,60+j*16,l[0],'font-size:'+(l[1]?12.5:11)+'px;font-weight:'+(l[1]?700:400)+';text-anchor:middle;fill:'+(l[1]?st:'var(--muted)'))).join('');
+  [50,160,270].forEach(cx=>{s+='<line x1="160" y1="24" x2="'+cx+'" y2="40" style="stroke:var(--line2);stroke-width:1.5"/>';});
+  s+=card(4,'var(--pri-bg)','var(--pri)',[['consistent',1],['hashing',1],['load over',0],['web caches',0]]);
+  s+=card(114,'var(--card)','var(--ink)',[['replica',1],['consistency',1],['copies agree',0],['(chapter 5)',0]]);
+  s+=card(224,'var(--card)','var(--ink)',[['ACID',1],['consistency',1],['(chapter 7)',0]]);
+  s+=T(105,90,'≠','font-size:18px;font-weight:700;text-anchor:middle;fill:var(--no)')+T(215,90,'≠','font-size:18px;font-weight:700;text-anchor:middle;fill:var(--no)');
+  s+='<rect x="50" y="142" width="220" height="30" rx="15" style="fill:var(--ok-bg);stroke:var(--ok-line)"/>'+T(160,162,'Just say: hash partitioning','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ok)');
+  return s+'</svg>';
+}
+function svgCompound(){
+  let s='<svg class="pzv" viewBox="0 0 320 196" role="img" aria-label="The key M-17 plus 9 Dec 14:02. Only M-17 is hashed and picks partition P3. Inside P3, Bramble and Bolt’s bookings are sorted by time, so last week is one range scan.">';
+  s+='<rect x="30" y="8" width="110" height="30" rx="8" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.6"/>'+T(85,28,'M-17','font-size:13.5px;font-weight:700;text-anchor:middle;fill:var(--h1)');
+  s+='<rect x="140" y="8" width="150" height="30" rx="8" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.6"/>'+T(215,28,'9 Dec 14:02','font-size:13.5px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+  s+=T(85,53,'hashed: picks the partition','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--h1)')+T(215,53,'sorts rows inside it','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--h3)');
+  s+=arrowLine(85,58,85,80,'var(--h1)',0,2);
+  s+='<rect x="10" y="82" width="300" height="108" rx="12" style="fill:var(--soft);stroke:var(--line2)"/>'+T(22,100,'P3','font-size:12px;font-weight:700;fill:var(--ink)');
+  const R=[['M-17 · 1 Dec 09:10',0],['M-17 · 4 Dec 11:42',1],['M-17 · 8 Dec 16:05',1],['M-17 · 9 Dec 14:02',2],['M-412 · 2 Dec 08:30',3]];
+  R.forEach((r,j)=>{const y=101+j*18;s+='<rect x="48" y="'+(y-10)+'" width="8" height="8" rx="2" style="fill:var(--'+(r[1]===3?'line2':'h4')+')"/>'+
+    T(62,y,r[0],'font-size:12.5px;font-weight:'+(r[1]===2?700:500)+';fill:'+(r[1]===3?'var(--muted)':r[1]===2?'var(--pri)':'var(--ink)'));});
+  s+='<path d="M186 110 h6 v51 h-6" style="fill:none;stroke:var(--pri);stroke-width:2"/>'+T(200,132,'last week:','font-size:11.5px;font-weight:600;fill:var(--pri)')+T(200,147,'one range scan','font-size:11.5px;font-weight:700;fill:var(--pri)');
+  return s+'</svg>';
+}
+function svgHotKey(){
+  let s='<svg class="pzv" viewBox="0 0 320 200" role="img" aria-label="Before: every flash-sale booking has key M-17, so one partition gets a tall bar. After: the key gets a two-digit suffix, 100 keys spread over all four partitions and the bars are even, but a read must fetch all 100.">';
+  const panel=(oy,title,hot,ticks,col)=>{let p=T(6,oy+14,title,'font-size:12px;font-weight:700;fill:var(--ink)');
+    p+='<rect x="6" y="'+(oy+50)+'" width="88" height="28" rx="8" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5"/>'+T(50,oy+68,hot?'M-17':'M-17-00…99','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h4)');
+    p+=arrowLine(96,oy+64,108,oy+64,'var(--h4)',0,1.6);
+    for(let k=0;k<4;k++){const x=110+k*50,h=hot?(k===2?34:5):14;
+      p+='<rect x="'+(x+12)+'" y="'+(oy+56-h)+'" width="26" height="'+h+'" rx="2" style="fill:var(--'+(hot&&k===2?'no':col)+'-bg);stroke:var(--'+(hot&&k===2?'no':col)+')"/>';
+      p+='<rect x="'+x+'" y="'+(oy+58)+'" width="50" height="14" style="fill:var(--'+PC[k]+'-bg);stroke:var(--'+PC[k]+')"/>'+T(x+25,oy+69,'P'+(k+1),'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--'+PC[k]+')');}
+    ticks.forEach(t=>{p+='<line x1="'+(110+t*200).toFixed(1)+'" x2="'+(110+t*200).toFixed(1)+'" y1="'+(oy+58.5)+'" y2="'+(oy+60.5)+'" style="stroke:var(--h4);stroke-width:1"/>';});
+    return p;};
+  s+=panel(0,'Before: one hot key, M-17',1,[BBH],'h4');
+  s+=panel(100,'After: a random two-digit suffix',0,SLV,'ok');
+  s+=T(210,192,'read: fetch 100 keys, then combine','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri)');
+  return s+'</svg>';
+}
+function svgNodes(after){
+  const N=[['A',[['P1',1],['P4',0],['P5',1]]],['B',[['P1',0],['P2',1],['P6',1]]],['C',[['P2',0],['P3',1],['P5',0]]],['D',[['P3',0],['P4',1],['P6',0]]]];
+  const pos=[[6,4],[164,4],[6,96],[164,96]];
+  let s='<svg class="pzv" viewBox="0 0 320 188" role="img" aria-label="Four nodes, six partitions, two copies of each. '+(after?'Node B is down; P2 and P6 have new leaders on C and D; P1 lost a copy.':'Filled boxes are leaders, dashed boxes followers.')+'">';
+  N.forEach(([n,ps],i)=>{const [x,y]=pos[i],dead=after&&n==='B';
+    s+='<g style="opacity:'+(dead?.35:1)+'"><rect x="'+x+'" y="'+y+'" width="150" height="86" rx="12" style="fill:var(--soft);stroke:var(--line2)"/>'+T(x+10,y+20,'Node '+n+(dead?' · down':''),'font-size:13px;font-weight:700;fill:var(--ink)');
+    ps.forEach(([p,l],j)=>{const px=x+6+j*48,py=y+30,pro=after&&!dead&&((n==='C'&&p==='P2')||(n==='D'&&p==='P6')),lost=after&&n==='A'&&p==='P1',lead=l||pro;
+      s+='<rect x="'+px+'" y="'+py+'" width="42" height="26" rx="8" style="fill:var(--'+(pro?'ok-bg':lead?'pri-bg':'card')+');stroke:var(--'+(pro?'ok':lead?'pri':'line2')+');stroke-width:'+(pro?2.5:1.5)+(lead?'':';stroke-dasharray:4 3')+'"/>'+
+        T(px+21,py+17.5,p,'font-size:13px;font-weight:700;text-anchor:middle;fill:var(--'+(pro?'ok':lead?'pri-deep':'muted')+')');
+      if(pro)s+=T(Math.min(Math.max(px+21,x+36),x+114),y+74,'new leader','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ok)');
+      if(lost)s+=T(px+21,y+74,'−1 copy','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--muted)');});
+    s+='</g>';
+    if(dead)s+='<path d="M'+(x+20)+' '+(y+14)+'L'+(x+130)+' '+(y+74)+'M'+(x+130)+' '+(y+14)+'L'+(x+20)+' '+(y+74)+'" style="stroke:var(--no);stroke-width:3;stroke-linecap:round"/>';});
+  return s+'</svg>';
+}
+
 Course.lesson({
   id:'0013', title:'Partitioning data and secondary indexes', minutes:20, icon:'layers',
   goals:['Explain why a big database is split into partitions, and how that fits with replication','Choose between key-range and hash partitioning, and calm a hot key','Pick a local or a global secondary index for a partitioned database'],
@@ -34,8 +443,8 @@ Course.lesson({
     '<b>Key range</b>: keys stay sorted, so range scans are easy, but keys written close together (like timestamps) pile onto one partition. Boundaries must follow the data.',
     '<b>Hash of key</b>: spreads keys evenly but loses their order, so range queries go to every partition. Don’t call it “consistent hashing”.',
     '<b>Compound key</b>: hash the first part to pick the partition, sort by the rest. Fix the first part and you can range-scan the rest.',
-    '<b>One very hot key</b> still lands on one partition. The app can add a random number to the key, but then reads must combine every piece.',
-    '<b>Local index</b>: a write touches one partition, but a search asks every partition (scatter/gather).',
+    '<b>One very hot key</b> still lands on one partition. The app can add a random number to that key, but then reads must combine every piece. Do it only for the few hot keys.',
+    '<b>Local index</b>: a write touches one partition, but a search asks every partition (scatter/gather) and waits for the slowest.',
     '<b>Global index</b>: a search asks one index partition, but a write may touch several, and the index is often updated asynchronously.'
   ],
   steps:[
@@ -46,203 +455,232 @@ Course.lesson({
    'Followers copy every write the leader makes, so they help with reads, not writes. To spread the <i>writes</i>, the data itself has to be split up. That’s this chapter.',
    'With leader-based replication every write goes to the leader, and every follower then applies that same write. More followers help with reads. To spread writes, the data must be split.');}},
 {part:0,src:'Chapter 6 · Partitioning',run(L){
-  L.h(L.kick('learn','Copying versus splitting')+'<h1 class="q">When copies aren’t enough, you cut the data into pieces</h1>'+
-   L.prose('Replication puts the <b>same</b> data on several '+L.g('node','nodes')+'. For a very large dataset or a very heavy query load, that isn’t enough. You also need to break the data into '+L.g('partition','partitions')+'.')+
-   L.flow([['layers','Replication','Every node holds the same parcels','copies'],['box','Partitioning','Each node holds a different slice of parcels','pieces']],false)+
-   L.prose('Normally each record belongs to <b>exactly one</b> partition, and each partition acts like a small database of its own. The main reason to do it is scalability: in a shared-nothing cluster, the data spreads over many disks and the queries over many processors.')+
-   L.note('A query that needs only one partition runs on that partition’s node alone, so adding nodes adds capacity. A big query that spans many partitions can be run in parallel too, but that is much harder.','info')+
-   '<p class="small" style="margin-top:10px">Careful with the word: this has nothing to do with a <i>network</i> partition (a broken link between machines). That comes in chapter 8.</p>');
+  L.h(L.kick('learn','Copying versus splitting')+'<h1 class="q">When copies aren’t enough, cut the data into pieces</h1>'+CSS+svgCopySplit()+
+   L.prose(L.g('replication','Replication')+' puts the <b>same</b> parcels on every '+L.g('node','node')+'. '+L.g('partition','Partitioning')+' gives each node a <b>different</b> slice: each record lives in one partition, so data spreads over many disks and queries over many processors.')+
+   '<p class="small">Not a <i>network</i> partition (a broken link between machines, chapter 8).</p>');
   L.done();}},
 {part:0,src:'Chapter 6 · Partitioning (Terminological confusion)',run(L){
-  L.h(L.kick('learn','One idea, many names')+'<h1 class="q">Every product calls a partition something different. Tap each card.</h1>');
-  L.flips(L.card,[
-   ['Shard','The word in MongoDB, Elasticsearch and SolrCloud. Splitting data this way is often called <b>sharding</b>.'],
-   ['Region','HBase’s name. It’s a range of keys, not a place on a map.'],
-   ['Tablet','Bigtable’s name for a partition.'],
-   ['vnode','Cassandra and Riak say vnode. It’s a slice of the data, not a virtual machine.'],
-   ['vBucket','Couchbase’s name for a partition.']],
-   'All five mean <b>partition</b>, the book’s word and the one this course uses. The idea is old: products like Teradata and Tandem NonStop SQL partitioned data in the 1980s, and NoSQL databases and Hadoop-based warehouses rediscovered it.');}},
+  L.h(L.kick('learn','One idea, many names')+'<h1 class="q">Every product calls a partition something different</h1>'+CSS+svgNames()+
+   L.prose('All five mean <b>partition</b>, the book’s word and this course’s. The idea is old: Teradata and Tandem NonStop SQL partitioned data in the 1980s, and NoSQL databases rediscovered it.'));
+  L.done();}},
 {part:0,src:'Chapter 6 · Partitioning and Replication',run(L){
-  L.h(L.kick('learn','Both at once')+'<h1 class="q">Each partition is split off, and then copied</h1>'+
-   L.prose('In practice, partitioning and '+L.g('replication','replication')+' go together. A parcel belongs to one partition, but that partition is stored on several nodes, so it survives a dead machine.')+
-   L.prose('With '+L.g('leader','leaders and followers')+', each partition has its own leader on one node and followers on other nodes. So the roles belong to <b>partitions</b>, not to machines:')+
-   L.tiers([['layers','Node A','Leader for partition 1, follower for partition 3'],
-            ['layers','Node B','Leader for partition 2, follower for partition 1'],
-            ['layers','Node C','Leader for partition 3, follower for partition 2']])+
-   '<p class="small" style="margin-top:10px">Everything from the replication chapter applies to each partition. How you split and how you copy are mostly separate choices, so the rest of this chapter sets copying aside.</p>');
+  L.h(L.kick('learn','Both at once')+'<h1 class="q">Each partition is split off, then copied</h1>'+CSS+svgRepl()+
+   L.prose('Partitions are still replicated. Each partition’s '+L.g('leader','leader')+' sits on one node and its followers on others, so a node leads some partitions and follows others. How you split and how you copy are mostly separate choices.'));
   L.done();}},
 {part:0,src:'Chapter 6 · Partitioning and Replication',pts:1,
- solve:async L=>{L.$('#kill').click();},
+ solve:async L=>{L.$('#k4b1').click();for(let i=0;i<60&&!L.$('#k4done');i++)await L.sleep(30);},
  run(L){
-  const N={A:[['P1','L'],['P4','F'],['P5','L']],B:[['P1','F'],['P2','L'],['P6','L']],C:[['P2','F'],['P3','L'],['P5','F']],D:[['P3','F'],['P4','L'],['P6','F']]};
-  const box=k=>'<div id="n'+k+'" style="background:var(--soft);border-radius:14px;padding:10px;transition:opacity .3s"><b style="display:block;margin-bottom:6px">Node '+k+'</b>'+N[k].map(c=>'<span class="chip static" style="font-size:13px;padding:5px 9px;'+(c[1]==='L'?'font-weight:700':'')+'">'+c[0]+' '+(c[1]==='L'?'leader':'follower')+'</span>').join('')+'</div>';
-  L.h(L.kick('try','See it happen')+'<h1 class="q">Kwame’s test cluster: 4 nodes, 6 partitions, two copies of each. Pull the plug on node B.</h1>'+
-   '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">'+['A','B','C','D'].map(box).join('')+'</div>'+
-   '<button class="btn pri" id="kill" style="margin-top:14px">'+L.ic('x')+'Node B dies</button><div id="kq"></div>');
-  L.$('#kill').onclick=function(){this.remove();const b=L.$('#nB');b.style.opacity='.35';b.querySelectorAll('.chip').forEach(c=>c.classList.add('no'));
-    const q=L.$('#kq');q.innerHTML='<h2 class="sub">How many partitions now need a new leader?</h2>';
-    L.mc(q,['One: only partition 2','Two: partitions 2 and 6','Three: partitions 1, 2 and 6'],1,
-     'Node B led P2 and P6, so those two fail over: their followers on C and D get promoted. P1 just lost a follower, and its leader on A carries on.',
-     'Count only the partitions B <i>led</i>: P2 and P6. B was a mere follower for P1, so P1’s leader on node A keeps working; it just needs a new copy later.');};}},
+  let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Kwame’s test cluster: 4 nodes, 6 partitions, two copies of each. Node B is about to die. How many partitions will need a new leader?</h1>'+CSS+
+   '<div id="k4v">'+svgNodes(false)+'</div><div class="pz-leg"><span><i style="background:var(--pri-bg);border:1.5px solid var(--pri)"></i>leader</span><span><i style="background:var(--card);border:1.5px dashed var(--line2)"></i>follower</span></div>'+
+   '<div class="pz-row" id="k4"></div><div id="k4x"></div>');
+  ['One','Two','Three'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.id='k4b'+j;b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      L.$('#k4v').innerHTML=svgNodes(true);await L.sleep(500);if(!L.$('#k4v'))return;
+      const ok=j===1;L.award(ok);
+      L.$('#k4x').innerHTML='<span id="k4done"></span>';
+      L.sheet(ok?'ok':'no',ok?'Right: two':'It was two','Node B <b>led</b> P2 and P6, so those two fail over: their followers on C and D become leaders. B was only a follower for P1, so P1’s leader on A carries on; it just needs a new copy later.');L.done();};
+    L.$('#k4').appendChild(b);});}},
 
 /* ---------- PART 2: KEY RANGES ---------- */
 {part:1,src:'Chapter 6 · Partitioning of Key-Value Data',run(L){
-  L.h(L.kick('learn','The goal: a fair share')+'<h1 class="q">Ten nodes should do ten times the work. Unless the split is unfair.</h1>'+
-   L.prose('The aim of partitioning is to spread the data <b>and</b> the queries evenly. If every node gets a fair share, 10 nodes can, in theory, hold 10 times the data and handle 10 times the reads and writes of one node.')+
-   L.prose('If the split is unfair, it is '+L.g('skew','skewed')+'. In the worst case all the load lands on one partition: 9 nodes sit idle and the busy one is your bottleneck. That busy partition is a '+L.g('hot-spot','hot spot')+'.')+
-   L.lanes([['cycle','Place records at random','Data spreads evenly. But to read one parcel you don’t know where it is, so you must ask <b>every</b> node.',4],
-            ['target','Place records by key','The key tells you the partition, so you go straight to the right node. Now: which rule for the key?',2]]));
+  L.h(L.kick('learn','The goal: a fair share')+'<h1 class="q">Ten nodes should do ten times the work, unless the split is unfair</h1>'+CSS+svgFair()+
+   L.prose('Spread data <b>and</b> queries evenly. An unfair split is '+L.g('skew','skewed')+'; the overloaded partition is a '+L.g('hot-spot','hot spot')+'. Random placement is even, but no one knows where a record is.'));
   L.done();}},
 {part:1,src:'Chapter 6 · Partitioning by Key Range',run(L){
-  L.h(L.kick('learn','Partitioning by key range')+'<h1 class="q">Like the volumes of a paper encyclopedia</h1>'+
-   L.prose('Give each partition one continuous range of keys, from some minimum to some maximum. If you know the boundaries, you know which partition holds a key, and you can go straight to its node, just as you pick the right volume off the shelf.')+
-   L.flow([['book','Volume 1','A and B','two letters, many words',1],['book','Volume 12','T to Z','six letters, fewer words',3]],false)+
-   L.prose('The ranges are <b>not</b> evenly spaced, because the data isn’t. One volume per two letters would make some volumes huge. The boundaries must follow the data, set by an administrator or chosen by the database.')+
-   L.note('Inside each partition the keys stay sorted. So a '+L.g('range-query','range scan')+' is easy: “every reading from March” is one quick read. Bigtable, HBase, RethinkDB and MongoDB before version 2.4 work this way.','list'));
+  L.h(L.kick('learn','Partitioning by key range')+'<h1 class="q">Like the volumes of a paper encyclopedia</h1>'+CSS+svgShelf()+
+   L.prose('Each partition owns one continuous range of keys. The boundaries follow the data, not the alphabet. Keys stay sorted inside, so a '+L.g('range-query','range query')+' is cheap.')+
+   '<p class="small">Used by Bigtable, HBase, RethinkDB and MongoDB before version 2.4.</p>');
   L.done();}},
-{part:1,src:'Chapter 6 · Partitioning by Key Range',run(L){
-  L.h(L.kick('ex','The book’s sensor example, at Otterpost')+'<h1 class="q">Linh keys the scan-event table by time. What could go wrong?</h1>');
-  L.beats(L.card,[
-   ['The book’s case','A sensor network stores readings keyed by timestamp, partitioned by key range (say, one partition per day). Fetching a month of readings is a single range scan.'],
-   ['The catch','Readings are written as they happen, so <b>all</b> writes go to today’s partition. It overloads while the others sit idle.'],
-   ['At Otterpost','Linh wants Parcel DB scan events keyed by scan time, so “every scan on 9 December” is one range scan. During Peak Week every one of the day’s scans would hit the same partition.'],
-   ['The fix','Put something else first in the key. The book prefixes the sensor name; Linh prefixes the <b>courier ID</b>: <i>courier, then scan time</i>. With about 3,000 couriers scanning at once, writes spread out.'],
-   ['The cost','“All scans between 9 and 10 this morning” is no longer one range scan. It is a separate range query for <b>each courier</b>.']],
-   'Key-range partitioning makes range scans cheap, but keys written close together in time crowd onto one partition.');}},
-{part:1,src:'Chapter 6 · Partitioning by Key Range',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab range-partitions parcels by tracking code into four partitions. Codes start with a region letter: W (Westport, 70% of parcels), E (Eastvale, 25%), N (Nordhaven, 5%). Where should the boundaries go?</h1>');
-  L.mc(L.card,['Even slices of the alphabet: A–F, G–L, M–R, S–Z','One partition per region letter, plus one kept spare','Wherever each partition ends up with about a quarter of parcels'],2,
-   'Boundaries follow the data, like the encyclopedia’s uneven volumes. Westport alone needs most of the four partitions.',
-   'That splits by letters, not by data. Westport’s 70% would crowd into one or two partitions. Boundaries should give each partition a fair share of the parcels.');}},
-{part:1,src:'Chapter 6 · Partitioning by Key Range',pts:1,
- solve:async L=>{L.$('#k0').click();L.$('#k1').click();},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',
+ solve:async L=>{const r=L.rul;r.setB(2,.881);r.setB(1,.762);r.setB(0,1/3);},
  run(L){
-  const M=[{lab:['1–7 Dec','8–14 Dec','15–21 Dec','22–31 Dec'],v:[0,8000,0,0]},{lab:['Couriers 1–750','Couriers 751–1500','Couriers 1501–2250','Couriers 2251–3000'],v:[1950,2080,2010,1960]}];const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">It’s 9 December, Peak Week. About 8,000 scans arrive each minute. Try both keys and watch where the writes land.</h1>'+
-   '<div id="kk"></div><div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0">'+
-   [0,1,2,3].map(j=>'<div class="meterrow" style="margin:8px 0"><div class="lb" id="lb'+j+'" style="width:auto;flex:0 0 125px;font-size:13px">Partition '+(j+1)+'</div><div class="meter"><div id="mt'+j+'" style="background:var(--h3);transition:width .8s"></div></div><b id="nv'+j+'" style="font-size:13px;width:44px;text-align:right">–</b></div>').join('')+
-   '<div class="small" id="kc">Pick a key above.</div></div><div id="hq"></div>');
-  ['Key: scan time','Key: courier ID + scan time'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.id='k'+j;b.innerHTML=L.ic('pencil')+n;
-    b.onclick=()=>{[...L.$('#kk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      M[j].v.forEach((v,x)=>{L.$('#lb'+x).textContent=M[j].lab[x];L.$('#mt'+x).style.width=Math.round(v/80)+'%';L.$('#mt'+x).style.background=j?'var(--ok-strong)':'var(--no-strong)';L.$('#nv'+x).textContent=v.toLocaleString('en');});
-      L.$('#kc').innerHTML=j?'<b>Four partitions share the load.</b> Each courier’s scans are still sorted by time inside its partition.':'<b>One hot spot.</b> Every scan today has a key inside 8–14 Dec, so one partition takes everything.';
-      if(seen.size===2&&!L.$('#hq').innerHTML){const q=L.$('#hq');q.innerHTML='<h2 class="sub">The courier-first key fixed the hot spot. What did it cost?</h2>';
-        L.mc(q,['One courier’s scans for a day now sit on every partition','A time range across all couriers needs one query per courier','Each scan is now written to two partitions instead of one'],1,
-         'Right. The key now sorts by courier first, so “9 to 10 am for everyone” becomes about 3,000 small range queries.',
-         'One courier’s scans all share a courier ID, so they sit together on one partition, sorted by time, and each scan is still written once. The price is a time-range query across <i>all</i> couriers: one range query per courier.');}};
-    L.$('#kk').appendChild(b);});}},
+  let done=false;
+  L.h(L.kick('ex','Hands-on · the key-space ruler')+'<h1 class="q">Zainab’s test key puts the region letter first, like W-OP-48213. Drag the three boundaries until no partition takes more than 32% of new parcels.</h1><div id="r7"></div>'+CSS);
+  L.rul=Ruler(L,L.$('#r7'),{id:'r7',key:'code',drag:true,on:e=>{
+    if(done||(e.type!=='drag'&&e.type!=='dragend')||!L.rul)return;
+    if(L.rul.max()<=.32){done=true;
+      L.sheet('info','Boundaries follow the data','W codes are 70% of parcels, so two boundaries belong inside the W range. Even slices of the key space leave P4 with half the work. Like the encyclopedia, ranges are set to fit the data, by an administrator or by the database.');L.done();}}});}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',pts:1,
+ solve:async L=>{L.$('#p8b1').click();for(let i=0;i<80&&!L.$('#p8done');i++)await L.sleep(30);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Linh keys bookings by booked-at time, in four date ranges. It’s 9 December, Peak Week. Where will today’s bookings land?</h1><div id="r8"></div><div class="pz-row" id="p8"></div><div id="p8x"></div>'+CSS);
+  const r=L.rul=Ruler(L,L.$('#r8'),{id:'r8',key:'time',show:false});
+  ['Spread over all four partitions','Almost all on one partition','Mostly on the two middle ones'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.id='p8b'+j;b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');r.set({show:true});await L.sleep(900);if(!r.alive())return;
+      const ok=j===1;L.award(ok);L.$('#p8x').innerHTML='<span id="p8done"></span>';
+      L.sheet(ok?'ok':'no',ok?'Right: one hot spot':'All on one partition','Every booking made today has a key near “now”, so all of them land in P2 (8 to 16 Dec) while the other three sit idle. The book’s sensor network has the same problem: readings keyed by timestamp all hit today’s partition.');L.done();};
+    L.$('#p8').appendChild(b);});}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',
+ solve:async L=>{L.$('#k9m').click();L.$('#q9').click();},
+ run(L){
+  L.h(L.kick('pr','Fix it, then count the cost')+'<h1 class="q">Same bookings, same day. Change the key so today’s writes spread out, then ask for the last hour.</h1>'+
+   tasks('t9',['Pick a key that spreads today’s bookings','Run “every booking in the last hour” with that key'])+
+   '<div class="pz-row" id="k9"></div><div class="pz-row"><button class="btn" id="q9">'+L.ic('eye')+'Every booking in the last hour</button></div><div id="r9"></div>'+CSS);
+  const chk=()=>{const S=r.S;if(S.key==='mkey'&&r.max()<=HOT)tick(L,'t9',0);if(S.key==='mkey'&&S.q==='hour')tick(L,'t9',1);
+    if(allDone(L,'t9')&&!L.$('#t9ok')){L.$('#t9').insertAdjacentHTML('afterend','<span id="t9ok"></span>');
+      L.sheet('info','The fix has a price','The book’s fix for its sensors: put the sensor name before the timestamp. Merchant first spreads writes over many shops. But “the last hour, for everyone” is now one range query per merchant, on every partition.');L.done();}};
+  const r=L.rul=Ruler(L,L.$('#r9'),{id:'r9',key:'time',on:chk});
+  chipRow(L.$('#k9'),[['k9t','Key: booked-at time'],['k9m','Key: merchant ID + booked-at']],j=>r.set({key:j?'mkey':'time'}),0);
+  L.$('#q9').onclick=()=>r.query('hour');}},
+{part:1,src:'Chapter 6 · Partitioning by Key Range',pts:1,run(L){
+  L.h(L.kick('pr','Build the sentence')+'<h1 class="q">Tap each piece until the sentence is true.</h1>');
+  L.sentence(L.card,[['Keying bookings by booked-at time','Keying bookings by tracking code'],['makes last week one quick range scan,','scatters last week over every partition,'],['and spreads today’s writes evenly.','but piles today’s writes onto one partition.'],['Putting the merchant first spreads the writes.','Shrinking each date range spreads the writes.']],[0,0,1,0],
+   [['A tracking code says nothing about time. The sentence is about a timestamp key.'],['With key ranges, neighbouring times sit together in one partition, in order.'],['Today’s bookings all have keys near “now”, so they share one partition.'],['Smaller date ranges still put all of today in one range. Something other than time must come first.']],
+   'Key ranges by time: cheap range scans, one hot partition for today. Putting another field first spreads the writes.');}},
 
 /* ---------- PART 3: HASHING ---------- */
 {part:2,src:'Chapter 6 · Partitioning by Hash of Key',run(L){
-  L.h(L.kick('learn','Partitioning by hash of key')+'<h1 class="q">Scramble the key first, then split the numbers</h1>'+
-   L.prose('To avoid skew, many datastores run each key through a '+L.g('hash-fn','hash function')+'. A 32-bit hash turns any string into a number between 0 and about 4.3 billion. Even keys that look almost alike come out evenly spread.')+
-   L.flow([['pencil','Key','OP-48213','the tracking code',1],['cycle','Hash','2,917,402,551','made-up number',2],['layers','Partition 3','owns hashes 2.1 to 3.2 billion','',3]])+
-   L.prose('Each partition owns a <b>range of hashes</b> instead of a range of keys. The hash needn’t be cryptographically strong: Cassandra and MongoDB use MD5, and Voldemort uses the Fowler–Noll–Vo function.')+
-   L.note('Don’t grab your language’s built-in hash. Some, like Java’s <code>Object.hashCode()</code>, can give the same key a <b>different</b> number in a different process. Then two nodes would disagree about where a parcel lives.','alert'));
+  L.h(L.kick('learn','Partitioning by hash of key')+'<h1 class="q">Scramble the key first, then split the numbers</h1>'+CSS+svgHash()+
+   L.prose('A 32-bit '+L.g('hash-fn','hash function')+' turns each key into a number from 0 to 2<sup>32</sup>−1 (about 4.3 billion), and similar keys land far apart. Each partition owns a <b>range of hashes</b>. Cassandra and MongoDB use MD5; Voldemort, Fowler–Noll–Vo.')+
+   '<p class="small">Avoid built-in hashes: Java’s <code>hashCode()</code> can differ between processes.</p>');
+  L.done();}},
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key (Consistent Hashing)',run(L){
+  L.h(L.kick('learn','A confusing name')+'<h1 class="q">“Consistent hashing” has nothing to do with consistency</h1>'+CSS+svgConsistent()+
+   L.prose('Hash range boundaries can be evenly spaced or random. Random ones are sometimes called “consistent hashing”, a method for web caches. It works poorly for databases, is rarely used, and some docs still misuse the name. Say <b>hash partitioning</b>.'));
   L.done();}},
 {part:2,src:'Chapter 6 · Partitioning by Hash of Key',run(L){
-  L.h(L.kick('learn','What hashing costs')+'<h1 class="q">Even spread, but the keys lose their order</h1>'+
-   L.prose('Keys that were neighbors now land on random partitions, so efficient range queries on the key are gone. In MongoDB’s hash mode, a range query goes to every partition. Riak, Couchbase and Voldemort don’t support range queries on the primary key at all.')+
-   L.prose('Cassandra finds a middle way with a <b>compound primary key</b> made of several columns. Only the <b>first</b> part is hashed to pick the partition. The other parts sort the data inside that partition.')+
-   L.lanes([['check','Works','Fix the first part, scan a range of the rest: one user’s posts between two dates, in order.',2],
-            ['x','Doesn’t','A range over the first part itself, which was scrambled by the hash.',4]])+
-   L.note('Some call hash partitioning with random boundaries “consistent hashing”. That term comes from spreading load across web caches, and its “consistent” has nothing to do with replicas agreeing or with ACID. The book suggests just saying <b>hash partitioning</b>.','info'));
+  L.h(L.kick('learn','Hash part, sort the rest')+'<h1 class="q">A compound key gets back some order</h1>'+CSS+svgCompound()+
+   L.prose('Hashing loses the key’s order: in MongoDB’s hash mode a range query asks every partition. Cassandra hashes only the <b>first</b> part of a compound key and sorts by the rest.')+
+   '<p class="small">The book’s example: (user ID, post time) gives one user’s posts in a time range, in order. Riak, Couchbase and Voldemort don’t offer range queries on the key at all.</p>');
   L.done();}},
-{part:2,src:'Chapter 6 · Partitioning by Hash of Key',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Zainab picks a compound key for Otterpost’s scan events</h1>');
-  L.beats(L.card,[
-   ['The need','The tracking page shows one parcel’s scans in order: picked up, at hub, out for delivery, delivered. It is read far more than anything else.'],
-   ['The key','Zainab chooses <b>(tracking code, scan time)</b>. The tracking code is hashed to pick the partition. Scan time sorts the rows inside it.'],
-   ['Writes','Hundreds of thousands of parcels hash to random partitions, so scans spread evenly. No “today” hot spot.'],
-   ['The page’s read','“All scans for OP-48213, in time order” goes to <b>one</b> partition and is a single range scan.'],
-   ['The trade-off','“Every scan between 9 and 10 this morning” can’t use the key, since tracking codes are scrambled. It must ask every partition.']],
-   'Hash the part you always know (the parcel), sort by the part you scan over (time). One-to-many data like this fits a compound key well.');}},
-{part:2,src:'Chapter 6 · Partitioning by Hash of Key',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Bookings are keyed by (merchant ID, booked at), and only the merchant ID is hashed. Which query is cheap?</h1>');
-  L.mc(L.card,['Every parcel booked in the last hour, across all merchants','All merchants whose ID falls between M-1000 and M-2000','One merchant’s bookings from last week, in time order'],2,
-   'The merchant ID picks one partition, and inside it bookings are sorted by time. One range scan.',
-   'The cheap query fixes the hashed first part, then ranges over the rest. Last hour across all merchants, or a range of merchant IDs, both have to ask every partition.');}},
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key',pts:1,
+ solve:async L=>{L.$('#q14b2').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('try','Run a query')+'<h1 class="q">Bookings are keyed by (merchant ID, booked-at), and only the merchant ID is hashed. Which query reads just one partition? Tap it to run it.</h1><div class="pz-row pz-sm" id="q14"></div><div id="r14"></div>'+CSS);
+  const r=L.rul=Ruler(L,L.$('#r14'),{id:'r14',key:'mkey',mode:'hash'});
+  [['hour','Every booking in the last hour'],['mr','Merchants M-100 to M-200'],['bb','Bramble & Bolt’s bookings, last week']].forEach((q,j)=>{const b=document.createElement('button');b.className='chip';b.id='q14b'+j;b.innerHTML=q[1];
+    b.onclick=()=>{[...L.$('#q14').children].forEach(x=>x.classList.toggle('sel',x===b));r.query(q[0]);
+      if(!first)return;first=false;const ok=q[0]==='bb';L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'One partition, one scan':'That one asks every partition',(ok?'The merchant ID picks the partition, and inside it B&amp;B’s bookings are sorted by time. Tap the other two to see them light up every partition.':'Hashing scattered the merchant IDs and time comes second, so this query lights all four. The cheap one fixes the hashed part (one merchant) and ranges over the rest (time). Try it.')+
+        '<p class="small" style="margin-top:6px">Why it matters: a one-partition query runs on that node alone, so more nodes serve more queries. A query across partitions can run in parallel, but that’s much harder (chapter 10).</p>');L.done();};
+    L.$('#q14').appendChild(b);});}},
 {part:2,src:'Chapter 6 · Skewed Workloads and Relieving Hot Spots',run(L){
-  L.h(L.kick('learn','When one key is the hot spot')+'<h1 class="q">Hashing spreads different keys. It can’t split one key.</h1>'+
-   L.prose('The same key always hashes to the same number. So if a huge share of reads and writes hit <b>one</b> key, they all hit one partition. The book’s example: a celebrity with millions of followers does something, and a storm of activity hits one user ID.')+
-   L.prose('Most data systems can’t fix this automatically, so it’s the application’s job. For a key known to be hot, add a random number to its start or end. A two-digit number splits it into 100 keys that land on different partitions.')+
-   L.list([['scale','Reads pay','A read must now fetch all 100 keys and combine them.'],
-           ['list','Bookkeeping','Only do it for the few hot keys, and keep track of which keys are split.']],3));
+  L.h(L.kick('learn','When one key is the hot spot')+'<h1 class="q">Hashing spreads different keys. It can’t split one key.</h1>'+CSS+svgHotKey()+
+   L.prose('The same key always hashes to the same place. The book’s case: a celebrity acts and a storm of writes hits one user ID. The app can add a random two-digit number to that key, making 100 keys.')+
+   '<p class="small">Reads then fetch all 100 and combine them. Do it only for the few hot keys, and keep track of which ones are split.</p>');
   L.done();}},
-{part:2,src:'Chapter 6 · Skewed Workloads and Relieving Hot Spots',pts:1,run(L){
-  L.h(L.kick('pr','Tobias’s idea')+'<h1 class="q">Bramble & Bolt’s flash sales overload one partition: every booking writes to its merchant key. Tobias suggests adding a random two-digit number to <i>every</i> merchant’s key, “to be safe”. What’s the problem?</h1>');
-  L.mc(L.card,['Every merchant’s reads now gather 100 pieces','Nothing: every merchant gets spread out evenly','Hashing already splits hot keys, so it does nothing'],0,
-   'Splitting is only worth its cost for the few hot keys. For a small shop it makes every read combine 100 pieces for no gain. Split Bramble & Bolt’s key only, and record that it’s split.',
-   'Hashing can’t split one key: the same ID always lands on the same partition. Splitting works, but every split key costs reads 100 lookups, so do it only for hot keys like Bramble & Bolt’s.');}},
+{part:2,src:'Chapter 6 · Skewed Workloads and Relieving Hot Spots',
+ solve:async L=>{L.$('#s16').click();L.$('#k16b').click();L.$('#q16').click();},
+ run(L){
+  L.h(L.kick('ex','Hands-on · flash sale')+'<h1 class="q">Bookings are hash-partitioned by merchant. Bramble & Bolt starts a flash sale.</h1>'+
+   tasks('t16',['Start the flash sale and find the hot spot','Split B&amp;B’s key with a random two-digit suffix','Read B&amp;B’s bookings and count the keys'])+
+   '<div class="pz-row"><button class="btn pri" id="s16">'+L.ic('flame')+'Start flash sale</button><button class="btn" id="q16">'+L.ic('eye')+'Read B&amp;B’s bookings</button></div><div class="pz-row pz-sm" id="k16"></div><div id="r16"></div>'+CSS);
+  const chk=()=>{const S=r.S;if(S.sale&&!S.split&&r.max()>HOT)tick(L,'t16',0);if(S.sale&&S.split)tick(L,'t16',1);if(S.split&&S.q==='bb')tick(L,'t16',2);
+    if(allDone(L,'t16')&&!L.$('#t16ok')){L.$('#t16').insertAdjacentHTML('afterend','<span id="t16ok"></span>');
+      L.sheet('info','Writes spread, reads pay','In the sale B&amp;B is most of the bookings, all on one hash, so P3 takes 70%. The suffix turns one key into 100 that spread out. The bill comes at read time: 100 keys to read and combine instead of one.');L.done();}};
+  const r=L.rul=Ruler(L,L.$('#r16'),{id:'r16',key:'mkey',mode:'hash',on:chk});
+  L.$('#s16').onclick=function(){const on=!r.S.sale;this.innerHTML=L.ic('flame')+(on?'End flash sale':'Start flash sale');r.set({sale:on});};
+  chipRow(L.$('#k16'),[['k16a','No suffix'],['k16b','Suffix on B&amp;B’s key']],j=>r.set({split:j}),0);
+  L.$('#q16').onclick=()=>r.query('bb');}},
+{part:2,src:'Chapter 6 · Partitioning of Key-Value Data',
+ solve:async L=>{for(let j=0;j<5;j++)L.$('#e17b'+j).click();},
+ run(L){
+  const P=[
+   ['Time key, Peak Week',{key:'time',mode:'range',b:[.25,.5,.75],sale:false,split:0},null,'Key ranges by time: every new booking lands in today’s range. One partition works, three wait.'],
+   ['W codes are 70%',{key:'code',mode:'range',b:[.25,.5,.75],sale:false,split:0},null,'Even slices of the key space aren’t even slices of the data. Drag the boundaries and it heals: key ranges must follow the data.'],
+   ['Hash + range query',{key:'time',mode:'hash',sale:false,split:0},'hour','Hashing cured the hot spot, but neighbouring times now sit on every partition. “The last hour” has to ask all four.'],
+   ['Bramble & Bolt is 15% of parcels',{key:'mkey',mode:'hash',sale:false,split:0},'bb','Hashing spreads merchants, not one merchant. On a normal day, B&amp;B’s single key already gives P3 about 1.5 times its fair share.'],
+   ['Suffix on every key',{key:'mkey',mode:'hash',sale:false,split:2},'pip','Tobias’s “to be safe” idea. Writes look fine, but reading small shop Pip &amp; Thistle now means 100 keys. Split only the few hot keys.']];
+  const seen=new Set();
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does each scheme stop protecting you? Try all five.</h1><div class="pz-row pz-sm" id="e17"></div><div id="e17c"></div><div id="r17"></div>'+CSS);
+  const r=L.rul=Ruler(L,L.$('#r17'),{id:'r17',key:'time',drag:true});
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e17b'+j;b.innerHTML=p[0].replace('&','&amp;');
+    b.onclick=()=>{[...L.$('#e17').children].forEach(x=>x.classList.toggle('sel',x===b));r.S.q=p[2];r.set(Object.assign({},p[1],{b:(p[1].b||r.S.b).slice()}));
+      L.$('#e17c').innerHTML='<div class="fb info" style="margin:4px 0 6px;font-size:14.5px">'+p[3]+'</div>';seen.add(j);
+      if(seen.size===P.length&&!L.$('#e17ok')){L.$('#e17c').insertAdjacentHTML('beforeend','<span id="e17ok"></span>');L.done();}};
+    L.$('#e17').appendChild(b);});
+  L.$('#e17c').innerHTML='<div class="fb info" style="margin:4px 0 6px;font-size:14.5px">Tap a case. Each one sets up the ruler for you.</div>';}},
 {part:2,src:'Chapter 6 · Partitioning of Key-Value Data',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'What happens here?',['A hot spot','A query that asks every partition','Works well'],[
    ['Parcels are range-partitioned by booking time. Peak Week Monday morning, bookings pour in.',0,'New bookings all have keys near “now”, so they crowd onto the newest range.'],
    ['Parcels are hash-partitioned by tracking code. A recipient opens the tracking page for one parcel.',2,'The tracking code gives the hash, the hash gives the partition: one hop.'],
-   ['Parcels are hash-partitioned by tracking code. Linh wants codes OP-10000 to OP-19999.',1,'Hashing scattered neighboring codes, so the range is spread over every partition.'],
+   ['Parcels are hash-partitioned by tracking code. Linh wants codes OP-10000 to OP-19999.',1,'Hashing scattered neighbouring codes, so the range is spread over every partition.'],
    ['Bookings are hash-partitioned by merchant ID. Bramble & Bolt runs a flash sale.',0,'One very busy key hashes to one partition. Hashing can’t split it.'],
-   ['Scans keyed by (courier ID, scan time), hashing courier ID. Show courier Ravi’s scans today, in order.',2,'Fixed first part, range over the rest: one partition, one scan.'],
-   ['Same key. Show every scan between 9 and 10 am, across all couriers.',1,'Courier IDs are scrambled by the hash, so a time range across all of them asks everywhere.']]);}},
+   ['Tobias added a random two-digit suffix to every merchant’s key. Show small shop Pip & Thistle’s bookings.',1,'Pip & Thistle’s key was split into 100 keys too, so a small shop’s read now gathers 100 pieces from everywhere.'],
+   ['Scans keyed by (courier ID, scan time), hashing the courier ID. Show courier Ravi’s scans today, in order.',2,'Fixed first part, range over the rest: one partition, one scan.']]);}},
+{part:2,src:'Chapter 6 · Partitioning by Hash of Key',pts:1,
+ solve:async L=>{L.$('#k19m').click();L.$('#m19h').click();L.$('#c19').click();},
+ run(L){
+  let first=true,passed=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Design the bookings key for Peak Week. Writes must spread (no partition over 40%), and “Bramble & Bolt’s bookings, last week” must read one partition.</h1>'+
+   '<div class="pz-lbl">Key</div><div class="pz-row" id="k19"></div><div class="pz-lbl">Scheme</div><div class="pz-row" id="m19"></div>'+
+   '<div id="g19"></div><div id="r19"></div><button class="btn pri" id="c19" style="margin-top:6px">'+L.ic('check')+'Check my design</button>'+CSS);
+  const goals=()=>{const ok1=r.max()<=HOT,ok2=rQuery(r.S,'bb').parts.length===1;
+    L.$('#g19').innerHTML=[[ok1,'Writes spread: busiest partition at most 40%'],[ok2,'B&amp;B’s last week reads one partition']].map(g=>'<div class="pz-goal"><b class="'+(g[0]?'pz-ok':'pz-hot')+'">'+(g[0]?'✓':'✗')+'</b>'+g[1]+'</div>').join('');return ok1&&ok2;};
+  const r=L.rul=Ruler(L,L.$('#r19'),{id:'r19',key:'time',q:'bb',on:()=>{if(L.$('#g19'))goals();}});
+  chipRow(L.$('#k19'),[['k19t','Booked-at'],['k19c','Region + code'],['k19m','Merchant + booked-at']],j=>r.set({key:['time','code','mkey'][j]}),0);
+  chipRow(L.$('#m19'),[['m19r','Key ranges'],['m19h','Hash of key']],j=>r.set({mode:j?'hash':'range'}),0);
+  goals();
+  L.$('#c19').onclick=()=>{if(passed)return;const ok=goals();
+    if(first){L.award(ok);first=false;}
+    if(ok){passed=true;L.sheet('ok','Design passes','Merchant first, booked-at second. Writes spread over many shops, and one shop’s week is one range scan on one partition. Hashing the merchant is one way, as in Cassandra’s compound key; key ranges work here too. B&amp;B still makes its partition the busiest, at 36%.');L.done();}
+    else L.sheet('no','Not yet','Look at the red cross. A time-first key piles today onto one partition, or scatters one shop’s week. A key that doesn’t start with the merchant can’t find one shop’s bookings in one place. Change the key or scheme and check again.');};}},
 
 /* ---------- PART 4: SECONDARY INDEXES ---------- */
 {part:3,src:'Chapter 6 · Partitioning and Secondary Indexes',run(L){
-  L.h(L.kick('learn','The problem with secondary indexes')+'<h1 class="q">The key tells you where a record lives. A postcode doesn’t.</h1>'+
-   L.prose('So far, every request came with the primary key, and the key told us the partition. A '+L.g('secondary-index','secondary index')+' is different: it searches for every record with some value. All parcels to postcode WP4. All parcels from Bramble & Bolt.')+
-   L.prose('Relational databases rely on them, document databases use them a lot, and search servers like Solr and Elasticsearch exist for them. Some key-value stores left them out because they are hard to build. The trouble is that they don’t map neatly onto partitions.')+
-   L.note('Otterpost now hash-partitions parcels by tracking code. Signe’s support team searches by postcode, and the merchant dashboard lists parcels by merchant. Neither value tells you the partition.','people')+
-   '<p class="small" style="margin-top:10px">Tempted to build the index yourself in application code? The book warns that crashes and race conditions easily leave a hand-made index out of sync with the data.</p>');
+  L.h(L.kick('learn','The problem with secondary indexes')+'<h1 class="q">The key tells you where a parcel lives. A postcode doesn’t.</h1>'+CSS+'<div id="v20"></div>'+
+   L.prose('Parcels are spread by a hash of the tracking code. A '+L.g('secondary-index','secondary index')+' finds records by another value, like postcode WP4, whose parcels sit on six of eight partitions.')+
+   '<p class="small">Relational databases rely on them; Solr and Elasticsearch exist for them.</p>');
+  Pillars(L,L.$('#v20'),{id:'v20',shelf:false,read:false});
   L.done();}},
 {part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Document',run(L){
-  L.h(L.kick('learn','Option 1: a local index')+'<h1 class="q">Each partition indexes only its own records</h1>'+
-   L.prose('In a <b>document-partitioned</b> index, each partition keeps its own secondary index, covering only the records it holds. The book’s example is a used-car site: partition 0 lists its own red cars, partition 1 lists its own.')+
-   L.lanes([['check','Writes: easy','Adding or changing a record touches one partition: the one holding that record and its index entries.',2],
-            ['alert','Reads: costly','Red cars could be anywhere. A search goes to <b>every</b> partition and the answers are combined.',4]])+
-   L.prose('That second pattern is '+L.g('scatter-gather','scatter/gather')+'. Even run in parallel, it waits for the slowest partition, so it suffers tail latency amplification (from chapter 1). Still, MongoDB, Riak, Cassandra, Elasticsearch, SolrCloud and VoltDB all use local indexes.'));
+  L.h(L.kick('learn','Option 1: a local index')+'<h1 class="q">Each partition indexes only its own parcels</h1>'+CSS+'<div id="v21"></div>'+
+   L.prose('A '+L.g('local-index','local index')+' makes a booking write one partition. But a search must ask all eight and combine the answers: '+L.g('scatter-gather','scatter/gather')+', as slow as the slowest partition.')+
+   '<p class="small">MongoDB, Riak, Cassandra, Elasticsearch, SolrCloud and VoltDB work this way. The book’s example is a used-car site searching for red cars.</p>');
+  Pillars(L,L.$('#v21'),{id:'v21',read:false,lines:[0,1,2,3,4,5,6,7].map(k=>({f:'s',k,col:'var(--h2)'})).concat([{f:'b',k:HOME,col:'var(--h1)'}])});
   L.done();}},
-{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Document',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Parcels sit on 8 partitions, each with a local index on postcode. Signe searches for WP4. How many partitions answer?</h1>');
-  L.mc(L.card,['All 8, then the answers are combined','Only the one that holds postcode WP4','Two: the leader and a follower'],0,
-   'Parcels to WP4 can be on any partition, so the search scatters to all 8 and gathers the results.',
-   'With a local index no partition “holds” a postcode: WP4 parcels are scattered by their tracking codes. The search must ask all 8.');}},
 {part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',run(L){
-  L.h(L.kick('learn','Option 2: a global index')+'<h1 class="q">One index for everything, split by the value you search for</h1>'+
-   L.prose('A '+L.g('global-index','global index')+' covers the records in every partition. It can’t sit on one node, or that node becomes the bottleneck. So it is partitioned too, but by the searched value, which the book calls the <b>term</b>.')+
-   L.flow([['list','Index partition 0','postcodes A–M','EV2, KR8, …',1],['list','Index partition 1','postcodes N–Z','WP4, SN1, …',2]],false)+
-   L.prose('You can split by the term itself (handy for range scans, like a price range) or by a hash of it (a more even spread). A search now asks just <b>one</b> index partition.')+
-   L.note('The price: one new parcel can touch several index partitions, one per indexed field. Keeping them all in step instantly needs a distributed transaction, which not every database supports. So global indexes are often updated <b>asynchronously</b>: right after a write, the index may not show it yet. Amazon DynamoDB says its global indexes usually catch up within a fraction of a second, longer when something fails.','clock'));
+  L.h(L.kick('learn','Option 2: a global index')+'<h1 class="q">One index for all parcels, split by the term you search for</h1>'+CSS+'<div id="v22"></div>'+
+   L.prose('A '+L.g('global-index','global index')+' is partitioned by the searched value (the <b>term</b>): WP4 lives on P8. A search asks one partition, but a booking also writes each term’s partition, often later.')+
+   '<p class="small">Split by the term itself for range scans (like a price range), or by a hash of the term for an even load.</p>');
+  Pillars(L,L.$('#v22'),{id:'v22',mode:'global',read:false,lines:[{f:'s',k:PCI,col:'var(--h2)'},{f:'b',k:HOME,col:'var(--h1)'},{f:'b',k:PCI,col:'var(--h3)',dash:1},{f:'b',k:MCI,col:'var(--h3)',dash:1}]});
   L.done();}},
-{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',pts:1,
- solve:async L=>{L.$('#ix0').click();L.$('#ix1').click();},
+{part:3,src:'Chapter 6 · Partitioning and Secondary Indexes',
+ solve:async L=>{const p=L.pil;L.$('#a23s').click();await p.idle();L.$('#a23b').click();await p.idle();L.$('#m23g').click();L.$('#a23s').click();await p.idle();L.$('#a23b').click();await p.idle();},
  run(L){
-  const P=['Data 1','Data 2','Data 3','Data 4'],I=['Postcode A–M','Postcode N–Z','Merchant A–M','Merchant N–Z'];
-  const R=[{s:[['d',0],['d',1],['d',2],['d',3]],w:[['d',2]]},{s:[['i',1]],w:[['d',2],['i',1],['i',2]]}];const seen=new Set();
-  const row=(lab,hits,j)=>{const all=P.map((p,x)=>['d',x,p]).concat(j?I.map((p,x)=>['i',x,p]):[]);
-    const on=all.filter(a=>hits.some(h=>h[0]===a[0]&&h[1]===a[1]));
-    return '<div style="margin:10px 0"><b style="font-size:14.5px">'+lab+'</b> <span class="small">· touches '+on.length+' partition'+(on.length>1?'s':'')+'</span><div style="margin-top:6px">'+all.map(a=>{const h=on.includes(a);return '<span class="chip static'+(h?' ok':'')+'" style="font-size:12.5px;padding:5px 8px;'+(h?'':'opacity:.4')+'">'+a[2]+'</span>';}).join('')+'</div></div>';};
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Same parcels, two kinds of index. Try both and count the partitions each action touches.</h1><div id="ix"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:6px 14px;margin:8px 0;min-height:90px"><div id="ir" style="padding:8px 0"><span class="small">Choose an index above.</span></div></div><div id="iq"></div>');
-  ['Local index','Global index'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.id='ix'+j;b.innerHTML=L.ic('list')+n;
-    b.onclick=()=>{[...L.$('#ix').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#ir').innerHTML=row('Signe looks up postcode WP4',R[j].s,j)+row('Bramble & Bolt books a parcel to WP4',R[j].w,j);
-      if(seen.size===2&&!L.$('#iq').innerHTML){const q=L.$('#iq');q.innerHTML='<h2 class="sub">Which sentence matches what you just saw?</h2>';
-        L.mc(q,['Global index: one-partition writes, but searches ask everywhere','Local index: one-partition writes, but searches ask everywhere','Either index: every search has to ask every partition'],1,
-         'Local keeps writes simple and makes searches scatter. Global flips it: one index partition per search, but a booking touched three partitions.',
-         'Look again: with the local index the booking touched one partition and the search touched four. With the global index the search touched one, and the booking touched three.');}};
-    L.$('#ix').appendChild(b);});}},
+  const seen=new Set();
+  L.h(L.kick('ex','Hands-on · the index pillars')+'<h1 class="q">Run Signe’s search and a booking with each kind of index. Count the partitions each one touches.</h1>'+
+   tasks('t23',['Local index: search and book','Global index: search and book'])+
+   '<div class="pz-row pz-sm" id="m23"></div><div class="pz-row"><button class="btn pri" id="a23s">'+L.ic('eye')+'Search WP4</button><button class="btn" id="a23b">'+L.ic('box')+'Book a parcel</button></div><div id="v23"></div>'+CSS);
+  const p=L.pil=Pillars(L,L.$('#v23'),{id:'v23',on:e=>{
+    if(e.type==='search'||e.type==='book')seen.add(e.mode+e.type);
+    if(seen.has('localsearch')&&seen.has('localbook'))tick(L,'t23',0);
+    if(seen.has('globalsearch')&&seen.has('globalbook'))tick(L,'t23',1);
+    if(allDone(L,'t23')&&!L.$('#t23ok')){L.$('#t23').insertAdjacentHTML('afterend','<span id="t23ok"></span>');
+      L.sheet('info','The trade, in one picture','Local: a booking writes 1 partition, a search asks all 8. Global: a search asks 1 partition, a booking writes 3, and the index catches up a moment later. You choose which side pays.');L.done();}}});
+  chipRow(L.$('#m23'),[['m23l','Local index'],['m23g','Global index']],j=>{if(p.S.busy)return;p.setMode(j?'global':'local');},0);
+  L.$('#a23s').onclick=()=>p.search();L.$('#a23b').onclick=()=>p.book();}},
+{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#e24b'+j).click();await L.sleep(30);await L.pil.idle();for(let i=0;i<60&&L.$('#e24b'+j).disabled;i++)await L.sleep(30);}},
+ run(L){
+  const seen=new Set();let busy=false;
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does each index stop protecting you? Run all three cases.</h1><div class="pz-row pz-sm" id="e24"></div><div id="e24c"></div><div id="v24"></div>'+CSS);
+  const p=L.pil=Pillars(L,L.$('#v24'),{id:'v24'});
+  const P=[
+   ['Slow P6 · local',async()=>{p.setMode('local');p.setSlow(5);await p.search();},'Scatter/gather waits for every answer, so one slow partition makes every search slow. That’s tail latency amplification, from chapter 1.'],
+   ['Slow P6 · global',async()=>{p.setMode('global');p.setSlow(5);await p.search();},'The search asks only P8, so the slow P6 doesn’t matter, unless the term you want lives on P6.'],
+   ['Search just after booking · global',async()=>{p.setMode('global');p.setSlow(-1);await p.book();await p.search();},'The parcel is saved, but its index entry is still on its way. DynamoDB says its global indexes usually catch up within a fraction of a second, and take longer when something fails. Keeping them exact would need a distributed transaction.']];
+  P.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.id='e24b'+j;b.textContent=c[0];
+    b.onclick=async()=>{if(busy||p.S.busy)return;busy=true;[...L.$('#e24').children].forEach(x=>{x.classList.toggle('sel',x===b);x.disabled=true;});
+      L.$('#e24c').innerHTML='<div class="fb info" style="margin:4px 0 6px;font-size:14.5px">Running…</div>';
+      await c[1]();if(!p.alive())return;
+      L.$('#e24c').innerHTML='<div class="fb info" style="margin:4px 0 6px;font-size:14.5px">'+c[2]+'</div>';seen.add(j);busy=false;[...L.$('#e24').children].forEach(x=>{x.disabled=false;});
+      if(seen.size===P.length&&!L.$('#e24ok')){L.$('#e24c').insertAdjacentHTML('beforeend','<span id="e24ok"></span>');L.done();}};
+    L.$('#e24').appendChild(b);});
+  L.$('#e24c').innerHTML='<div class="fb info" style="margin:4px 0 6px;font-size:14.5px">Tap a case to run it.</div>';}},
 {part:3,src:'Chapter 6 · Partitioning and Secondary Indexes',pts:5,run(L){
   L.h(L.kick('pr','Local or global?')+'<h1 class="q">For each need, which kind of index fits better?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Local index','Global index'],[
    ['Searches are rare, but Peak Week bookings must stay as cheap as possible',0,'A local index keeps each write inside one partition.'],
    ['Signe’s team searches all day long, and each search must be quick',1,'A global index answers from one index partition, with no scatter/gather.'],
    ['The slowest of 40 partitions keeps dragging search times up',1,'That’s tail latency amplification from scatter/gather. A global index avoids asking all 40.'],
-   ['Each booking must write only to the partition that stores the parcel itself',0,'A local index sits in the same partition as the record, so one partition is enough.'],
+   ['Each booking must write only to the partition that stores the parcel itself',0,'A local index sits in the same partition as the parcel, so one partition is enough.'],
    ['Merchants refresh their dashboards all day; bookings are far fewer',1,'Reads dominate, so make each read hit one index partition and accept heavier writes.']],
-   'Local: cheap writes, scattered reads. Global: targeted reads, heavier and often delayed writes.');}},
-{part:3,src:'Chapter 6 · Partitioning Secondary Indexes by Term',pts:1,run(L){
-  L.h(L.kick('pr','A puzzled merchant')+'<h1 class="q">The merchant dashboard uses a global index on merchant ID. Bramble & Bolt books a parcel, refreshes right away, and the parcel isn’t listed. A second later it is. What happened?</h1>');
-  L.mc(L.card,['The parcel was first written to the wrong partition','The index partition for B is a hot spot that drops writes','The global index is updated asynchronously, so it lagged'],2,
-   'The parcel was saved, but its entry in the global index arrived a moment later. Zainab should tell Tobias the dashboard can be briefly behind.',
-   'Nothing was lost or misplaced: the parcel appeared a second later. That’s the usual asynchronous update of a global index, which can lag behind the data.');}}
+   'Local: cheap writes, scattered reads. Global: targeted reads, heavier and often delayed writes.');}}
   ]
 });
 </script>

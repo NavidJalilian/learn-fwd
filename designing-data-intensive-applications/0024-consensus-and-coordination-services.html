@@ -13,10 +13,384 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0024 only. Two hands-on models used across the lesson:
+   1. Ladder – the epoch ladder. Columns are Kwame’s five voting nodes,
+               rows are votes (elections and proposals), each tagged with
+               its epoch. Crash nodes, elect, propose; property badges
+               show which consensus promises still hold. A Venn panel
+               shows how the election and proposal quorums overlap.
+   2. Tree   – a ZooKeeper-style tree. Three route planners race for an
+               ephemeral leader key; freeze one and watch its session
+               expire, the key vanish and a watcher take over.
+   ===================================================================== */
+const CSS='<style>'+
+ '.cc-fig svg{width:100%;display:block;touch-action:manipulation}.cc-fig svg text{font-family:var(--sans)}'+
+ '.cc-cap{font-size:15.5px;line-height:1.5;margin:10px 0 4px}'+
+ '.cc-foot{font-size:13px;color:var(--muted);line-height:1.45;margin:6px 0 0}'+
+ '.cc-ctl{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.cc-ctl .btn{min-height:42px;padding:8px 12px;margin:0}.cc-ctl .chip{margin:0;min-height:40px}'+
+ '.cc-hint{font-size:13px;color:var(--muted);margin:6px 0 4px}'+
+ '.cc-nodes{display:flex;gap:6px;flex-wrap:wrap;margin:2px 0 4px}.cc-nodes .chip{margin:0;min-width:50px;min-height:40px;justify-content:center;font-weight:600}'+
+ '.cc-nodes .chip.down{background:var(--soft);color:var(--muted);border-style:dashed;text-decoration:line-through}.cc-nodes .chip.zz{background:var(--soft);color:var(--muted);border-style:dashed}.cc-nodes .chip.lock{opacity:.55;cursor:default}'+
+ '.cc-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:46px}'+
+ '.cc-badges{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0 2px}'+
+ '.cc-b{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:700;border-radius:99px;padding:4px 9px;border:1.5px solid}.cc-b svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.cc-b.ok{color:var(--ok);background:var(--ok-bg);border-color:var(--ok-line)}.cc-b.no{color:var(--no);background:var(--no-bg);border-color:var(--no-line)}.cc-b.wa{color:var(--h3);background:var(--h3-bg);border-color:var(--h3)}'+
+ '.cc-dec{font-size:13.5px;color:var(--muted);margin:4px 0}.cc-dec b{color:var(--ink)}.cc-dec .d{display:inline-block;border-radius:8px;padding:1px 7px;margin:2px 4px 2px 0;background:var(--ok-bg);color:var(--ok);font-weight:700}.cc-dec .d.x{background:var(--no-bg);color:var(--no)}'+
+ '.cc-goals{margin:8px 0 4px;padding:0;list-style:none}.cc-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.cc-goals li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.cc-goals li.done{color:var(--ok)}.cc-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.cc-goals li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.cc-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.cc-tile{border-radius:14px;padding:8px 9px 10px;border:2px solid var(--line);font-size:13px;line-height:1.35;color:var(--muted);background:var(--card)}'+
+ '.cc-tile svg{width:100%;display:block;margin:2px 0 4px}.cc-tile svg text{font-family:var(--sans)}.cc-tile b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}'+
+ '.cc-tag{display:inline-block;font-size:11.5px;font-weight:700;border-radius:99px;padding:2px 8px}.cc-tag.s{background:var(--h1-bg);color:var(--h1)}.cc-tag.l{background:var(--h2-bg);color:var(--h2)}'+
+ '.cc-pl{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}.cc-pc{border:2px solid var(--line);border-radius:14px;padding:7px 7px 8px;font-size:12.5px;line-height:1.3;background:var(--card);transition:border-color .2s,background .2s}'+
+ '.cc-pc.lead{border-color:var(--ok-line);background:var(--ok-bg)}.cc-pc.ring{border-color:var(--h3);background:var(--h3-bg)}.cc-pc.dead{border-style:dashed;background:var(--soft)}'+
+ '.cc-pc b{display:block;font-size:13.5px;color:var(--ink)}.cc-pc .stt{min-height:32px;color:var(--muted);margin:2px 0 4px}.cc-pc .stt svg.i{width:13px;height:13px;vertical-align:-2px}'+
+ '.cc-hb{display:flex;align-items:center;gap:5px;font-size:11.5px;color:var(--muted)}.cc-hb i{width:9px;height:9px;border-radius:50%;background:var(--line2);display:inline-block}.cc-hb i.on{background:var(--ok-strong);animation:ccbeat 1s infinite}'+
+ '@keyframes ccbeat{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.45);opacity:.55}}'+
+ '.cc-bar{height:6px;border-radius:9px;background:var(--soft2);margin:5px 0 6px;overflow:hidden}.cc-bar span{display:block;height:100%;width:0;background:var(--no);border-radius:9px}'+
+ '.cc-pc .btn{width:100%;justify-content:center;min-height:38px;padding:6px 4px;font-size:13px;margin:0}'+
+ '.cc-store{border-radius:14px;padding:9px 12px;font-size:14px;line-height:1.45;border:2px dashed var(--line2);margin:6px 0}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}.wa-t{color:var(--h3);font-weight:700}'+
+ '</style>';
+
+const T=(L,ms)=>L.fast?Math.min(ms,25):ms;
+const nap=(L,ms)=>L.sleep(T(L,ms));
+function anim(L,ms,fn){return new Promise(res=>{const d=T(L,ms),t0=performance.now();(function st(){const p=Math.min(1,(performance.now()-t0)/d);if(fn(p)===false){res(false);return;}if(p<1)setTimeout(st,16);else res(true);})();});}
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+const NM=k=>'N'+(k+1);
+const FULL={Okoro:'Mrs. Okoro',Lund:'Mr. Lund',Adeyemi:'Ms. Adeyemi',Haddad:'Mr. Haddad',Silva:'Ms. Silva',nobody:'“nobody”'};
+function crownD(x,y0,s){s=s||1;return 'M'+(x-9*s)+' '+y0+'L'+(x-9*s)+' '+(y0-9*s)+'L'+(x-4.5*s)+' '+(y0-4*s)+'L'+x+' '+(y0-11*s)+'L'+(x+4.5*s)+' '+(y0-4*s)+'L'+(x+9*s)+' '+(y0-9*s)+'L'+(x+9*s)+' '+y0+'Z';}
+const chk=(x,y,c)=>'<path d="M'+(x-5)+' '+y+'L'+(x-1.5)+' '+(y+3.5)+'L'+(x+5)+' '+(y-4)+'" style="fill:none;stroke:'+(c||'var(--ok)')+';stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round"/>';
+const xx=(x,y,s,c)=>'<path d="M'+(x-s)+' '+(y-s)+'L'+(x+s)+' '+(y+s)+'M'+(x+s)+' '+(y-s)+'L'+(x-s)+' '+(y+s)+'" style="fill:none;stroke:'+(c||'var(--no)')+';stroke-width:2.6;stroke-linecap:round"/>';
+const node=(x,y,r,t,f,s,dash)=>'<circle cx="'+x+'" cy="'+y+'" r="'+r+'" style="fill:'+(f||'var(--h1-bg)')+';stroke:'+(s||'var(--h1)')+';stroke-width:2'+(dash?';stroke-dasharray:'+dash:'')+'"/>'+(t?tx(x,y+4,t,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)'):'');
+const arrowDefs=id=>'<defs><marker id="'+id+'" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>';
+function goalsHtml(id,items){return '<ul class="cc-goals" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+function allTicked(L,id){return L.$$('#'+id+' li').every(li=>li.classList.contains('done'));}
+
+/* ---------- 1. The epoch ladder ---------- */
+const ST={up:['var(--h1-bg)','var(--h1)',''],down:['var(--soft)','var(--line2)','3 3'],zz:['var(--soft)','var(--line2)','5 4'],cut:['var(--h3-bg)','var(--h3)',''],x:['var(--card)','var(--line2)','2 3']};
+function Ladder(L,host,o){
+  o=Object.assign({id:'ld',n:5,rows:5,tap:false,badges:true,lock:[],label:'Epoch ladder: one column per voting node, one row per vote',on:null},o||{});
+  const ID=o.id;
+  const S={n:o.n,extra:0,st:[],know:[],rows:[],top:0,leader:null,believe:{},twin:null,dec:[],mode:'ok',ovr:{},busy:false,anim:true,lastE:[],lastP:[]};
+  host.insertAdjacentHTML('beforeend','<div class="cc-fig"><svg id="'+ID+'-s" viewBox="0 0 320 100" role="img" aria-label="'+o.label+'"></svg></div>'+
+    (o.tap?'<div class="cc-hint">Tap a node to crash it or bring it back</div><div class="cc-nodes" id="'+ID+'-c"></div>':'')+
+    (o.badges?'<div class="cc-badges" id="'+ID+'-b" aria-live="polite"></div>':'')+'<div class="cc-dec" id="'+ID+'-d"></div>');
+  const svg=host.querySelector('#'+ID+'-s'),chips=host.querySelector('#'+ID+'-c'),bdg=host.querySelector('#'+ID+'-b'),decEl=host.querySelector('#'+ID+'-d');
+  const alive=()=>svg.isConnected;
+  const maj=()=>Math.floor(S.n/2)+1;
+  function reset(n){S.n=n||o.n;S.extra=0;S.st=Array(S.n).fill('up');S.know=Array(S.n).fill(0);S.rows=[];S.top=0;S.leader=null;S.believe={};S.twin=null;S.dec=[];S.mode='ok';S.ovr={};S.lastE=[];S.lastP=[];}
+  reset(o.n);
+  function props(){
+    const by={};let a=true;S.dec.forEach(d=>{if(by[d.slot]!=null&&by[d.slot]!==d.val)a=false;by[d.slot]=d.val;});
+    const up=S.st.filter(s=>s==='up').length;
+    const t=S.mode==='dict'?(S.st[0]==='up'?'ok':'no'):(up>=maj()?'ok':'no');
+    return Object.assign({a:a?'ok':'no',i:'ok',v:S.dec.some(d=>d.bad)?'no':'ok',t},S.ovr);}
+  function paint(){
+    if(!alive())return;
+    const C=S.n+S.extra,cw=164/C,cx=k=>+(82+cw*(k+.5)).toFixed(1),r=Math.min(13,cw/2-3),fs=C>5?10.5:12,RH=32,y0=72;
+    const H=y0+Math.max(1,S.rows.length)*RH+4;svg.setAttribute('viewBox','0 0 320 '+H);
+    let s='';
+    s+=tx(4,36,'nodes','font-size:11px;fill:var(--muted)')+tx(4,62,'knows','font-size:11px;fill:var(--muted)')+tx(285,36,'result','font-size:11px;text-anchor:middle;fill:var(--muted)');
+    for(let k=0;k<C;k++){const x=cx(k),y=32,ext=k>=S.n,st=ext?'x':S.st[k],c=ST[st];
+      s+='<circle cx="'+x+'" cy="'+y+'" r="'+r+'" style="fill:'+c[0]+';stroke:'+c[1]+';stroke-width:2.2'+(c[2]?';stroke-dasharray:'+c[2]:'')+'"/>';
+      s+=tx(x,y+4,NM(k),'font-size:'+fs+'px;font-weight:700;text-anchor:middle;fill:var(--'+(st==='up'||st==='cut'?'ink':'muted')+')');
+      if(st==='down')s+='<circle cx="'+(x+r*.75)+'" cy="'+(y-r*.75)+'" r="6" style="fill:var(--no-bg);stroke:var(--no)"/>'+xx(x+r*.75,y-r*.75,2.6);
+      if(st==='zz')s+=tx(x+r*.8,y-r*.55,'z','font-size:11px;font-weight:700;fill:var(--muted)');
+      s+=tx(x,62,ext?'—':st==='down'?'down':S.know[k]?'e'+S.know[k]:'—','font-size:11px;text-anchor:middle;fill:var(--'+(st==='down'?'no':'muted')+')');}
+    const crowns=[];if(S.leader!=null)crowns.push([S.leader,'solid']);
+    Object.keys(S.believe).forEach(k=>{k=+k;if(k!==S.leader)crowns.push([k,S.twin&&S.twin.includes(k)?'solid':'ghost']);});
+    crowns.forEach(cr=>{const x=cx(cr[0]),y0c=32-r-1;s+='<path d="'+crownD(x,y0c,.75)+'" style="'+(cr[1]==='solid'?'fill:var(--h4);stroke:var(--h4)':'fill:var(--card);stroke:var(--no);stroke-dasharray:2 2')+';stroke-width:1.4;stroke-linejoin:round"/>';});
+    S.rows.forEach((rw,i)=>{const y=y0+i*RH;
+      if(i%2===0)s+='<rect x="0" y="'+y+'" width="320" height="'+RH+'" rx="7" style="fill:var(--soft)"/>';
+      s+='<rect x="3" y="'+(y+8)+'" width="28" height="17" rx="8" style="fill:var(--pri-bg)"/>'+tx(17,y+20.5,rw.e==null?'—':'E'+rw.e,'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+      s+=tx(35,y+21,rw.kind==='elect'?'elect':rw.val,'font-size:11px;'+(rw.kind==='elect'?'font-style:italic;fill:var(--muted)':'font-weight:600;fill:var(--ink)'));
+      for(let k=0;k<C;k++){if(k>=rw.shown)break;const x=cx(k),yc=y+16,v=k<rw.cells.length?rw.cells[k]:'o',rr=Math.min(10,r);
+        if(v==='L')s+='<circle cx="'+x+'" cy="'+yc+'" r="'+rr+'" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.6"/><path d="'+crownD(x,yc+4,.55)+'" style="fill:var(--h4);stroke:var(--h4);stroke-width:1;stroke-linejoin:round"/>';
+        else if(v==='y')s+='<circle cx="'+x+'" cy="'+yc+'" r="'+rr+'" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.6"/>'+chk(x,yc);
+        else if(v==='n')s+='<rect x="'+(x-12)+'" y="'+(yc-9)+'" width="24" height="18" rx="6" style="fill:var(--no-bg);stroke:var(--no-line);stroke-width:1.4"/>'+tx(x,yc+4,(rw.tags&&rw.tags[k])||'no','font-size:10.5px;font-weight:700;text-anchor:middle;fill:var(--no)');
+        else if(v==='-')s+='<line x1="'+(x-6)+'" y1="'+yc+'" x2="'+(x+6)+'" y2="'+yc+'" style="stroke:var(--line2);stroke-width:2.4;stroke-linecap:round"/>';
+        else s+='<circle cx="'+x+'" cy="'+yc+'" r="2.5" style="fill:var(--line2)"/>';}
+      if(rw.shown>=C){const col=rw.ok?'var(--ok)':'var(--no)';s+=tx(285,y+14,rw.res1,'font-size:11px;font-weight:700;text-anchor:middle;fill:'+col)+tx(285,y+27,rw.res2,'font-size:11px;text-anchor:middle;fill:'+col);}});
+    if(!S.rows.length)s+=tx(160,y0+20,'No votes yet','font-size:12px;text-anchor:middle;fill:var(--muted)');
+    svg.innerHTML=s;
+    if(chips){chips.innerHTML=S.st.map((st,k)=>'<button class="chip '+st+(o.lock.includes(k)?' lock':'')+'" data-k="'+k+'" aria-label="'+NM(k)+': '+({up:'running',down:'crashed',zz:'frozen',cut:'cut off'}[st])+'. Tap to change">'+NM(k)+'</button>').join('');
+      chips.querySelectorAll('button').forEach(b=>{b.onclick=()=>tap(+b.dataset.k);});}
+    if(bdg){const p=props(),B=[['a','Agreement'],['i','Integrity'],['v','Validity'],['t','Termination']];
+      bdg.innerHTML=B.map(b=>'<span class="cc-b '+p[b[0]]+'">'+L.ic(p[b[0]]==='ok'?'check':p[b[0]]==='no'?'x':'clock')+b[1]+(p[b[0]]==='wa'?' (barely)':'')+'</span>').join('');}
+    const by={};S.dec.forEach(d=>{(by[d.slot]=by[d.slot]||[]).push(d);});
+    decEl.innerHTML='<b>Decided:</b> '+(S.dec.length?Object.keys(by).map(sl=>by[sl].map(d=>'<span class="d'+(by[sl].length>1||d.bad?' x':'')+'">#'+sl+' '+d.val+'</span>').join('')).join(''):'nothing yet');
+  }
+  async function addRow(rw){
+    const C=S.n+S.extra;rw.shown=0;S.rows.push(rw);if(S.rows.length>o.rows)S.rows.shift();
+    if(!S.anim){rw.shown=C;paint();return;}
+    for(let k=0;k<=C;k++){rw.shown=k;paint();await nap(L,k<C?120:60);if(!alive())return;}
+    rw.shown=C;paint();}
+  async function elect(cand){
+    const n=S.n,e=++S.top;let c=cand;
+    if(c==null){const ups=[...Array(n).keys()].filter(k=>S.st[k]==='up');c=ups.find(k=>k!==S.leader);if(c==null)c=ups[0];}
+    if(c==null){await addRow({e,kind:'elect',cells:S.st.map(()=>'-'),res1:'0 of '+n,res2:'no leader',ok:false});return {ok:false,yes:0,e};}
+    const cells=S.st.map((s,k)=>k===c?'L':s==='up'?'y':'-');
+    const yes=cells.filter(x=>x!=='-').length,ok=yes>=maj();
+    if(ok){cells.forEach((x,k)=>{if(x!=='-'){S.know[k]=e;if(k!==c)delete S.believe[k];}});S.believe[c]=e;S.leader=c;S.lastE=cells.map((x,k)=>x!=='-'?k:-1).filter(k=>k>=0);}
+    await addRow({e,kind:'elect',cells,res1:yes+' of '+n,res2:ok?'leader '+NM(c):'no leader',ok});
+    return {ok,yes,e,c};}
+  async function propose(val,by,bad){
+    if(by==null)by=S.leader;
+    if(by==null||S.believe[by]==null||S.st[by]!=='up')return {ok:false,why:'nolead'};
+    const eb=S.believe[by],n=S.n,slot=S.dec.length+1,tags=[];let cells;
+    if(S.mode==='dict')cells=S.st.map((s,k)=>k===by?'L':'o');
+    else cells=S.st.map((s,k)=>{if(k===by)return 'L';if(s!=='up')return '-';if(S.know[k]>eb){tags[k]='e'+S.know[k];return 'n';}return 'y';});
+    const yes=cells.filter(x=>x==='L'||x==='y').length,ok=S.mode==='dict'?true:yes>=maj();
+    if(ok){cells.forEach((x,k)=>{if(x==='y')S.know[k]=Math.max(S.know[k],eb);});S.dec.push({slot,val,e:eb,by,bad:!!bad});S.lastP=cells.map((x,k)=>x==='L'||x==='y'?k:-1).filter(k=>k>=0);}
+    else if(cells.includes('n')){delete S.believe[by];S.know[by]=Math.max(...S.know);}
+    await addRow({e:S.mode==='dict'?null:eb,kind:'prop',val,cells,tags,res1:S.mode==='dict'?NM(by)+' alone':yes+' of '+n,res2:ok?'decided':'refused',ok});
+    return {ok,yes,slot,cells};}
+  function tap(k){if(!o.tap||S.busy||o.lock.includes(k))return;
+    S.st[k]=S.st[k]==='up'?'down':'up';paint();if(o.on)o.on({type:'tap',k,st:S.st[k]});}
+  const api={S,reset,paint,elect,propose,addRow,alive,maj,props};
+  L.ld=api;return api;}
+
+/* Venn panel: election quorum (blue) vs proposal votes (amber) */
+function vennSvg(n,E,P,o){
+  o=o||{};const both=E.filter(k=>P.includes(k)),eo=E.filter(k=>!P.includes(k)),po=P.filter(k=>!E.includes(k)),none=[];
+  for(let k=0;k<n;k++)if(!E.includes(k)&&!P.includes(k))none.push(k);
+  const ys=(m,i)=>94+(i-(m-1)/2)*27;
+  const tok=(x,y,k,col)=>'<circle cx="'+x+'" cy="'+y+'" r="12" style="fill:var(--card);stroke:'+col+';stroke-width:2.2"/>'+tx(x,y+4,NM(k),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+    ((o.no||[]).includes(k)?'<circle cx="'+(x+11)+'" cy="'+(y-10)+'" r="6.5" style="fill:var(--no-bg);stroke:var(--no)"/>'+xx(x+11,y-10,2.8):'');
+  let s='<svg viewBox="0 0 320 186" role="img" aria-label="'+(o.aria||'Two overlapping circles: the election quorum and the proposal votes')+'">';
+  s+='<circle cx="122" cy="94" r="66" style="fill:var(--h1-bg);fill-opacity:.75;stroke:var(--h1);stroke-width:2"/>';
+  s+='<circle cx="198" cy="94" r="66" style="fill:var(--h3-bg);fill-opacity:.75;stroke:var(--h3);stroke-width:2"/>';
+  s+=tx(88,17,o.la||'Election quorum','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+tx(232,17,o.lb||'Proposal votes','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+  eo.forEach((k,i)=>{s+=tok(90,ys(eo.length,i),k,'var(--h1)');});
+  both.forEach((k,i)=>{s+=tok(160,ys(both.length,i),k,'var(--ok-strong)');});
+  po.forEach((k,i)=>{s+=tok(230,ys(po.length,i),k,'var(--h3)');});
+  if(!both.length&&o.gap)s+=tx(160,90,o.gap[0],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--no)')+tx(160,104,o.gap[1],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--no)');
+  if(none.length)s+=tx(160,181,'In neither: '+none.map(NM).join(', '),'font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  return s+'</svg>';}
+
+/* ---------- 2. The coordination tree ---------- */
+const PN=['Planner A','Planner B','Planner C'];
+function Tree(L,host,o){
+  o=Object.assign({id:'tr',on:null,branches:true,freeze:true},o||{});
+  const ID=o.id;
+  const S={lead:null,zx:1040,tok:[null,null,null],sess:[1,1,1],frozen:[0,0,0],bar:[0,0,0],watch:[0,0,0],ring:[0,0,0],store:0,storeMsg:'No writes yet',started:false,busy:false,open:null,gone:false};
+  host.insertAdjacentHTML('beforeend','<div class="cc-fig"><svg id="'+ID+'-s" viewBox="0 0 320 194" role="img" aria-label="A coordination-service tree for Otterpost: the Westport planner leader key, dispatch members, partition 7 and the merchant API address"></svg></div>'+
+    (o.branches?'<div class="cc-ctl" id="'+ID+'-br"></div>':'')+'<div class="cc-pl" id="'+ID+'-p"></div><div class="cc-store" id="'+ID+'-st" aria-live="polite"></div>');
+  const svg=host.querySelector('#'+ID+'-s'),pl=host.querySelector('#'+ID+'-p'),stEl=host.querySelector('#'+ID+'-st'),br=host.querySelector('#'+ID+'-br');
+  const alive=()=>svg.isConnected;
+  const BR=[['lead','planners/westport'],['mem','members/dispatch'],['part','partitions/p7'],['svc','services/merchant-api']];
+  function paint(){
+    if(!alive())return;
+    let s='';const Y=[44,90,134,174];
+    s+=tx(6,16,'/otterpost','font-size:13px;font-weight:700;fill:var(--ink)');
+    s+='<line x1="14" y1="22" x2="14" y2="'+Y[3]+'" style="stroke:var(--line2);stroke-width:2"/>';
+    BR.forEach((b,j)=>{const y=Y[j],on=S.open===b[0];
+      s+='<line x1="14" y1="'+y+'" x2="26" y2="'+y+'" style="stroke:var(--line2);stroke-width:2"/>';
+      s+=tx(30,y+4,b[1],'font-size:11.5px;'+(on?'font-weight:700;fill:var(--pri)':'fill:var(--ink)'));});
+    const pill=(y,l1,l2,eph,col,bg,dim)=>'<rect x="176" y="'+(y-16)+'" width="140" height="32" rx="10" style="fill:'+(bg||'var(--card)')+';stroke:'+(col||'var(--line2)')+';stroke-width:2'+(eph?';stroke-dasharray:5 3':'')+'"/>'+
+      tx(246,y-2,l1,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+(dim?'var(--muted)':'var(--ink)'))+(l2?tx(246,y+11,l2,'font-size:11px;text-anchor:middle;fill:var(--muted)'):'');
+    if(S.lead!=null)s+=pill(Y[0],'leader → '+PN[S.lead],'ephemeral · zxid '+S.tok[S.lead],true,'var(--ok-line)','var(--ok-bg)');
+    else if(S.gone)s+=pill(Y[0],'leader key deleted','session timed out',true,'var(--no)','var(--no-bg)');
+    else s+=pill(Y[0],'(no leader key)',S.started?'racing…':'planners not started',true,'var(--line2)','var(--soft)',true);
+    ['w1','w2','w3'].forEach((w,j)=>{const x=176+j*48;s+='<rect x="'+x+'" y="'+(Y[1]-13)+'" width="44" height="26" rx="9" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2;stroke-dasharray:5 3"/>'+tx(x+22,Y[1]+4,w,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');});
+    s+=pill(Y[2],'leader: 10.1.1.23','changes over hours',false,'var(--h2)','var(--h2-bg)');
+    s+=pill(Y[3],'10.1.4.8','merchant API address',false,'var(--h4)','var(--h4-bg)');
+    if(S.open){const j=BR.findIndex(b=>b[0]===S.open);s+='<rect x="2" y="'+(Y[j]-19)+'" width="316" height="38" rx="11" style="fill:none;stroke:var(--pri);stroke-width:2"/>';}
+    svg.innerHTML=s;
+    pl.innerHTML=PN.map((nm,k)=>{const lead=S.lead===k,dead=!S.sess[k];
+      let st=!S.started?'idle':dead?(S.frozen[k]?'frozen · session expired':'session expired · lock gone'):S.frozen[k]?(lead?'frozen… still thinks it leads':'frozen'):lead?'<span class="ok-t">leader · token '+S.tok[k]+'</span>':S.ring[k]?L.ic('alert')+' <b style="display:inline;font-size:12.5px;color:var(--h3)">notified!</b>':S.watch[k]?L.ic('eye')+' watching the key':'racing…';
+      const hb=S.started&&!S.frozen[k]&&S.sess[k];
+      return '<div class="cc-pc'+(lead&&!dead?' lead':'')+(S.ring[k]?' ring':'')+(dead?' dead':'')+'"><b>'+nm+'</b><div class="stt">'+st+'</div>'+
+        '<div class="cc-hb"><i class="'+(hb?'on':'')+'"></i>'+(hb?'heartbeats':'no heartbeats')+'</div><div class="cc-bar" title="session timeout"><span style="width:'+Math.round(S.bar[k]*100)+'%"></span></div>'+
+        (o.freeze&&S.started&&!S.frozen[k]&&S.sess[k]?'<button class="btn" id="'+ID+'-f'+k+'" aria-label="Freeze '+nm+': its heartbeats stop">'+L.ic('pause')+'Freeze</button>':'')+'</div>';}).join('');
+    PN.forEach((nm,k)=>{const b=host.querySelector('#'+ID+'-f'+k);if(b)b.onclick=()=>freeze(k);});
+    stEl.innerHTML='<b>Routes store</b> · highest token seen: <b>'+(S.store||'—')+'</b><br>'+S.storeMsg;
+    if(br){br.innerHTML=BR.map(b=>'<button class="chip'+(S.open===b[0]?' sel':'')+'" data-b="'+b[0]+'">'+({lead:'Leader key',mem:'Members',part:'Partition 7',svc:'Merchant API'}[b[0]])+'</button>').join('');
+      br.querySelectorAll('button').forEach(b=>{b.onclick=()=>{S.open=b.dataset.b;paint();if(o.on)o.on({type:'open',b:S.open});};});}
+  }
+  function write(k){const t=S.tok[k];if(t>=S.store){S.store=t;S.storeMsg='<span class="ok-t">✓</span> '+PN[k]+' writes routes with token '+t;}else S.storeMsg='<span class="no-t">✗</span> '+PN[k]+'’s write with token '+t+' refused: it has already seen '+S.store;}
+  async function start(){if(S.started||S.busy)return;S.busy=true;S.started=true;paint();await nap(L,600);if(!alive())return;
+    S.zx=1041;S.lead=0;S.tok[0]=1041;S.watch=[0,1,1];paint();await nap(L,450);if(!alive())return;write(0);paint();S.busy=false;if(o.on)o.on({type:'start'});}
+  function setStarted(){S.started=true;S.zx=1041;S.lead=0;S.tok[0]=1041;S.watch=[0,1,1];write(0);paint();}
+  async function freeze(k){if(S.busy||S.frozen[k]||!S.sess[k])return;S.busy=true;S.frozen[k]=1;paint();if(o.on)o.on({type:'freeze',k});
+    const ok=await anim(L,1500,p=>{if(!alive())return false;S.bar[k]=p;const e=host.querySelector('#'+ID+'-p .cc-pc:nth-child('+(k+1)+') .cc-bar span');if(e)e.style.width=Math.round(p*100)+'%';});if(!ok)return;
+    S.sess[k]=0;S.watch[k]=0;
+    if(S.lead===k){S.lead=null;S.gone=true;paint();await nap(L,600);if(!alive())return;
+      const w=[0,1,2].filter(j=>S.watch[j]&&S.sess[j]);w.forEach(j=>S.ring[j]=1);paint();await nap(L,700);if(!alive())return;
+      w.forEach(j=>S.ring[j]=0);
+      if(w.length){const j=w[0];S.zx+=5;S.lead=j;S.tok[j]=S.zx;S.watch[j]=0;S.gone=false;paint();await nap(L,450);if(!alive())return;write(j);if(o.on)o.on({type:'takeover',k:j});}
+      else S.storeMsg='No planner left to take over';}
+    paint();S.busy=false;}
+  async function wake(k){if(!S.frozen[k])return;S.frozen[k]=0;paint();await nap(L,350);if(!alive())return;write(k);paint();if(o.on)o.on({type:'wake',k});}
+  async function idle(){for(let i=0;i<300&&S.busy;i++)await L.sleep(15);}
+  paint();
+  const api={S,paint,start,setStarted,freeze,wake,idle,alive};L.tr=api;return api;}
+
+/* ---------- Static figures for Learn screens ---------- */
+function FIG_PROPOSE(){
+  const box=(x,y,t1,t2,f,s)=>'<rect x="'+x+'" y="'+y+'" width="94" height="42" rx="11" style="fill:'+f+';stroke:'+s+';stroke-width:2"/>'+tx(x+47,y+18,t1,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+47,y+34,t2,'font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 214" role="img" aria-label="Three servers each propose a different recipient. The consensus algorithm picks one, and all three servers decide Mrs. Okoro.">'+arrowDefs('ccA1')+
+   tx(4,12,'1 · each server proposes','font-size:11px;font-weight:700;fill:var(--muted)')+
+   box(6,18,'Server 1','Mrs. Okoro','var(--h1-bg)','var(--h1)')+box(113,18,'Server 2','Mr. Lund','var(--h3-bg)','var(--h3)')+box(220,18,'Server 3','Ms. Adeyemi','var(--h2-bg)','var(--h2)')+
+   '<path d="M53 62 L128 92 M160 62 L160 90 M267 62 L192 92" style="fill:none;stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA1)"/>'+
+   '<rect x="92" y="94" width="136" height="38" rx="19" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2"/>'+tx(160,110,'consensus','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+tx(160,125,'picks one proposal','font-size:11px;text-anchor:middle;fill:var(--pri-deep)')+
+   '<path d="M128 134 L53 164 M160 134 L160 162 M192 134 L267 164" style="fill:none;stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA1)"/>'+
+   tx(4,158,'2 · all decide','font-size:11px;font-weight:700;fill:var(--muted)')+
+   [6,113,220].map((x,j)=>box(x,166,'Server '+(j+1),'decides Okoro','var(--ok-bg)','var(--ok-line)')).join('')+'</svg></div>';}
+
+function FIG_PROPS(L){
+  const mini=(inner,lab)=>'<svg viewBox="0 0 140 66" role="img" aria-label="'+lab+'">'+inner+'</svg>';
+  const n=(x,y,t)=>node(x,y,14,t);
+  const T1=mini(n(28,24,'N1')+n(112,24,'N2')+tx(28,58,'Okoro','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+tx(112,58,'Lund','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+'<circle cx="70" cy="34" r="12" style="fill:var(--no-bg);stroke:var(--no)"/>'+xx(70,34,5),'Forbidden: N1 decides Okoro while N2 decides Lund');
+  const T2=mini(n(20,30,'N1')+tx(62,34,'Okoro','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+'<line x1="86" y1="30" x2="100" y2="30" style="stroke:var(--muted);stroke-width:1.8"/>'+tx(120,34,'Lund','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+'<circle cx="93" cy="52" r="10" style="fill:var(--no-bg);stroke:var(--no)"/>'+xx(93,52,4),'Forbidden: N1 decides Okoro, then switches to Lund');
+  const T3=mini(tx(70,12,'proposed: Okoro, Lund','font-size:11px;text-anchor:middle;fill:var(--muted)')+n(26,42,'N1')+tx(90,46,'nobody','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--no)')+'<line x1="64" y1="42" x2="116" y2="42" style="stroke:var(--no);stroke-width:2"/>','Forbidden: deciding nobody, which no node proposed');
+  const T4=mini(n(26,30,'N1')+'<path d="M64 14 L92 14 L78 30 L92 46 L64 46 L78 30 Z" style="fill:var(--soft);stroke:var(--muted);stroke-width:1.8;stroke-linejoin:round"/>'+tx(120,35,'forever','font-size:11px;text-anchor:middle;fill:var(--muted)')+'<circle cx="92" cy="54" r="10" style="fill:var(--no-bg);stroke:var(--no)"/>'+xx(92,54,4),'Forbidden: a working node waiting forever');
+  const tile=(tag,svg,b,t)=>'<div class="cc-tile"><span class="cc-tag '+(tag==='Safety'?'s':'l')+'">'+tag+'</span>'+svg+'<b>'+b+'</b>'+t+'</div>';
+  return '<div class="cc-tiles">'+tile('Safety',T1,'Uniform agreement','No two nodes decide differently.')+tile('Safety',T2,'Integrity','No node decides twice.')+
+    tile('Safety',T3,'Validity','The decision was proposed by some node.')+tile('Liveness',T4,'Termination','Every node that doesn’t crash eventually decides.')+'</div>';}
+
+function FIG_DICT(){
+  return '<div class="cc-fig"><svg viewBox="0 0 320 196" role="img" aria-label="Left: a dictator node N1 is buried, and the other nodes are stuck with question marks. Right: five nodes, two crashed, three still decide. Below: safety properties always hold; termination needs a majority.">'+
+   tx(75,14,'Dictator','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(240,14,'Majority','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   '<line x1="160" y1="6" x2="160" y2="120" style="stroke:var(--line);stroke-width:1.5"/>'+
+   node(75,46,17,'N1','var(--soft)','var(--line2)','4 3')+'<path d="'+crownD(75,27,.8)+'" style="fill:var(--h4);stroke:var(--h4);stroke-width:1.2"/>'+
+   '<path d="M40 62 Q58 46 75 54 Q94 44 112 62 Z" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.8"/>'+tx(75,76,'buried in mud','font-size:11px;text-anchor:middle;fill:var(--h3)')+
+   [30,75,120].map((x,j)=>'<line x1="75" y1="80" x2="'+x+'" y2="88" style="stroke:var(--line2);stroke-width:1.5;stroke-dasharray:3 3"/>'+node(x,100,12,'?','var(--soft)','var(--line2)')).join('')+
+   [186,212,238,264,290].map((x,j)=>j<2?node(x,50,11,'','var(--soft)','var(--line2)','3 3')+xx(x,50,4,'var(--muted)'):node(x,50,11,'','var(--ok-bg)','var(--ok-line)')+chk(x,50)).join('')+
+   tx(240,84,'2 down, 3 of 5 up:','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+tx(240,100,'still decides','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ok)')+
+   '<rect x="4" y="132" width="312" height="26" rx="13" style="fill:var(--h1-bg)"/>'+tx(160,149,'Safety: agreement, integrity, validity · always','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h1)')+
+   '<rect x="4" y="164" width="312" height="26" rx="13" style="fill:var(--h2-bg)"/>'+tx(160,181,'Liveness: termination · needs a majority up','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h2)')+'</svg></div>';}
+
+function FIG_TOB(){
+  const vals=['Okoro','Lund','Adeyemi'];let s='';
+  ['round 1','round 2','round 3','next'].forEach((r,j)=>{s+=tx(92+j*62,14,r,'font-size:11px;text-anchor:middle;fill:var(--muted)');});
+  ['N1','N2','N3'].forEach((n,i)=>{const y=24+i*30;s+=node(22,y+12,12,n);
+    for(let j=0;j<4;j++){const x=64+j*62;s+='<rect x="'+x+'" y="'+y+'" width="56" height="24" rx="7" style="fill:'+(j<3?'var(--h'+(j+1)+'-bg)':'var(--card)')+';stroke:'+(j<3?'var(--h'+(j+1)+')':'var(--line2)')+';stroke-width:1.6'+(j<3?'':';stroke-dasharray:4 3')+'"/>'+(j<3?tx(x+28,y+16,vals[j],'font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)'):tx(x+28,y+16,'…','font-size:12px;text-anchor:middle;fill:var(--muted)'));}});
+  const pill=(x,y,t)=>'<rect x="'+x+'" y="'+y+'" width="154" height="24" rx="12" style="fill:var(--soft)"/>'+tx(x+77,y+16,t,'font-size:11px;font-weight:600;text-anchor:middle;fill:var(--ink)');
+  s+=pill(4,124,'Agreement: same order')+pill(162,124,'Integrity: no duplicates')+pill(4,154,'Validity: nothing made up')+pill(162,154,'Termination: none lost');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 182" role="img" aria-label="Three nodes hold identical logs: Okoro, Lund, Adeyemi. Each log slot is one round of consensus. Agreement gives the same order, integrity no duplicates, validity nothing made up, termination nothing lost.">'+s+'</svg></div>';}
+
+function FIG_LOOP(){
+  const b=(x,y,w,l1,l2,c)=>'<rect x="'+(x-w/2)+'" y="'+(y-20)+'" width="'+w+'" height="40" rx="12" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2"/>'+tx(x,y-3,l1,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x,y+12,l2,'font-size:11.5px;text-anchor:middle;fill:var(--ink)');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 214" role="img" aria-label="A loop: to elect a leader you need consensus; consensus algorithms are total order broadcast; that is like single-leader replication; which needs a leader.">'+arrowDefs('ccA2')+
+   b(160,26,150,'To elect a leader…','you need consensus','h1')+b(258,107,116,'Consensus algos','= total order','h2')+b(160,188,150,'Total order broadcast','≈ single-leader repl.','h3')+b(62,107,116,'Single-leader','needs a leader…','h4')+
+   '<path d="M236 30 Q264 36 262 84" style="fill:none;stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA2)"/>'+
+   '<path d="M262 129 Q262 176 240 184" style="fill:none;stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA2)"/>'+
+   '<path d="M82 188 Q58 180 58 130" style="fill:none;stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA2)"/>'+
+   '<path d="M58 85 Q58 34 82 30" style="fill:none;stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA2)"/>'+
+   tx(160,100,'?','font-size:30px;font-weight:700;text-anchor:middle;fill:var(--no)')+tx(160,121,'chicken','font-size:11px;text-anchor:middle;fill:var(--muted)')+tx(160,134,'and egg','font-size:11px;text-anchor:middle;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_EPOCH(){
+  let s='';const xs=[136,170,204,238,272];
+  xs.forEach((x,k)=>{s+=tx(x,16,'N'+(k+1),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--muted)');});
+  const rows=[[1,0,[0,1,1,1,1]],[2,2,[2,1,0,1,1]],[3,1,[2,0,1,1,1]]];
+  rows.forEach((r,i)=>{const y=28+i*38;if(i%2===0)s+='<rect x="66" y="'+y+'" width="230" height="32" rx="8" style="fill:var(--soft)"/>';
+    s+='<rect x="72" y="'+(y+7)+'" width="34" height="18" rx="9" style="fill:var(--pri-bg)"/>'+tx(89,y+20,'E'+r[0],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+    xs.forEach((x,k)=>{const v=k===r[1]?'L':r[2][k];const yc=y+16;
+      if(v==='L')s+='<circle cx="'+x+'" cy="'+yc+'" r="11" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.6"/><path d="'+crownD(x,yc+4,.6)+'" style="fill:var(--h4);stroke:var(--h4);stroke-width:1"/>';
+      else if(v===1)s+='<circle cx="'+x+'" cy="'+yc+'" r="11" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.6"/>'+chk(x,yc);
+      else s+='<line x1="'+(x-6)+'" y1="'+yc+'" x2="'+(x+6)+'" y2="'+yc+'" style="stroke:var(--line2);stroke-width:2.4;stroke-linecap:round"/>';});});
+  s+='<path d="M44 34 L44 128" style="stroke:var(--pri);stroke-width:2.2" marker-end="url(#ccA3)"/>'+tx(34,84,'newer','font-size:11px;fill:var(--pri);text-anchor:middle" transform="rotate(-90 34 84)');
+  s+=tx(181,152,'At most one leader (crown) per row','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  s+='<rect x="4" y="162" width="312" height="24" rx="12" style="fill:var(--soft)"/>'+tx(160,178,'Paxos: ballot · VSR: view · Raft: term','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 190" role="img" aria-label="An epoch ladder: epoch 1 led by N1, epoch 2 by N3, epoch 3 by N2. Each row has at most one leader, and newer epochs win."><defs><marker id="ccA3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--pri)"/></marker></defs>'+s+'</svg></div>';}
+
+function FIG_2PC(){
+  let s='';
+  s+=tx(80,14,'Two-phase commit','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(240,14,'Consensus','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  s+='<line x1="160" y1="6" x2="160" y2="132" style="stroke:var(--line);stroke-width:1.5"/>';
+  s+='<rect x="34" y="26" width="92" height="28" rx="9" style="fill:var(--soft);stroke:var(--line2);stroke-width:2"/>'+tx(80,44,'coordinator','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  s+=tx(80,68,'not elected','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  [36,80,124].forEach((x,j)=>{s+='<line x1="80" y1="54" x2="'+x+'" y2="86" style="stroke:var(--line2);stroke-width:1.4"/>'+(j<2?node(x,96,11,'','var(--ok-bg)','var(--ok-line)')+chk(x,96):node(x,96,11,'','var(--no-bg)','var(--no)')+xx(x,96,4));});
+  s+=tx(80,124,'every yes needed','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--no)');
+  s+=node(240,40,14,'','var(--h4-bg)','var(--h4)')+'<path d="'+crownD(240,45,.6)+'" style="fill:var(--h4);stroke:var(--h4);stroke-width:1"/>'+tx(260,37,'elected','font-size:11px;fill:var(--muted)')+tx(260,50,'for E3','font-size:11px;fill:var(--muted)');
+  [192,216,240,264,288].forEach((x,j)=>{s+='<line x1="240" y1="54" x2="'+x+'" y2="86" style="stroke:var(--line2);stroke-width:1.4"/>'+(j<3?node(x,96,10,'','var(--ok-bg)','var(--ok-line)')+chk(x,96):node(x,96,10,'','var(--soft)','var(--line2)','3 3'));});
+  s+=tx(240,124,'a majority is enough','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ok)');
+  s+='<rect x="164" y="138" width="152" height="26" rx="13" style="fill:var(--ok-bg)"/>'+tx(240,155,'+ a recovery process','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--ok)');
+  s+='<rect x="4" y="138" width="152" height="26" rx="13" style="fill:var(--no-bg)"/>'+tx(80,155,'one “no” → abort','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--no)');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 168" role="img" aria-label="Left: 2PC, an unelected coordinator needs a yes from every participant; one no aborts. Right: consensus, an elected leader needs only a majority, plus a recovery process after a new leader.">'+s+'</svg></div>';}
+
+function FIG_PRICE(){
+  const T=(x,y,t,st)=>tx(x,y,t,'font-size:11.5px;'+(st||'fill:var(--ink)'));
+  const N=[[160,70],[208,100],[190,152],[130,152],[112,100]];
+  let s='<rect x="84" y="38" width="152" height="140" rx="22" style="fill:none;stroke:var(--line2);stroke-width:1.8;stroke-dasharray:6 4"/>'+tx(160,30,'fixed set of voters','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  /* leader to followers: N5 solid, N2 a flaky zigzag */
+  s+='<line x1="148" y1="76" x2="124" y2="92" style="stroke:var(--muted);stroke-width:1.8" marker-end="url(#ccA4)"/>';
+  s+='<path d="M173 75 L180 72 L184 82 L191 79 L196 92" style="fill:none;stroke:var(--h3);stroke-width:2.2;stroke-linejoin:round"/>';
+  N.forEach((p,k)=>{const dn=k===2||k===3;
+    s+=k===0?node(p[0],p[1],14,'','var(--h4-bg)','var(--h4)')+'<path d="'+crownD(p[0],p[1]+4,.6)+'" style="fill:var(--h4);stroke:var(--h4);stroke-width:1"/>':
+      dn?node(p[0],p[1],13,'','var(--soft)','var(--line2)','3 3')+xx(p[0],p[1],4.5):node(p[0],p[1],13,'','var(--ok-bg)','var(--ok-line)')+chk(p[0],p[1]);});
+  /* 1 · waits: clock left of leader */
+  s+='<circle cx="42" cy="58" r="13" style="fill:var(--card);stroke:var(--muted);stroke-width:1.8"/><path d="M42 50 L42 58 L48 62" style="fill:none;stroke:var(--muted);stroke-width:1.8;stroke-linecap:round"/>';
+  s+=T(42,88,'each write','text-anchor:middle;fill:var(--ink)')+T(42,102,'waits for','text-anchor:middle;fill:var(--ink)')+T(42,116,'votes','text-anchor:middle;fill:var(--ink)');
+  /* 2 · flaky link: right */
+  s+=T(244,62,'flaky link','font-weight:700;fill:var(--h3)')+T(244,76,'→ needless','fill:var(--h3)')+T(244,90,'elections','fill:var(--h3)');
+  /* 3 · crashes: bottom */
+  s+=T(160,198,'2 of 5 down: still decides','font-weight:700;text-anchor:middle;fill:var(--ok)')+T(160,213,'3 down: stuck','text-anchor:middle;fill:var(--no)');
+  /* 4 · a sixth node can't join */
+  s+=node(40,152,12,'N6','var(--soft)','var(--line2)','3 3')+'<line x1="54" y1="152" x2="80" y2="152" style="stroke:var(--line2);stroke-width:1.6;stroke-dasharray:3 3"/>'+T(40,180,'hard to add','text-anchor:middle;fill:var(--muted)');
+  s+=tx(244,148,'2 voters','font-size:11px;fill:var(--muted)')+tx(244,161,'crashed','font-size:11px;fill:var(--muted)');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 220" role="img" aria-label="Five voters inside a fixed fence. The leader waits for votes on each write; a flaky link to one follower causes needless elections; two crashed nodes are tolerated but three would stall; a sixth node outside is hard to add."><defs><marker id="ccA4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>'+s+'</svg></div>';}
+
+function FIG_ZK(){
+  let s='';
+  const pill=(x,y,w,t,c)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="24" rx="12" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.5"/>'+tx(x+w/2,y+16,t,'font-size:11px;font-weight:600;text-anchor:middle;fill:var(--ink)');
+  s+=pill(4,4,152,'compare-and-set → locks','h1')+pill(164,4,152,'total order → zxid tokens','h2');
+  for(let i=0;i<5;i++){const y=58+i*18;s+='<line x1="34" y1="'+y+'" x2="96" y2="'+(84+i*6)+'" style="stroke:var(--line);stroke-width:1.2"/><circle cx="28" cy="'+y+'" r="5" style="fill:var(--soft2);stroke:var(--line2)"/>';
+    s+='<line x1="286" y1="'+y+'" x2="224" y2="'+(84+i*6)+'" style="stroke:var(--line);stroke-width:1.2"/><circle cx="292" cy="'+y+'" r="5" style="fill:var(--soft2);stroke:var(--line2)"/>';}
+  s+=tx(28,46,'apps','font-size:11px;text-anchor:middle;fill:var(--muted)')+tx(292,46,'apps','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  s+='<rect x="96" y="44" width="128" height="104" rx="16" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2.2"/>'+tx(160,64,'ZooKeeper / etcd','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+  [124,142,160,178,196].forEach(x=>{s+=node(x,90,8,'','var(--card)','var(--pri)');});
+  s+=tx(160,116,'3 or 5 voters','font-size:11px;text-anchor:middle;fill:var(--pri-deep)')+tx(160,136,'small data, in memory','font-size:11px;text-anchor:middle;fill:var(--pri-deep)');
+  s+=pill(4,160,152,'sessions → ephemeral','h3')+pill(164,160,152,'watches → notifications','h4');
+  return '<div class="cc-fig"><svg viewBox="0 0 320 188" role="img" aria-label="A coordination service with 3 or 5 voting nodes, holding small data in memory, serves many app nodes. Its four features: compare-and-set locks, totally ordered zxid tokens, sessions with ephemeral nodes, and watches.">'+s+'</svg></div>';}
+
+/* Service-health panel for the coordination-service edge cases */
+function svcSvg(c){
+  let s='';const lineCol=w=>w>2?'var(--no)':'var(--line2)';
+  /* clients on the left */
+  c.clients.forEach((cl,i)=>{const y=40+i*38;
+    s+='<line x1="84" y1="'+(y+15)+'" x2="96" y2="'+(c.ro&&cl[2]>2?104:72+i*6)+'" style="stroke:'+lineCol(cl[2])+';stroke-width:'+cl[2]+'"/>';
+    s+='<rect x="2" y="'+y+'" width="82" height="32" rx="8" style="fill:'+(cl[2]>2?'var(--no-bg)':'var(--soft)')+';stroke:'+(cl[2]>2?'var(--no)':'var(--line2)')+';stroke-width:1.5"/>'+
+      tx(43,y+14,cl[0],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(43,y+27,cl[1],'font-size:11px;text-anchor:middle;fill:var(--muted)');});
+  s+=tx(43,30,'clients','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  /* the service box */
+  s+='<rect x="96" y="22" width="138" height="112" rx="14" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2"/>'+tx(165,38,c.many?'1,000 voters':'ZooKeeper · '+c.n+' voters','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+  if(c.many){for(let i=0;i<60;i++){const x=106+(i%15)*8.5,y=50+Math.floor(i/15)*9;s+='<circle cx="'+x+'" cy="'+y+'" r="3" style="fill:var(--card);stroke:var(--pri);stroke-width:1"/>';}
+    s+=tx(165,96,'every vote waits','font-size:11px;text-anchor:middle;fill:var(--no)')+tx(165,108,'on 501 of them','font-size:11px;text-anchor:middle;fill:var(--no)');}
+  else{[117,141,165,189,213].forEach((x,k)=>{const dn=k<c.down;s+=node(x,66,10,'',dn?'var(--soft)':'var(--card)',dn?'var(--line2)':'var(--pri)',dn?'3 3':'')+(dn?xx(x,66,4,'var(--no)'):'');});
+    s+=tx(165,92,(c.n-c.down)+' of '+c.n+' up · need 3','font-size:11px;font-weight:600;text-anchor:middle;fill:var(--'+(c.n-c.down>=3?'pri-deep':'no')+')');
+    [145,185].forEach(x=>{s+='<circle cx="'+x+'" cy="'+110+'" r="7" style="fill:'+(c.ro?'var(--ok-bg)':'var(--card)')+';stroke:'+(c.ro?'var(--ok-line)':'var(--line2)')+';stroke-width:1.6;stroke-dasharray:3 2"/>';});
+    s+=tx(165,128,'read-only replicas','font-size:11px;text-anchor:middle;fill:var(--'+(c.ro?'ok':'muted')+')');}
+  /* verdict on the right */
+  const vc={ok:'ok',wa:'h3',no:'no'}[c.v[0]];
+  s+='<rect x="242" y="22" width="74" height="112" rx="14" style="fill:var(--'+vc+'-bg);stroke:var(--'+(vc==='h3'?'h3':vc+'-line')+');stroke-width:2"/>';
+  s+=(c.v[0]==='ok'?chk(279,52,'var(--ok)'):c.v[0]==='no'?xx(279,52,7):'<path d="M273 45 L285 45 L279 52 L285 59 L273 59 L279 52 Z" style="fill:none;stroke:var(--h3);stroke-width:2;stroke-linejoin:round"/>');
+  c.v.slice(1).forEach((t,i)=>{s+=tx(279,82+i*15,t,'font-size:'+(i?11:12.5)+'px;'+(i?'':'font-weight:700;')+'text-anchor:middle;fill:var(--'+(i?'ink':vc)+')');});
+  /* change rate and memory */
+  const X0=68,X1=312,lab=['hours','minutes','seconds','1,000s/s'];
+  s+=tx(4,162,'changes','font-size:11px;fill:var(--muted)')+'<line x1="'+X0+'" y1="158" x2="'+X1+'" y2="158" style="stroke:var(--line2);stroke-width:2"/>';
+  lab.forEach((l,i)=>{const x=X0+12+i*(X1-X0-24)/3;s+='<line x1="'+x+'" y1="153" x2="'+x+'" y2="163" style="stroke:var(--line2);stroke-width:1.5"/>'+tx(i===3?X1:x,177,l,'font-size:11px;text-anchor:'+(i===3?'end':'middle')+';'+(i<2?'font-weight:700;fill:var(--ok)':'fill:var(--muted)'));});
+  s+='<rect x="'+X0+'" y="150" width="'+(12+1.3*(X1-X0-24)/3)+'" height="16" rx="8" style="fill:var(--ok-bg);opacity:.8"/>';
+  const mx=X0+12+c.rate*(X1-X0-24);s+='<path d="M'+(mx-6)+' 146 L'+(mx+6)+' 146 L'+mx+' 155 Z" style="fill:var(--'+(c.rate>.5?'no':'ink')+')"/>';
+  s+=tx(4,200,'memory','font-size:11px;fill:var(--muted)')+'<rect x="'+X0+'" y="191" width="'+(X1-X0)+'" height="12" rx="6" style="fill:var(--soft2)"/>'+
+    '<rect x="'+X0+'" y="191" width="'+Math.max(6,(X1-X0)*Math.min(1,c.mem))+'" height="12" rx="6" style="fill:var(--'+(c.mem>=1?'no':'pri')+')"/>'+(c.mem>=1?tx(X1-4,218,'won’t fit in memory','font-size:11px;font-weight:700;text-anchor:end;fill:var(--no)'):'');
+  return '<svg viewBox="0 0 320 '+(c.mem>=1?224:210)+'" role="img" aria-label="'+c.aria+'">'+s+'</svg>';}
+
+function FIG_HUB(){
+  const P=[[160,26,'Compare-and-set','set if unchanged?','h1'],[248,72,'Atomic commit','commit or abort?','h2'],[248,160,'Total order','which message next?','h3'],[160,206,'Locks & leases','who got it?','h4'],[72,160,'Membership','who’s alive?','h1'],[72,72,'Uniqueness','which record wins?','h2']];
+  let s='';P.forEach(p=>{s+='<line x1="160" y1="116" x2="'+p[0]+'" y2="'+p[1]+'" style="stroke:var(--line2);stroke-width:1.8;stroke-dasharray:4 3"/>';});
+  s+='<circle cx="160" cy="116" r="38" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2.4"/>'+tx(160,113,'consensus','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+tx(160,128,'decide once','font-size:11px;text-anchor:middle;fill:var(--pri-deep)');
+  P.forEach(p=>{s+='<rect x="'+(p[0]-68)+'" y="'+(p[1]-19)+'" width="136" height="38" rx="12" style="fill:var(--'+p[4]+'-bg);stroke:var(--'+p[4]+');stroke-width:1.8"/>'+tx(p[0],p[1]-3,p[2],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(p[0],p[1]+12,p[3],'font-size:11px;text-anchor:middle;fill:var(--muted)');});
+  return '<div class="cc-fig"><svg viewBox="0 0 320 228" role="img" aria-label="Consensus in the middle, linked to six equivalent problems: compare-and-set registers, atomic commit, total order broadcast, locks and leases, membership, uniqueness constraints.">'+s+'</svg></div>';}
+
 Course.lesson({
   id:'0024', title:'Consensus and coordination services', minutes:20, icon:'people',
-  goals:['Name the four properties of consensus and why it needs a majority','Explain how epochs and overlapping quorums let a leader decide safely','Choose when to lean on a coordination service like ZooKeeper or etcd'],
-  parts:['Agreeing safely','Leaders and epochs','Coordination','Big picture'],
+  goals:['Name the four properties of consensus and why it needs a majority','Use epochs and overlapping quorums to show why a stale leader can’t decide','Choose when to lean on a coordination service like ZooKeeper or etcd'],
+  parts:['What consensus means','Epochs and quorums','The price','Coordination services'],
   read:'Read chapter 9 from “Fault-Tolerant Consensus” to the end of the chapter summary for the details, including the ZooKeeper features and the list of problems equivalent to consensus.',
   glossary:{
     'twopc':'Two-phase commit (2PC): an algorithm for atomic commit across nodes. A coordinator first asks every participant “can you commit?” (prepare), and only if all say yes tells them all to commit.',
@@ -25,209 +399,298 @@ Course.lesson({
     quorum:'Quorum: a minimum number of nodes that must vote for a decision. Usually a majority, more than half of all nodes.',
     'coordination-service':'Coordination service: a small, highly reliable store, such as ZooKeeper, that other systems use to agree on shared facts like “which node holds which partition”.',
     'ephemeral':'Ephemeral node: a ZooKeeper entry tied to a client’s session. If the session times out, the entry is deleted automatically, releasing any lock it stood for.',
-    fencing:'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already seen.'
+    fencing:'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already seen.',
+    byzantine:'Byzantine fault: a node that doesn’t follow the protocol, such as by sending conflicting or hostile messages. Most consensus algorithms assume there are none. Consensus can still be solved if fewer than a third of the nodes are Byzantine-faulty.',
+    'split-brain':'Split brain: two nodes both believe they are the leader and both accept writes, which can lose or corrupt data.'
   },
   cheatsheet:[
-    '<b>Consensus</b>: nodes propose values and decide on one. Properties: uniform agreement, integrity, validity, termination.',
-    '<b>Termination</b> is the fault-tolerance part. It needs a majority up; safety holds even when there isn’t one. 2PC fails termination.',
+    '<b>Consensus</b>: nodes propose values and all decide on one. Properties: uniform agreement, integrity, validity, termination.',
+    '<b>Termination</b> is the fault-tolerance part and needs a majority up. Safety holds even without one: an outage stalls decisions but can’t corrupt them. 2PC fails termination.',
     'Viewstamped Replication, Paxos, Raft and Zab decide a <b>sequence</b> of values: they are total order broadcast.',
-    'At most one leader per <b>epoch</b>. Each decision needs a quorum vote, and the election and proposal quorums overlap.',
+    'At most one leader per <b>epoch</b>. Every decision needs a second quorum vote, and the election and proposal quorums overlap, so a stale leader always meets a node that knows better.',
     'Costs: synchronous voting, 3 nodes to survive 1 failure (5 for 2), mostly fixed membership, trouble with timeouts on flaky networks.',
-    '<b>ZooKeeper / etcd</b>: linearizable atomic operations, total order (fencing tokens), sessions with ephemeral nodes, change notifications. Small, slow-changing data only.',
+    '<b>ZooKeeper / etcd</b>: linearizable atomic operations, total order (zxid as fencing token), sessions with ephemeral nodes, change notifications. Small, slow-changing data only.',
     'Compare-and-set, atomic commit, total order broadcast, locks and leases, membership and uniqueness are all <b>equivalent to consensus</b>.',
     'A leader only moves consensus elsewhere. Don’t build your own: use a proven algorithm or service.'
   ],
   steps:[
-/* ---------- PART 1: AGREEING SAFELY ---------- */
+/* ---------- PART 1: WHAT CONSENSUS MEANS ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two recipients try to grab the last place in the 6–7 pm delivery slot at the same moment, through two different servers. How many should get it?</h1>');
+  L.fast=false;
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mrs. Okoro and Mr. Lund grab the last place in the 6–7 pm delivery slot at the same moment, through two different servers. How many should get it?</h1>');
   L.mc(L.card,['Both: the courier can squeeze one more in','Exactly one, and every server must agree which'],1,
    'Both can’t win. Something has to pick one, and every server has to agree on the pick. That’s the consensus problem.',
-   'The slot has a fixed number of places, so only one request can win. Every server must agree which one. That’s the consensus problem.');}},
+   'The slot has a fixed number of places, so only one request can win, and every server must agree which. That’s the consensus problem.');}},
 {part:0,src:'Chapter 9 · Fault-Tolerant Consensus',run(L){
-  L.h(L.kick('learn','Consensus, stated precisely')+'<h1 class="q">Propose, then decide</h1>'+
-   L.prose('Formally, one or more nodes <b>propose</b> values, and the algorithm <b>decides</b> on one of them. For the last slot place, each server proposes the ID of the recipient it’s serving. The decision says who got the place.')+
-   L.list([['Uniform agreement','No two nodes decide differently.'],['Integrity','No node decides twice.'],['Validity','If a node decides a value, some node proposed it.'],['Termination','Every node that doesn’t crash eventually decides.']],1)+
-   '<p class="small" style="margin-top:10px">Agreement and integrity are the core: everyone decides the same thing, and nobody changes their mind. Validity rules out cheats, such as always deciding “nothing.”</p>');
+  L.h(L.kick('learn','Consensus, stated precisely')+'<h1 class="q">Propose, then decide</h1>'+CSS+FIG_PROPOSE()+
+   '<p class="cc-cap">Each server <b>proposes</b> the recipient it’s serving. The '+L.g('consensus','consensus')+' algorithm <b>decides</b> on one proposal, and every server gets the same answer. The others hear: sorry, the place is gone.</p>');
   L.done();}},
 {part:0,src:'Chapter 9 · Fault-Tolerant Consensus',run(L){
-  L.h(L.kick('learn','Where fault tolerance comes in')+'<h1 class="q">A dictator can agree. It just can’t survive.</h1>'+
-   L.prose('The first three properties are easy if you don’t need fault tolerance: let one node be the “dictator” that decides everything. If it fails, no more decisions. That’s exactly '+L.g('twopc','2PC')+'’s weakness: when the coordinator dies, in-doubt participants are stuck.')+
-   L.prose('<b>Termination</b> is the fault-tolerance property: even if some nodes fail, the rest must still decide. The model assumes a crashed node never comes back (picture its datacenter buried by a landslide). So any algorithm that waits for recovery, like 2PC, fails termination.')+
-   L.lanes([['shield','Safety','Agreement, integrity, validity. Most implementations keep these even if a majority fails: an outage can stop decisions, but never corrupt them.',2],
-            ['play','Liveness','Termination. It needs a majority of nodes working and reachable.',3]])+
-   '<p class="small" style="margin-top:10px">Most consensus algorithms assume no Byzantine faults (nodes that break the protocol, for example by sending contradictory messages). Tolerating those is possible if fewer than a third of nodes are faulty.</p>');
+  L.h(L.kick('learn','Four promises')+'<h1 class="q">Each property forbids one thing</h1>'+CSS+FIG_PROPS(L)+
+   '<p class="cc-cap">Agreement and integrity are the heart: one answer, and it’s final. Validity rules out cheats like always deciding “nobody”. Termination is the promise of progress.</p>');
   L.done();}},
-{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias jokes: “My slot algorithm always decides ‘nobody gets the place.’ Every node agrees, and none ever changes its mind!” Which property does it break?</h1>');
-  L.mc(L.card,['Uniform agreement','Integrity','Validity'],2,
-   '“Nobody” was never proposed. Validity says the decision must be one of the proposed values.',
-   'Every node agrees and never changes its mind, so agreement and integrity hold. Validity fails: no server proposed “nobody.”');}},
-{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',pts:1,
- solve:async L=>{for(let k=0;k<3;k++)L.$('#crash').click();},
- run(L){
-  let down=0;const P=['Agreement','Integrity','Validity','Termination'];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Five nodes decide who gets each last slot place. Crash them one at a time and watch which properties still hold.</h1>'+
-   '<div id="nodes"></div><button class="btn pri" id="crash" style="margin:4px 0 12px">'+L.ic('flame')+'Crash a node</button>'+
-   '<div class="lane"><div class="small" id="st"></div><div id="props" style="margin-top:8px"></div></div><div id="cq"></div>');
-  const draw=()=>{const live=5-down,maj=live>=3;
-    L.$('#nodes').innerHTML=[1,2,3,4,5].map(j=>{const up=j<=live;return '<span class="chip static '+(up?'ok':'no')+'">'+L.ic(up?'check':'x')+'N'+j+'</span>';}).join('');
-    L.$('#st').innerHTML='<b>'+live+' of 5</b> nodes up. '+(maj?'That’s a majority, so decisions keep coming.':'No majority, so decisions stop. Nothing wrong is decided.');
-    L.$('#props').innerHTML=P.map((p,j)=>{const ok=j<3||maj;return '<span class="chip static '+(ok?'ok':'no')+'">'+L.ic(ok?'check':'x')+p+'</span>';}).join('');};
-  draw();
-  L.$('#crash').onclick=()=>{if(down>=5)return;down++;draw();if(down>=5)L.$('#crash').hidden=true;
-    if(down===3&&!L.$('#cq').innerHTML){const q=L.$('#cq');q.innerHTML='<h2 class="sub">Three of five are down. What’s true now?</h2>';
-      L.mc(q,['Decisions go on among the two survivors','Decisions stop, and nothing wrong is decided','Decisions go on, but nodes may disagree'],1,
-       'Termination needs a majority, so progress halts. Agreement, integrity and validity still hold: the cluster stalls rather than deciding badly.',
-       'Two of five isn’t a majority. A correct algorithm stops deciding rather than risk a wrong or conflicting decision. Only termination is lost.');}};}},
+{part:0,src:'Chapter 9 · Fault-Tolerant Consensus',run(L){
+  L.h(L.kick('learn','Where fault tolerance comes in')+'<h1 class="q">A dictator can agree. It just can’t survive.</h1>'+CSS+FIG_DICT()+
+   '<p class="cc-cap">One “dictator” node meets the first three easily. That’s '+L.g('twopc','2PC')+': if the coordinator dies, nobody decides, and a crashed node counts as gone for good. Nodes are assumed honest (no '+L.g('byzantine','Byzantine faults')+').</p>');
+  L.done();}},
 {part:0,src:'Chapter 9 · Fault-Tolerant Consensus',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which property is broken?',['Uniform agreement','Integrity','Validity','Termination'],[
    ['Server 1 tells Mrs. Okoro they got the last place. Server 2 tells Mr. Lund they did.',0,'Two nodes decided differently.'],
-   ['Server 3 decides Mrs. Okoro, then later switches its decision to Mr. Lund.',1,'A node decided twice.'],
-   ['The cluster gives the place to “test-user-0”, which no server proposed.',2,'The decision must be one of the proposed values.'],
+   ['Server 3 decides Mrs. Okoro, then later switches its decision to Mr. Lund.',1,'A node decided twice: it changed its mind.'],
+   ['Tobias’s algorithm always decides “nobody gets the place”, whatever was proposed.',2,'Every node agrees and never changes its mind, but nobody proposed “nobody”.'],
    ['A healthy server waits forever because the one node it relies on was destroyed.',3,'A node that didn’t crash never decides. No progress.'],
    ['Under 2PC, a participant stays in doubt because the coordinator never comes back.',3,'2PC waits for the coordinator to recover, so it doesn’t meet termination.']]);}},
 
-/* ---------- PART 2: LEADERS AND EPOCHS ---------- */
+/* ---------- PART 2: EPOCHS AND QUORUMS ---------- */
 {part:1,src:'Chapter 9 · Consensus algorithms and total order broadcast',run(L){
-  L.h(L.kick('learn','Real consensus algorithms')+'<h1 class="q">They agree on a whole sequence, not one value</h1>'+
-   L.prose('The best-known fault-tolerant consensus algorithms are <b>Viewstamped Replication</b>, <b>Paxos</b>, <b>Raft</b> and <b>Zab</b>. They’re similar, not identical. The book’s advice: know their shared ideas, and don’t implement one yourself. It’s hard.')+
-   L.prose('Most of them decide a <b>sequence</b> of values, which makes them '+L.g('tob','total order broadcast')+' algorithms. Each message delivered is one round of consensus, and each property becomes a guarantee:')+
-   L.list([['check','Agreement','Every node delivers the same messages in the same order.'],['x','Integrity','No message is duplicated.'],['shield','Validity','No message is corrupted or made up.'],['play','Termination','No message is lost.']],2)+
-   '<p class="small" style="margin-top:10px">Viewstamped Replication, Raft and Zab implement total order broadcast directly. For Paxos, this optimization is called Multi-Paxos.</p>');
+  L.h(L.kick('learn','Real algorithms')+'<h1 class="q">They agree on a whole sequence, not one value</h1>'+CSS+FIG_TOB()+
+   '<p class="cc-cap">Viewstamped Replication, Paxos, Raft and Zab decide a <b>sequence</b>: each log slot is one round of consensus. That makes them '+L.g('tob','total order broadcast')+'. Know their shared ideas, and don’t build your own: it’s hard.</p>');
   L.done();}},
-{part:1,src:'Chapter 9 · Consensus algorithms and total order broadcast',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In total order broadcast built on consensus, which property makes sure no message is lost?</h1>');
-  L.mc(L.card,['Integrity','Termination','Validity'],1,
-   'Every node that doesn’t crash eventually decides, so every message eventually gets delivered.',
-   'Integrity stops duplicates and validity stops fakes. Termination makes sure every message eventually gets decided, so none is lost.');}},
 {part:1,src:'Chapter 9 · Single-leader replication and consensus',run(L){
-  L.h(L.kick('learn','A chicken-and-egg problem')+'<h1 class="q">To elect a leader, you first need… a leader?</h1>'+
-   L.prose('Single-leader replication sends every write through the '+L.g('leader','leader')+', in one order, to all followers. That sounds like total order broadcast. So why didn’t replication need consensus? It depends on how the leader is chosen.')+
-   L.lanes([['person','Chosen by humans','Operators configure the leader: a “dictator” consensus. It works, but if the leader dies, writes stop until a human picks a new one. That fails termination.',3],
-            ['cycle','Chosen automatically','Automatic failover gets closer to fault-tolerant total order broadcast. But all nodes must agree who leads, or you get split brain. That takes consensus.',2]])+
-   L.prose('Now the loop: consensus algorithms are total order broadcast, which is like single-leader replication, which needs a leader, which needs consensus. Next screen: the way out.'));
+  L.h(L.kick('learn','A chicken-and-egg problem')+'<h1 class="q">To elect a leader, you first need… a leader?</h1>'+CSS+FIG_LOOP()+
+   '<p class="cc-cap">Automatic failover must stop two nodes both thinking they lead ('+L.g('split-brain','split brain')+'). That takes consensus. If humans pick the leader instead, it works, but writes stop until they act: no termination.</p>');
   L.done();}},
 {part:1,src:'Chapter 9 · Epoch numbering and quorums',run(L){
-  L.h(L.kick('learn','Epochs and quorums')+'<h1 class="q">The way out: one leader per epoch</h1>'+
-   L.prose('Consensus protocols do use a leader, but don’t promise it’s unique. They promise something weaker: each '+L.g('epoch','epoch number')+' has at most one leader. Paxos calls it the ballot number, Viewstamped Replication the view number, Raft the term number.')+
-   L.list([['Elect','When the leader seems dead, nodes vote for a new one with a higher epoch number. If two leaders clash, the higher epoch wins.'],
-     ['Propose','For every decision, the leader sends its proposal and waits for a '+L.g('quorum','quorum')+' (usually a majority) to vote for it. A node votes yes only if it knows of no leader with a higher epoch.'],
-     ['Overlap','The election quorum and the proposal quorum must share at least one node. So if a proposal vote turns up no higher epoch, the leader knows it’s still in charge.']],3)+
-   '<p class="small" style="margin-top:10px">It looks like 2PC, but the leader is elected, it needs a majority rather than every node, and a recovery process brings nodes back into a consistent state after a new leader takes over.</p>');
+  L.h(L.kick('learn','The way out')+'<h1 class="q">One leader per epoch, and two rounds of voting</h1>'+CSS+FIG_EPOCH()+
+   '<p class="cc-cap">Each election gets a higher '+L.g('epoch','epoch number')+'; in a clash, the higher epoch wins. Then every decision needs a second '+L.g('quorum','quorum')+' vote. A node votes yes only if it knows no higher epoch.</p>');
   L.done();}},
-{part:1,src:'Chapter 9 · Epoch numbering and quorums',pts:1,
- solve:async L=>{L.$('#pk').children[1].click();L.$('#run').click();},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',
+ solve:async L=>{L.fast=true;const h=()=>L.ld;const w=async()=>{for(let i=0;i<200&&h().S.busy;i++)await L.sleep(15);};
+   L.$('#x9p').click();await w();L.$('#ld9-c button[data-k="0"]').click();await L.sleep(10);L.$('#x9e').click();await w();L.$('#x9p').click();await w();},
  run(L){
-  let p=null;
-  const A=[['N1 → N2','yes, it knows no higher epoch','ok'],['N1 → N3','no: “I voted in epoch 4”','no'],['N1','2 of 5 votes, counting itself. No majority. It learns of epoch 4 and steps down.','no']];
-  const B=[['N5 → N3','yes','ok'],['N5 → N4','yes','ok'],['N5','3 of 5 votes, counting itself. Decided.','ok']];
-  L.h(L.kick('pr','Predict, then watch')+L.note('Kwame’s five-node coordination cluster. N1 led in <b>epoch 3</b>. A network fault cut N1 off from N4 and N5, so N3, N4 and N5 elected N5 as leader for <b>epoch 4</b>. N1 doesn’t know yet, and can still reach N2 and N3.','info')+
-   '<h1 class="q" style="margin-top:16px">Both leaders propose a different Westport route planner. Whose proposal gets decided?</h1><div id="pk"></div>'+
-   '<div id="vt" hidden>'+L.lanes([['person','N1 · epoch 3','<div id="la"></div>',4],['person','N5 · epoch 4','<div id="lb"></div>',2]])+'<button class="btn pri" id="run" style="margin-top:12px">'+L.ic('play')+'Run the votes</button></div>');
-  ['N1’s (epoch 3)','N5’s (epoch 4)','Both of them'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;
-    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#vt').hidden=false;};L.$('#pk').appendChild(b);});
-  const line=x=>'<p class="small" style="margin:6px 0;color:var(--'+x[2]+')"><b>'+x[0]+'</b>: '+x[1]+'</p>';
-  L.$('#run').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const la=L.$('#la'),lb=L.$('#lb');if(!la||!lb){clearInterval(t);return;}
-      la.insertAdjacentHTML('beforeend',line(A[k]));lb.insertAdjacentHTML('beforeend',line(B[k]));k++;
-      if(k>=A.length){clearInterval(t);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'You called it':'Only N5’s proposal wins','N5 gathered a majority. N1 couldn’t: N3 had voted in the epoch-4 election, so it refused N1 and told it about the newer epoch. Any two majorities overlap, so an outdated leader always runs into a node that knows better.');L.done();}},500);};}},
-{part:1,src:'Chapter 9 · Epoch numbering and quorums',pts:1,run(L){
-  L.h(L.kick('pr','Why it’s safe')+'<h1 class="q">Kwame’s cluster has five nodes. Why is a leader that collects a majority of votes sure to meet at least one node from the latest election?</h1>');
-  L.mc(L.card,['Every election result is broadcast to all clients','The old leader compares its clock with the new one','Any two majorities of five nodes share a node'],2,
-   'Three plus three is six, more than five, so two majorities always overlap. The shared node reports any higher epoch.',
-   'It’s plain counting, not clocks or broadcasts: two groups of at least three out of five must share a node, and that node knows the newest epoch.');}},
-{part:1,src:'Chapter 9 · Limitations of consensus',run(L){
-  L.h(L.kick('learn','Limitations of consensus')+'<h1 class="q">A huge breakthrough, with a price</h1>'+
-   L.prose('Consensus brings safety where everything else is uncertain, stays fault-tolerant, and provides total order broadcast, so it can also implement '+L.g('linearizability','linearizable')+' operations. Yet it isn’t used everywhere:')+
-   L.list([['Voting is synchronous replication','Many databases choose asynchronous replication for speed, and accept losing some committed data on failover.'],
-     ['A strict majority is needed','Three nodes tolerate one failure; five tolerate two. If the network splits, only the majority side makes progress.'],
-     ['Membership is usually fixed','Adding or removing nodes needs dynamic-membership extensions, which are much less well understood.'],
-     ['Timeouts misfire','With variable delays, especially across regions, nodes wrongly decide the leader is dead. Safety holds, but frequent elections can leave little time for real work.']],4)+
-   '<p class="small" style="margin-top:10px">Raft has known edge cases: with one consistently unreliable link, leadership can bounce between two nodes and the system never makes progress.</p>');
+  L.fast=false;
+  L.h(L.kick('ex','Try it live · the epoch ladder')+'<h1 class="q">Kwame’s five nodes decide who gets each last slot place. Crash the leader and keep deciding.</h1>'+CSS+
+   goalsHtml('g9',['Get a place decided in epoch 1','Crash leader N1, then elect a new leader','Get a place decided by the new leader'])+
+   '<div id="l9"></div><div class="cc-ctl"><button class="btn pri" id="x9p">'+L.ic('play')+'Propose next place</button><button class="btn" id="x9e">'+L.ic('cycle')+'Elect a new leader</button></div><div class="cc-read" id="r9" aria-live="polite"></div>');
+  const NAMES=['Okoro','Lund','Adeyemi','Haddad','Silva'];let ni=0;
+  const say=t=>{L.$('#r9').innerHTML=t;};
+  const h=Ladder(L,L.$('#l9'),{id:'ld9',tap:true,on:e=>{say(e.st==='down'?NM(e.k)+' crashed.'+(e.k===h.S.leader?' It was the leader, so nobody can propose until a new leader is elected.':''):NM(e.k)+' is back, but it missed any news while it was down.');}});
+  h.S.anim=false;h.elect(0).then(()=>{h.S.anim=true;h.paint();});
+  say('Epoch 1: N1 won the election with 5 of 5 votes (the crown). Press <b>Propose</b> to decide who gets the first last place.');
+  const fin=()=>{if(allTicked(L,'g9')&&!L.$('#ok9')){L.$('#g9').insertAdjacentHTML('afterend','<span id="ok9"></span>');
+    L.sheet('info','Two rounds, every time','A majority elects the epoch’s leader. Then each proposal needs its own majority of yes votes. Crash two and it still works; crash three and the ladder fills with refusals.');L.done();}};
+  L.$('#x9p').onclick=async()=>{if(h.S.busy)return;h.S.busy=true;const v=NAMES[ni%NAMES.length];
+    const r=await h.propose(v);h.S.busy=false;if(!h.alive())return;
+    if(r.why==='nolead'){say('No live leader: '+NM(h.S.leader)+' is down, so nobody may propose. Press <b>Elect a new leader</b>.');return;}
+    ni++;
+    if(r.ok){say('Decided: '+FULL[v]+' gets place #'+r.slot+', with '+r.yes+' of 5 yes votes in epoch '+h.S.believe[h.S.leader]+'.');tick(L,'g9',h.S.top===1?0:2);if(h.S.top>1&&h.S.st[0]!=='up')tick(L,'g9',2);}
+    else say('Only '+r.yes+' of 5 voted yes: no majority, so nothing is decided. Stuck, but nothing wrong happened.');fin();};
+  L.$('#x9e').onclick=async()=>{if(h.S.busy)return;h.S.busy=true;const old=h.S.leader;const r=await h.elect();h.S.busy=false;if(!h.alive())return;
+    if(r.ok){say('Epoch '+r.e+': '+NM(r.c)+' collects '+r.yes+' of 5 votes and leads. Every voter now knows epoch '+r.e+'.');if(h.S.st[old]==='down')tick(L,'g9',1);}
+    else say('Epoch '+r.e+': only '+r.yes+' of 5 nodes answer. No majority, no leader.');fin();};}},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',
+ solve:async L=>{const c=k=>L.$('#v10-n button[data-k="'+k+'"]').click();c(0);c(1);c(2);await L.sleep(10);L.$('#v10-q2').click();await L.sleep(10);c(0);c(1);},
+ run(L){
+  L.fast=false;let q=3,P=[];
+  L.h(L.kick('ex','Try to break it')+'<h1 class="q">Can a proposal dodge the latest election’s voters?</h1>'+CSS+
+   goalsHtml('g10',['With majorities: pick 3 proposal voters, avoiding the blue circle if you can','Switch to quorums of 2 and find voters with no overlap'])+
+   '<div class="cc-ctl"><button class="chip sel" id="v10-q3">Majority: 3 of 5</button><button class="chip" id="v10-q2">Just 2 of 5</button></div>'+
+   '<div class="cc-fig" id="v10"></div><div class="cc-hint">Tap nodes to choose who votes for the proposal</div><div class="cc-nodes" id="v10-n"></div><div class="cc-read" id="r10" aria-live="polite"></div>');
+  const E=()=>q===3?[2,3,4]:[3,4];
+  const draw=()=>{const both=E().filter(k=>P.includes(k));
+    L.$('#v10').innerHTML=vennSvg(5,E(),P,{la:'Elected leader in E3',lb:'Proposal votes',gap:P.length===q?['no','overlap']:null});
+    L.$('#v10-n').innerHTML=[0,1,2,3,4].map(k=>'<button class="chip'+(P.includes(k)?' sel':'')+'" data-k="'+k+'">'+NM(k)+'</button>').join('');
+    L.$$('#v10-n button').forEach(b=>{b.onclick=()=>{const k=+b.dataset.k;if(P.includes(k))P=P.filter(x=>x!==k);else{P.push(k);if(P.length>q)P.shift();}draw();};});
+    let t;
+    if(P.length<q)t='Pick '+q+' proposal voters ('+P.length+' of '+q+'). The blue circle voted in epoch 3’s election, so they know epoch 3.';
+    else if(both.length){t='<span class="ok-t">Overlap: '+both.map(NM).join(', ')+'.</span> '+(both.length>1?'They':'It')+' voted in epoch 3’s election, so a stale epoch-2 leader asking for this vote would be refused.';if(q===3)tick(L,'g10',0);}
+    else{t='<span class="no-t">No overlap!</span> A stale epoch-2 leader could collect these 2 votes and decide, while the epoch-3 leader decides something else: two answers.';if(q===2)tick(L,'g10',1);}
+    L.$('#r10').innerHTML=t;
+    if(allTicked(L,'g10')&&!L.$('#ok10')){L.$('#g10').insertAdjacentHTML('afterend','<span id="ok10"></span>');
+      L.sheet('info','Two majorities always share a node','3 + 3 = 6, more than 5, so any two majorities of five overlap. The shared node took part in the newest election and refuses an older epoch. Quorums that don’t overlap can miss each other, and then two leaders can both decide.');L.done();}};
+  L.$('#v10-q3').onclick=function(){q=3;P=[];this.classList.add('sel');L.$('#v10-q2').classList.remove('sel');draw();};
+  L.$('#v10-q2').onclick=function(){q=2;P=[];this.classList.add('sel');L.$('#v10-q3').classList.remove('sel');draw();};
+  draw();}},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',pts:1,
+ solve:async L=>{L.fast=true;L.$('#p11').children[1].click();for(let i=0;i<200&&!L.$('#p11d');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">While N1 (epoch 2) was frozen and N5 down, N2 won epoch 3. Now both are back, and N1 still thinks it leads. It proposes Mr. Lund. What happens?</h1>'+CSS+
+   '<div id="l11"></div><div class="cc-ctl" id="p11" style="flex-direction:column;align-items:stretch"></div><div id="v11" class="cc-fig"></div><div id="p11x"></div>');
+  const h=Ladder(L,L.$('#l11'),{id:'ld11',label:'Epoch ladder before N1 proposes'});
+  (async()=>{h.S.anim=false;h.S.top=1;await h.elect(0);await h.propose('Okoro');h.S.st[0]='zz';h.S.st[4]='down';await h.elect(1);h.S.st[4]='up';h.S.st[0]='up';h.S.anim=true;h.paint();})();
+  ['Decided: N1 and N5 both vote yes, and that’s enough','Refused: N1 can’t reach a majority without someone who knows epoch 3','Decided twice: N1’s answer and N2’s answer both stand'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.style.textAlign='left';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      await nap(L,250);if(!h.alive())return;h.S.busy=true;await h.propose('Lund',0);h.S.busy=false;if(!h.alive())return;
+      L.$('#v11').innerHTML=vennSvg(5,[1,2,3],[0,4],{la:'Elected N2 in E3',lb:'Yes to N1',no:[1,2,3],gap:['3rd vote','refused'],aria:'N2, N3 and N4 voted in the epoch 3 election and refuse N1. Only N1 and N5 vote yes.'});
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: the stale leader is refused':'N1’s proposal is refused','N5 missed the news and votes yes, but that’s only 2 of 5. A third vote would have to come from N2, N3 or N4, and each answers “I know epoch 3”. N1 learns it was replaced and steps down.');
+      L.$('#p11x').innerHTML='<span id="p11d"></span>';L.done();};
+    L.$('#p11').appendChild(b);});}},
+{part:1,src:'Chapter 9 · Epoch numbering and quorums',run(L){
+  L.h(L.kick('learn','Not 2PC in disguise')+'<h1 class="q">Votes, but with three key differences</h1>'+CSS+FIG_2PC()+
+   '<p class="cc-cap">It looks a bit like two-phase commit. But the leader is elected, a majority is enough instead of every yes, and a recovery process brings nodes back in line after a new leader takes over.</p>');
   L.done();}},
-{part:1,src:'Chapter 9 · Limitations of consensus',pts:6,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Keeps deciding, or blocked?',['Keeps deciding','Blocked, but safe'],[
-   ['A five-node cluster with two nodes crashed.',0,'Three of five is still a majority.'],
-   ['A five-node cluster with three nodes crashed.',1,'Two of five isn’t a majority. It stops, but decides nothing wrong.'],
-   ['A three-node cluster with one node crashed.',0,'Two of three is a majority.'],
-   ['A network split leaves 3 of 5 nodes in Westport. The Westport side…',0,'Three of five is a majority, so it carries on.'],
-   ['…and the Eastvale side, with the other 2 nodes.',1,'The minority side is blocked until the network heals.'],
-   ['A four-node cluster split 2 and 2.',1,'A majority of four is three. Neither half has it, so neither can decide.']]);}},
 
-/* ---------- PART 3: COORDINATION ---------- */
-{part:2,src:'Chapter 9 · Membership and Coordination Services',run(L){
-  L.h(L.kick('learn','Coordination services')+'<h1 class="q">ZooKeeper and etcd: consensus you can borrow</h1>'+
-   L.prose(L.g('coordination-service','Coordination services')+' like ZooKeeper and etcd look like a key-value database. But they hold only small amounts of data that fit in memory, replicated to every node by fault-tolerant total order broadcast. You often use them indirectly: HBase, Hadoop YARN, OpenStack Nova and Kafka all rely on ZooKeeper.')+
-   L.list([['lock','Linearizable atomic operations','Compare-and-set lets exactly one of several racing clients win, for example to take a lock. Locks are usually leases that expire if the client fails.'],
-     ['list','Total ordering','Every operation gets a rising transaction ID (ZooKeeper’s zxid), which works as a '+L.g('fencing','fencing token')+'.'],
-     ['eye','Failure detection','Clients keep a session alive with heartbeats. If it times out, the session’s '+L.g('ephemeral','ephemeral nodes')+' are deleted, releasing its locks.'],
-     ['alert','Change notifications','Clients can watch keys and get told when they change, instead of polling.']],1)+
-   '<p class="small" style="margin-top:10px">Only the first one truly needs consensus. The combination is what makes these services so useful.</p>');
+/* ---------- PART 3: THE PRICE ---------- */
+{part:2,src:'Chapter 9 · Limitations of consensus',run(L){
+  L.h(L.kick('learn','Limitations of consensus')+'<h1 class="q">A huge breakthrough, with a price</h1>'+CSS+FIG_PRICE()+
+   '<p class="cc-cap">Consensus gives safe, '+L.g('linearizability','linearizable')+' decisions while a majority is up. The price: every write waits for votes. So many databases still pick asynchronous replication: faster, but it can lose committed data on failover.</p>');
   L.done();}},
-{part:2,src:'Chapter 9 · Membership and Coordination Services',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">One route planner per region, for real this time</h1>');
-  L.beats(L.card,[
-   ['The rule','Each region must have exactly one route planner writing its routes. Lesson 0020 showed the damage a paused planner can do.'],
-   ['The setup','Kwame runs three route planner instances in Westport, plus a five-node coordination service such as ZooKeeper or etcd.'],
-   ['The race','At startup, all three try to create the key “westport-planner-leader” with an atomic operation. Exactly one succeeds. Its key is ephemeral, tied to its session.'],
-   ['The token','The winner takes the operation’s rising transaction ID and sends it as a fencing token with every write to the routes store.'],
-   ['The pause','The leader freezes in a long garbage-collection pause. Its heartbeats stop, the session times out, and the ephemeral key disappears.'],
-   ['The takeover','The other two were watching the key. They’re notified, race again, and one becomes leader with a higher token. When the old leader wakes up, its writes carry an older token and are rejected.']],
-   'Atomic operations, ephemeral nodes, notifications and ordering together give automatic failover, without Otterpost writing a consensus algorithm.');}},
-{part:2,src:'Chapter 9 · Membership and Coordination Services',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In that setup, how do the two standby planners learn the leader is gone, without checking every second?</h1>');
-  L.mc(L.card,['They poll the routes store for missing writes','They compare their clocks with the leader’s','They watch the key and get a change notification'],2,
-   'Watching a key means the service tells them when it changes, so they never have to poll.',
-   'Polling and clock checks are what change notifications save you from. The standbys watch the key, and the service tells them when the ephemeral key disappears.');}},
-{part:2,src:'Chapter 9 · Membership and Coordination Services',run(L){
-  L.h(L.kick('learn','What they’re for')+'<h1 class="q">Good jobs for a coordination service, and bad ones</h1>'+
-   L.list([['Allocating work','Choosing a leader among several instances, and deciding which partition goes to which node as nodes join, leave or fail. Libraries like Apache Curator help, but it’s still not easy.'],
-     ['Outsourced coordination','The service runs on a fixed few nodes (usually three or five) and serves many clients, so thousands of app nodes don’t have to vote.'],
-     ['Slow-changing data only','Facts like “the node at 10.1.1.23 leads partition 7,” which change over minutes or hours. Not runtime state that changes thousands of times a second.'],
-     ['Service discovery','Finding a service’s IP address doesn’t really need consensus. DNS answers are cached and a little stale, and that’s usually fine. Read-only caching replicas can serve such reads.'],
-     ['Membership','Agreeing which nodes are alive. A node may be wrongly declared dead, but agreement still helps: “the lowest-numbered member leads” only works if all agree who the members are.']],2));
+{part:2,src:'Chapter 9 · Limitations of consensus',
+ solve:async L=>{L.fast=true;for(const id of ['crash3','flaky','dict','nobody','sixth','tobias']){L.$('#e14-'+id).click();for(let i=0;i<300&&L.ld.S.busy;i++)await L.sleep(15);await L.sleep(10);}},
+ run(L){
+  L.fast=false;const tried=new Set();
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does consensus stall, or break? Run each preset and watch the four badges.</h1>'+CSS+
+   '<div class="cc-ctl"><button class="chip" id="e14-crash3">Crash 3 of 5</button><button class="chip" id="e14-flaky">Flaky network</button><button class="chip" id="e14-dict">Dictator node</button><button class="chip" id="e14-nobody">Always “nobody”</button><button class="chip" id="e14-sixth">Add a 6th node</button><button class="chip" id="e14-tobias">Tobias’s heartbeat rule</button></div>'+
+   '<div id="l14"></div><div class="cc-read" id="r14" aria-live="polite">Pick a preset. Try at least four.</div>');
+  const h=Ladder(L,L.$('#l14'),{id:'ld14',rows:6});h.S.anim=false;h.elect(0).then(()=>{h.S.anim=true;h.paint();});
+  const say=t=>{L.$('#r14').innerHTML=t;};
+  const base=async()=>{h.reset(5);h.S.anim=false;await h.elect(0);await h.propose('Okoro');h.S.anim=true;h.paint();};
+  const P={
+   crash3:async()=>{await base();h.S.st=['down','down','down','up','up'];h.paint();await h.elect();
+     say('Three of five crash. N4 calls an election and gets only 2 votes: no leader, nothing more decided. <b>Termination</b> is lost, but the other three badges stay green: the cluster stalls rather than deciding wrongly.');},
+   flaky:async()=>{await base();h.S.ovr={t:'wa'};for(const c of [1,0,1,0]){await h.elect(c);if(!h.alive())return;}
+     say('Every node is up, but variable delays make nodes think the leader died. Four elections, and no place decided since #1. Safety holds; useful work stops. Raft can even bounce leadership between two nodes when one link keeps failing.');},
+   dict:async()=>{h.reset(5);h.S.mode='dict';h.S.believe[0]=0;h.S.leader=0;h.paint();await h.propose('Okoro');h.S.st[0]='down';h.paint();
+     await h.addRow({e:null,kind:'prop',val:'Lund',cells:['-','o','o','o','o'],res1:'N1 down',res2:'stuck',ok:false});
+     say('N1 decides everything alone, so agreement is easy. Then N1 is lost. No one else may decide and there’s no election to replace it: <b>termination</b> fails. That’s 2PC’s weakness.');},
+   nobody:async()=>{h.reset(5);h.S.anim=false;await h.elect(0);h.S.anim=true;await h.propose('nobody',0,true);
+     say('Tobias’s joke algorithm decides “nobody” every time. All nodes agree and never change their minds, but no server proposed “nobody”: <b>validity</b> fails.');},
+   sixth:async()=>{h.reset(5);h.S.extra=1;h.S.anim=false;await h.elect(0);h.S.anim=true;await h.propose('Okoro');
+     say('Kwame adds N6 for Peak Week. Most algorithms have a fixed set of voters, so N6 gets no vote and the majority is still 3 of 5. Changing the set needs dynamic membership extensions, which are much less well understood.');},
+   tobias:async()=>{await base();h.S.st=['cut','cut','up','up','up'];h.paint();
+     await h.addRow({e:null,kind:'prop',val:'N3 leads',cells:['-','-','L','y','y'],res1:'no vote',res2:'takes over',ok:false});
+     h.S.believe[2]=1;h.S.twin=[0,2];h.paint();
+     await h.addRow({e:1,kind:'prop',val:'Lund',cells:['L','y','-','-','-'],res1:'2 of 5',res2:'accepted!',ok:false});h.S.dec.push({slot:2,val:'Lund'});h.paint();
+     await h.addRow({e:null,kind:'prop',val:'Adeyemi',cells:['-','-','L','y','y'],res1:'3 of 5',res2:'accepted',ok:false});h.S.dec.push({slot:2,val:'Adeyemi'});h.paint();
+     say('Tobias’s rule: “miss three heartbeats and the lowest ID you can see takes over”, with no majority count. A fault cuts N1, N2 off from N3–N5. Both sides crown a leader and both decide place #2: '+L.g('split-brain','split brain')+', <b>agreement</b> broken. A majority rule would refuse N1’s 2 votes.');}};
+  Object.keys(P).forEach(id=>{L.$('#e14-'+id).onclick=async function(){if(h.S.busy)return;h.S.busy=true;L.$$('#e14-crash3,#e14-flaky,#e14-dict,#e14-nobody,#e14-sixth,#e14-tobias').forEach(x=>x.classList.toggle('sel',x===this));
+    say('Running…');await P[id]();h.S.busy=false;if(!h.alive())return;tried.add(id);
+    if(tried.size>=4&&!L.$('#ok14')){L.$('#r14').insertAdjacentHTML('afterend','<span id="ok14"></span>');
+      L.sheet('info','Stalls are safe; shortcuts are not','A real algorithm may stop (too few nodes, endless elections) but never decides wrongly. The breakages came from shortcuts: one dictator, a made-up value, no majority rule. Fixed membership is a practical limit.');L.done();}};});}},
+{part:2,src:'Chapter 9 · Limitations of consensus',pts:1,
+ solve:async L=>{L.fast=true;L.$('#ld15-c button[data-k="1"]').click();await L.sleep(10);L.$('#x15').click();for(let i=0;i<300&&!L.$('#d15');i++)await L.sleep(15);},
+ run(L){
+  L.fast=false;let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Leader N1 has crashed. Crash as many <i>more</i> nodes as you can while place #2 still gets decided. One try counts.</h1>'+CSS+
+   '<div id="l15"></div><div class="cc-ctl"><button class="btn pri" id="x15">'+L.ic('play')+'Elect, then decide place #2</button><button class="btn" id="z15" hidden>'+L.ic('cycle')+'Reset</button></div><div class="cc-read" id="r15" aria-live="polite">N1 is down (locked). Tap N2–N5 to crash them, then run.</div>');
+  const h=Ladder(L,L.$('#l15'),{id:'ld15',tap:true,lock:[0]});
+  const setup=async()=>{h.reset(5);h.S.anim=false;await h.elect(0);await h.propose('Okoro');h.S.st[0]='down';h.S.anim=true;h.paint();};
+  setup();
+  L.$('#z15').onclick=async()=>{if(h.S.busy)return;await setup();L.$('#x15').hidden=false;L.$('#z15').hidden=true;L.$('#r15').innerHTML='Tap N2–N5 to crash them, then run.';};
+  L.$('#x15').onclick=async()=>{if(h.S.busy)return;h.S.busy=true;L.$('#x15').hidden=true;
+    const down=h.S.st.filter(s=>s==='down').length;const e=await h.elect();let r={ok:false};if(e.ok)r=await h.propose('Lund');h.S.busy=false;if(!h.alive())return;
+    const ok=r.ok&&down===2;
+    const msg=ok?'Two down is the limit for five nodes: the remaining 3 of 5 still form a majority for the election and again for the proposal.':
+      r.ok?'Place #2 was decided with only '+down+' node'+(down>1?'s':'')+' down. Five nodes can lose two and still decide, so one more crash was possible.':
+      'With '+down+' nodes down only '+(5-down)+' of 5 can vote: no majority, no new leader, nothing decided. Stuck, though nothing wrong happened.';
+    L.$('#r15').innerHTML=msg;L.$('#z15').hidden=false;
+    if(first){first=false;L.award(ok);L.sheet(ok?'ok':'no',ok?'Exactly at the limit':'Not quite',msg);L.$('#r15').insertAdjacentHTML('afterend','<span id="d15"></span>');L.done();}};}},
+
+/* ---------- PART 4: COORDINATION SERVICES ---------- */
+{part:3,src:'Chapter 9 · Membership and Coordination Services',run(L){
+  L.h(L.kick('learn','Coordination services')+'<h1 class="q">ZooKeeper and etcd: consensus you can borrow</h1>'+CSS+FIG_ZK()+
+   '<p class="cc-cap">A '+L.g('coordination-service','coordination service')+' looks like a key-value store, but holds small, slow-changing data, replicated by consensus. A few voters serve many clients.</p>');
   L.done();}},
-{part:2,src:'Chapter 9 · Membership and Coordination Services',pts:6,run(L){
+{part:3,src:'Chapter 9 · Allocating work to nodes',
+ solve:async L=>{L.fast=true;L.$('#s17').click();await L.tr.idle();L.$('#tr17-f0').click();await L.tr.idle();L.$('#tr17-br button[data-b="part"]').click();},
+ run(L){
+  L.fast=false;
+  L.h(L.kick('ex','Try it live · the coordination tree')+'<h1 class="q">Three Westport route planners, one leader key. Start them, then freeze the leader.</h1>'+CSS+
+   goalsHtml('g17',['Start the planners: they race for the leader key','Freeze the leader and watch who takes over','Tap another branch to see what it’s for'])+
+   '<div class="cc-ctl"><button class="btn pri" id="s17">'+L.ic('play')+'Start the planners</button></div><div id="t17"></div><div class="cc-read" id="r17" aria-live="polite">The tree is Otterpost’s data in the coordination service. Dashed boxes are '+L.g('ephemeral','ephemeral')+': they live only as long as their owner’s session.</div>');
+  const say=t=>{L.$('#r17').innerHTML=t;};
+  const BT={lead:'<b>Leader election.</b> The planners race to create this key with an atomic compare-and-set; exactly one wins. Its zxid becomes a '+L.g('fencing','fencing token')+' for every route write.',
+    mem:'<b>Membership.</b> Each dispatch worker keeps an ephemeral entry. If its session times out, the entry vanishes, and everyone agrees it’s out. Even a wrong “dead” verdict is useful, because all agree on it.',
+    part:'<b>Allocating work.</b> “Partition 7 of the Parcel DB is led by 10.1.1.23.” Facts like this change over minutes or hours, which is what these services are for. Not data that changes thousands of times a second.',
+    svc:'<b>Service discovery.</b> Where to reach the merchant API. This doesn’t really need consensus: a slightly stale answer, as DNS gives, is fine. Read-only caching replicas can serve such reads.'};
+  const t=Tree(L,L.$('#t17'),{id:'tr17',on:e=>{
+    if(e.type==='start'){tick(L,'g17',0);say('All three tried to create <b>planners/westport/leader</b> at once. A won; B and C saw it already existed and now <b>watch</b> the key. Freeze A.');}
+    if(e.type==='freeze')say(PN[e.k]+' froze: its heartbeats stopped. The session timeout bar is running…');
+    if(e.type==='takeover'){tick(L,'g17',1);say('The session timed out, so the ephemeral key was deleted. B and C were notified (no polling), raced again, and '+PN[e.k]+' won with a higher zxid: '+t.S.tok[e.k]+'.');}
+    if(e.type==='open'){say(BT[e.b]);if(e.b!=='lead')tick(L,'g17',2);}
+    if(allTicked(L,'g17')&&!L.$('#ok17')){L.$('#g17').insertAdjacentHTML('afterend','<span id="ok17"></span>');
+      L.sheet('info','Failover without writing consensus code','Atomic operations, ephemeral nodes, notifications and ordering together gave automatic failover. Only the atomic operations truly need consensus; the combination is what helps. Libraries like Apache Curator help, but it’s still not easy.');L.done();}}});
+  L.$('#s17').onclick=function(){this.disabled=true;t.start();};}},
+{part:3,src:'Chapter 9 · Membership and Coordination Services',pts:1,
+ solve:async L=>{L.fast=true;L.$('#p18').children[2].click();for(let i=0;i<300&&!L.$('#p18d');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Planner A leads with token 1041. It freezes in a 15-second garbage-collection pause; the session timeout is 10 seconds (both illustrative). When A wakes, it writes routes with token 1041. What happens?</h1>'+CSS+
+   '<div class="cc-ctl" id="p18" style="flex-direction:column;align-items:stretch"></div><div id="t18"></div><div id="p18x"></div>');
+  const t=Tree(L,L.$('#t18'),{id:'tr18',branches:false,freeze:false});t.setStarted();
+  ['A still holds the lock, so its write lands','The service keeps A’s key until A confirms it’s alive','A’s key vanished with its session; B took over, and A’s write is refused'].forEach((s,j)=>{
+    const b=document.createElement('button');b.className='chip';b.style.textAlign='left';b.textContent=s;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      await t.freeze(0);if(!t.alive())return;await nap(L,300);await t.wake(0);if(!t.alive())return;
+      const ok=j===2;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: the session decides, not A':'A lost the lock while it slept','The service doesn’t wait for A: heartbeats stopped, so after the timeout it declared the session dead and deleted the ephemeral key. B was notified and won with zxid 1046. A’s late write carries 1041, and the routes store refuses it.');
+      L.$('#p18x').innerHTML='<span id="p18d"></span>';L.done();};
+    L.$('#p18').appendChild(b);});}},
+{part:3,src:'Chapter 9 · Membership and Coordination Services',pts:6,run(L){
   L.h(L.kick('pr','Right tool?')+'<h1 class="q">Kwame gets requests to put things in the coordination service. Sort them.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Good fit','Wrong tool'],[
    ['Which node leads partition 7 of the Parcel DB',0,'Small, slow-changing, and everyone must agree on it.'],
-   ['Every courier GPS ping, tens of millions a day',1,'Huge, fast-changing data. These services hold small amounts of data in memory.'],
+   ['Every booking write, copied to a standby Parcel DB',1,'Replicating app state from node to node is a job for other tools, such as Apache BookKeeper.'],
    ['Which Eastvale route planner instance is the leader',0,'Leader election is a classic use.'],
    ['Every parcel record and its scan events',1,'It’s not a general-purpose database. That data belongs in the Parcel DB.'],
    ['Which dispatch workers are alive right now',0,'Membership: sessions and ephemeral nodes are built for it.'],
-   ['Each courier’s live position, updated every few seconds',1,'Runtime state that changes constantly. Other tools are meant for that.']],
+   ['Each courier’s live position, updated every few seconds',1,'Runtime state that changes constantly. Other tools are meant for replicating that.']],
    'Small, slow-changing facts the whole system must agree on: yes. Bulk or fast-changing application data: no.');}},
-{part:2,src:'Chapter 9 · Membership and Coordination Services',pts:1,run(L){
-  L.h(L.kick('pr','Advise the team')+'<h1 class="q">Tobias wants every tracking-page server to do a linearizable read from the coordination service on every request, just to find the merchant API’s address. What’s the better view?</h1>');
-  L.mc(L.card,['Service discovery can live with slightly stale answers','Right: addresses must always be perfectly fresh','Addresses belong in the Parcel DB instead'],0,
-   'Like DNS, service discovery is fine with answers that are a little stale. Cached or read-only replica reads are enough. Staying available matters more.',
-   'The book notes service discovery doesn’t really need consensus. DNS answers are cached and stale, and that’s usually fine. What matters is that lookups stay available.');}},
-
-/* ---------- PART 4: BIG PICTURE ---------- */
+{part:3,src:'Chapter 9 · Membership and Coordination Services; Service discovery',
+ solve:async L=>{for(const k of ['zk1','zk3','gps','track','many']){L.$('#e20-'+k).click();await L.sleep(10);}},
+ run(L){
+  const tried=new Set();
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does the coordination service stop helping? Try each preset.</h1>'+CSS+
+   '<div class="cc-ctl" id="e20"><button class="chip" id="e20-zk1">1 server fails</button><button class="chip" id="e20-zk3">3 of 5 crash</button><button class="chip" id="e20-gps">Store GPS pings</button><button class="chip" id="e20-track">Read on every request</button><button class="chip" id="e20-many">1,000 voters</button></div>'+
+   '<div class="cc-fig" id="v20"></div><div class="cc-read" id="r20" aria-live="polite">Normal use: leader keys, members and partition owners. Small facts that change over minutes or hours. Rates are illustrative.</div>');
+  const base={n:5,down:0,many:false,ro:false,rate:.1,mem:.06,clients:[['Planners','×3',1.5],['Dispatch','×12 workers',1.5]],v:['ok','Fits','small, slow','facts'],aria:'Normal use: five voters up, small slow-changing data, little memory used'};
+  const PR={
+   zk1:[{down:1,v:['ok','Fine','4 of 5 vote','sessions live'],aria:'One of five voters down; the service keeps working'},
+     'One ZooKeeper server fails. Four of five still form a majority, and Planner A’s <b>session stays active</b>: one server failing doesn’t end it. No false “A is dead”.'],
+   zk3:[{down:3,v:['wa','Stalls','safe, but','stuck'],aria:'Three of five voters down; the service cannot decide anything'},
+     'The service runs consensus itself, so it needs a majority of its own voters. With 2 of 5 it can’t commit any change: no lock handed over, no new leader key. Like the ladder: <b>stuck, but never wrong</b>.'],
+   gps:[{rate:.98,mem:1.3,clients:[['Planners','×3',1.5],['Courier app','3,000 phones',5]],v:['no','Wrong tool','fast app','state'],aria:'Every GPS ping written to the service: changes thousands of times a second and does not fit in memory'},
+     'Tobias wants every courier ping in the tree. That’s app state changing <b>thousands of times a second</b>, while these services keep a small amount of data in memory. Keep it in the courier location store.'],
+   track:[{ro:true,clients:[['Planners','×3',1.5],['Tracking','every request',5]],v:['wa','Overkill','a stale read','is fine'],aria:'Tracking-page servers read the merchant API address on every request; read-only replicas can answer'},
+     'Tobias wants a linearizable read of the merchant API’s address on every tracking-page request. Service discovery can live with slightly stale answers, as DNS does. <b>Read-only caching replicas</b> (no vote) can serve them.'],
+   many:[{many:true,clients:[['App servers','1,000 vote',5],['Dispatch','×12 workers',1.5]],v:['no','Too slow','501 votes','per change'],aria:'A thousand voters: every decision waits for 501 of them'},
+     'Why not let all 1,000 app servers vote? Polling that many nodes for a majority would waste huge effort. So the service votes among <b>3 or 5</b> nodes and serves many clients: coordination is outsourced.']};
+  const draw=c=>{L.$('#v20').innerHTML=svcSvg(Object.assign({},base,c||{}));};draw();
+  Object.keys(PR).forEach(k=>{L.$('#e20-'+k).onclick=function(){L.$$('#e20 .chip').forEach(x=>x.classList.toggle('sel',x===this));draw(PR[k][0]);L.$('#r20').innerHTML=PR[k][1];tried.add(k);
+    if(tried.size>=4&&!L.$('#ok20')){L.$('#r20').insertAdjacentHTML('afterend','<span id="ok20"></span>');
+      L.sheet('info','Small, slow, and agreed','Use it for facts everyone must agree on that change over minutes or hours. It tolerates a minority of failures and stalls safely without a majority. Bulk app state and stale-tolerant lookups belong elsewhere.');L.done();}};});}},
 {part:3,src:'Chapter 9 · Summary',run(L){
-  L.h(L.kick('learn','The chapter’s big reveal')+'<h1 class="q">Six problems that are secretly the same</h1>'+
-   L.prose('Many problems turn out to be <b>equivalent to '+L.g('consensus','consensus')+'</b>: if you can solve one, you can turn that into a solution for the others.')+
-   L.list([['Linearizable compare-and-set','Decide whether to set a value, based on its current value.'],['Atomic transaction commit','Decide whether a distributed transaction commits or aborts.'],
-     ['Total order broadcast','Decide the order in which to deliver messages.'],['Locks and leases','Decide which of several racing clients gets the lock.'],
-     ['Membership / coordination','Decide which nodes are alive and which count as dead.'],['Uniqueness constraint','Decide which of several conflicting records is allowed.']],1)+
-   '<p class="small" style="margin-top:10px">All are easy on one node, or if one node makes every decision. That’s why a single-leader database can offer linearizable operations, uniqueness constraints and an ordered replication log.</p>');
+  L.h(L.kick('learn','The chapter’s big reveal')+'<h1 class="q">Six problems that are secretly one</h1>'+CSS+FIG_HUB()+
+   '<p class="cc-cap">Each is “decide one thing, together”. Solve one and you can turn it into a solution for the others. With a single leader deciding, all of them are easy.</p>');
   L.done();}},
-{part:3,src:'Chapter 9 · Summary',run(L){
-  L.h(L.kick('learn','When the leader fails')+'<h1 class="q">Three ways out, and only one is automatic</h1>'+
-   L.tiers([['clock','Wait for it to recover','The system is blocked meanwhile. Many XA/JTA coordinators do this. If the leader never returns, it’s stuck forever: no termination.','Otterpost’s 2PC bookings work this way'],
-            ['person','Fail over by hand','Humans choose a new leader and reconfigure. Many relational databases do this. Consensus by “act of God,” as slow as people are.',''],
-            ['cycle','Elect automatically','Needs a consensus algorithm. Use a proven one that handles bad network conditions.','',true,'Fault-tolerant']])+
-   L.quote('kicks the can down the road','Chapter 9 summary, on what having a leader achieves')+
-   L.prose('A single-leader database avoids consensus on every write, but still needs it to keep and change leadership. Not every system needs consensus at all: leaderless and multi-leader systems usually live with conflicts and branching histories instead.'));
-  L.done();}},
+{part:3,src:'Chapter 9 · Summary',
+ solve:async L=>{L.fast=true;for(const k of ['wait','man','auto']){L.$('#w22-'+k).click();for(let i=0;i<200&&L.$('#w22').dataset.busy==='1';i++)await L.sleep(15);}},
+ run(L){
+  L.fast=false;const seen=new Set();const shown={};
+  L.h(L.kick('ex','The leader dies at 2 am')+'<h1 class="q">Three ways out when the leader fails. Tap each one.</h1>'+CSS+
+   '<div class="cc-ctl"><button class="chip" id="w22-wait">Wait for it</button><button class="chip" id="w22-man">Fail over by hand</button><button class="chip" id="w22-auto">Elect automatically</button></div>'+
+   '<div class="cc-fig"><svg id="w22" viewBox="0 0 320 196" role="img" aria-label="Timeline from 2:00 to 3:00 am showing how long writes are blocked under each approach"></svg></div><div class="cc-read" id="r22" aria-live="polite">Times are illustrative.</div><div id="q22"></div>');
+  const X=m=>36+m*(268/60);
+  const R={wait:[0,'Wait for it',60,'blocked until it returns… if ever'],man:[1,'Fail over by hand',30,'Kwame is paged'],auto:[2,'Elect automatically',0.6,'new leader in seconds']};
+  const TXT={wait:'Many XA/JTA transaction coordinators wait for the leader to recover. If it never does, the system is blocked forever: no termination.',
+    man:'Many relational databases fail over by hand: consensus by “act of God”, as a human decides from outside the system. Only as fast as people are.',
+    auto:'Electing a new leader automatically needs a consensus algorithm. Use a proven one that handles bad networks, or a service like ZooKeeper.'};
+  function paint(){let s='';
+    [0,15,30,45,60].forEach(m=>{s+='<line x1="'+X(m)+'" y1="168" x2="'+X(m)+'" y2="173" style="stroke:var(--line2);stroke-width:1.5"/>'+tx(m===0?X(m)-6:m===60?X(m)+6:X(m),188,m===60?'3:00':'2:'+String(m).padStart(2,'0'),'font-size:12px;text-anchor:'+(m===0?'start':m===60?'end':'middle')+';fill:var(--muted)');});
+    s+='<line x1="'+X(0)+'" y1="168" x2="'+X(60)+'" y2="168" style="stroke:var(--line2);stroke-width:1.5"/>';
+    s+='<line x1="'+X(0)+'" y1="20" x2="'+X(0)+'" y2="168" style="stroke:var(--no);stroke-width:1.8;stroke-dasharray:4 3"/>'+tx(X(0)-6,13,'leader fails','font-size:12px;font-weight:700;fill:var(--no)');
+    Object.keys(R).forEach(k=>{const r=R[k],top=26+r[0]*48,p=shown[k],by=top+18;
+      s+=tx(X(0)+8,top+12,r[1],'font-size:13px;'+(p==null?'fill:var(--muted)':'font-weight:700;fill:var(--ink)'));
+      if(p==null){s+='<rect x="'+X(0)+'" y="'+by+'" width="'+(X(60)-X(0))+'" height="20" rx="6" style="fill:none;stroke:var(--line);stroke-width:1.2;stroke-dasharray:4 3"/>';return;}
+      const end=Math.min(r[2],60),xr=X(end*p);
+      s+='<rect x="'+X(0)+'" y="'+by+'" width="'+Math.max(3,xr-X(0))+'" height="20" rx="6" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.4"/>';
+      if(k!=='wait'&&p>=1)s+='<rect x="'+xr+'" y="'+by+'" width="'+(X(60)-xr)+'" height="20" rx="6" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.4"/>';
+      if(p>=1)s+=tx(k==='auto'?X(60)-6:X(0)+8,by+14,r[3],'font-size:11.5px;font-weight:600;fill:var(--'+(k==='auto'?'ok':'no')+');text-anchor:'+(k==='auto'?'end':'start'));});
+    const el=L.$('#w22');if(el){const b=el.dataset.busy;el.innerHTML=s;el.dataset.busy=b||'0';}}
+  paint();
+  Object.keys(R).forEach(k=>{L.$('#w22-'+k).onclick=async function(){const el=L.$('#w22');if(el.dataset.busy==='1')return;el.dataset.busy='1';
+    L.$$('#w22-wait,#w22-man,#w22-auto').forEach(x=>x.classList.toggle('sel',x===this));L.$('#r22').innerHTML=TXT[k];
+    const ok=await anim(L,700,p=>{if(!L.$('#w22'))return false;shown[k]=p;paint();});if(!ok)return;shown[k]=1;paint();L.$('#w22').dataset.busy='0';seen.add(k);
+    if(seen.size===3&&!L.$('#ok22')){L.$('#q22').innerHTML='<span id="ok22"></span>'+L.quote('kicks the can down the road','Martin Kleppmann, chapter 9 summary, on what a leader achieves');
+      L.sheet('info','A leader only moves the problem','A single-leader database avoids consensus on every write, but still needs it to keep and change leadership. Leaderless and multi-leader systems usually skip global consensus and live with conflicts instead.');L.done();}};});}},
 {part:3,src:'Chapter 9 · Summary',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which problem is it, underneath?',['Uniqueness constraint','Atomic commit','Total order broadcast','Locks and leases','Membership'],[
-   ['Two bookings must never get the same tracking code.',0,'Concurrent conflicting records: one must win, the other must fail.'],
+   ['Two bookings must never get the same tracking code, OP-48213.',0,'Concurrent conflicting records: one must win, the other must fail.'],
    ['A booking must land in both the Parcel DB and the billing ledger, or in neither.',1,'Every participant must agree to commit or abort.'],
    ['Every replica must apply parcel scan events in exactly the same order.',2,'Deciding the delivery order of messages.'],
    ['Only one Westport route planner may write routes at a time.',3,'Racing instances; one gets the lease.'],
@@ -236,12 +699,7 @@ Course.lesson({
   L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence says what a leader really does for consensus.</h1>');
   L.sentence(L.card,[['A single-leader database avoids consensus','A single-leader database still needs consensus'],['to choose and change its leader,','on every single write,'],['so the leader moves the problem elsewhere.','so the leader makes the problem go away.']],[1,0,0],
    [['It runs no consensus per write, but leadership itself must be agreed. It still needs consensus.'],['Writes flow through the leader without a vote each time. Consensus is needed for leadership, not every write.'],['It doesn’t go away: when the leader fails, the nodes still have to agree on a new one.']],
-   'Consensus is still required, only in a different place and less often.');}},
-{part:3,src:'Chapter 9 · Summary',pts:1,run(L){
-  L.h(L.kick('pr','Final call')+'<h1 class="q">For Nordhaven’s new dispatch service, Tobias plans their own leader election: “Miss three heartbeats and you’re dead. The lowest ID left takes over.” What should Kwame advise?</h1>');
-  L.mc(L.card,['Ship it: heartbeats and lowest ID are enough','Use a proven coordination service like ZooKeeper or etcd','Skip leaders and let every dispatcher write routes'],1,
-   'Home-made consensus has a poor track record. Timeouts can wrongly declare nodes dead, and without agreement on membership, two nodes can each think they lead. A proven service handles those cases.',
-   'Without agreement on who’s alive, “lowest ID” can crown two leaders, and routes need exactly one writer. The book advises using something like ZooKeeper rather than building your own.');}}
+   'You still need consensus, just in a different place and less often. For that part, borrow a proven service such as ZooKeeper instead of building your own.');}}
   ]
 });
 </script>

@@ -13,13 +13,315 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0017 only. Three hands-on models used across the lesson:
+   1. Ledger  – the Parcel DB's lock ledger: rows with shared (S) and
+                exclusive (X) lock badges, a wait queue, a live wait-for
+                graph with deadlock loops (2PL), and read markers,
+                uncommitted versions and commit checks (SSI).
+   2. Ribbon  – the single thread of a serial-execution database drawn
+                over time: work, waits for the app, disk stalls and
+                cross-partition lock-step.
+   3. Bays    – the Westport hub's loading-bay board, showing which part
+                a predicate lock or an index-range lock covers.
+   ===================================================================== */
+let FAST=false;                                   /* solvers switch animations off */
+const nap=(L,ms)=>L.sleep(FAST?0:ms);
+const alive=el=>!!(el&&el.isConnected);
+const CSS='<style>'+
+ '.sz-led{border:2px solid var(--line);border-radius:16px;padding:9px;margin:10px 0 6px;background:var(--card)}'+
+ '.sz-hd{font-size:12px;font-weight:700;color:var(--muted);letter-spacing:.04em;text-transform:uppercase;margin:0 0 4px;display:flex;justify-content:space-between;gap:6px}'+
+ '.sz-row{display:grid;grid-template-columns:84px 1fr;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}'+
+ '.sz-row:first-child{border-top:0}.sz-rl b{display:block;font-size:14px;line-height:1.2}.sz-rl span{font-size:12.5px;color:var(--muted)}'+
+ '.sz-bs{display:flex;flex-wrap:wrap;gap:4px;min-height:26px;align-items:center}'+
+ '.sz-b{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;font-weight:600;border-radius:8px;padding:2px 6px;border:1.5px solid;line-height:1.35}'+
+ '.sz-b i{font-style:normal;font-weight:800;border-radius:4px;padding:0 4px;background:var(--card)}.sz-b svg.i{width:13px;height:13px}'+
+ '.h1c{background:var(--h1-bg);color:var(--h1);border-color:var(--h1)}.h2c{background:var(--h2-bg);color:var(--h2);border-color:var(--h2)}'+
+ '.h3c{background:var(--h3-bg);color:var(--h3);border-color:var(--h3)}.h4c{background:var(--h4-bg);color:var(--h4);border-color:var(--h4)}'+
+ '.sz-b.q{border-style:dashed;background:transparent}.sz-b.pv{border-style:dotted}'+
+ '.sz-b.trip{border-color:var(--no);color:var(--no);background:var(--no-bg)}'+
+ '.sz-none{font-size:12.5px;color:var(--faint)}'+
+ '.sz-toks{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:8px}'+
+ '.sz-tok{text-align:left;border:2px solid var(--line);border-bottom-width:3px;border-radius:12px;background:var(--card);padding:7px 9px;min-height:66px;display:flex;flex-direction:column;gap:1px;min-width:0}'+
+ 'button.sz-tok:hover{border-color:var(--line2)}div.sz-tok{cursor:default}'+
+ '.sz-tok b{font-size:14.5px}.sz-tok small{font-size:12px;color:var(--muted)}.sz-tok .sz-ts{font-size:12.5px;line-height:1.35}'+
+ '.sz-tok.h1t{border-left:6px solid var(--h1)}.sz-tok.h2t{border-left:6px solid var(--h2)}.sz-tok.h3t{border-left:6px solid var(--h3)}.sz-tok.h4t{border-left:6px solid var(--h4)}'+
+ '.sz-tok.st-wait{background:var(--h3-bg)}.sz-tok.st-done{background:var(--ok-bg)}.sz-tok.st-abort{background:var(--no-bg)}'+
+ '.sz-pp{display:flex;gap:3px;margin:2px 0}.sz-pp i{width:9px;height:9px;border-radius:3px;background:var(--soft2);border:1px solid var(--line2)}.sz-pp i.on{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.sz-msg{font-size:14px;line-height:1.45;padding:8px 10px;border-radius:12px;background:var(--soft);margin-top:8px;min-height:42px}'+
+ '.sz-msg.ok{background:var(--ok-bg);color:var(--ok)}.sz-msg.no{background:var(--no-bg);color:var(--no)}.sz-msg.wait{background:var(--h3-bg);color:var(--h3)}'+
+ '.sz-stats{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;font-size:13px}.sz-stats span{background:var(--soft);border-radius:99px;padding:3px 10px;font-weight:600;font-variant-numeric:tabular-nums}'+
+ '.sz-svg{width:100%;display:block}svg text{font-family:var(--sans)}'+
+ '.sz-ctl{display:flex;flex-wrap:wrap;gap:0;margin:8px 0 2px}.sz-ctl .chip{min-height:40px;font-size:14.5px}'+
+ '.sz-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 4px}'+
+ '.sz-key{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:6px 0}.sz-key span{display:inline-flex;align-items:center;gap:5px}.sz-key i{width:14px;height:10px;border-radius:3px;display:inline-block}'+
+ '.sz-cap{font-size:15.5px;line-height:1.5;margin:8px 0 4px}'+
+ '.sz-tags{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}.sz-tags span{font-size:12.5px;font-weight:600;background:var(--soft);border-radius:99px;padding:4px 10px;color:var(--muted)}'+
+ '.sz-goals{list-style:none;margin:6px 0;padding:0}.sz-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0;color:var(--muted)}'+
+ '.sz-goals li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.sz-goals li.done{color:var(--ok)}.sz-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.sz-goals li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.sz-read{background:var(--soft);border-radius:12px;padding:8px 10px;font-size:14px;line-height:1.5;margin:8px 0}'+
+ '.sz-tbl{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0}.sz-tbl th{text-align:left;color:var(--muted);font-weight:600;padding:5px 4px;font-size:12.5px}.sz-tbl td{padding:6px 4px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}'+
+ '.sz-grid2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}'+
+ '.sz-cand{border:2px solid var(--line);border-radius:14px;padding:7px;min-width:0}.sz-cand .small{margin-top:5px}.sz-cand>b{font-size:13.5px;display:block;line-height:1.3;min-height:36px}'+
+ '.sz-cand .sz-yn{display:flex;gap:5px;margin-top:5px}.sz-cand .sz-yn button{flex:1;min-height:38px;border-radius:10px;border:2px solid var(--line);background:var(--card);font-size:13.5px;font-weight:600;padding:4px}'+
+ '.sz-cand .sz-yn button.sel{border-color:var(--pri);background:var(--pri-bg);color:var(--pri-deep)}'+
+ '.sz-cand.ok{border-color:var(--ok-line);background:var(--ok-bg)}.sz-cand.no{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.sz-wl{border:2px solid var(--line);border-radius:16px;padding:10px;margin:10px 0}.sz-wl h3{margin:0 0 4px;font-size:15.5px}'+
+ '.sz-tr{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 6px}.sz-tr span{display:inline-flex;align-items:center;gap:4px;font-size:12.5px;border-radius:8px;padding:3px 7px;background:var(--soft);color:var(--ink)}'+
+ '.sz-tr span svg.i{width:14px;height:14px}.sz-tr span.hit{background:var(--no-bg);color:var(--no);outline:1.5px solid var(--no)}'+
+ '.sz-dots{display:flex;gap:5px;margin:6px 0 2px;min-height:16px}.sz-dots i{width:16px;height:16px;border-radius:50%;display:inline-block}'+
+ '.sz-why{font-size:13.5px;line-height:1.45;margin-top:4px}'+
+ '.sz-mtx td.y{background:var(--ok-bg);color:var(--ok);font-weight:700;text-align:center}.sz-mtx td.n{background:var(--no-bg);color:var(--no);font-weight:700;text-align:center}.sz-mtx td.p{background:var(--h3-bg);color:var(--h3);font-weight:700;text-align:center}'+
+ '.sz-mtx td{border:2px solid var(--card)}.sz-mtx th{text-align:center}.sz-mtx th:first-child,.sz-mtx td:first-child{text-align:left}'+
+ '</style>';
+const COL={h1:'h1',h2:'h2',h3:'h3',h4:'h4'};
+
+/* ---------------- 1. LEDGER ----------------
+   rows: [{k,label,v,fmt}]   txs: [{id,name,role,col,ops,at}]
+   ops: {k:'r',rows,s,out} read · {k:'w',row,f,s,ok,no} write (f returns null = app decides not to write)
+        {k:'t',s} work in the app · {k:'c',s} commit                                        */
+const rd=(rows,s,out)=>({k:'r',rows,s,out});
+const wr=(row,f,s,ok,no)=>({k:'w',row,f,s,ok,no});
+const th=s=>({k:'t',s});
+const cm=()=>({k:'c',s:'Commit'});
+const places=v=>v+(v===1?' place':' places')+' left';
+const duty=v=>v?'on duty':'off duty';
+function slotRow(k,label,v){return {k,label,v,fmt:places,say:'slot '+label.slice(5)};}
+function booking(id,name,role,col,slot,lab,at){
+  return {id,name,role,col,at,ops:[rd([slot],'Check '+lab,v=>'sees '+places(v[slot])+' at '+lab),
+    wr(slot,v=>v[slot]>0?v[slot]-1:null,'Book '+lab,'takes a place at '+lab,'finds '+lab+' full and books nothing'),cm()]};}
+function endShift(id,name,col,role){
+  return {id,name,role:role||'ends their shift',col,ops:[rd(['ravi','mia'],'Count on-duty couriers',v=>'counts '+(v.ravi+v.mia)+' on duty in W3'),
+    wr(id==='R'?'ravi':'mia',v=>v.ravi+v.mia>=2?0:null,'End shift','goes off duty, not committed yet','refuses: W3 would have nobody on duty'),cm()]};}
+const dutyRows=()=>[{k:'ravi',label:'Ravi · W3',v:1,fmt:duty,say:'Ravi’s row'},{k:'mia',label:'Mia · W3',v:1,fmt:duty,say:'Mia’s row'}];
+
+function Ledger(L,host,o){
+  const me={o};let S;
+  const R=k=>S.rows.find(r=>r.k===k),T=id=>S.txs.find(t=>t.id===id);
+  const cur=r=>r.com[r.com.length-1].v;
+  const active=t=>t.state==='run'||t.state==='wait';
+  me.reset=()=>{
+    S=me.S={mode:o.mode,clock:1,tick:0,wseq:0,loop:null,msg:o.hello||'',kind:'',stats:{done:0,wait:0,aborts:0},
+      rows:o.rows.map(r=>({k:r.k,label:r.label,say:r.say||r.label,fmt:r.fmt,com:[{v:r.v,ts:1,by:null}],pend:[],locks:{},reads:[]})),
+      txs:o.txs.map((t,j)=>({id:t.id,name:t.name,role:t.role,col:t.col,ops:t.ops,at:t.at||0,j,pc:0,state:'new',view:{},rs:{},ign:{},warn:{},snap:0,tries:0,wt:0,cool:0,why:'',wrote:false}))};
+    render();};
+  function say(t,k){S.msg=t;S.kind=k||'';}
+  function emit(e){if(o.on)o.on(e,me);}
+  function visible(r,tx){const own=r.pend.find(p=>p.tx===tx.id);if(own)return own.v;
+    if(S.mode==='ssi'){let v=r.com[0].v;r.com.forEach(c=>{if(c.ts<=tx.snap)v=c.v;});return v;}return cur(r);}
+  function blockers(tx,r,m){return Object.keys(r.locks).filter(id=>id!==tx.id&&(m==='X'||r.locks[id]==='X'));}
+  function names(ids){return ids.map(id=>T(id).name).join(' and ');}
+  /* try the current op; true = done, false = must wait (2PL only) */
+  function attempt(tx){
+    const op=tx.ops[tx.pc];
+    if(op.k==='r'){
+      if(S.mode==='2pl'){
+        for(const k of op.rows){const b=blockers(tx,R(k),'S');if(b.length){tx.want={k,m:'S',by:b};return false;}}
+        op.rows.forEach(k=>{const r=R(k);if(!r.locks[tx.id])r.locks[tx.id]='S';});
+      }else op.rows.forEach(k=>{const r=R(k);tx.rs[k]=1;if(!r.reads.includes(tx.id))r.reads.push(tx.id);
+        const o2=r.pend.filter(p=>p.tx!==tx.id).map(p=>p.tx);if(o2.length)tx.ign[k]=o2;});
+      op.rows.forEach(k=>{tx.view[k]=visible(R(k),tx);});return true;}
+    if(op.k==='w'){
+      const r=R(op.row);
+      if(S.mode==='2pl'){const b=blockers(tx,r,'X');if(b.length){tx.want={k:op.row,m:'X',by:b};return false;}r.locks[tx.id]='X';}
+      r.pend=r.pend.filter(p=>p.tx!==tx.id);r.pend.push({tx:tx.id,v:tx.nv});tx.view[op.row]=tx.nv;tx.wrote=true;
+      if(S.mode==='ssi'){const hit=r.reads.filter(id=>id!==tx.id&&active(T(id)));hit.forEach(id=>{T(id).warn[op.row]=tx.id;});tx.trip=hit;}
+      return true;}
+    return true;}
+  function opText(tx,op,pre){
+    if(op.k==='r')return tx.name+' '+op.out(tx.view)+(S.mode==='2pl'?(pre?'.':' (shared lock'+(op.rows.length>1?'s':'')+' taken).'):' from its snapshot.');
+    if(op.k==='w')return tx.name+' '+op.ok+(S.mode==='2pl'&&!pre?' (exclusive lock taken).':'.');
+    return pre||'';}
+  function cycleFrom(tx){
+    const edges=t=>t.state==='wait'?blockers(t,R(t.want.k),t.want.m):[];
+    const path=[];const seen=new Set();
+    const dfs=id=>{if(id===tx.id&&path.length)return true;if(seen.has(id))return false;seen.add(id);path.push(id);
+      for(const n of edges(T(id)))if(dfs(n))return true;path.pop();return false;};
+    return dfs(tx.id)?path.slice():null;}
+  function enterWait(tx){
+    tx.state='wait';tx.ws=++S.wseq;
+    const r=R(tx.want.k);
+    say(tx.name+' must wait: '+names(tx.want.by)+' '+(tx.want.by.length>1?'hold':'holds')+' a lock on '+r.say+' that clashes with the '+(tx.want.m==='X'?'exclusive':'shared')+' lock '+tx.name+' needs.','wait');
+    if(o.auto)S.stats.wait++;emit({type:'wait',tx});
+    const cyc=cycleFrom(tx);
+    if(cyc){S.loop=cyc.slice();const msg='Deadlock: '+cyc.map((id,i)=>T(id).name+' waits for '+T(cyc[(i+1)%cyc.length]).name).join(', and ')+'. The database aborts '+tx.name+' so the rest can move.';
+      emit({type:'deadlock',tx,cyc});abort(tx,'deadlock',msg);}
+  }
+  function finish(tx,state){
+    S.rows.forEach(r=>{delete r.locks[tx.id];r.reads=r.reads.filter(id=>id!==tx.id);r.pend=r.pend.filter(p=>p.tx!==tx.id);});
+    tx.state=state;tx.want=null;wake();}
+  function abort(tx,kind,msg){
+    tx.why=kind;S.stats.aborts++;tx.cool=1;say(msg,'no');finish(tx,'abort');emit({type:'abort',tx,kind});}
+  function wake(){
+    const ws=S.txs.filter(t=>t.state==='wait').sort((a,b)=>a.ws-b.ws);
+    ws.forEach(t=>{if(attempt(t)){const op=t.ops[t.pc];t.state='run';t.pc++;
+      S.granted=(S.granted||0)+1;S.msg+=' Now '+t.name+' gets its lock and '+opText(t,op,1).replace(t.name+' ','');emit({type:'grant',tx:t});}});}
+  function commit(tx){
+    const mine=S.rows.filter(r=>r.pend.some(p=>p.tx===tx.id));
+    if(S.mode==='ssi'&&mine.length){
+      for(const k of Object.keys(tx.rs)){const r=R(k);const c=r.com.find(c=>c.ts>tx.snap&&c.by&&c.by!==tx.id);
+        if(c){const stale=(tx.ign[k]||[]).includes(c.by),w=T(c.by).name;
+          abort(tx,stale?'stale':'trip',stale?
+            'Commit check fails for '+tx.name+'. When '+tx.name+' read '+r.say+', '+w+'’s change was already there but not committed, so the snapshot skipped it. '+w+' has committed since, so '+tx.name+'’s premise is stale. Aborted.':
+            'Commit check fails for '+tx.name+'. '+w+' wrote '+r.say+' after '+tx.name+' read it (the tripwire went off), and '+w+' committed first. '+tx.name+'’s premise is stale. Aborted.');
+          return;}}}
+    S.clock++;mine.forEach(r=>{const p=r.pend.find(p=>p.tx===tx.id);r.com.push({v:p.v,ts:S.clock,by:tx.id});});
+    const ro=!mine.length;S.stats.done++;
+    say(tx.name+' commits'+(ro?' (it wrote nothing)':'')+'.'+(S.mode==='2pl'?' All '+tx.name+'’s locks are released.':(ro?' Read-only, so no check is needed.':' No write it depended on changed: the check passes.')),'ok');
+    finish(tx,'done');emit({type:'commit',tx,ro});}
+  function step(tx,auto){
+    if(tx.state==='done')return false;
+    if(tx.state==='wait'){say(tx.name+' is still waiting for '+names(tx.want.by)+'.','wait');return false;}
+    if(tx.state==='abort'&&!o.retry)return false;
+    if(tx.state==='new'||tx.state==='abort'){if(tx.state==='abort')tx.tries++;tx.state='run';tx.pc=0;tx.view={};tx.rs={};tx.ign={};tx.warn={};tx.wrote=false;tx.snap=S.clock;S.loop=null;}
+    const op=tx.ops[tx.pc];
+    if(op.k==='t'){tx.pc++;say(tx.name+': '+op.s+'.','');}
+    else if(op.k==='r'){if(attempt(tx)){tx.pc++;say((tx.tries&&tx.pc===1?tx.name+' retries. ':'')+opText(tx,op)+
+        (S.mode==='ssi'&&op.rows.some(k=>tx.ign[k])?' It skips '+names([...new Set(op.rows.flatMap(k=>tx.ign[k]||[]))])+'’s uncommitted change, and the database notes that.':''),'');}else enterWait(tx);}
+    else if(op.k==='w'){const nv=op.f(tx.view);
+      if(nv===null){tx.pc++;tx.refused=true;say(tx.name+' '+op.no+'.','');}
+      else{tx.nv=nv;if(attempt(tx)){tx.pc++;say(opText(tx,op)+(S.mode==='ssi'&&tx.trip&&tx.trip.length?' The write trips '+names(tx.trip)+'’s read marker: their premise may be out of date.':''),'');emit({type:'write',tx});}else enterWait(tx);}}
+    else if(op.k==='c')commit(tx);
+    return true;}
+  me.tap=id=>{const tx=T(id);if(!tx)return;S.loop=null;step(tx);render();emit({type:'step',tx});};
+  me.finished=()=>S.txs.every(t=>t.state==='done'||(t.state==='abort'&&!o.retry));
+  /* auto mode: one op per transaction per tick */
+  me.run=async ms=>{
+    for(let g=0;g<70&&!me.finished();g++){
+      if(!alive(host))return false;S.tick++;
+      for(const tx of S.txs){if(S.tick<=tx.at)continue;
+        if(tx.state==='wait'){tx.wt++;S.stats.wait++;continue;}
+        if(tx.state==='abort'&&tx.cool>0){tx.cool--;continue;}
+        step(tx,true);}
+      render();await nap(L,ms);}
+    return alive(host);};
+  function status(t){
+    if(t.state==='new')return t.at&&S.tick<=t.at&&o.auto?'Not started':'Next: '+t.ops[0].s;
+    if(t.state==='run')return 'Next: '+t.ops[t.pc].s;
+    if(t.state==='wait')return '<b>Waiting</b> for '+names(t.want.by);
+    if(t.state==='done')return '<b>Committed</b>'+(t.refused?' · changed nothing':'')+(t.tries?' · after '+t.tries+' retr'+(t.tries>1?'ies':'y'):'');
+    return '<b>Aborted</b>'+(t.why==='deadlock'?' (deadlock)':'')+(o.retry&&!o.auto?' · tap to retry':o.retry?' · retrying':'');}
+  function wfGraph(){
+    const tx=S.txs;const n=tx.length,W=300,y=40,xs=tx.map((t,j)=>Math.round(W/(n+1)*(j+1))+10);
+    const loop=S.loop||[];const inLoop=(a,b)=>{const i=loop.indexOf(a);return i>=0&&loop[(i+1)%loop.length]===b;};
+    let e='';tx.forEach((t,j)=>{const by=t.state==='wait'?blockers(t,R(t.want.k),t.want.m):[];
+      const targets=by.map(id=>({id,red:false}));
+      if(loop.length&&loop.includes(t.id)){const nx=loop[(loop.indexOf(t.id)+1)%loop.length];if(!by.includes(nx))targets.push({id:nx,red:true});}
+      targets.forEach(tg=>{const k=tx.findIndex(u=>u.id===tg.id),x1=xs[j],x2=xs[k],up=x2>x1?-1:1,red=tg.red||inLoop(t.id,tg.id);
+        const sx=x1+(x2>x1?14:-14),ex=x2+(x2>x1?-17:17),cy=y+up*34;
+        e+='<path d="M'+sx+' '+(y+up*6)+' Q'+((x1+x2)/2)+' '+cy+' '+ex+' '+(y+up*6)+'" style="fill:none;stroke:'+(red?'var(--no)':'var(--h3)')+';stroke-width:2.2'+(tg.red?';stroke-dasharray:4 3':'')+'" marker-end="url(#'+o.id+(red?'-mr':'-ma')+')"/>';});});
+    const nodes=tx.map((t,j)=>'<circle cx="'+xs[j]+'" cy="'+y+'" r="14" style="fill:var(--'+t.col+'-bg);stroke:var(--'+t.col+');stroke-width:2"/><text x="'+xs[j]+'" y="'+(y+4.5)+'" style="font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--'+t.col+')">'+t.name.slice(0,2)+'</text>').join('');
+    const any=e!=='';
+    return '<svg class="sz-svg" viewBox="0 0 320 84" role="img" aria-label="Wait-for graph: an arrow from A to B means A waits for B.">'+
+      '<defs><marker id="'+o.id+'-ma" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--h3)"/></marker>'+
+      '<marker id="'+o.id+'-mr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--no)"/></marker></defs>'+
+      e+nodes+(any?'':'<text x="160" y="78" style="font-size:12px;fill:var(--faint);text-anchor:middle">nobody is waiting</text>')+
+      (loop.length?'<text x="160" y="80" style="font-size:12.5px;font-weight:700;fill:var(--no);text-anchor:middle">deadlock loop</text>':'')+'</svg>';}
+  function render(){
+    if(!alive(host))return;
+    const ic=L.ic;
+    let h='<div class="sz-led"><div class="sz-hd"><span>'+(o.title||'Parcel DB')+'</span><span>'+(S.mode==='2pl'?'2PL':'SSI')+'</span></div><div>';
+    S.rows.forEach(r=>{let b='';
+      if(S.mode==='2pl'){
+        Object.keys(r.locks).forEach(id=>{const t=T(id);b+='<span class="sz-b '+t.col+'c"><i>'+r.locks[id]+'</i>'+t.name+'</span>';});
+        S.txs.filter(t=>t.state==='wait'&&t.want.k===r.k).forEach(t=>{b+='<span class="sz-b q '+t.col+'c">'+ic('clock')+t.name+' wants '+t.want.m+'</span>';});
+      }else r.reads.forEach(id=>{const t=T(id);const tr=Object.keys(t.warn).length&&t.warn[r.k];b+='<span class="sz-b '+(tr?'trip':t.col+'c')+'">'+ic(tr?'alert':'eye')+t.name+' read'+'</span>';});
+      r.pend.forEach(p=>{const t=T(p.tx);b+='<span class="sz-b pv '+t.col+'c">'+ic('pencil')+t.name+': '+(r.fmt===duty?duty(p.v):p.v+' left')+' · uncommitted</span>';});
+      h+='<div class="sz-row"><div class="sz-rl"><b>'+r.label+'</b><span>'+r.fmt(cur(r))+'</span></div><div class="sz-bs">'+(b||'<span class="sz-none">'+(S.mode==='2pl'?'no locks':'no readers')+'</span>')+'</div></div>';});
+    h+='</div>';
+    if(S.mode==='2pl'&&o.graph!==false)h+='<div class="sz-hd" style="margin-top:6px;border-top:1px solid var(--line);padding-top:6px"><span>Who waits for whom</span></div>'+wfGraph();
+    h+='</div>';
+    const tag=(o.auto||o.static)?'div':'button';
+    h+='<div class="sz-toks">'+S.txs.map(t=>'<'+tag+' class="sz-tok '+t.col+'t st-'+t.state+'" id="'+o.id+'-t-'+t.id+'"'+((o.auto||o.static)?'':' aria-label="Step '+t.name+'"')+'><b>'+t.name+'</b><small>'+t.role+'</small>'+
+      '<span class="sz-pp">'+t.ops.map((x,k)=>'<i class="'+((t.state==='done'||k<t.pc)&&t.state!=='new'&&t.state!=='abort'?'on':'')+'"></i>').join('')+'</span><span class="sz-ts">'+status(t)+'</span></'+tag+'>').join('')+'</div>';
+    h+='<div class="sz-msg '+S.kind+'" aria-live="polite">'+(S.msg||'&nbsp;')+'</div>';
+    if(o.stats!==false)h+='<div class="sz-stats"><span>Committed '+S.stats.done+'</span><span>'+(o.auto?'Ticks spent waiting ':'Times made to wait ')+(o.auto?S.stats.wait:S.txs.reduce((a,t)=>a+(t.waits||0),0))+'</span><span>Aborted '+S.stats.aborts+'</span></div>';
+    host.innerHTML=h;
+    if(!o.auto&&!o.static)S.txs.forEach(t=>{const b=document.getElementById(o.id+'-t-'+t.id);if(b)b.onclick=()=>me.tap(t.id);});}
+  /* count manual waits per transaction */
+  const on0=o.on;o.on=(e,m)=>{if(e.type==='wait'&&!o.auto)e.tx.waits=(e.tx.waits||0)+1;if(on0)on0(e,m);};
+  me.render=render;me.reset();return me;}
+
+/* ---------------- 2. RIBBON ----------------
+   The single thread (one lane per partition) over a 60-unit window.
+   mode 'inter' = statements with round trips to the app; 'proc' = stored procedure.
+   pre: '' | 'cross' (every 6th transaction spans all partitions) | 'disk' | 'slow'           */
+function ribbonPlan(c){
+  const W=60,P=c.p,free=Array(P).fill(0),lanes=[...Array(P)].map(()=>[]);let rr=0,done=0,work=0;
+  for(let i=0;i<110;i++){
+    let segs=c.mode==='inter'?[['w',1],['g',4],['w',1],['g',4],['w',1]]:[['w',3]];
+    if(i===1&&c.pre==='disk')segs=[['w',1],['d',22],['w',2]];
+    if(i===1&&c.pre==='slow')segs=[['w',24]];
+    const cross=c.pre==='cross'&&i%6===4&&P>1;
+    if(cross){const st=Math.max(...free);
+      lanes.forEach((ln,l)=>{if(st>free[l])ln.push({a:free[l],b:st,k:'s',i});ln.push({a:st,b:st+9,k:'x',i});free[l]=st+9;});
+      if(st+9<=W)done++;continue;}
+    const l=rr%P;rr++;let t=free[l];const q=lanes[l].filter(b=>b.k!=='s').length;
+    segs.forEach(s=>{lanes[l].push({a:t,b:t+s[1],k:s[0],i:q});t+=s[1];});free[l]=t;if(t<=W)done++;}
+  lanes.forEach(ln=>ln.forEach(b=>{if((b.k==='w')&&b.a<W)work+=Math.min(b.b,W)-b.a;if(b.k==='x'&&b.a<W)work+=Math.max(0,Math.min(b.a+3,W)-b.a);}));
+  return {lanes,done,busy:Math.round(work/(P*W)*100),W};}
+function ribbonSVG(c,id){
+  const p=ribbonPlan(c),x0=30,sc=(316-x0)/p.W,lh=c.p>2?22:28,top=8,H=top+lh*c.p+30;
+  const fill={w:'var(--ok-strong)',g:'var(--soft2)',d:'var(--h3)',x:'var(--h4)',s:'var(--no-bg)'};
+  let s='<svg class="sz-svg" viewBox="0 0 320 '+H+'" role="img" aria-label="The database thread over time: '+p.done+' transactions finished in the window."><defs><clipPath id="'+id+'-cp"><rect id="'+id+'-cr" x="0" y="0" width="'+(FAST?320:x0)+'" height="'+H+'"/></clipPath></defs>';
+  for(let l=0;l<c.p;l++){const y=top+l*lh;
+    s+='<text x="2" y="'+(y+lh/2+4)+'" style="font-size:12px;font-weight:600;fill:var(--muted)">'+(c.p>1?'P'+(l+1):'thr')+'</text>'+
+       '<rect x="'+x0+'" y="'+(y+2)+'" width="'+(p.W*sc)+'" height="'+(lh-6)+'" rx="4" style="fill:var(--soft)"/>';}
+  s+='<g clip-path="url(#'+id+'-cp)">';
+  p.lanes.forEach((ln,l)=>{const y=top+l*lh;ln.forEach(b=>{if(b.a>=p.W)return;const xa=x0+b.a*sc,xb=x0+Math.min(b.b,p.W)*sc;
+    s+='<rect x="'+(xa+.5).toFixed(1)+'" y="'+(y+2)+'" width="'+Math.max(1,xb-xa-1).toFixed(1)+'" height="'+(lh-6)+'" rx="2" style="fill:'+fill[b.k]+(b.k==='g'?';stroke:var(--line2);stroke-width:1':'')+(b.k==='s'?';stroke:var(--no-line);stroke-dasharray:3 2;stroke-width:1':'')+(b.k==='w'&&b.i%2?';opacity:.72':'')+'"/>';});});
+  s+='</g>';
+  const ay=top+lh*c.p+4;
+  s+='<path d="M'+x0+' '+ay+'h'+(p.W*sc)+'" style="stroke:var(--line2);stroke-width:1.2"/>';
+  [0,20,40,60].forEach(t=>{const x=x0+t*sc;s+='<path d="M'+x+' '+ay+'v4" style="stroke:var(--line2)"/><text x="'+x+'" y="'+(ay+16)+'" style="font-size:12px;fill:var(--muted);text-anchor:'+(t===0?'start':t===60?'end':'middle')+'">'+t+' ms</text>';});
+  s+='</svg>';
+  return {svg:s,done:p.done,busy:p.busy};}
+function ribbonAnimate(id){
+  const r=document.getElementById(id+'-cr');if(!r)return Promise.resolve();
+  if(FAST){r.setAttribute('width',320);return Promise.resolve();}
+  return new Promise(res=>{const t0=performance.now();const f=t=>{if(!r.isConnected){res();return;}const k=Math.min(1,(t-t0)/900);r.setAttribute('width',30+k*290);if(k<1)requestAnimationFrame(f);else res();};requestAnimationFrame(f);});}
+const RKEY='<div class="sz-key"><span><i style="background:var(--ok-strong)"></i>working</span><span><i style="background:var(--soft2);border:1px solid var(--line2)"></i>waiting for the app</span>'+
+  '<span><i style="background:var(--h3)"></i>waiting for disk</span><span><i style="background:var(--h4)"></i>cross-partition</span><span><i style="background:var(--no-bg);border:1px dashed var(--no-line)"></i>stalled</span></div>';
+
+/* ---------------- 3. BAY BOARD ----------------
+   Westport hub loading bays 1-4 × 15-minute windows 08:30-10:15.                          */
+const BT=['08:30','08:45','09:00','09:15','09:30','09:45','10:00','10:15'];
+const BX=44,BW=34,BY=22,BH=27;
+const EXIST=[[1,2,4],[4,0,1],[3,6,7]];
+const LOCKS={row:null,pred:[3,3,2,3],bay:[3,3,0,7],time:[1,4,2,3],table:[1,4,0,7]};
+const INS=[{b:3,c:3,who:'Ana',t:'bay 3 at 09:15'},{b:3,c:0,who:'Ravi',t:'bay 3 at 08:30'},{b:2,c:2,who:'Mia',t:'bay 2 at 09:00'}];
+function inBox(bx,b,c){return !!bx&&b>=bx[0]&&b<=bx[1]&&c>=bx[2]&&c<=bx[3];}
+function bayBoard(o){
+  const H=o.mini?BY+4*BH+4:BY+4*BH+8;
+  let s='<svg class="sz-svg" viewBox="0 0 320 '+H+'" role="img" aria-label="'+(o.aria||'Loading-bay board')+'">';
+  if(!o.mini)[0,2,4,6].forEach(c=>{s+='<text x="'+(BX+c*BW+2)+'" y="14" style="font-size:12px;fill:var(--muted)">'+BT[c]+'</text>';});
+  for(let b=1;b<=4;b++){const y=BY+(b-1)*BH;
+    if(!o.mini)s+='<text x="2" y="'+(y+BH/2+4)+'" style="font-size:12px;font-weight:600;fill:var(--muted)">Bay '+b+'</text>';
+    for(let c=0;c<8;c++)s+='<rect x="'+(BX+c*BW+1)+'" y="'+(y+1)+'" width="'+(BW-2)+'" height="'+(BH-2)+'" rx="3" style="fill:var(--soft)"/>';}
+  EXIST.forEach(e=>{const y=BY+(e[0]-1)*BH;s+='<rect x="'+(BX+e[1]*BW+2)+'" y="'+(y+4)+'" width="'+((e[2]-e[1]+1)*BW-4)+'" height="'+(BH-8)+'" rx="4" style="fill:var(--line2)"/>'+
+    (o.mini?'':'<text x="'+(BX+e[1]*BW+8)+'" y="'+(y+BH/2+4)+'" style="font-size:12px;fill:var(--ink)">booked</text>');});
+  if(o.lock){const k=o.lock;s+='<rect x="'+(BX+k[2]*BW-1)+'" y="'+(BY+(k[0]-1)*BH-1)+'" width="'+((k[3]-k[2]+1)*BW+2)+'" height="'+((k[1]-k[0]+1)*BH+2)+'" rx="5" style="fill:var(--h3);fill-opacity:.28;stroke:var(--h3);stroke-width:2.5"/>';}
+  if(o.lockCells)o.lockCells.forEach(e=>{const y=BY+(e[0]-1)*BH;s+='<rect x="'+(BX+e[1]*BW)+'" y="'+y+'" width="'+((e[2]-e[1]+1)*BW)+'" height="'+BH+'" rx="5" style="fill:var(--h3);fill-opacity:.28;stroke:var(--h3);stroke-width:2.5"/>';});
+  if(o.pred!==false){const y=BY+2*BH;s+='<rect x="'+(BX+2*BW+3)+'" y="'+(y+3)+'" width="'+(2*BW-6)+'" height="'+(BH-6)+'" rx="4" style="fill:none;stroke:var(--pri);stroke-width:2;stroke-dasharray:4 3"/>';}
+  (o.ins||[]).forEach((n,j)=>{const x=BX+n.c*BW+BW/2,y=BY+(n.b-1)*BH+BH/2;
+    const col=n.res==='wait'?'var(--h3)':n.res==='bad'?'var(--no)':n.res==='ok'?'var(--ok-strong)':'var(--pri)';
+    s+='<circle cx="'+x+'" cy="'+y+'" r="10" style="fill:'+col+';stroke:var(--card);stroke-width:2"/><text x="'+x+'" y="'+(y+4)+'" style="font-size:12px;font-weight:700;fill:var(--card);text-anchor:middle">'+(j+1)+'</text>';});
+  return s+'</svg>';}
+
+/* small helpers */
+function goals(id,items){return '<ul class="sz-goals" id="'+id+'">'+items.map(t=>'<li><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(id,k){const li=document.querySelectorAll('#'+id+' li')[k];if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML='<svg class="i" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';}}
+function allTicked(id){return [...document.querySelectorAll('#'+id+' li')].every(li=>li.classList.contains('done'));}
+function chips(host,labels,onPick,sel){const box=host;labels.forEach((t,j)=>{const b=document.createElement('button');b.className='chip'+(j===sel?' sel':'');b.innerHTML=t;b.onclick=()=>{[...box.children].forEach(x=>x.classList.toggle('sel',x===b));onPick(j,b);};box.appendChild(b);});}
+
 Course.lesson({
-  id:'0017', title:'Serializability', minutes:20, icon:'lock',
-  goals:['Explain the three ways databases reach serializability: serial execution, two-phase locking and SSI','Predict when each one slows down or stops working','Match each race condition to the weakest isolation level that stops it'],
-  parts:['Serial execution','Two-phase locking','Optimistic: SSI','The whole map'],
-  read:'Read the “Serializability” section and the summary of chapter 7 for the figures on stored procedures and on how SSI detects conflicts.',
+  id:'0017', title:'Serializability', minutes:22, icon:'lock',
+  goals:['Explain the three ways databases reach serializability: one at a time, two-phase locking and SSI','Predict when each one makes transactions wait, abort or stall, and where it breaks','Match each race condition to the weakest isolation level that stops it'],
+  parts:['One at a time','Two-phase locking','Optimistic: SSI','Pick a method'],
+  read:'Read the “Serializability” section and the summary of chapter 7, with Figures 7-9 to 7-11 on stored procedures and on how SSI spots stale premises.',
   glossary:{
-    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the result is the same as if they had run one after another.',
+    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the outcome matches running them one at a time.',
     'stored-proc':'Stored procedure: transaction code handed to the database ahead of time, so the database runs the whole thing in one go instead of waiting for the app between steps.',
     deadlock:'Deadlock: transaction A waits for a lock held by B while B waits for a lock held by A. Neither can move until the database aborts one of them.',
     'predicate-lock':'Predicate lock: a lock on every row that matches a search condition, including rows that don’t exist yet.',
@@ -38,68 +340,87 @@ Course.lesson({
     'Weakest level that stops each race: dirty reads and writes → read committed; read skew → snapshot isolation; lost updates → some snapshot implementations or a lock; write skew → serializable only.'
   ],
   steps:[
-/* ---------- PART 1: SERIAL EXECUTION ---------- */
+/* ---------- PART 1: ONE AT A TIME ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A hub counter has one clerk who serves one customer at a time. Can two customers ever be sold the last place in the same delivery slot?</h1>');
   L.mc(L.card,['No: the second customer sees it’s gone','Yes, if both arrive at the same moment'],0,
    'One at a time means no races at all. That’s the simplest road to serializability, and the first one in this lesson.',
    'The clerk serves one person completely before the next. The second customer sees the slot already taken. No overlap, no race.');}},
 {part:0,src:'Chapter 7 · Serializability',run(L){
-  L.h(L.kick('learn','The researchers’ answer')+'<h1 class="q">Weak isolation is a mess. Why not just be serializable?</h1>'+
-   L.prose('Since the 1970s, the situation has been the same: isolation levels are hard to understand and differ between databases, it’s hard to tell whether your code is safe at a given level, and there are no good tools to find race conditions. Researchers have always answered: use '+L.g('serializable','serializable isolation')+'.')+
-   L.prose('Serializable isolation guarantees that the result is the same as if transactions had run one at a time. So if each transaction is correct on its own, they stay correct together. The database prevents <b>all</b> race conditions.')+
-   L.tiers([['list','Actual serial execution','Literally run one transaction at a time.'],['lock','Two-phase locking (2PL)','For decades the only widely used option.'],['flask','Optimistic methods, like SSI','Let transactions run, check them at commit.']])+
-   '<p class="small" style="margin-top:6px">So why isn’t everyone serializable? Each method has a cost. This lesson looks at them on a single machine; chapter 9 extends them to several.</p>');
+  const bar=(x,y,w,c,t)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="24" rx="6" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2"/><text x="'+(x+8)+'" y="'+(y+16)+'" style="font-size:12.5px;font-weight:600;fill:var(--'+c+')">'+t+'</text>';
+  L.h(L.kick('learn','The researchers’ answer')+'<h1 class="q">Serializable: overlap all you like, end as if in a line</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 178" role="img" aria-label="Ravi’s and Mia’s transactions overlap in time. The result must equal either Ravi then Mia, or Mia then Ravi.">'+
+   '<text x="8" y="12" style="font-size:12px;font-weight:600;fill:var(--muted)">What actually ran, overlapping</text>'+
+   bar(8,20,196,'h1','Ravi ends shift')+bar(112,50,200,'h2','Mia ends shift')+
+   '<path d="M160 82v20" style="stroke:var(--ink);stroke-width:2"/><path d="M154 96l6 8 6-8" style="fill:none;stroke:var(--ink);stroke-width:2"/>'+
+   '<text x="172" y="97" style="font-size:12px;font-weight:600;fill:var(--ink)">result must equal…</text>'+
+   bar(8,116,72,'h1','Ravi')+bar(82,116,72,'h2','Mia')+bar(166,116,72,'h2','Mia')+bar(240,116,72,'h1','Ravi')+
+   '<text x="81" y="160" style="font-size:12px;fill:var(--muted);text-anchor:middle">Ravi, then Mia</text><text x="239" y="160" style="font-size:12px;fill:var(--muted);text-anchor:middle">Mia, then Ravi</text>'+
+   '<text x="160" y="176" style="font-size:12px;font-weight:700;fill:var(--ok);text-anchor:middle">either order is fine</text></svg>'+
+   '<p class="sz-cap">With '+L.g('serializable','serializable isolation')+', transactions may overlap, but the result equals <b>some one-at-a-time order</b>. No race gets through, so you skip the guesswork of weaker levels, whose races hide from tests.</p>'+
+   '<div class="sz-lbl">Three roads, each with a cost</div><div class="sz-tr"><span>'+L.ic('list')+'1 · Run one at a time</span><span>'+L.ic('lock')+'2 · Two-phase locking</span><span>'+L.ic('flask')+'3 · SSI</span></div>');
   L.done();}},
 {part:0,src:'Chapter 7 · Actual Serial Execution',run(L){
-  L.h(L.kick('learn','Remove the concurrency')+'<h1 class="q">One thread, one transaction at a time</h1>'+
-   L.prose('The simplest way to avoid concurrency problems is to have no concurrency: run each transaction to completion, in order, on a single thread. The result is serializable by definition.')+
-   L.prose('For 30 years designers thought this would be too slow. Around 2007 they changed their minds, because of two developments:')+
-   L.list([['box','RAM got cheap','The whole active dataset often fits in memory, so transactions don’t wait for the disk.'],
-     ['clock','OLTP transactions are short','Everyday transactions make a few reads and writes. Long analytic queries are read-only and can run on a snapshot, outside the single thread.']],1)+
-   L.prose('VoltDB/H-Store, Redis and Datomic work this way. Skipping lock management can sometimes make it faster than a concurrent design. But throughput is capped at what <b>one CPU core</b> can do.'));
+  let blocks='';for(let j=0;j<9;j++)blocks+='<rect x="'+(20+j*31)+'" y="31" width="26" height="20" rx="4" style="fill:var(--ok-strong);opacity:'+(j%2?.72:1)+'"/>';
+  L.h(L.kick('learn','Remove the concurrency')+'<h1 class="q">One thread, one transaction at a time</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 182" role="img" aria-label="One thread runs short transactions back to back. Data sits in memory. Long read-only reports run on a snapshot outside the thread.">'+
+   '<text x="14" y="16" style="font-size:12px;font-weight:600;fill:var(--muted)">The database’s one thread</text>'+
+   '<rect x="14" y="24" width="292" height="34" rx="9" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+blocks+
+   '<rect x="14" y="68" width="142" height="42" rx="9" style="fill:var(--h2-bg)"/><text x="24" y="86" style="font-size:12px;font-weight:700;fill:var(--h2)">Active data in RAM</text><text x="24" y="102" style="font-size:12px;fill:var(--h2)">no waiting for the disk</text>'+
+   '<rect x="164" y="68" width="142" height="42" rx="9" style="fill:var(--h1-bg)"/><text x="174" y="86" style="font-size:12px;font-weight:700;fill:var(--h1)">Short OLTP work</text><text x="174" y="102" style="font-size:12px;fill:var(--h1)">a few reads and writes</text>'+
+   '<text x="14" y="128" style="font-size:12px;font-weight:600;fill:var(--muted)">Long read-only reports: off to the side</text>'+
+   '<rect x="14" y="134" width="292" height="28" rx="9" style="fill:none;stroke:var(--line2);stroke-dasharray:5 4;stroke-width:1.5"/>'+
+   '<rect x="20" y="139" width="210" height="18" rx="4" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/><text x="28" y="152" style="font-size:12px;font-weight:600;fill:var(--h3)">Linh’s report, on a snapshot</text>'+
+   '<text x="14" y="178" style="font-size:12px;fill:var(--muted)">Built this way: VoltDB/H-Store, Redis, Datomic</text></svg>'+
+   '<p class="sz-cap">For 30 years designers assumed a database needed many threads. Around 2007 that flipped: cheap RAM and short transactions make a single loop fast. It is serializable by definition and skips locking, but throughput is capped at <b>one CPU core</b>.</p>');
   L.done();}},
-{part:0,src:'Chapter 7 · Actual Serial Execution · Encapsulating transactions in stored procedures',run(L){
-  L.h(L.kick('learn','No chatting allowed')+'<h1 class="q">The single thread can’t wait for your app</h1>'+
-   L.prose('Early databases imagined one transaction covering a whole user journey, like booking a flight: search, choose, pick seats, enter details, pay. But people are slow. The database would hold huge numbers of idle transactions. So web apps keep each transaction inside one HTTP request.')+
-   L.prose('Even so, most transactions are still <b>interactive</b>: the app sends a query, reads the answer, sends the next one, and so on. Each step is a trip across the network. A single-threaded database would spend most of its time waiting for the app.')+
-   L.note('So serial-execution databases don’t allow interactive multi-statement transactions. The app hands over the whole transaction as a <b>'+L.g('stored-proc','stored procedure')+'</b>. With the data in memory, it runs very fast, with no waiting for the network or the disk.','play'));
-  L.done();}},
-{part:0,src:'Chapter 7 · Actual Serial Execution · Encapsulating transactions in stored procedures',pts:1,
- solve:async L=>{L.$('#run').click();},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Encapsulating transactions in stored procedures',
+ solve:async L=>{FAST=true;L.$('#rb4').children[0].click();await L.sleep(20);L.$('#rb4').children[1].click();await L.sleep(20);FAST=false;},
  run(L){
-  const A=['b','w','w','b','w','w','b'],B=['b','b','b'];
-  const bar=(id,arr,n)=>{const el=L.$('#'+id);if(!el)return;el.innerHTML=arr.slice(0,n).map(x=>'<span style="display:inline-block;width:16px;height:16px;border-radius:5px;margin:0 3px 3px 0;background:'+(x==='b'?'var(--ok-strong)':'var(--soft2)')+';border:1px solid var(--line)"></span>').join('');};
-  L.h(L.kick('try','See it happen')+'<h1 class="q">The database’s only thread runs Ravi’s “end shift” transaction. Green = working, grey = waiting for the app.</h1>'+
-   L.lanes([['chat','Interactive','Count on-duty couriers, wait for the app, update Ravi, wait, commit.<div id="ba" style="margin-top:10px"></div><div class="res" id="ra"></div>',4],
-            ['play','Stored procedure','The whole transaction is sent in one call.<div id="bb" style="margin-top:10px"></div><div class="res" id="rb"></div>',2]])+
-   '<button class="btn pri" id="run" style="margin-top:14px">'+L.ic('play')+'Run it</button><div id="sq"></div>');
-  L.$('#run').onclick=function(){this.remove();let n=0;
-    const t=setInterval(()=>{n++;if(!L.$('#ba')){clearInterval(t);return;}bar('ba',A,n);bar('bb',B,Math.min(n,3));
-      if(n>=A.length){clearInterval(t);
-        L.$('#ra').innerHTML='<span style="color:var(--no)">Idle for most of the time, and no other transaction may run meanwhile.</span>';
-        L.$('#rb').innerHTML='<span style="color:var(--ok)">Done in one go. The thread is free for the next transaction.</span>';
-        const q=L.$('#sq');q.innerHTML='<h2 class="sub">Why do serial-execution databases insist on stored procedures?</h2>';
-        L.mc(q,['Stored procedure languages are more modern','So the one thread never waits on the network','So a transaction can wait for user input'],1,
-         'With one thread, every wait stalls everyone. Sending the whole transaction up front removes the network waits.',
-         'It’s about waiting: with one thread, any pause for the network stalls every other transaction. (Stored procedure languages have in fact been criticized as old-fashioned.)');}},160);};}},
+  const seen=new Set();
+  L.h(L.kick('ex','See it happen · the lone thread')+'<h1 class="q">The thread runs couriers’ “end shift” transactions back to back. Send them both ways and compare.</h1>'+CSS+
+   '<div class="sz-ctl" id="rb4"></div><div id="rv4"><div class="sz-read">Pick a way to send the transactions.</div></div>'+RKEY+'<div class="sz-read" id="rr4" aria-live="polite">Each transaction: count on-duty couriers, then update one row, then commit.</div>');
+  chips(L.$('#rb4'),['Interactive: one statement at a time','Stored procedure: all at once'],j=>{
+    const r=ribbonSVG({p:1,mode:j?'proc':'inter',pre:''},'r4');L.$('#rv4').innerHTML=r.svg;ribbonAnimate('r4');
+    L.$('#rr4').innerHTML=(j?'<b>Stored procedure:</b> ':'<b>Interactive:</b> ')+r.done+' transactions finished in 60 ms, and the thread works '+r.busy+'% of the time.'+
+      (j?' No waiting for the network or the disk.':' The rest of the time it waits for the app across the network, and no other transaction may run.')+' <span class="small">(Illustrative timings.)</span>';
+    seen.add(j);
+    if(seen.size===2&&!L.$('#rb4d')){L.$('#rb4').insertAdjacentHTML('beforeend','<span id="rb4d"></span>');
+      L.sheet('info','Why serial databases insist on stored procedures','Web apps already keep people out of transactions: each one commits within a single HTTP request. But the app still chats with the database query by query. With one thread, every round trip stalls everyone, so the app must hand over the whole transaction ahead of time as a '+L.g('stored-proc','stored procedure')+'.');L.done();}});}},
 {part:0,src:'Chapter 7 · Actual Serial Execution · Pros and cons of stored procedures',run(L){
-  L.h(L.kick('learn','A bad reputation, partly fixed')+'<h1 class="q">Stored procedures have real downsides</h1>'+
-   L.list([['Old languages','Each vendor has its own (Oracle’s PL/SQL, SQL Server’s T-SQL, PostgreSQL’s PL/pgSQL). They look archaic and lack libraries.'],
-     ['Hard to manage','Code inside the database is harder to debug, version, deploy, test and monitor.'],
-     ['Shared blast radius','One database often serves many app servers, so a badly written procedure does more damage there.']],4)+
-   L.prose('Newer systems use ordinary languages: VoltDB uses Java or Groovy, Datomic Java or Clojure, Redis Lua.')+
-   L.note('VoltDB replicates by running the same procedure on every replica. So procedures must be <b>deterministic</b>: the same result on every node. Reading the current time, for example, has to go through special deterministic functions.','cycle'));
+  const box=(x,y,w,c,t1,t2)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="40" rx="8" style="fill:var(--'+c+'-bg);stroke:var(--'+c+(c==='ok'||c==='no'?'-line':'')+');stroke-width:1.5"/><text x="'+(x+8)+'" y="'+(y+16)+'" style="font-size:12px;font-weight:700;fill:var(--'+c+')">'+t1+'</text><text x="'+(x+8)+'" y="'+(y+32)+'" style="font-size:12px;fill:var(--'+c+')">'+t2+'</text>';
+  L.h(L.kick('learn','Code inside the database')+'<h1 class="q">Stored procedures: fast, a bit unloved, and must be deterministic</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 174" role="img" aria-label="One procedure is re-run on two replicas and gives the same result. If it reads the clock directly, the replicas get different times.">'+
+   '<text x="8" y="13" style="font-size:12px;font-weight:600;fill:var(--muted)">VoltDB copies a transaction by re-running it</text>'+
+   '<rect x="8" y="34" width="100" height="52" rx="9" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2"/><text x="18" y="56" style="font-size:12px;font-weight:700;fill:var(--pri-deep)">endShift(Ravi)</text><text x="18" y="74" style="font-size:12px;fill:var(--pri-deep)">procedure</text>'+
+   '<path d="M110 52 L176 40M110 68 L176 82" style="stroke:var(--line2);stroke-width:2"/>'+
+   box(178,20,134,'ok','Replica A','Ravi: off duty')+box(178,66,134,'ok','Replica B','Ravi: off duty')+
+   '<text x="8" y="126" style="font-size:12px;font-weight:600;fill:var(--muted)">Same procedure, but it reads the clock itself:</text>'+
+   box(8,132,140,'no','Replica A','time 09:00:01')+box(172,132,140,'no','Replica B','time 09:00:03')+'</svg>'+
+   '<p class="sz-cap">Shipping the whole transaction is what makes one thread fast. Where replicas re-run the procedure, it must give the same result everywhere, so time comes from special deterministic functions.</p>'+
+   '<div class="sz-lbl">Why stored procedures got a bad name</div><div class="sz-tr"><span>'+L.ic('x')+'Vendor languages: PL/SQL, T-SQL, PL/pgSQL</span><span>'+L.ic('x')+'Hard to debug, version, test, monitor</span><span>'+L.ic('x')+'One bad one can hurt every app server</span><span style="background:var(--ok-bg);color:var(--ok)">'+L.ic('check')+'Newer systems: Java, Groovy, Clojure, Lua</span></div>');
   L.done();}},
-{part:0,src:'Chapter 7 · Actual Serial Execution · Partitioning',run(L){
-  L.h(L.kick('learn','Scaling past one core')+'<h1 class="q">Partition, and keep each transaction inside one partition</h1>'+
-   L.prose('If each transaction only touches one '+L.g('partition','partition')+', each partition can have its own thread on its own CPU core, and throughput grows with the number of cores. A transaction that spans partitions must run in lock-step across all of them. VoltDB reports about 1,000 cross-partition writes per second, orders of magnitude below its single-partition speed, and adding machines doesn’t help.')+
-   L.prose('Simple key-value data partitions easily. Data with several secondary indexes tends to need a lot of cross-partition work.')+
-   '<h2 class="sub">Serial execution works when…</h2>'+
-   L.list([['clock','Every transaction is small and fast','One slow transaction stalls all the others.'],
-     ['box','The active data fits in memory','A transaction that has to wait for the disk slows everything down.'],
-     ['trend','Writes fit on one core','Or the data partitions so transactions rarely cross partitions.']],2));
-  L.done();}},
+{part:0,src:'Chapter 7 · Actual Serial Execution · Partitioning',
+ solve:async L=>{FAST=true;L.$('#rp6').children[2].click();await L.sleep(10);L.$('#rq6').children[1].click();await L.sleep(10);L.$('#rq6').children[2].click();await L.sleep(10);L.$('#rq6').children[0].click();await L.sleep(10);FAST=false;},
+ run(L){
+  let p=1,pre='';
+  L.h(L.kick('pr','Edge cases · where serial breaks')+'<h1 class="q">Give each partition its own thread. Then find what stalls them.</h1>'+CSS+
+   '<div id="rv6"></div>'+RKEY+'<div class="sz-read" id="rr6" aria-live="polite"></div>'+
+   '<div class="sz-lbl">Partitions, one thread each</div><div class="sz-ctl" id="rp6"></div><div class="sz-lbl">Workload</div><div class="sz-ctl" id="rq6"></div>'+
+   goals('g6',['Scale to 4 partitions with the normal workload','Add cross-partition bookings with 4 partitions','Stall a thread with a disk read or a slow transaction']));
+  const NOTE={'':'Each transaction touches one partition, so each thread runs on its own core and throughput grows with the cores.',
+   cross:'A cross-partition transaction must run in lock-step on every partition: all threads stall until each is free, then pay for coordination.',
+   disk:'One transaction needs data that isn’t in memory. Its thread sits idle for the disk, and everything queued behind it waits.',
+   slow:'One slow transaction holds its thread, and every transaction queued behind it stalls.'};
+  function draw(){
+    const r=ribbonSVG({p,mode:'proc',pre},'r6');L.$('#rv6').innerHTML=r.svg;ribbonAnimate('r6');
+    L.$('#rr6').innerHTML='<b>'+r.done+' transactions</b> finished in 60 ms on '+p+' thread'+(p>1?'s':'')+'. '+(pre==='cross'&&p===1?'With one partition nothing is cross-partition yet. Add partitions.':NOTE[pre])+' <span class="small">(Illustrative.)</span>';
+    if(p===4&&pre==='')tick('g6',0);if(p>1&&pre==='cross')tick('g6',1);if(pre==='disk'||pre==='slow')tick('g6',2);
+    if(allTicked('g6')&&!L.$('#g6d')){L.$('#g6').insertAdjacentHTML('afterend','<span id="g6d"></span>');
+      L.sheet('info','Serial execution has hard limits','It works when every transaction is small and fast, the active data fits in memory, and writes fit on one core, or partition cleanly. VoltDB reports about 1,000 cross-partition writes a second, far below its single-partition speed, and more machines don’t help. Key-value data partitions easily; data with many secondary indexes needs a lot of cross-partition work.');L.done();}}
+  chips(L.$('#rp6'),['1','2','4'],j=>{p=[1,2,4][j];draw();},0);
+  chips(L.$('#rq6'),['Normal','Cross-partition','Not in memory','One slow one'],j=>{pre=['','cross','disk','slow'][j];draw();},0);
+  draw();}},
 {part:0,src:'Chapter 7 · Actual Serial Execution · Summary of serial execution',pts:6,run(L){
   L.h(L.kick('pr','Fit or trouble?')+'<h1 class="q">Otterpost is testing a serial-execution database. Sort each use.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Works well','Will cause trouble'],[
@@ -112,27 +433,61 @@ Course.lesson({
    'Short, in-memory, single-partition, deterministic: that’s where serial execution shines.');}},
 
 /* ---------- PART 2: TWO-PHASE LOCKING ---------- */
-{part:1,src:'Chapter 7 · Two-Phase Locking (2PL)',run(L){
-  L.h(L.kick('learn','The classic method')+'<h1 class="q">Two-phase locking: anyone writing gets the object alone</h1>'+
-   L.prose('For about 30 years, two-phase locking (2PL) was the only widely used way to get serializability. Several transactions may read an object together, as long as nobody is writing it. Writing needs exclusive access:')+
-   L.list([['eye','A read it, B wants to write it','B waits until A commits or aborts. B can’t change it behind A’s back.'],
-     ['pencil','A wrote it, B wants to read it','B waits too. Reading the old version, as snapshot isolation would, isn’t allowed.']],1)+
-   L.prose('Writers block readers and readers block writers, the opposite of snapshot isolation. In return 2PL stops every race condition, including lost updates and '+L.g('write-skew','write skew')+'. MySQL (InnoDB) and SQL Server use it for “serializable”; DB2 for “repeatable read”.')+
-   L.note('<b>2PL is not 2PC.</b> Two-phase commit (chapter 9) is something completely different.','alert'));
-  L.done();}},
 {part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Implementation of two-phase locking',run(L){
-  L.h(L.kick('learn','How the locks work')+'<h1 class="q">Shared to read, exclusive to write, held until the end</h1>'+
-   L.tiers([['eye','Shared mode','To read, take the lock in shared mode. Many can share it, but they wait if someone holds it exclusively.'],
-            ['lock','Exclusive mode','To write, take it in exclusive mode. Nobody else may hold it in any mode, so you wait for all of them.'],
-            ['arrow','Upgrade','Read first, then write? Upgrade shared to exclusive, under the same rules.'],
-            ['clock','Hold to the end','Keep every lock until commit or abort. Phase one: take locks while running. Phase two: release them all at the end.']])+
-   L.prose('With so many locks, A can end up waiting for B while B waits for A: a '+L.g('deadlock','deadlock')+'. The database spots it and aborts one of them, and the app must retry it.'));
+  const cell=(x,y,ok,t)=>'<rect x="'+x+'" y="'+y+'" width="50" height="36" rx="7" style="fill:var(--'+(ok?'ok':'h3')+'-bg);stroke:var(--'+(ok?'ok-line':'h3')+');stroke-width:1.5"/><text x="'+(x+25)+'" y="'+(y+23)+'" style="font-size:12.5px;font-weight:700;fill:var(--'+(ok?'ok':'h3')+');text-anchor:middle">'+t+'</text>';
+  L.h(L.kick('learn','The classic method')+'<h1 class="q">Two-phase locking: share to read, alone to write, hold to the end</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 196" role="img" aria-label="Lock rules: a read can share with a read; every other pair waits. Locks pile up while the transaction runs and are all released at commit.">'+
+   '<text x="62" y="14" style="font-size:12px;font-weight:600;fill:var(--muted)">You want to…</text>'+
+   '<text x="89" y="32" style="font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle">read (S)</text><text x="143" y="32" style="font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle">write (X)</text>'+
+   '<text x="4" y="58" style="font-size:12px;fill:var(--muted)">Other has</text><text x="4" y="72" style="font-size:12px;font-weight:700;fill:var(--ink)">S</text>'+
+   '<text x="4" y="100" style="font-size:12px;fill:var(--muted)">Other has</text><text x="4" y="114" style="font-size:12px;font-weight:700;fill:var(--ink)">X</text>'+
+   cell(64,40,1,'share')+cell(118,40,0,'wait')+cell(64,82,0,'wait')+cell(118,82,0,'wait')+
+   '<text x="4" y="140" style="font-size:12px;fill:var(--muted)">Read, then write?</text><text x="4" y="155" style="font-size:12px;fill:var(--muted)">Upgrade S to X, same rule.</text>'+
+   '<text x="186" y="14" style="font-size:12px;font-weight:600;fill:var(--muted)">Locks held</text>'+
+   '<path d="M186 22V150H316" style="fill:none;stroke:var(--line2);stroke-width:1.5"/>'+
+   '<path d="M188 150V128H210V106H232V84H254V62H276V40H290V150Z" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+
+   '<path d="M290 40V150" style="stroke:var(--no);stroke-width:2.5"/><text x="296" y="36" style="font-size:12px;font-weight:700;fill:var(--no);text-anchor:middle">commit</text>'+
+   '<text x="188" y="168" style="font-size:12px;fill:var(--h1)">1 · take locks as it runs</text><text x="316" y="184" style="font-size:12px;fill:var(--no);text-anchor:end">2 · release all at once</text></svg>'+
+   '<p class="sz-cap">Readers may share a lock; a writer needs the object alone. Every lock stays until commit or abort. So readers block writers and writers block readers: the opposite of snapshot isolation. In return, every race is stopped, '+L.g('write-skew','write skew')+' included.</p>'+
+   '<div class="sz-tags"><span>The standard for ~30 years</span><span>Serializable in MySQL (InnoDB), SQL Server</span><span>Repeatable read in DB2</span><span>2PL is not 2PC (chapter 9)</span></div>');
   L.done();}},
-{part:1,src:'Chapter 7 · Two-Phase Locking (2PL)',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Under 2PL, Linh’s long report has read every row of the slots table and is still running. Tobias’s booking wants to update one slot. What happens?</h1>');
-  L.mc(L.card,['It writes at once; the report sees the old version','It waits until the report commits or aborts','The report is aborted so the booking can go first'],1,
-   'The report holds shared locks on everything it read, so the writer must wait. That’s why long transactions hurt under 2PL.',
-   'Under 2PL readers block writers: no old versions, no automatic abort. The booking waits for the report to finish.');}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL)',
+ solve:async L=>{const g=L.led;['L','L','T','T','L','L','T'].forEach(id=>g.tap(id));await L.sleep(20);},
+ run(L){
+  L.h(L.kick('ex','Explore · the lock ledger')+'<h1 class="q">Tap a transaction to run its next step. Make someone wait for a lock, then let them through.</h1>'+CSS+
+   '<p class="small" style="margin:0">S = shared lock (for reading). X = exclusive lock (for writing). Try: Linh reads 09:30, then Tobias books 09:30.</p><div id="led9"></div>'+
+   '<button class="btn" id="led9r" style="margin-top:8px">'+L.ic('cycle')+'Reset</button>');
+  let got=false;
+  const g=L.led=Ledger(L,L.$('#led9'),{id:'l9',mode:'2pl',title:'Delivery slots',
+    rows:[slotRow('s0900','Slot 09:00',3),slotRow('s0930','Slot 09:30',1),slotRow('s1000','Slot 10:00',2)],
+    txs:[{id:'L',name:'Linh',role:'report, reads every slot',col:'h3',ops:[rd(['s0900'],'Read 09:00',v=>'reads '+places(v.s0900)+' at 09:00'),rd(['s0930'],'Read 09:30',v=>'reads '+places(v.s0930)+' at 09:30'),rd(['s1000'],'Read 10:00',v=>'reads '+places(v.s1000)+' at 10:00'),cm()]},
+      booking('T','Tobias','test booking','h4','s0930','09:30'),booking('A','Ada','Pip & Thistle booking','h1','s0930','09:30')],
+    hello:'Nobody holds a lock yet.',
+    on:(e)=>{if(got)return;
+      if(e.type==='grant'||e.type==='deadlock'){got=true;
+        setTimeout(()=>{if(!alive(L.$('#led9')))return;
+          L.sheet('info',e.type==='grant'?'You just saw 2PL’s core rule':'You even found a deadlock',
+           e.type==='grant'?'The writer needed the row alone, but a reader held a shared lock on it. It waited until that reader committed, which released all its locks at once. Under 2PL readers block writers, and the wait has no time limit.':
+           'Two transactions each held a shared lock and each needed the other to let go before upgrading to exclusive. The database broke the loop by aborting one. More on deadlocks soon.');L.done();},30);}}});
+  L.$('#led9r').onclick=()=>g.reset();}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Performance of two-phase locking',pts:1,
+ solve:async L=>{FAST=true;L.$('#p10').children[1].click();for(let i=0;i<100&&!L.$('#p10d');i++)await L.sleep(20);FAST=false;},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Linh’s report has read every slot under 2PL and is still running. Tobias’s booking wants to write 09:30. What happens?</h1>'+CSS+
+   '<div class="sz-ctl" id="p10" style="flex-direction:column;align-items:stretch"></div><div id="led10"></div><div id="p10x"></div>');
+  const g=L.led=Ledger(L,L.$('#led10'),{id:'l10',mode:'2pl',static:true,title:'Delivery slots',
+    rows:[slotRow('s0900','Slot 09:00',3),slotRow('s0930','Slot 09:30',2),slotRow('s1000','Slot 10:00',2)],
+    txs:[{id:'L',name:'Linh',role:'long report',col:'h3',ops:[rd(['s0900','s0930','s1000'],'Read every slot',v=>'reads all three slots'),th('Total the places'),th('Format the report'),cm()]},
+      booking('T','Tobias','booking','h4','s0930','09:30')]});
+  g.tap('L');g.S.msg='Linh holds shared locks on every slot and keeps working. Pick your prediction to run it.';g.render();
+  ['Tobias writes now; Linh keeps the old value','Tobias waits until Linh commits','Linh is aborted so Tobias goes first'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      for(const id of ['T','T','L','L','L','T']){await nap(L,430);if(!alive(L.$('#led10')))return;g.tap(id);}
+      const ok=j===1;L.award(ok);L.$('#p10x').innerHTML='<span id="p10d"></span>';
+      L.sheet(ok?'ok':'no',ok?'Right: the writer waits':'It waited',
+       'Linh held a shared lock on 09:30, so Tobias’s exclusive lock had to wait, with no old version to fall back on and no abort. Only Linh’s commit released the locks. That’s why long transactions hurt under 2PL: one reader can hold up every writer.');L.done();};
+    L.$('#p10').appendChild(b);});}},
 {part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Implementation of two-phase locking',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Under 2PL, must B wait?',['B goes ahead','B must wait'],[
@@ -140,123 +495,257 @@ Course.lesson({
    ['A has read Ravi’s row and is still running. B wants to update it.',1,'B needs the lock exclusively, and A still holds it shared.'],
    ['A has updated Mia’s row and hasn’t committed. B wants to read it.',1,'A holds it exclusively, so B waits, even just to read.'],
    ['A read Ravi’s row and has already committed. B wants to update it.',0,'A released all its locks at commit.']]);}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Implementation of two-phase locking',
+ solve:async L=>{const g=L.led;['R','M','R','M'].forEach(id=>g.tap(id));for(let k=0;k<8&&!g.finished();k++){const t=g.S.txs.find(t=>t.state==='run'||t.state==='abort'||t.state==='new');if(t)g.tap(t.id);}await L.sleep(20);},
+ run(L){
+  let dead=false,fin=false;
+  L.h(L.kick('ex','See it happen · deadlock')+'<h1 class="q">Zone W3 must keep one courier on duty. Ravi and Mia end their shifts at once. Interleave their steps.</h1>'+CSS+
+   '<p class="small" style="margin:0">Each app counts who is on duty and ends the shift only if 2 are on. Try Ravi, Mia, Ravi, Mia.</p><div id="led12"></div>'+
+   '<button class="btn" id="led12r" style="margin-top:8px">'+L.ic('cycle')+'Reset</button>');
+  const g=L.led=Ledger(L,L.$('#led12'),{id:'l12',mode:'2pl',retry:true,title:'Couriers on duty',rows:dutyRows(),
+    txs:[endShift('R','Ravi','h1'),endShift('M','Mia','h2')],hello:'Both are on duty.',
+    on:(e,m)=>{if(e.type==='deadlock')dead=true;
+      if(e.type==='step'&&m.finished()&&!fin){
+        if(!dead){m.S.msg+=' No collision this time: one ran before the other. Reset and interleave them.';m.render();return;}
+        fin=true;setTimeout(()=>{if(!alive(L.$('#led12')))return;
+          L.sheet('info','Deadlock caught, write skew stopped','Both held shared locks on both rows, then each needed an exclusive lock the other was sharing. The database spotted the '+L.g('deadlock','deadlock')+' loop and aborted one. Its app retried, now counted 1 on duty, and refused. Deadlocks happen far more often under 2PL than under read committed, and each one throws work away.');L.done();},30);}}});
+  L.$('#led12r').onclick=()=>{dead=false;g.reset();};}},
 {part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Performance of two-phase locking',run(L){
-  L.h(L.kick('ex','A load test')+'<h1 class="q">Zainab tries 2PL serializable on a copy of the Parcel DB, with Peak Week traffic</h1>');
-  L.beats(L.card,[
-   ['Queues form','Many bookings want the same popular slot rows. Each waits for the one ahead, so a queue builds up.'],
-   ['No time limit','Traditional databases don’t cap how long a transaction runs, so there is no limit on how long a waiter may wait.'],
-   ['One slow transaction','A single transaction that touches lots of data takes many locks, and the rest of the system can grind to a halt.'],
-   ['Kwame’s graphs','Latency becomes unstable and very slow at high percentiles like p99, exactly where Kwame looks.'],
-   ['Deadlocks','Deadlocks happen far more often than under lock-based read committed. Each one aborts a transaction that must redo all its work.']],
-   'The cost of 2PL is partly managing locks, but mostly lost concurrency: anything that might race has to wait.');}},
-{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Predicate locks',run(L){
-  L.h(L.kick('learn','Locking rows that don’t exist yet')+'<h1 class="q">Predicate locks stop phantoms</h1>'+
-   L.prose('Serializable isolation must also stop phantoms. Example: the Westport hub’s loading bays. If one transaction has searched for bookings of bay 3 between 09:00 and 09:30, nobody else may insert an overlapping booking for bay 3 then. Other bays, or other times, are fine.')+
-   L.prose('A '+L.g('predicate-lock','predicate lock')+' belongs to every object matching a search condition, not to one row:')+
-   L.list([['eye','Reading with a condition','Take a shared predicate lock on the condition. Wait if someone holds an exclusive lock on any matching object.'],
-     ['pencil','Inserting, updating, deleting','First check whether the old or new value matches anyone’s predicate lock. If so, wait for them.']],3)+
-   L.note('The key: it also covers objects that <b>don’t exist yet</b>. With predicate locks, 2PL stops all write skew and becomes serializable.','lock'));
+  const hs=[10,12,9,14,11,70,10,13,9,12,16,11,10,84,12,9,13,11,58,10,12,14,10,11];
+  let bars='';hs.forEach((h,j)=>{const x=10+j*12.6;bars+='<rect x="'+x.toFixed(1)+'" y="'+(176-h)+'" width="9" height="'+h+'" rx="2" style="fill:'+(h>40?'var(--no-strong)':'var(--ok-strong)')+'"/>';});
+  const q=(x,t)=>'<rect x="'+x+'" y="24" width="24" height="28" rx="6" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5;stroke-dasharray:4 3"/><text x="'+(x+12)+'" y="42" style="font-size:12px;font-weight:700;fill:var(--h4);text-anchor:middle">'+t+'</text>';
+  L.h(L.kick('learn','What 2PL costs')+'<h1 class="q">Queues behind locks, spiky p99, wasted work</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 196" role="img" aria-label="A long job holds the lock on slot 09:30 while four bookings queue behind it. A response-time chart shows most bookings fast and a few very slow.">'+
+   '<rect x="4" y="16" width="312" height="44" rx="10" style="fill:var(--soft)"/><text x="12" y="35" style="font-size:12px;font-weight:700;fill:var(--ink)">Slot</text><text x="12" y="50" style="font-size:12px;font-weight:700;fill:var(--ink)">09:30</text>'+
+   '<rect x="50" y="24" width="122" height="28" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/><text x="111" y="42" style="font-size:12px;font-weight:700;fill:var(--h3);text-anchor:middle">Big job holds lock</text>'+
+   q(182,'B1')+q(214,'B2')+q(246,'B3')+q(278,'B4')+
+   '<text x="182" y="74" style="font-size:12px;fill:var(--muted)">queue, no time limit</text>'+
+   '<text x="10" y="96" style="font-size:12px;font-weight:600;fill:var(--muted)">Booking response times (illustrative)</text>'+
+   '<path d="M8 176H316" style="stroke:var(--line2);stroke-width:1.2"/>'+bars+
+   '<text x="316" y="112" style="font-size:12px;font-weight:700;fill:var(--no);text-anchor:end">p99 spikes</text></svg>'+
+   '<p class="sz-cap">Managing locks is the smaller part. The big part is lost concurrency: anything that <i>might</i> race must wait, for as long as it takes. One slow or lock-hungry transaction can grind the rest to a halt, so p99 swings. Each deadlock throws work away.</p>');
   L.done();}},
-{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Index-range locks',run(L){
-  L.h(L.kick('learn','The practical version')+'<h1 class="q">Index-range locks: lock a bit more, check much less</h1>'+
-   L.prose('Checking many predicate locks is slow. So most 2PL databases use '+L.g('index-range','index-range locks')+' (also called next-key locks). The trick: lock a <b>bigger</b> set than the condition. Any write that matches the original condition still matches the bigger one, so it’s safe.')+
-   L.lanes([['list','Index on bay','Lock the index entry for bay 3: all its bookings, at any time.',1],
-            ['clock','Index on time','Lock the 09:00–09:30 range: bookings for every bay in that window.',2]])+
-   L.prose('A conflicting insert has to update that same part of the index, hits the lock and waits. Less precise, but far cheaper. With no suitable index, the database can lock the whole table: safe, but bad for performance.'));
-  L.done();}},
-{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Index-range locks',pts:1,run(L){
-  L.h(L.kick('pr','Safe or not?')+'<h1 class="q">A transaction searched for bookings of bay 3 between 09:00 and 09:30. Which lock is a safe simplification of that search?</h1><div id="hq"></div>');
-  L.mc(L.$('#hq'),['Lock only bay 3, from 09:00 to 09:15','Lock every bay from 09:00 to 09:30','Lock only the bookings that exist now'],1,
-   'It covers more than the search did, so any conflicting booking still runs into it.',
-   'A safe simplification must cover <i>more</i> than the search. A shorter window misses 09:15–09:30, and locking existing rows misses new ones: the phantoms.');}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Predicate locks',
+ solve:async L=>{FAST=true;for(let j=0;j<5;j++){L.$('#bl14').children[j].click();await L.sleep(15);}FAST=false;},
+ run(L){
+  const tried=new Set();let busy=false;
+  const NAMES=['Row locks only','Predicate lock','Index-range: bay 3','Index-range: 09:00–09:30','Whole table'],KEYS=['row','pred','bay','time','table'];
+  const COST={row:'Nothing matched Joss’s search, so there was no row to lock. Ana’s booking slips in: a phantom double-books bay 3.',
+   pred:'Exact: only the real clash waits. But every write is checked against every predicate lock held, which gets slow with many locks.',
+   bay:'Cheap: one shared lock on the bay-3 entry of an index on bay. Safe, but Ravi’s 08:30 booking waits for no reason.',
+   time:'Cheap: one shared lock on the 09:00–09:30 range of an index on time. Safe, but Mia’s bay-2 booking waits for no reason.',
+   table:'The fallback when no index fits: safe, but every booking in the table waits.'};
+  L.h(L.kick('ex','Explore · phantoms')+'<h1 class="q">Joss searched bay 3 for 09:00–09:30 (dashed box), found nothing, and is about to book. Pick the lock the database holds.</h1>'+CSS+
+   '<div id="bb14">'+bayBoard({ins:INS})+'</div>'+
+   '<div class="sz-key"><span><i style="background:var(--h3);opacity:.5"></i>locked area</span><span><i style="background:var(--line2)"></i>booked</span><span><i style="background:var(--ok-strong)"></i>goes ahead</span><span><i style="background:var(--h3)"></i>waits</span><span><i style="background:var(--no)"></i>double booking</span></div>'+
+   '<div class="sz-ctl" id="bl14"></div><div class="sz-read" id="br14" aria-live="polite">Three bookings arrive while Joss’s transaction runs: <b>1</b> Ana, bay 3 at 09:15 (a real clash) · <b>2</b> Ravi, bay 3 at 08:30 · <b>3</b> Mia, bay 2 at 09:00.</div>');
+  chips(L.$('#bl14'),NAMES,async j=>{if(busy)return;busy=true;const k=KEYS[j],lk=LOCKS[k];
+    const ins=INS.map(n=>({...n}));L.$('#bb14').innerHTML=bayBoard({lock:lk,ins});await nap(L,380);if(!alive(L.$('#bb14'))){return;}
+    const res=ins.map((n,i)=>{const bl=inBox(lk,n.b,n.c);n.res=bl?'wait':(i===0?'bad':'ok');return n;});
+    L.$('#bb14').innerHTML=bayBoard({lock:lk,ins:res});
+    const word=n=>n.res==='wait'?'<b style="color:var(--h3)">waits</b>':n.res==='bad'?'<b style="color:var(--no)">double-books!</b>':'<b style="color:var(--ok)">goes ahead</b>';
+    L.$('#br14').innerHTML='<b>'+NAMES[j]+'.</b> '+res.map((n,i)=>(i+1)+' '+n.who+' '+word(n)).join(' · ')+'<br>'+COST[k];
+    tried.add(k);busy=false;
+    if(tried.has('row')&&tried.has('pred')&&(tried.has('bay')||tried.has('time'))&&!L.$('#bb14d')){L.$('#bl14').insertAdjacentHTML('afterend','<span id="bb14d"></span>');
+      L.sheet('info','Lock what doesn’t exist yet','A '+L.g('predicate-lock','predicate lock')+' covers every row matching a search, even rows not inserted yet, so 2PL with predicate locks stops phantoms and all write skew. Checking many of them is slow, so most 2PL databases use '+L.g('index-range','index-range locks')+' (next-key locks): lock a bigger area that’s cheap to check. Any write matching the search also hits the bigger area.<br><br>No index to hang the range lock on? The database falls back to a shared lock on the <b>whole table</b>: still safe, but every other writer to that table waits.');L.done();}});}},
+{part:1,src:'Chapter 7 · Two-Phase Locking (2PL) · Index-range locks',pts:1,
+ solve:async L=>{const A=[0,1,0,1,1];A.forEach((a,i)=>{L.$('#c15-'+i).querySelectorAll('.sz-yn button')[a?0:1].click();});L.$('#c15go').click();},
+ run(L){
+  const C=[['Bay 3, 09:00–09:15',{lockCells:[[3,2,2]]},0,'It misses 09:15–09:30, so a clashing booking there gets through.'],
+   ['Bay 3, all morning',{lock:[3,3,0,7]},1,'Bigger than the search, so any clash hits it: the index-on-bay version.'],
+   ['Only the bookings that exist now',{lockCells:[[1,2,4],[4,0,1],[3,6,7]]},0,'The danger is a <i>new</i> row. Locking existing rows can’t stop a phantom.'],
+   ['All bays, 09:00–09:30',{lock:[1,4,2,3]},1,'Bigger than the search: the index-on-time version.'],
+   ['Bays 2–4, 08:45–09:45',{lock:[2,4,1,5]},1,'Odd, but it fully covers the search, so it’s safe. It just blocks more than needed.']];
+  const ans=Array(C.length).fill(null);let first=true;
+  L.h(L.kick('pr','Challenge · safe stand-ins')+'<h1 class="q">The database can’t lock Joss’s exact search cheaply. Which of these locks are safe stand-ins for it?</h1>'+CSS+
+   '<p class="small" style="margin:0">Dashed box = Joss’s search. Shaded = what would be locked.</p><div class="sz-grid2" id="c15"></div><button class="btn pri" id="c15go" disabled>'+L.ic('check')+'Check</button>');
+  C.forEach((c,i)=>{const d=document.createElement('div');d.className='sz-cand';d.id='c15-'+i;
+    d.innerHTML=bayBoard(Object.assign({mini:true,aria:c[0]},c[1]))+'<b>'+c[0]+'</b><div class="sz-yn"><button>Safe</button><button>Not safe</button></div><div class="small" style="line-height:1.4"></div>';
+    const bs=d.querySelectorAll('.sz-yn button');bs.forEach((b,k)=>b.onclick=()=>{if(!first)return;ans[i]=k===0?1:0;bs.forEach(x=>x.classList.toggle('sel',x===b));L.$('#c15go').disabled=ans.includes(null);});
+    L.$('#c15').appendChild(d);});
+  L.$('#c15go').onclick=()=>{if(!first||ans.includes(null))return;first=false;L.$('#c15go').disabled=true;
+    let n=0;C.forEach((c,i)=>{const ok=ans[i]===c[2];if(ok)n++;const d=L.$('#c15-'+i);d.classList.add(ok?'ok':'no');d.querySelector('.small').innerHTML=(c[2]?'<b>Safe.</b> ':'<b>Not safe.</b> ')+c[3];});
+    const all=n===C.length;L.award(all);
+    L.sheet(all?'ok':'no',all?'All five right':n+' of 5 right','The rule: a stand-in is safe only if it covers <b>everything</b> the search covers, including rows that don’t exist yet. Bigger is safe but blocks more; smaller or “existing rows only” lets phantoms through.');L.done();};}},
 
 /* ---------- PART 3: SSI ---------- */
 {part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Pessimistic versus optimistic concurrency control',run(L){
-  L.h(L.kick('learn','A newer idea')+'<h1 class="q">Serializable without the waiting</h1>'+
-   L.prose('So far: 2PL doesn’t perform well, serial execution doesn’t scale well, and weak levels let races through. '+L.g('ssi','Serializable snapshot isolation (SSI)')+' offers full serializability with only a small cost over snapshot isolation. It was first described in 2008 (Michael Cahill’s PhD thesis). PostgreSQL has used it for “serializable” since version 9.1, and FoundationDB uses a similar method.')+
-   L.lanes([['lock','Pessimistic','If anything might go wrong, wait until it’s safe. That’s 2PL. Serial execution is the extreme: one lock on everything, kept short.',4],
-            ['flask','Optimistic','Carry on and hope. At commit, check whether isolation was broken; if so, abort and retry.',2]])+
-   L.prose('Optimistic control does badly under high '+L.g('contention','contention')+': many aborts, and retries add load near full capacity. With spare capacity and little contention, it tends to beat pessimistic methods. SSI is snapshot isolation plus a way to detect conflicts.'));
+  const dot=(x,y,c,t)=>'<circle cx="'+x+'" cy="'+y+'" r="11" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2"/><text x="'+x+'" y="'+(y+4)+'" style="font-size:12px;font-weight:700;fill:var(--'+c+');text-anchor:middle">'+t+'</text>';
+  L.h(L.kick('learn','A newer idea')+'<h1 class="q">Wait first, or check at the end?</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 196" role="img" aria-label="Pessimistic: a transaction waits at a lock gate. Optimistic: transactions run straight to a commit check; one passes, one is sent back to retry.">'+
+   '<text x="8" y="16" style="font-size:12.5px;font-weight:700;fill:var(--h4)">Pessimistic · 2PL</text>'+
+   '<path d="M10 48H310" style="stroke:var(--line2);stroke-width:3"/>'+
+   '<rect x="170" y="28" width="10" height="40" rx="3" style="fill:var(--h4)"/><text x="175" y="84" style="font-size:12px;fill:var(--h4);text-anchor:middle">lock</text>'+
+   dot(146,48,'h3','T2')+dot(250,48,'ok','T1')+
+   '<text x="10" y="76" style="font-size:12px;fill:var(--h3)">T2 waits until it’s safe</text>'+
+   '<text x="8" y="112" style="font-size:12.5px;font-weight:700;fill:var(--h2)">Optimistic · SSI</text>'+
+   '<path d="M10 144H310" style="stroke:var(--line2);stroke-width:3"/>'+
+   '<path d="M232 128L248 144L232 160L216 144Z" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:2"/><text x="232" y="122" style="font-size:12px;fill:var(--h2);text-anchor:middle">commit check</text>'+
+   dot(286,144,'ok','T1')+dot(150,144,'no','T2')+
+   '<path d="M210 156Q180 184 160 158" style="fill:none;stroke:var(--no);stroke-width:2;stroke-dasharray:4 3"/><path d="M158 168l1-11 9 6" style="fill:none;stroke:var(--no);stroke-width:2"/>'+
+   '<text x="10" y="188" style="font-size:12px;fill:var(--no)">premise changed: abort, retry</text><text x="310" y="170" style="font-size:12px;fill:var(--ok);text-anchor:end">commits</text></svg>'+
+   '<p class="sz-cap">2PL waits whenever something <i>might</i> go wrong. '+L.g('ssi','SSI')+' carries on and checks at commit. With low '+L.g('contention','contention')+', optimistic tends to win; under heavy contention, aborts and retries pile up.</p>'+
+   '<div class="sz-tags"><span>SSI = snapshot isolation + commit checks</span><span>New in 2008 · PostgreSQL 9.1+, FoundationDB</span></div>');
   L.done();}},
-{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Decisions based on an outdated premise',run(L){
-  L.h(L.kick('ex','Catching an outdated premise')+'<h1 class="q">How SSI notices that a decision went stale</h1>');
-  L.beats(L.card,[
-   ['The premise','Ravi (txn 42) and Mia (txn 43) each read “2 couriers on duty in W3” and act on it. The database doesn’t know how the app uses that answer, so it assumes any change to it could make their writes wrong.'],
-   ['Case 1 · stale read','Txn 43 reads from its snapshot and ignores 42’s uncommitted change to Ravi’s row. The database notes that. If 42 has committed by the time 43 commits, 43’s premise is out of date: abort.'],
-   ['Why wait until commit?','If 43 turns out to be read-only, there’s no write skew risk. And 42 might still abort. Waiting avoids needless aborts and keeps long read-only queries cheap.'],
-   ['Case 2 · write after read','The database records that 42 and 43 read the W3 data (for example on that index entry). When one writes, it finds the other’s read. Like a lock, but it doesn’t block: it’s a tripwire that marks the reader’s premise as possibly stale.'],
-   ['Who wins','The first to commit succeeds. When the second tries to commit, a conflicting write has already committed, so it is aborted.']],
-   'SSI lets everyone run, then aborts the transactions whose premise changed before they committed.');}},
-{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Detecting writes that affect prior reads',pts:1,
- solve:async L=>{L.$('#who').children[0].click();await L.sleep(20);L.$('#go2').click();},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Decisions based on an outdated premise',
+ solve:async L=>{const g=L.led;['R','R','M','R','M','M'].forEach(id=>g.tap(id));g.reset();['R','M','R','M','R','M'].forEach(id=>g.tap(id));await L.sleep(40);},
  run(L){
-  let first=null;const N=['Ravi','Mia'];
-  L.h(L.kick('try','See it happen')+'<h1 class="q">Under SSI, Ravi and Mia end their shifts at the same time and neither waits. Pick who reaches commit first, then run.</h1><div id="who"></div>'+
-   '<div id="sim" hidden>'+L.lanes([['person','Ravi · txn 42','<div id="l0"></div>',2],['person','Mia · txn 43','<div id="l1"></div>',3]])+
-   '<button class="btn pri" id="go2" style="margin-top:14px">'+L.ic('play')+'Run</button></div><div id="sq"></div>');
-  N.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n+' commits first';b.onclick=()=>{if(first!==null)return;first=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#who').appendChild(b);});
-  const add=(j,ic,txt,col)=>{const el=L.$('#l'+j);if(el)el.innerHTML+='<div style="display:flex;gap:6px;align-items:flex-start;margin:6px 0;font-size:13.5px;color:'+(col||'var(--ink)')+'">'+L.ic(ic)+'<span>'+txt+'</span></div>';};
-  L.$('#go2').onclick=function(){this.remove();const s=1-first;
-    setTimeout(()=>{add(0,'eye','Reads: 2 on duty');add(1,'eye','Reads: 2 on duty');},200);
-    setTimeout(()=>{add(0,'pencil','Sets own row off duty');add(1,'pencil','Sets own row off duty');},550);
-    setTimeout(()=>{add(first,'check','Commits: no conflicting write committed yet','var(--ok)');},900);
-    setTimeout(()=>{if(!L.$('#l0'))return;add(s,'x','Aborted: a write that changed what it read has already committed, so its premise is stale','var(--no)');
-      const q=L.$('#sq');q.innerHTML='<h2 class="sub">'+N[s]+'’s app retries the aborted transaction. What does it see now?</h2>';
-      L.mc(q,['Still 2 on duty, so it ends the shift','1 on duty, so it refuses to end the shift'],1,
-       'The retry runs on a fresh snapshot that includes '+N[first]+'’s committed change. The rule holds: one courier stays on duty.',
-       'The retry gets a new snapshot, which includes the committed change. It sees only 1 on duty and refuses.');},1250);};}},
+  L.h(L.kick('ex','Explore · SSI')+'<h1 class="q">Same couriers, now under SSI. Nobody waits. Get Mia’s or Ravi’s commit refused in both ways SSI checks.</h1>'+CSS+
+   goals('g17',['A read <b>skipped an uncommitted change</b> that later committed','A later write <b>tripped a read marker</b>'])+
+   '<p class="small" style="margin:0">Hint: for the first, let Ravi read and write before Mia reads. For the second, let both read first.</p><div id="led17"></div>'+
+   '<button class="btn" id="led17r" style="margin-top:8px">'+L.ic('cycle')+'Reset</button>');
+  const g=L.led=Ledger(L,L.$('#led17'),{id:'l17',mode:'ssi',retry:true,title:'Couriers on duty',rows:dutyRows(),
+    txs:[endShift('R','Ravi','h1'),endShift('M','Mia','h2')],hello:'Each transaction reads from its own snapshot.',
+    on:e=>{if(e.type!=='abort')return;tick('g17',e.kind==='stale'?0:1);
+      if(allTicked('g17')&&!L.$('#g17d')){L.$('#g17').insertAdjacentHTML('afterend','<span id="g17d"></span>');
+        setTimeout(()=>{if(!alive(L.$('#led17')))return;
+          L.sheet('info','The two ways SSI spots a stale premise','<b>Stale read:</b> the database notes when a snapshot skips someone’s uncommitted write; if that write has committed by your commit, you abort. <b>Write after read:</b> it notes who read what (on an index entry, or the whole table); a later write trips the marker without blocking. Either way, the first to commit wins.');L.done();},30);}}});
+  L.$('#led17r').onclick=()=>g.reset();}},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Detecting stale MVCC reads',pts:1,
+ solve:async L=>{FAST=true;L.$('#p18').children[1].click();for(let i=0;i<100&&!L.$('#p18d');i++)await L.sleep(20);FAST=false;},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Under SSI, Linh’s shift report counts W3’s couriers. Then Ravi ends their shift and commits. Linh’s count is now stale. What happens to Linh?</h1>'+CSS+
+   '<div class="sz-ctl" id="p18" style="flex-direction:column;align-items:stretch"></div><div id="led18"></div><div id="p18x"></div>');
+  const g=L.led=Ledger(L,L.$('#led18'),{id:'l18',mode:'ssi',static:true,title:'Couriers on duty',rows:dutyRows(),
+    txs:[{id:'L',name:'Linh',role:'shift report, read-only',col:'h3',ops:[rd(['ravi','mia'],'Count on-duty couriers',v=>'counts '+(v.ravi+v.mia)+' on duty in W3'),th('Write up the report'),cm()]},endShift('R','Ravi','h1')]});
+  g.tap('L');g.S.msg='Linh has counted 2 on duty. Pick your prediction to run it.';g.render();
+  ['It is aborted at commit','It commits normally','It waits for Ravi to finish'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      for(const id of ['R','R','R','L','L']){await nap(L,450);if(!alive(L.$('#led18')))return;g.tap(id);}
+      const ok=j===1;L.award(ok);L.$('#p18x').innerHTML='<span id="p18d"></span>';
+      L.sheet(ok?'ok':'no',ok?'Right: read-only commits':'It committed',
+       'Linh’s read is stale, but a read-only transaction can’t cause write skew, so SSI lets it commit. That’s why SSI decides at commit, not at read time: it can’t yet know whether a transaction will write, or whether the other one will abort. So long read-only reports run freely.');L.done();};
+    L.$('#p18').appendChild(b);});}},
 {part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Performance of serializable snapshot isolation',run(L){
-  L.h(L.kick('learn','What SSI costs')+'<h1 class="q">The abort rate decides how well SSI performs</h1>'+
-   L.list([['scale','Tracking detail','Tracking reads and writes precisely means fewer needless aborts but more bookkeeping. Coarser tracking is faster but aborts more. PostgreSQL uses theory to skip some unnecessary aborts.'],
-     ['lock','Versus 2PL','Nobody waits for locks, and readers and writers don’t block each other. Latency is much more predictable, and read-only queries need no locks.'],
-     ['trend','Versus serial execution','Not limited to one CPU core. FoundationDB spreads conflict detection over many machines, even for transactions across partitions.'],
-     ['clock','Keep writers short','A long transaction that reads and writes is likely to hit a conflict and abort. Long read-only ones may be fine.']],1)+
-   '<p class="small" style="margin-top:8px">SSI is probably less sensitive to slow transactions than 2PL or serial execution. When the book was written it was young and still proving itself in practice.</p>');
+  const tile=(ic,t,c)=>'<div style="background:var(--'+c+'-bg);color:var(--'+c+');border-radius:12px;padding:8px 9px;font-size:13px;line-height:1.35;display:flex;gap:6px;align-items:flex-start">'+L.ic(ic)+'<span>'+t+'</span></div>';
+  L.h(L.kick('learn','What SSI costs')+'<h1 class="q">The abort rate decides how fast SSI is</h1>'+CSS+
+   '<svg class="sz-svg" viewBox="0 0 320 100" role="img" aria-label="A dial for how finely reads and writes are tracked: precise means fewer needless aborts but more bookkeeping; coarse means faster bookkeeping but more aborts.">'+
+   '<text x="8" y="14" style="font-size:12px;font-weight:600;fill:var(--muted)">How finely to track who read and wrote what</text>'+
+   '<path d="M22 40H298" style="stroke:var(--line2);stroke-width:8;stroke-linecap:round"/><circle cx="160" cy="40" r="11" style="fill:var(--pri)"/>'+
+   '<text x="12" y="66" style="font-size:12px;font-weight:700;fill:var(--ink)">Precise</text><text x="12" y="81" style="font-size:12px;fill:var(--muted)">fewer needless aborts,</text><text x="12" y="95" style="font-size:12px;fill:var(--muted)">more bookkeeping</text>'+
+   '<text x="308" y="66" style="font-size:12px;font-weight:700;fill:var(--ink);text-anchor:end">Coarse</text><text x="308" y="81" style="font-size:12px;fill:var(--muted);text-anchor:end">less bookkeeping,</text><text x="308" y="95" style="font-size:12px;fill:var(--muted);text-anchor:end">more aborts</text></svg>'+
+   '<div class="sz-grid2">'+tile('lock','Vs 2PL: no lock waits, steady latency','ok')+tile('eye','Read-only queries take no locks','ok')+
+     tile('trend','Vs serial: not capped at one core','ok')+tile('clock','Long read-write transactions tend to abort','no')+'</div>'+
+   '<p class="sz-cap">So keep read-write transactions short. SSI is probably less hurt by slow transactions than 2PL or serial execution.</p>');
   L.done();}},
-{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Performance of serializable snapshot isolation',pts:1,run(L){
-  L.h(L.kick('pr','Where it struggles')+'<h1 class="q">In which situation would SSI perform worst?</h1><div id="hq"></div>');
-  L.mc(L.$('#hq'),['Long read-only reports running beside bookings','Data spread across many partitions','Many transactions fighting over the same rows'],2,
-   'High contention means many premises go stale, many aborts and many retries, which hurts most when the system is near capacity.',
-   'Read-only queries run on a snapshot without locks, and SSI can work across partitions. Its weak spot is contention: lots of conflicts mean lots of aborts.');}},
+{part:2,src:'Chapter 7 · Serializable Snapshot Isolation (SSI) · Performance of serializable snapshot isolation',
+ solve:async L=>{FAST=true;for(let j=0;j<5;j++){L.$('#e20').children[j].click();for(let k=0;k<200&&L.busy20;k++)await L.sleep(10);}FAST=false;},
+ run(L){
+  const S4=()=>[slotRow('s0900','Slot 09:00',3),slotRow('s0930','Slot 09:30',2),slotRow('s1000','Slot 10:00',2),slotRow('s1030','Slot 10:30',2)];
+  const rep=(writes)=>({id:'L',name:'Linh',role:writes?'long report that also writes':'long read-only report',col:'h3',
+    ops:[rd(['s0900','s0930','s1000','s1030'],'Read every slot',v=>'reads every slot'),...Array(writes?5:7).fill(0).map((x,k)=>th('Crunch numbers')),
+      ...(writes?[wr('s1030',v=>v.s1030>0?v.s1030-1:null,'Hold a place for returns','holds a 10:30 place for returns','finds 10:30 full'),th('Crunch numbers')]:[]),cm()]});
+  const bks=()=>[booking('A','Ada','booking 09:00','h1','s0900','09:00',1),booking('B','B&B','booking 09:30','h2','s0930','09:30',2),booking('O','Okoro','booking 10:00','h4','s1000','10:00',3)];
+  const flash=()=>[booking('A','Ada','flash-sale booking','h1','s0930','09:30'),booking('B','B&B','flash-sale booking','h2','s0930','09:30'),booking('O','Okoro','flash-sale booking','h4','s0930','09:30'),booking('S','Signe','flash-sale booking','h3','s0930','09:30')];
+  const P=[['2PL · long report','2pl',()=>S4(),()=>[rep(0),...bks()]],['SSI · long report','ssi',()=>S4(),()=>[rep(0),...bks()]],['SSI · report that writes','ssi',()=>S4(),()=>[rep(1),...bks()]],
+    ['2PL · flash sale','2pl',()=>[slotRow('s0930','Slot 09:30',6)],flash],['SSI · flash sale','ssi',()=>[slotRow('s0930','Slot 09:30',6)],flash]];
+  const runs={};L.busy20=false;
+  L.h(L.kick('pr','Edge cases · stress test')+'<h1 class="q">Zainab replays five Otterpost workloads. Run at least four and compare waiting with aborting.</h1>'+CSS+
+   '<div class="sz-ctl" id="e20"></div><div id="led20"><div class="sz-read">Pick a workload to run it.</div></div>'+
+   '<div class="sz-lbl">Results (illustrative ticks)</div><table class="sz-tbl" id="t20"><tr><th>Run</th><th>Done</th><th>Waited</th><th>Aborts</th></tr><tr><td colspan="4" class="small">No runs yet.</td></tr></table>');
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];
+    b.onclick=async()=>{if(L.busy20)return;L.busy20=true;[...L.$('#e20').children].forEach(x=>x.classList.toggle('sel',x===b));
+      const g=Ledger(L,L.$('#led20'),{id:'l20',mode:p[1],auto:true,retry:true,graph:p[1]==='2pl',title:p[0],rows:p[2](),txs:p[3](),hello:'Running…'});
+      const okRun=await g.run(110);L.busy20=false;if(!okRun)return;
+      const st=g.S.stats;runs[p[0]]=[st.done,st.wait,st.aborts];
+      L.$('#t20').innerHTML='<tr><th>Run</th><th>Done</th><th>Waited</th><th>Aborts</th></tr>'+P.filter(q=>runs[q[0]]).map(q=>{const r=runs[q[0]];return '<tr><td>'+q[0]+'</td><td>'+r[0]+'</td><td style="color:'+(r[1]>5?'var(--h3)':'inherit')+';font-weight:'+(r[1]>5?700:400)+'">'+r[1]+'</td><td style="color:'+(r[2]>1?'var(--no)':'inherit')+';font-weight:'+(r[2]>1?700:400)+'">'+r[2]+'</td></tr>';}).join('');
+      g.S.msg='Finished: '+st.done+' committed, '+st.wait+' ticks spent waiting, '+st.aborts+' abort'+(st.aborts===1?'':'s')+'.';g.S.kind='';g.render();
+      if(Object.keys(runs).length>=4&&!L.$('#e20d')){L.$('#e20').insertAdjacentHTML('afterend','<span id="e20d"></span>');
+        L.sheet('info','Waiting versus aborting','Under 2PL a long reader makes writers queue behind its shared locks; under SSI nobody waits, and a read-only report never aborts. A long transaction that also writes is likely to hit a conflict under SSI and redo all its work. With heavy contention both suffer: 2PL deadlocks and queues, SSI aborts and retries.');L.done();}};
+    L.$('#e20').appendChild(b);});}},
 
-/* ---------- PART 4: THE WHOLE MAP ---------- */
-{part:3,src:'Chapter 7 · Summary',run(L){
-  const Y='<span style="color:var(--ok);font-weight:700">yes</span>',N='<span style="color:var(--no);font-weight:700">no</span>',P='<span style="color:var(--h3);font-weight:700">partly</span>';
-  const rows=[['Dirty reads',Y,Y,Y],['Dirty writes',Y,Y,Y],['Read skew',N,Y,Y],['Lost updates',N,P,Y],['Write skew',N,N,Y],['Phantoms in writes',N,N,Y]];
-  L.h(L.kick('learn','The chapter on one card')+'<h1 class="q">Which level prevents which race?</h1>'+
-   '<table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0 12px"><tr style="text-align:left;color:var(--muted)"><th style="padding:6px 4px"></th><th style="padding:6px 4px">Read committed</th><th style="padding:6px 4px">Snapshot</th><th style="padding:6px 4px">Serial&shy;izable</th></tr>'+
-   rows.map(r=>'<tr style="border-top:1px solid var(--line)">'+r.map((c,j)=>'<td style="padding:7px 4px;'+(j?'':'font-weight:600')+'">'+c+'</td>').join('')+'</tr>').join('')+'</table>'+
-   '<p class="small">Lost updates: some snapshot implementations detect them automatically; others need a manual lock. Snapshot isolation does stop simple phantom reads in read-only queries.</p>'+
-   L.prose('Transactions are an abstraction: whole classes of faults and concurrency problems shrink to “abort and try again”. An app that only reads and writes single records may manage without them. For anything more complex, they remove a huge number of error cases you would otherwise have to think about.'));
-  L.done();}},
-{part:3,src:'Chapter 7 · Summary',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which race condition does only serializable isolation prevent?</h1>');
-  L.mc(L.card,['Read skew','Dirty writes','Write skew'],2,
-   'Snapshot isolation’s lost-update detection doesn’t catch it. Only serializable isolation does.',
-   'Snapshot isolation already stops read skew, and almost every implementation stops dirty writes. Write skew needs serializability.');}},
+/* ---------- PART 4: PICK A METHOD ---------- */
+{part:3,src:'Chapter 7 · Serializability',pts:3,
+ solve:async L=>{FAST=true;[0,2,1].forEach((m,w)=>L.$('#w21-'+w).querySelectorAll('.sz-ctl .chip')[m].click());L.$('#w21go').click();for(let i=0;i<100&&!L.$('#w21d');i++)await L.sleep(20);FAST=false;},
+ run(L){
+  const M=['One at a time','2PL','SSI'];
+  const W=[
+   {t:'Flash sale on Bramble & Bolt’s credit',tr:[['clock','Short transactions'],['box','All data in memory'],['layers','One partition each'],['trend','Fits one core'],['flame','Hundreds hit the same balance']],
+    r:[[1,null,[8,0,0],'One at a time there are no locks and no aborts. Tiny in-memory transactions drain the queue fast.'],
+       [0,4,[4,3,1],'Everyone queues for the same row lock and some deadlock, so p99 swings.'],
+       [0,4,[3,0,5],'High contention: most premises go stale, so most commits abort and retry.']]},
+   {t:'Linh’s all-day reports beside bookings',tr:[['eye','Long read-only reports'],['layers','Bookings span partitions'],['trend','More writes than one core'],['leaf','Little contention']],
+    r:[[0,1,[3,5,0],'Cross-partition bookings run in lock-step, and one core can’t keep up.'],
+       [0,0,[2,6,0],'Reports hold shared locks on everything they read, so bookings wait until each report ends.'],
+       [1,null,[8,0,0],'Reports read a snapshot with no locks, little contention keeps aborts rare, and it isn’t capped at one core.']]},
+   {t:'Dispatch app that chats with the database',tr:[['chat','App sends one statement at a time'],['clock','Short transactions'],['leaf','Little contention']],
+    r:[[0,0,[2,6,0],'The lone thread would sit idle during every network round trip.'],
+       [1,null,[8,0,0],'Little contention, so locks rarely make anyone wait.'],
+       [1,null,[8,0,0],'Little contention, so aborts are rare and nobody waits.']]}];
+  const pick=[null,null,null];let first=true,busy=false;
+  L.h(L.kick('pr','Challenge · pick the method')+'<h1 class="q">Femi wants serializable everywhere. Pick a method for each workload, then run them. Pass = nearly all done, few waits, few aborts (illustrative).</h1>'+CSS+
+   '<div id="w21"></div><button class="btn pri" id="w21go" disabled>'+L.ic('play')+'Run all three</button>'+
+   '<div class="sz-key"><span><i style="background:var(--ok-strong);border-radius:50%"></i>done</span><span><i style="background:var(--h3);border-radius:50%"></i>waited long</span><span><i style="background:var(--no);border-radius:50%"></i>aborted</span><span>(illustrative)</span></div>');
+  W.forEach((w,i)=>{const d=document.createElement('div');d.className='sz-wl';d.id='w21-'+i;
+    d.innerHTML='<h3>'+(i+1)+' · '+w.t+'</h3><div class="sz-tr">'+w.tr.map((t,k)=>'<span data-k="'+k+'">'+L.ic(t[0])+t[1]+'</span>').join('')+'</div><div class="sz-ctl"></div><div class="sz-dots"></div><div class="sz-why"></div>';
+    chips(d.querySelector('.sz-ctl'),M,j=>{if(busy)return;pick[i]=j;L.$('#w21go').disabled=pick.includes(null);});
+    L.$('#w21').appendChild(d);});
+  L.$('#w21go').onclick=async()=>{if(busy||pick.includes(null))return;busy=true;let n=0;
+    for(let i=0;i<3;i++){const d=L.$('#w21-'+i);if(!alive(d))return;const r=W[i].r[pick[i]];if(r[0])n++;
+      d.querySelectorAll('.sz-tr span').forEach(s=>s.classList.toggle('hit',r[1]!==null&&(+s.dataset.k===r[1]||(i===1&&pick[i]===0&&+s.dataset.k===2))));
+      const dots=d.querySelector('.sz-dots');dots.innerHTML='';const seq=[].concat(Array(r[2][0]).fill('var(--ok-strong)'),Array(r[2][1]).fill('var(--h3)'),Array(r[2][2]).fill('var(--no)'));
+      for(const c of seq){dots.insertAdjacentHTML('beforeend','<i style="background:'+c+'"></i>');await nap(L,45);}
+      d.querySelector('.sz-why').innerHTML=(r[0]?'<b style="color:var(--ok)">Pass</b>':'<b style="color:var(--no)">Fail</b>')+' <span class="small">(illustrative run)</span>. '+r[3];}
+    busy=false;
+    if(first){first=false;L.awardMany(n,3);L.$('#w21go').insertAdjacentHTML('afterend','<span id="w21d"></span>');
+      L.sheet(n===3?'ok':'no',n===3?'All three pass':n+' of 3 pass',(n===3?'':'Change a pick and run again to see why. ')+'One at a time suits short, in-memory, single-partition work, even with heavy contention. SSI suits long read-only work and partitioned data with little contention. With an app that chats query by query, serial is out; 2PL or SSI both work. (The book notes SSI was still young.)');L.done();}};}},
+{part:3,src:'Chapter 7 · Summary',pts:5,
+ solve:async L=>{const s=L.$('#lv22');for(const a of [0,1,2,0,2]){s.value=a;s.dispatchEvent(new Event('input'));L.$('#lv22go').click();await L.sleep(15);}for(let i=0;i<50&&!L.$('#lv22d');i++)await L.sleep(20);},
+ run(L){
+  const LV=['Read committed','Snapshot isolation','Serializable'],WC=['h1','h2','ok'];
+  const RACES=[['Dirty reads','yyy'],['Dirty writes','yyy'],['Read skew','nyy'],['Lost updates','npy'],['Write skew','nny'],['Phantom write skew','nny']];
+  const NOTE=['Read committed: you only see committed data, and a writer waits for an uncommitted write. Anything that reads twice, or decides from a read, can still race.',
+   'Snapshot isolation: each transaction reads one consistent snapshot. Some databases catch lost updates on their own; others need a manual lock.',
+   'Serializable: the result is as if transactions ran one at a time, so every race on this list stops.'];
+  const BUGS=[['A dashboard shows a parcel from a booking that later aborts.',0,'a dirty read. Read committed stops it.'],
+   ['Linh’s backup mixes data from before and after a transfer.',1,'read skew. A consistent snapshot fixes it.'],
+   ['The last two couriers in a zone both end their shifts.',2,'write skew. Only serializable catches it on its own.'],
+   ['Two claims overwrite each other’s uncommitted parcel writes.',0,'dirty writes. Read committed makes the second writer wait.'],
+   ['Two dispatchers book the same loading bay and time at once.',2,'write skew through a phantom: each inserted a row the other’s check never saw.']];
+  let lv=0,b=0,right=0;
+  L.h(L.kick('pr','Challenge · the weakest level')+'<h1 class="q">Slide the isolation level and watch which races get through. Then set the weakest level that stops each Otterpost bug.</h1>'+CSS+
+   '<div class="sz-led" style="padding:6px 8px" id="mx22"></div>'+
+   '<label class="sz-lbl" for="lv22" style="display:block">Isolation level: <b id="lv22v" style="color:var(--ink)"></b></label>'+
+   '<input type="range" id="lv22" min="0" max="2" step="1" value="0" style="width:100%;accent-color:var(--pri);min-height:36px" aria-describedby="lv22n">'+
+   '<div class="sz-read" id="lv22n" aria-live="polite" style="margin-top:4px"></div>'+
+   '<div class="sz-wl" id="bug22"><h3 id="bug22h"></h3><div class="sz-why" id="bug22t" style="font-size:15px;margin:0 0 8px"></div>'+
+   '<button class="btn pri" id="lv22go">'+L.ic('check')+'Lock in this level</button><div class="sz-dots" id="bug22o"></div><div class="sz-why" id="bug22f" aria-live="polite"></div></div>');
+  function draw(){
+    const c=WC[lv],top=22,rh=25,H=top+RACES.length*rh+4,wx=152;
+    let s='<svg class="sz-svg" viewBox="0 0 320 '+H+'" role="img" aria-label="At '+LV[lv]+': '+RACES.map(r=>r[0]+' '+(r[1][lv]==='y'?'stopped':r[1][lv]==='p'?'depends on the database':'gets through')).join(', ')+'.">'+
+      '<text x="4" y="13" style="font-size:12px;font-weight:600;fill:var(--muted)">Race</text><text x="'+(wx+6)+'" y="13" style="font-size:12px;font-weight:700;fill:var(--'+c+');text-anchor:middle">wall</text>'+
+      '<text x="316" y="13" style="font-size:12px;font-weight:600;fill:var(--muted);text-anchor:end">your data</text>'+
+      '<rect x="'+wx+'" y="'+(top-2)+'" width="12" height="'+(RACES.length*rh)+'" rx="4" style="fill:var(--'+c+')"/>';
+    RACES.forEach((r,i)=>{const y=top+i*rh+rh/2,st=r[1][lv];
+      s+='<text x="4" y="'+(y+4)+'" style="font-size:12px;font-weight:600;fill:var(--ink)">'+r[0]+'</text>';
+      if(st==='y')s+='<path d="M'+(wx-20)+' '+y+'H'+(wx-3)+'" style="stroke:var(--ok-strong);stroke-width:2.5"/><text x="'+(wx+20)+'" y="'+(y+4)+'" style="font-size:12px;font-weight:700;fill:var(--ok)">stopped</text>';
+      else{const col=st==='p'?'var(--h3)':'var(--no)';
+        s+='<path d="M'+(wx-20)+' '+y+'H226" style="stroke:'+col+';stroke-width:2.5'+(st==='p'?';stroke-dasharray:5 3':'')+'"/><path d="M220 '+(y-5)+'L228 '+y+'L220 '+(y+5)+'" style="fill:none;stroke:'+col+';stroke-width:2.5"/>'+
+          '<text x="316" y="'+(y+4)+'" style="font-size:12px;font-weight:700;fill:'+col+';text-anchor:end">'+(st==='p'?'depends':'gets in')+'</text>';}});
+    L.$('#mx22').innerHTML=s+'</svg>';L.$('#lv22v').textContent=LV[lv];L.$('#lv22n').textContent=NOTE[lv];}
+  function showBug(){L.$('#bug22h').textContent='Bug '+(b+1)+' of '+BUGS.length;L.$('#bug22t').textContent=BUGS[b][0];}
+  L.$('#lv22').addEventListener('input',e=>{lv=+e.target.value;draw();});
+  L.$('#lv22go').onclick=()=>{if(b>=BUGS.length)return;const q=BUGS[b],ok=lv===q[1];if(ok)right++;
+    L.$('#bug22o').insertAdjacentHTML('beforeend','<i style="background:var(--'+(ok?'ok-strong':'no')+')"></i>');
+    L.$('#bug22f').innerHTML='<b style="color:var(--'+(ok?'ok':'no')+')">Bug '+(b+1)+': '+(ok?'right':'weakest is '+LV[q[1]].toLowerCase())+'.</b> It’s '+q[2];
+    b++;
+    if(b<BUGS.length){showBug();return;}
+    L.$('#lv22go').disabled=true;L.$('#bug22t').textContent='All five bugs checked.';L.$('#bug22h').textContent='Done';
+    L.$('#bug22f').insertAdjacentHTML('afterend','<span id="lv22d"></span>');
+    L.awardMany(right,BUGS.length);
+    L.sheet(right===BUGS.length?'ok':'info',right+' of '+BUGS.length+' right','Anything shaped like check → decide → write needs serializable (or careful manual locks). That’s the payoff of transactions: crashes, outages and races all shrink to one case, abort and retry. An app that only reads and writes single records may manage without them.');L.done();};
+  draw();showBug();}},
 {part:3,src:'Chapter 7 · Serializability',pts:6,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which way to serializability?',['Serial execution','Two-phase locking','SSI'],[
+  L.quick(L.$('#qk'),'Which way to serializability?',['One at a time','Two-phase locking','SSI'],[
    ['Readers never wait for writers; conflicts are checked when a transaction commits.',2,'Optimistic: run on a snapshot, check at commit.'],
    ['Shared and exclusive locks, all held until commit or abort.',1,'That’s the two phases: take locks, then release them all at the end.'],
    ['The whole transaction is sent as a stored procedure and run on one thread.',0,'No concurrency at all, so no network waits allowed.'],
-   ['Index-range locks stop phantoms by making writers wait.',1,'A pessimistic approximation of predicate locks.'],
+   ['Index-range locks stop phantoms by making writers wait.',1,'A pessimistic, cheaper stand-in for predicate locks.'],
    ['Throughput is capped at one CPU core per partition.',0,'One thread does all the work for its partition.'],
-   ['Performance depends mostly on how many transactions get aborted.',2,'Contention causes stale premises, which cause aborts.']]);}},
-{part:3,src:'Chapter 7 · Serializability',pts:1,run(L){
-  L.h(L.kick('pr','Femi’s trade-off')+'<h1 class="q">Write skew keeps hitting slots and on-duty rules. The Parcel DB is partitioned, Linh’s long read-only reports run all day, and bookings rarely fight over the same rows. By the book’s trade-offs, which method fits best?</h1><div id="hq"></div>');
-  L.mc(L.$('#hq'),['Actual serial execution','Serializable snapshot isolation','Two-phase locking'],1,
-   'Reports read a snapshot without blocking bookings, low contention keeps aborts rare, and it isn’t capped at one core. (Caveat: it was still young when the book was written.)',
-   'Serial execution struggles with cross-partition work and long transactions. Under 2PL, the all-day reports would block bookings. SSI suits low contention plus long reads.');}},
-{part:3,src:'Chapter 7 · Summary',pts:5,run(L){
-  L.h(L.kick('pr','The weakest level that works')+'<h1 class="q">For each Otterpost bug, what is the weakest isolation level that stops it?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Read committed','Snapshot isolation','Only serializable'],[
-   ['A dashboard shows a parcel from a booking that later aborts',0,'A dirty read. Read committed stops it.'],
-   ['Linh’s backup mixes data from before and after a transfer',1,'Read skew. A consistent snapshot fixes it.'],
-   ['The last two couriers in a zone both end their shifts',2,'Write skew. Only serializable isolation catches it automatically.'],
-   ['Two claims overwrite each other’s uncommitted parcel and slip writes',0,'Dirty writes. Read committed makes the second writer wait.'],
-   ['Two recipients overfill a delivery slot by booking at once',2,'Write skew through a phantom: each inserted a new row the other’s check never saw.']],
-   'Weaker levels are fine for some races, but anything shaped like check → decide → write needs serializable isolation (or careful manual locking).');}}
+   ['Performance depends mostly on how many transactions get aborted.',2,'Contention causes stale premises, which cause aborts.']]);}}
+
   ]
 });
 </script>

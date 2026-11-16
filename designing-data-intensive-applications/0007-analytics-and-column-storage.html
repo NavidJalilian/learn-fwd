@@ -13,220 +13,656 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-const CELL=(t,kind)=>'<div style="padding:10px 4px;border-radius:12px;font-weight:600;overflow-wrap:anywhere;'+(kind===1?'background:var(--h1-bg);color:var(--h1);border:2px solid var(--h1)':kind===2?'background:var(--h2-bg);color:var(--h2)':'')+'">'+t+'</div>';
-const TD='padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)';
+/* =====================================================================
+   Lesson 0007 only. Hands-on models used across the lesson:
+   1. Block map   – fact_deliveries as disk blocks: row store vs column store,
+                    which blocks a query has to read (or rewrite).
+   2. Run strip   – 40 deliveries as four column files; sort whole rows and
+                    watch runs (compression) and blocks skipped.
+   3. Bitmap lab  – one bitmap per value, run-length encoding, AND / OR.
+   4. Data cube   – hub × day totals that answer some questions instantly.
+   Plus: the lunchtime report (why a warehouse), the star with “play a day”,
+   and the in-memory write store.
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const fmt=n=>Math.round(n).toLocaleString('en-US');
+const live=el=>!!el&&el.isConnected;
+function T(x,y,txt,st){return '<text x="'+x+'" y="'+y+'" style="font-size:12px;fill:var(--ink);'+(st||'')+'">'+txt+'</text>';}
+function goals(id,items){return '<ul class="ac-goals" id="'+id+'">'+items.map((t,k)=>'<li id="'+id+'-'+k+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,k){const li=L.$('#'+id+'-'+k);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').textContent='✓';}}
+function allTicked(L,id){const u=L.$('#'+id);return !!u&&[...u.children].every(li=>li.classList.contains('done'));}
+function mkBtn(host,html,cls,fn,id){const b=document.createElement('button');b.className=cls||'btn';b.innerHTML=html;if(id)b.id=id;b.onclick=fn;host.appendChild(b);return b;}
+async function waitFor(L,fn,n){for(let i=0;i<(n||150)&&!fn();i++)await L.sleep(40);}
+const CSS='<style>'+
+ '.ac-svg{width:100%;height:auto;display:block;margin:4px 0 6px}.ac-svg text{font-family:var(--sans)}'+
+ '.ac-cap{font-size:15.5px;line-height:1.55;margin:8px 0 0}'+
+ '.ac-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0;align-items:center}.ac-row .chip,.ac-row .btn{margin:0;min-height:40px}.ac-row .chip.sm{min-height:38px;padding:6px 10px;font-size:13.5px}'+
+ '.btn[disabled],.chip[disabled]{opacity:.45;cursor:default}'+
+ '.ac-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.55;margin:8px 0;font-variant-numeric:tabular-nums;min-height:44px}'+
+ '.ac-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 2px}'+
+ '.ac-goals{list-style:none;margin:4px 0 8px;padding:0}.ac-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.ac-goals .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}'+
+ '.ac-goals li.done{color:var(--ok)}.ac-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}'+
+ '.ac-cmp{margin:6px 0}.ac-cmp .hd{font-size:13px;font-weight:600;color:var(--muted)}.ac-cmp .r{display:grid;grid-template-columns:96px 1fr 84px;gap:8px;align-items:center;font-size:14px;margin:6px 0}'+
+ '.ac-cmp .bar{height:14px;background:var(--soft2);border-radius:99px;overflow:hidden}.ac-cmp .bar i{display:block;height:100%;width:0;border-radius:99px;transition:width .3s}'+
+ '.ac-cmp b{text-align:right;font-variant-numeric:tabular-nums;font-size:13.5px}'+
+ '.ac-cube{width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums;margin:4px 0}'+
+ '.ac-cube th,.ac-cube td{padding:7px 2px;text-align:right;border-bottom:1px solid var(--line);transition:background .25s,opacity .25s}'+
+ '.ac-cube th{font-size:12.5px;color:var(--muted);font-weight:600}.ac-cube th:first-child,.ac-cube td:first-child{text-align:left}'+
+ '.ac-cube .tot{font-weight:700}.ac-cube .hi{background:var(--h2-bg);color:var(--h2);font-weight:700}.ac-cube .hi2{background:var(--soft)}.ac-cube.x td{opacity:.3}'+
+ '.ac-q{background:var(--soft);border-radius:14px;padding:11px 13px;font-size:15.5px;line-height:1.5;margin:10px 0 4px}.ac-q small{display:block;font-size:12.5px;color:var(--muted);font-weight:600;margin-bottom:2px}'+
+ '</style>';
+
+/* ---------- 1. Block map: fact_deliveries as disk blocks ---------- */
+const BM_COLS=['date','hub','late','fee','merch','courier','zone','kg','eta','status','mins','km'];
+const BM_BANDS=8,CELL_GB=0.146; /* illustrative: a year = 146 million rows; one band × one column ≈ 18 million values × 8 bytes */
+const BM_TOTAL=BM_BANDS*120*CELL_GB;
+const gb=x=>(x>=20?Math.round(x):x.toFixed(1))+' GB';
+function blockMap(host,id){
+  host.insertAdjacentHTML('beforeend','<svg class="ac-svg" id="'+id+'" viewBox="0 0 320 222" role="img" aria-label="fact_deliveries drawn as disk blocks: 12 named columns plus 108 more, 8 bands of rows"></svg>');
+  const S={layout:'col',cols:new Set(),bands:'all',mode:'read',band:3};
+  const cx=c=>c<12?4+c*20:246, cw=c=>c<12?19:70;
+  function lit(b,c){
+    if(S.mode==='lookup')return b===S.band;
+    if(S.mode==='write')return S.layout==='row'?b===BM_BANDS-1:true;
+    const inB=S.bands==='all'||S.bands.has(b);if(!inB)return false;
+    if(S.layout==='row')return S.cols.size>0;
+    return S.cols.has(c);
+  }
+  function draw(){
+    const el=document.getElementById(id);if(!el)return;let s='';
+    BM_COLS.forEach((n,c)=>{s+='<text transform="translate('+(cx(c)+14)+',52) rotate(-90)" style="font-size:12px;fill:'+(S.cols.has(c)&&S.mode==='read'?'var(--pri)':'var(--muted)')+';font-weight:'+(S.cols.has(c)&&S.mode==='read'?'700':'500')+'">'+n+'</text>';});
+    const mo=S.cols.has(12)&&S.mode==='read';s+=T(281,36,'+108 more','text-anchor:middle;font-weight:'+(mo?'700':'500')+';fill:'+(mo?'var(--pri)':'var(--muted)'))+T(281,50,'columns','text-anchor:middle;fill:var(--muted)');
+    const col=S.mode==='write'?'var(--no-strong)':'var(--pri)';
+    for(let b=0;b<BM_BANDS;b++)for(let c=0;c<13;c++){const on=lit(b,c);
+      s+='<rect x="'+cx(c)+'" y="'+(58+b*18)+'" width="'+cw(c)+'" height="17" rx="2" style="fill:'+(on?col:'var(--soft2)')+';fill-opacity:'+(on?(c===12?.75:.9):1)+'"/>';
+      if(c===12&&!on)s+='<path d="M'+(cx(c)+6)+' '+(58+b*18+8.5)+'h58" style="stroke:var(--line2);stroke-width:1;stroke-dasharray:2 3"/>';}
+    if(S.layout==='row'){for(let b=0;b<BM_BANDS;b++){let any=false;for(let c=0;c<13;c++)if(lit(b,c))any=true;
+      s+='<rect x="2" y="'+(57+b*18)+'" width="316" height="19" rx="4" style="fill:none;stroke:'+(any?'var(--ink)':'var(--line2)')+';stroke-width:'+(any?1.6:1)+'"/>';}}
+    else{for(let c=0;c<13;c++){let any=false;for(let b=0;b<BM_BANDS;b++)if(lit(b,c))any=true;
+      s+='<rect x="'+(cx(c)-1)+'" y="56" width="'+(cw(c)+2)+'" height="147" rx="4" style="fill:none;stroke:'+(any?'var(--ink)':'var(--line2)')+';stroke-width:'+(any?1.6:1)+'"/>';}}
+    s+=T(2,218,S.layout==='row'?'Row store: each outlined band = blocks of whole rows':'Column store: each outlined strip = one column’s file','fill:var(--muted)');
+    el.innerHTML=s;
+  }
+  draw();
+  return {S,draw};
+}
+function bmStats(S){const nC=[...S.cols].reduce((a,c)=>a+(c===12?108:1),0),nb=S.bands==='all'?BM_BANDS:S.bands.size;
+  return {row:S.cols.size?nb*120*CELL_GB:0,col:nb*nC*CELL_GB};}
+function cmpHtml(id,head){return '<div class="ac-cmp" id="'+id+'"><div class="hd" id="'+id+'-h">'+(head||'')+'</div>'+
+  '<div class="r"><span>Row store</span><div class="bar"><i id="'+id+'-r"></i></div><b id="'+id+'-rv">–</b></div>'+
+  '<div class="r"><span>Column store</span><div class="bar"><i id="'+id+'-c"></i></div><b id="'+id+'-cv">–</b></div></div>';}
+function setCmp(L,id,rv,cv,rt,ct,max,head){const m=max||Math.max(rv,cv,1e-9);
+  const col=(a,b)=>Math.abs(a-b)<1e-9?'var(--h3)':a<b?'var(--ok-strong)':'var(--no-strong)';
+  const r=L.$('#'+id+'-r'),c=L.$('#'+id+'-c');r.style.width=Math.max(rv>0?2:0,rv/m*100)+'%';c.style.width=Math.max(cv>0?2:0,cv/m*100)+'%';r.style.background=col(rv,cv);c.style.background=col(cv,rv);
+  L.$('#'+id+'-rv').textContent=rt;L.$('#'+id+'-cv').textContent=ct;if(head!=null)L.$('#'+id+'-h').textContent=head;}
+
+/* ---------- 2. Run strip: 40 deliveries stored as four column files ---------- */
+const SR=(()=>{let s=5;const r=()=>{s=(s*1103515245+12345)%2147483648;return s/2147483648;};const rows=[];
+  for(let i=0;i<40;i++){const d=Math.floor(r()*8),hr=r(),hub=hr<.34?0:hr<.56?1:hr<.74?2:3,m=r()<.18?0:1+Math.floor(r()*7),late=r()<.27?1:0;rows.push({id:i,date:d,hub,merch:m,late});}
+  return rows;})();
+const SF=['date','hub','merch','late'],SF_NAME={date:'date',hub:'hub',merch:'merch',late:'late'};
+const HUBC=['var(--h1)','var(--h2)','var(--h3)','var(--h4)'];
+function srColor(f,v){
+  if(f==='date')return ['var(--h1)',.16+v*.1];
+  if(f==='hub')return [HUBC[v],.85];
+  if(f==='merch')return v===0?['var(--h4)',1]:[HUBC[(v-1)%3],v<4?.4:.85];
+  return v?['var(--no-strong)',.9]:['var(--line2)',.8];
+}
+function srOrder(keys){const idx=SR.map((_,i)=>i);idx.sort((a,b)=>{for(const k of keys){const d=SR[a][k]-SR[b][k];if(d)return d;}return a-b;});return idx;}
+const srMatch=id=>SR[id].date>=6;
+function runStrip(host,id){
+  host.insertAdjacentHTML('beforeend','<svg class="ac-svg" id="'+id+'" viewBox="0 0 320 186" role="img" aria-label="Forty deliveries stored as four column files: date, hub, merchant and late. Five blocks of eight rows."></svg>');
+  const svg=document.getElementById(id);
+  const S={perm:{},filter:false,each:false};SF.forEach(f=>S.perm[f]=SR.map((_,i)=>i));
+  const X0=52,CW=6.6,Y=f=>22+SF.indexOf(f)*40;
+  const mk=(tag,attrs)=>{const e=document.createElementNS(NS,tag);for(const k in attrs)e.setAttribute(k,attrs[k]);svg.appendChild(e);return e;};
+  const hl=[];for(let j=0;j<5;j++)hl.push(mk('rect',{x:X0+j*8*CW-1,y:18,width:8*CW+1,height:158,rx:5,style:'fill:var(--pri-bg);opacity:0;transition:opacity .3s'}));
+  for(let j=0;j<5;j++){const t=mk('text',{x:X0+j*8*CW+4*CW,y:12,style:'font-size:12px;fill:var(--muted);text-anchor:middle;font-family:var(--sans)'});t.textContent='block '+(j+1);}
+  for(let j=1;j<5;j++)mk('path',{d:'M'+(X0+j*8*CW-.3)+' 18v158',style:'stroke:var(--line2);stroke-width:1;stroke-dasharray:3 3'});
+  const lab={},cells={};
+  SF.forEach(f=>{const n=mk('text',{x:0,y:Y(f)+12,style:'font-size:12px;font-weight:700;fill:var(--ink);font-family:var(--sans)'});n.textContent=SF_NAME[f];
+    lab[f]=mk('text',{x:0,y:Y(f)+26,style:'font-size:12px;fill:var(--muted);font-family:var(--sans)'});
+    cells[f]=SR.map(row=>{const c=srColor(f,row[f]);return mk('rect',{x:0,y:0,width:CW-.6,height:26,rx:1.5,style:'fill:'+c[0]+';fill-opacity:'+c[1]+';transition:transform .6s cubic-bezier(.3,.8,.3,1),opacity .3s'});});});
+  const mark=mk('rect',{x:X0+4*CW-1.4,y:19,width:CW+2.2,height:156,rx:2,style:'fill:none;stroke:var(--ink);stroke-width:1.8;opacity:0'});
+  function runs(f){let n=0,p=null;S.perm[f].forEach(i=>{if(SR[i][f]!==p){n++;p=SR[i][f];}});return n;}
+  function stats(){const p=S.perm.date,blocks=new Set();let hg=0,ph=null;p.forEach((i,pos)=>{if(srMatch(i)){blocks.add(Math.floor(pos/8));if(SR[i].hub!==ph){hg++;ph=SR[i].hub;}}});
+    return {blocks:blocks.size,blockSet:blocks,hubGroups:hg,runs:Object.fromEntries(SF.map(f=>[f,runs(f)]))};}
+  function draw(){
+    const st=stats();
+    SF.forEach(f=>{lab[f].textContent=st.runs[f]+' runs';
+      S.perm[f].forEach((rid,pos)=>{const r=cells[f][rid];r.style.transform='translate('+(X0+pos*CW)+'px,'+Y(f)+'px)';
+        r.style.opacity=S.filter&&!S.each&&!srMatch(rid)?.18:1;});});
+    hl.forEach((h,j)=>h.style.opacity=S.filter&&!S.each&&st.blockSet.has(j)?1:0);
+    mark.style.opacity=S.each?1:0;
+    return st;
+  }
+  function setOrder(keys){S.each=false;SF.forEach(f=>S.perm[f]=keys?srOrder(keys):SR.map((_,i)=>i));return draw();}
+  function setEach(){S.each=true;SF.forEach(f=>S.perm[f]=srOrder([f]));return draw();}
+  draw();
+  return {S,draw,setOrder,setEach,stats};
+}
+
+/* ---------- 3. Bitmaps: twelve deliveries ---------- */
+const HUB12=['WC','WC','ED','WC','ED','ED','WC','WC','WN','WC','ED','WC'];
+const LATE12=[0,1,1,0,0,1,0,0,1,0,1,0];
+const bitsOf=v=>HUB12.map(h=>h===v?1:0);
+function rle(bits){const out=[];let cur=0,n=0;bits.forEach(b=>{if(b===cur)n++;else{out.push(n);cur=b;n=1;}});out.push(n);return out;}
+function bitRow(y,label,bits,col,shown){let s=T(0,y+16,label,'font-weight:700;fill:'+(col||'var(--ink)'));
+  bits.forEach((b,i)=>{const on=b===1,vis=shown==null||i<shown;const x=44+i*23;
+    s+='<rect x="'+x+'" y="'+y+'" width="21.5" height="24" rx="4" style="fill:'+(!vis?'var(--card)':on?'var(--h2-bg)':'var(--soft)')+';stroke:'+(!vis?'var(--line2)':on?'var(--h2)':'none')+';stroke-width:1.4;'+(!vis?'stroke-dasharray:3 2':'')+'"/>';
+    if(vis)s+=T(x+10.75,y+16.5,String(b),'text-anchor:middle;font-weight:'+(on?'700':'400')+';fill:'+(on?'var(--h2)':'var(--muted)'));});
+  return s;}
+
+/* ---------- 4. Data cube: deliveries per hub per day (thousands, illustrative) ---------- */
+const CUBE_H=['Westport Central','Westport North','Westport South','Eastvale Depot'],CUBE_S=['W. Central','W. North','W. South','Eastvale'];
+const CUBE_D=['Mon','Tue','Wed','Thu','Fri'];
+/* about 400 thousand a day, about 2,000 thousand a week: matches the 400,000 fact rows a day */
+const CUBE=[[117,119,123,120,126],[86,85,90,87,93],[78,80,76,81,84],[107,109,112,110,115]];
+function cubeHtml(id){
+  const rs=CUBE.map(r=>r.reduce((a,b)=>a+b,0)),cs=CUBE_D.map((_,j)=>CUBE.reduce((a,r)=>a+r[j],0)),all=rs.reduce((a,b)=>a+b,0);
+  return '<table class="ac-cube" id="'+id+'"><tr><th>Hub</th>'+CUBE_D.map(d=>'<th>'+d+'</th>').join('')+'<th>Week</th></tr>'+
+   CUBE.map((r,i)=>'<tr><td>'+CUBE_S[i]+'</td>'+r.map((v,j)=>'<td id="'+id+'-'+i+'-'+j+'">'+v+'</td>').join('')+'<td class="tot" id="'+id+'-'+i+'-t">'+rs[i]+'</td></tr>').join('')+
+   '<tr><td class="tot">All hubs</td>'+cs.map((v,j)=>'<td class="tot" id="'+id+'-a-'+j+'">'+v+'</td>').join('')+'<td class="tot" id="'+id+'-a-t">'+fmt(all)+'</td></tr></table>';
+}
+
 Course.lesson({
   id:'0007', title:'Analytics and column storage', minutes:20, icon:'trend',
-  goals:['Tell a transaction workload from an analytics workload, and say why warehouses exist','Lay out a star schema for Otterpost’s deliveries','Explain how column storage, compression and cubes make analytics fast'],
-  parts:['OLTP or analytics','Warehouses and stars','Column storage','Sorting, writes and cubes'],
-  read:'Read the rest of chapter 3, from “Transaction Processing or Analytics?”, for the grocery-store star schema and the chapter summary.',
+  goals:['Tell an OLTP workload from an analytics (OLAP) one, and say why a warehouse is a separate copy',
+         'Lay out a star schema, and show why column storage reads a sliver of what a row store reads',
+         'Explain how compression, sort order, in-memory writes and data cubes speed up analytics, and where each stops helping'],
+  parts:['Two workloads','Stars and columns','Compress and sort','Writes and cubes'],
+  read:'Read the rest of chapter 3, from “Transaction Processing or Analytics?”, for the book’s grocery-store star schema, its bitmap figure and the chapter summary.',
   glossary:{
-    'oltp':'OLTP (online transaction processing): the access pattern of user-facing apps: many small, fast reads and writes of a few records, found by key.',
-    'olap':'OLAP (online analytic processing): the access pattern of analytics: queries that scan huge numbers of records and compute totals, counts or averages.',
+    'oltp':'OLTP (online transaction processing): the access pattern of user-facing apps: many small, low-latency reads and writes of a few records, found by key. (“Transaction” here needn’t mean ACID.)',
+    'olap':'OLAP (online analytic processing): the access pattern of analytics: queries that scan huge numbers of records, read a few columns and compute totals, counts or averages.',
     'warehouse':'Data warehouse: a separate, read-only copy of the data from a company’s operational systems, shaped for analysts to query without slowing those systems down.',
     'etl':'ETL (Extract–Transform–Load): pulling data out of operational databases, reshaping and cleaning it, and loading it into a data warehouse.',
     'star-schema':'Star schema: a warehouse layout with one big fact table of events in the middle, linked to dimension tables that describe those events.',
     'fact-table':'Fact table: the central warehouse table, where each row is one event, such as one delivery or one sale.',
-    'dimension-table':'Dimension table: a warehouse table describing the who, what, where, when, how and why of the events in the fact table.',
+    'dimension-table':'Dimension table: a warehouse table describing the people, things, places, times, methods and reasons behind the events in the fact table.',
     'column-store':'Column-oriented storage: keeping all the values of each column together, instead of all the values of each row, so a query reads only the columns it needs.',
     'bitmap':'Bitmap encoding: storing a column as one string of bits per distinct value: 1 where a row has that value, 0 where it doesn’t.',
     'rle':'Run-length encoding: compressing a sequence by writing how many times each value repeats in a row, instead of writing every value.',
+    'vectorized':'Vectorized processing: running a tight loop over a chunk of (often compressed) column data that fits in the CPU’s cache, instead of handling one record at a time.',
     'materialized-view':'Materialized view: a stored copy of a query’s results, written to disk and updated when the data changes, so the query isn’t recomputed each time.',
     'data-cube':'Data cube (OLAP cube): a grid of precomputed totals, grouped by several dimensions such as date and hub.'
   },
   cheatsheet:[
-    '<b>OLTP:</b> users, small reads and writes by key, the latest state. <b>OLAP:</b> analysts, scans and totals over history.',
-    '<b>Data warehouse:</b> a separate read-only copy, loaded by <b>ETL</b>, so heavy scans don’t slow the live systems.',
-    '<b>Star schema:</b> a fact table of events in the middle, dimension tables (who, what, where, when, how, why) around it. Snowflake = dimensions split further.',
-    '<b>Column storage:</b> each column stored together, so a query reads only the few columns it uses. Rows are rebuilt by position.',
-    '<b>Compression:</b> one bitmap per distinct value, run-length encoded. Filters become bitwise AND and OR, and compact data feeds the CPU faster.',
-    '<b>Sort order:</b> sort whole rows by the columns queries filter on. The first sort key compresses best. Replicas can hold different sort orders.',
-    '<b>Writes</b> go to an in-memory store first, then merge into the column files in bulk, as in an LSM-tree.',
-    '<b>Materialized views and data cubes:</b> precomputed totals, fast but inflexible. Keep the raw facts.'
+    '<b>OLTP:</b> users, a few records by key, the latest state. <b>OLAP:</b> analysts, scans and totals over history. Disk seeks limit OLTP; disk bandwidth limits OLAP.',
+    '<b>Data warehouse:</b> a separate read-only copy, loaded by <b>ETL</b>, so heavy scans don’t slow the live systems. Same SQL on top, different engine inside.',
+    '<b>Star schema:</b> a huge fact table of events in the middle, dimension tables (who, what, where, when, how, why) around it. Snowflake = dimensions split further.',
+    '<b>Column storage:</b> each column in its own file, all in the same row order. A query reads only the few columns it uses. Loses its edge on SELECT * and one-row lookups.',
+    '<b>Compression:</b> one bitmap per distinct value, run-length encoded when sparse. Filters become bitwise AND and OR; compact chunks feed the CPU fast (vectorized processing).',
+    '<b>Sort order:</b> sort whole rows, never one column alone. The first sort key skips blocks and compresses best. Replicas can keep different sort orders.',
+    '<b>Writes</b> go to a sorted in-memory store first, then merge into new column files in bulk, as in an LSM-tree. Queries combine both.',
+    '<b>Materialized views and data cubes:</b> precomputed totals, instant for the questions they cover, useless outside their dimensions. Keep the raw facts.'
   ],
   steps:[
-/* ---------- PART 1: OLTP OR ANALYTICS ---------- */
+/* ---------- PART 1: TWO WORKLOADS ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Which question makes Otterpost’s database read more rows: “Where is parcel OP-4471 now?” or “What share of Eastvale deliveries were late last month?”</h1>');
-  L.mc(L.card,['Where parcel OP-4471 is now','Eastvale’s late share last month'],1,
-   'One parcel is one record, found by its code. The late share has to look at every Eastvale delivery of the month and count. Two very different jobs, and this lesson is about that difference.',
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Which question makes Otterpost’s database read more rows?</h1>');
+  L.mc(L.card,['“Where is parcel OP-48213 right now?”','“What share of Eastvale deliveries were late last month?”'],1,
+   'One parcel is one record, found by its code. The late share has to look at every Eastvale delivery of the month and count. Two very different jobs: that difference is this lesson.',
    'Finding one parcel reads one record, found by its code. The late share has to look at every Eastvale delivery of the month and count them. That’s far more rows.');}},
+
 {part:0,src:'Chapter 3 · Transaction Processing or Analytics?',run(L){
-  L.h(L.kick('learn','Two ways to use a database')+'<h1 class="q">Transactions for users, analytics for decision-makers</h1>'+
-   L.prose('Early on, a database write usually matched a business deal: a sale, an order, a salary payment. The word “transaction” stuck even as databases spread to blog comments, games and address books. It now means a group of reads and writes that form one logical unit, and it needn’t have the ACID properties of chapter 7.')+
-   L.prose('The access pattern stayed much the same: look up a few records by key using an index, and insert or update records based on what a user typed. Users interact with it live, so it’s called '+L.g('oltp','online transaction processing (OLTP)')+'.')+
-   L.prose('Analytics looks very different. A query scans a huge number of records, reads only a few columns of each, and returns a total, count or average instead of raw data. Business analysts write these queries for reports that help management decide (“business intelligence”). This is '+L.g('olap','online analytic processing (OLAP)')+'.'));
+  const grid=(x0,f)=>{let s='';for(let r=0;r<9;r++)for(let c=0;c<10;c++){const on=f(r,c);s+='<rect x="'+(x0+c*15)+'" y="'+(26+r*13)+'" width="14" height="12" rx="2" style="fill:'+(on||'var(--soft2)')+'"/>';}return s;};
+  L.h(L.kick('learn','Two ways to use one table')+'<h1 class="q">Users touch one row. Analysts sweep whole columns.</h1>'+
+   '<svg class="ac-svg" viewBox="0 0 320 184" role="img" aria-label="Left: the tracking page reads one whole row found by key. Right: a weekly report reads three columns down every row.">'+
+    T(79,15,'Tracking page','font-weight:700;text-anchor:middle;font-size:13px')+T(241,15,'Weekly report','font-weight:700;text-anchor:middle;font-size:13px')+
+    grid(4,(r)=>r===3?'var(--h1)':null)+grid(166,(r,c)=>[0,2,5].includes(c)?'var(--h2)':null)+
+    T(79,162,'OP-48213: 1 row, by key','text-anchor:middle;font-weight:600;fill:var(--h1)')+T(79,178,'every column of it','text-anchor:middle;fill:var(--muted)')+
+    T(241,162,'every row, 3 columns','text-anchor:middle;font-weight:600;fill:var(--h2)')+T(241,178,'→ a few totals','text-anchor:middle;fill:var(--muted)')+'</svg>'+
+   '<p class="ac-cap"><b>'+L.g('oltp','OLTP')+'</b> (online transaction processing): users read and write a few records, found by key, right now. <b>'+L.g('olap','OLAP')+'</b> (online analytic processing): analysts scan huge numbers of records, read a few columns and get totals.</p>'+CSS);
   L.done();}},
+
 {part:0,src:'Chapter 3 · Transaction Processing or Analytics?',run(L){
-  L.h(L.kick('learn','Side by side')+'<h1 class="q">Five ways the two workloads differ. Tap each one.</h1>');
-  L.flips(L.card,[
-   ['Main read pattern','<b>OLTP:</b> a few records per query, fetched by key.<br><b>OLAP:</b> totals over a large number of records.'],
-   ['Main write pattern','<b>OLTP:</b> random-access, low-latency writes from user input.<br><b>OLAP:</b> bulk imports (ETL) or a stream of events.'],
-   ['Who uses it','<b>OLTP:</b> end users and customers, through a web app.<br><b>OLAP:</b> internal analysts, for decision support.'],
-   ['What the data shows','<b>OLTP:</b> the latest state, right now.<br><b>OLAP:</b> the history of events over time.'],
-   ['Dataset size','<b>OLTP:</b> gigabytes to terabytes.<br><b>OLAP:</b> terabytes to petabytes.']],
-   'The line isn’t always sharp, but these are the typical differences. SQL handles both kinds of query well.');}},
-{part:0,src:'Chapter 3 · Transaction Processing or Analytics?',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these is an analytic (OLAP) query at Otterpost?</h1>');
-  L.mc(L.card,['Book one parcel for a merchant through the API','Mark parcel OP-4471 as delivered after a scan','Total fees billed per merchant over last year'],2,
-   'It scans a year of history and adds it up per merchant: many records in, a few totals out.',
-   'Booking and marking delivered each touch one record, right away, for a user: that’s OLTP. Adding up a year of fees per merchant scans history and aggregates it.');}},
+  const ic=(k,x,y,c)=>{const S='style="fill:'+c+'"',G='style="fill:var(--line2)"';
+    if(k==='r1')return [0,1,2,3].map(i=>'<rect x="'+x+'" y="'+(y+2+i*7)+'" width="28" height="5" rx="2" '+(i===2?S:G)+'/>').join('');
+    if(k==='r2')return [0,1,2,3].map(i=>'<rect x="'+x+'" y="'+(y+2+i*7)+'" width="28" height="5" rx="2" '+S+'/>').join('');
+    if(k==='w1')return '<path d="M'+(x+14)+' '+(y)+'v12" style="stroke:'+c+';stroke-width:2;stroke-linecap:round"/><path d="M'+(x+9)+' '+(y+8)+'l5 5 5-5" style="fill:none;stroke:'+c+';stroke-width:2"/><rect x="'+(x+9)+'" y="'+(y+18)+'" width="10" height="10" rx="2" '+S+'/>';
+    if(k==='w2')return [0,1,2,3].map(i=>'<rect x="'+(x+2)+'" y="'+(y+4+i*6)+'" width="24" height="5" rx="1.5" '+S+'/>').join('');
+    if(k==='u1')return '<circle cx="'+(x+14)+'" cy="'+(y+8)+'" r="6" '+S+'/><path d="M'+(x+3)+' '+(y+30)+'q11-16 22 0z" '+S+'/>';
+    if(k==='u2')return [8,15,24].map((h,i)=>'<rect x="'+(x+3+i*9)+'" y="'+(y+30-h)+'" width="7" height="'+h+'" rx="1.5" '+S+'/>').join('');
+    if(k==='d1')return '<circle cx="'+(x+14)+'" cy="'+(y+15)+'" r="9" style="fill:none;stroke:'+c+';stroke-width:2"/><circle cx="'+(x+14)+'" cy="'+(y+15)+'" r="4" '+S+'/>';
+    if(k==='d2')return '<path d="M'+x+' '+(y+15)+'h28" style="stroke:'+c+';stroke-width:2"/>'+[0,1,2,3,4].map(i=>'<circle cx="'+(x+2+i*6)+'" cy="'+(y+15)+'" r="2.6" '+S+'/>').join('');
+    if(k==='s1')return '<rect x="'+(x+9)+'" y="'+(y+20)+'" width="10" height="10" rx="2" '+S+'/>';
+    return '<rect x="'+(x+9)+'" y="'+y+'" width="10" height="30" rx="2" '+S+'/>';};
+  const rows=[['Reads','r1',['a few records,','found by key'],'r2',['totals over','many records']],
+              ['Writes','w1',['small writes','from user input'],'w2',['bulk loads (ETL)','or event streams']],
+              ['Used by','u1',['customers,','through the app'],'u2',['internal analysts,','for decisions']],
+              ['Data shows','d1',['the latest state,','right now'],'d2',['history of events','over time']],
+              ['Size','s1',['gigabytes to','terabytes'],'s2',['terabytes to','petabytes']]];
+  let s='<rect x="0" y="0" width="157" height="292" rx="12" style="fill:var(--h1-bg)"/><rect x="163" y="0" width="157" height="292" rx="12" style="fill:var(--h2-bg)"/>'+
+   T(78,22,'OLTP','text-anchor:middle;font-weight:700;font-size:14px;fill:var(--h1)')+T(241,22,'OLAP','text-anchor:middle;font-weight:700;font-size:14px;fill:var(--h2)');
+  rows.forEach((r,i)=>{const y=34+i*51;
+    s+=T(160,y+10,r[0].toUpperCase(),'text-anchor:middle;font-weight:700;fill:var(--muted);letter-spacing:.06em');
+    s+=ic(r[1],8,y+15,'var(--h1)')+T(44,y+27,r[2][0])+T(44,y+42,r[2][1]);
+    s+=ic(r[3],171,y+15,'var(--h2)')+T(207,y+27,r[4][0])+T(207,y+42,r[4][1]);});
+  L.h(L.kick('learn','Side by side')+'<h1 class="q">Five ways the two workloads differ</h1>'+
+   '<svg class="ac-svg" viewBox="0 0 320 292" role="img" aria-label="OLTP versus OLAP: reads, writes, users, what the data shows, and dataset size.">'+s+'</svg>'+
+   '<p class="ac-cap">The line isn’t always sharp, and SQL handles both kinds of query. Still, from the late 1980s companies began running analytics on a separate database.</p>'+CSS);
+  L.done();}},
+
 {part:0,src:'Chapter 3 · Transaction Processing or Analytics?',pts:6,run(L){
   L.h(L.kick('pr','Sort the requests')+'<h1 class="q">Six things that hit Otterpost’s data today. Which kind is each?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['OLTP','OLAP'],[
-   ['A recipient refreshes the tracking page for one parcel',0,'One record, found by its tracking code, for an end user.'],
+   ['Mrs. Okoro refreshes the tracking page for parcel OP-48213',0,'One record, found by its tracking code, for an end user.'],
    ['Average delivery time per zone, by weekday, for last quarter',1,'Scans a quarter of history and returns averages.'],
-   ['A courier scans a parcel as delivered',0,'A small, low-latency write from user input.'],
+   ['Courier Ravi scans a parcel as delivered',0,'A small, low-latency write from user input.'],
    ['Bramble & Bolt’s on-time rate for each month this year',1,'Aggregates a year of deliveries for a report.'],
    ['A merchant books a parcel through the API',0,'One new record, written right away for a customer.'],
    ['Parcels per hub in Peak Week versus a normal week',1,'Counts across millions of events to compare two periods.']],
-   'Users touching one record at a time is OLTP. Analysts adding up history is OLAP.');}},
+   'Users touching a few records at a time is OLTP. Analysts adding up history is OLAP.');}},
 
-/* ---------- PART 2: WAREHOUSES AND STARS ---------- */
-{part:1,src:'Chapter 3 · Data Warehousing',run(L){
-  L.h(L.kick('learn','Data warehouses')+'<h1 class="q">Give analysts their own copy of the data</h1>'+
-   L.prose('A large company runs dozens of transaction systems: the website, the checkout tills, stock tracking, vehicle route planning, suppliers, staff. They must stay available and fast, so their administrators guard them and don’t like analysts running ad hoc queries that scan huge parts of the data and slow down live transactions.')+
-   L.prose('So analysts get a '+L.g('warehouse','data warehouse')+': a separate, read-only copy of the data from all those systems, which they can query as hard as they like. Getting the data in is '+L.g('etl','ETL')+':')+
-   L.flow([['down','Extract','Pull data out of each OLTP database, by a periodic dump or a continuous stream of updates.','',1],['cycle','Transform','Reshape it into an analysis-friendly schema and clean it up.','',2],['box','Load','Write it into the warehouse.','',3]])+
-   '<p class="small">Almost every large enterprise has one. Small companies rarely do: their data fits in an ordinary SQL database or even a spreadsheet. The big win of a separate warehouse is that it can be built for analytic access patterns, which the indexes of the last two lessons don’t serve well.</p>');
+{part:0,src:'Chapter 3 · Data Warehousing',
+ solve:async L=>{L.$('#lu-b1').click();await waitFor(L,()=>!L.$('#lu-b2').disabled);L.$('#lu-b2').click();await waitFor(L,()=>!L.$('#lu-b3').disabled);L.$('#lu-b3').click();await waitFor(L,()=>L.$('#lu-done'));},
+ run(L){
+  L.h(L.kick('ex','Lunchtime in Peak Week')+'<h1 class="q">A manager wants late deliveries per zone for the whole year. Run it, and watch the tracking page.</h1>'+
+   '<svg class="ac-svg" id="lu-map" viewBox="0 0 320 152" role="img" aria-label="Parcel DB, Dispatch and Billing on the left, the analytics warehouse on the right."></svg>'+
+   '<div class="ac-lbl">Tracking-page response time (ms, illustrative)</div><svg class="ac-svg" id="lu-st" viewBox="0 0 320 88" role="img" aria-label="Recent tracking-page response times"></svg>'+
+   '<div class="ac-read" id="lu-rd"></div><div class="ac-row" id="lu-btns"></div><div id="lu-x"></div>'+CSS);
+  const vals=Array.from({length:30},()=>40+Math.random()*25);let job=null,built=false,fin=false;
+  const bx=L.$('#lu-btns');
+  const b1=mkBtn(bx,L.ic('play')+'Run it on the Parcel DB','btn pri',()=>{if(job||b1.disabled)return;b1.disabled=true;job={where:'db',p:0};},'lu-b1');
+  const b2=mkBtn(bx,'Build the warehouse','btn',()=>{if(job||b2.disabled)return;b2.disabled=true;built=true;b3.disabled=false;b3.classList.add('pri');
+    L.$('#lu-x').innerHTML='';L.fb(L.$('#lu-x'),'Linh’s nightly '+L.g('etl','ETL')+' job now <b>extracts</b> data from the Parcel DB, Dispatch and Billing, <b>transforms</b> it into an analysis-friendly shape, and <b>loads</b> it into the warehouse.','info');draw();},'lu-b2');
+  const b3=mkBtn(bx,L.ic('play')+'Run it on the warehouse','btn',()=>{if(job||b3.disabled)return;b3.disabled=true;job={where:'wh',p:0};},'lu-b3');
+  b2.disabled=true;b3.disabled=true;
+  function draw(){
+    const onDb=job&&job.where==='db',onWh=job&&job.where==='wh';let s='';
+    s+=T(58,11,'live users','text-anchor:middle;fill:var(--muted)');
+    [34,58,82].forEach(x=>{s+='<path d="M'+x+' 22V36" style="stroke:var(--h1);stroke-width:1.5"/><circle cx="'+x+'" cy="20" r="5" style="fill:var(--h1)"/>';});
+    s+='<rect x="8" y="36" width="100" height="44" rx="9" style="fill:'+(onDb?'var(--no-bg)':'var(--h1-bg)')+';stroke:'+(onDb?'var(--no)':'var(--h1)')+';stroke-width:1.8"/>'+T(58,54,'Parcel DB','text-anchor:middle;font-weight:700');
+    s+=onDb?'<rect x="18" y="64" width="80" height="7" rx="3.5" style="fill:var(--soft2)"/><rect x="18" y="64" width="'+(80*job.p)+'" height="7" rx="3.5" style="fill:var(--no-strong)"/>':T(58,72,'OLTP','text-anchor:middle;fill:var(--muted)');
+    s+='<rect x="8" y="88" width="100" height="26" rx="7" style="fill:var(--soft);stroke:var(--line2)"/>'+T(58,105,'Dispatch','text-anchor:middle');
+    s+='<rect x="8" y="120" width="100" height="26" rx="7" style="fill:var(--soft);stroke:var(--line2)"/>'+T(58,137,'Billing','text-anchor:middle');
+    if(built){s+='<path d="M108 58C130 58 132 86 152 86M108 101C130 101 132 86 152 86M108 133C130 133 132 86 152 86" style="fill:none;stroke:var(--h2);stroke-width:1.8"/>'+
+      '<path d="M152 86H206" style="stroke:var(--h2);stroke-width:2"/><path d="M200 81l7 5-7 5" style="fill:none;stroke:var(--h2);stroke-width:2"/>'+
+      T(179,78,'ETL','text-anchor:middle;font-weight:700;fill:var(--h2)')+T(179,102,'nightly','text-anchor:middle;fill:var(--muted)');}
+    s+='<rect x="212" y="60" width="104" height="56" rx="10" style="fill:'+(built?(onWh?'var(--h2-bg)':'var(--card)'):'none')+';stroke:'+(built?'var(--h2)':'var(--line2)')+';stroke-width:1.8;'+(built?'':'stroke-dasharray:5 4')+'"/>'+
+      T(264,80,'Analytics','text-anchor:middle;font-weight:700;'+(built?'':'fill:var(--faint)'))+T(264,95,'warehouse','text-anchor:middle;font-weight:700;'+(built?'':'fill:var(--faint)'));
+    if(onWh)s+='<rect x="224" y="102" width="80" height="7" rx="3.5" style="fill:var(--soft2)"/><rect x="224" y="102" width="'+(80*job.p)+'" height="7" rx="3.5" style="fill:var(--ok-strong)"/>';
+    s+=T(264,11,'manager’s report','text-anchor:middle;fill:var(--muted)')+'<circle cx="264" cy="22" r="6" style="fill:var(--h3)"/>';
+    if(job)s+='<path d="'+(onDb?'M258 24C210 30 150 34 108 44':'M264 28V60')+'" style="fill:none;stroke:var(--h3);stroke-width:2;stroke-dasharray:4 3"/>';
+    L.$('#lu-map').innerHTML=s;
+    let t='';const sc=v=>Math.min(70,v*.07);
+    vals.forEach((v,k)=>{const h=sc(v);t+='<rect x="'+(30+k*9.6)+'" y="'+(78-h)+'" width="8" height="'+Math.max(1,h)+'" rx="1.5" style="fill:'+(v>200?'var(--no-strong)':'var(--ok-strong)')+'"/>';});
+    t+='<path d="M28 '+(78-sc(200))+'H318" style="stroke:var(--muted);stroke-width:1;stroke-dasharray:3 3"/>'+T(24,78-sc(200)+4,'200','text-anchor:end;fill:var(--muted)')+T(24,12,'1 s','text-anchor:end;fill:var(--muted)')+'<path d="M28 78H318" style="stroke:var(--line2)"/>';
+    L.$('#lu-st').innerHTML=t;
+    const v=vals[vals.length-1];
+    L.$('#lu-rd').innerHTML='Tracking page now: <b style="color:'+(v>200?'var(--no)':'var(--ok)')+'">'+Math.round(v)+' ms</b> · Report: '+(job?'<b>'+Math.round(job.p*100)+'%</b> on the '+(onDb?'Parcel DB':'warehouse'):fin?'done on the warehouse':built?'ready to run':'not started');
+  }
+  function finish(){const w=job.where;job=null;
+    if(w==='db'){b2.disabled=false;b2.classList.add('pri');b1.classList.remove('pri');L.$('#lu-x').innerHTML='';L.fb(L.$('#lu-x'),'While the scan ran, couriers, merchants and recipients all waited. Database admins guard their live systems from exactly this kind of query.','no');}
+    else{fin=true;L.$('#lu-x').insertAdjacentHTML('beforeend','<span id="lu-done"></span>');
+      L.sheet('info','That’s why warehouses exist','A '+L.g('warehouse','data warehouse')+' is a separate, read-only copy of all the live systems’ data. Analysts can query it as hard as they like without slowing anyone down, and it can be built for analytic access patterns. Almost every large company has one; small ones rarely do, since their data fits in an ordinary database or even a spreadsheet.');L.done();}
+    draw();}
+  const iv=setInterval(()=>{if(!live(L.$('#lu-st'))){clearInterval(iv);return;}
+    const busy=job&&job.where==='db';vals.push(busy?360+Math.random()*560:38+Math.random()*28);vals.shift();
+    if(job){job.p=Math.min(1,job.p+.07);if(job.p>=1)finish();}
+    draw();},110);
+  draw();}},
+
+{part:0,src:'Chapter 3 · The divergence between OLTP databases and data warehouses',run(L){
+  const tree='<rect x="66" y="70" width="26" height="12" rx="3" style="fill:var(--h1)"/><path d="M79 82L52 100M79 82L106 100M52 112L38 126M52 112L64 126M106 112L94 126M106 112L120 126" style="stroke:var(--line2);stroke-width:1.5"/>'+
+   '<rect x="40" y="100" width="24" height="12" rx="3" style="fill:var(--h1-bg);stroke:var(--h1)"/><rect x="94" y="100" width="24" height="12" rx="3" style="fill:var(--h1-bg);stroke:var(--h1)"/>'+
+   [30,56,86,112].map(x=>'<rect x="'+x+'" y="126" width="18" height="10" rx="2" style="fill:var(--soft2)"/>').join('')+'<rect x="86" y="126" width="18" height="10" rx="2" style="fill:var(--h1)"/>';
+  const cols=[0,1,2,3,4,5,6].map(i=>'<rect x="'+(200+i*12)+'" y="70" width="9" height="66" rx="2" style="fill:'+([1,4].includes(i)?'var(--h2)':'var(--soft2)')+'"/>').join('');
+  L.h(L.kick('learn','Same SQL, different insides')+'<h1 class="q">On top, a warehouse looks like any SQL database. Open it up.</h1>'+
+   '<svg class="ac-svg" viewBox="0 0 320 180" role="img" aria-label="Two databases with the same SQL lid. Inside the OLTP engine: an index tree finding one row. Inside the warehouse engine: column files scanned in bulk.">'+
+    ['6','168'].map(x=>'<rect x="'+x+'" y="4" width="146" height="30" rx="8" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.5"/>'+T(+x+73,24,'SQL','text-anchor:middle;font-weight:700;fill:var(--pri-deep)')).join('')+
+    '<rect x="6" y="40" width="146" height="136" rx="10" style="fill:var(--soft);stroke:var(--line2)"/><rect x="168" y="40" width="146" height="136" rx="10" style="fill:var(--soft);stroke:var(--line2)"/>'+
+    T(79,60,'OLTP engine','text-anchor:middle;font-weight:700')+T(241,60,'Warehouse engine','text-anchor:middle;font-weight:700')+tree+cols+
+    T(79,155,'indexes find a few','text-anchor:middle;fill:var(--muted)')+T(79,169,'rows by key','text-anchor:middle;fill:var(--muted)')+
+    T(241,155,'column files read','text-anchor:middle;fill:var(--muted)')+T(241,169,'in bulk','text-anchor:middle;fill:var(--muted)')+'</svg>'+
+   '<p class="ac-cap">Warehouses are mostly relational: SQL suits analytics, and drill-down tools sit on top. Inside, the engine is built for a very different query pattern, so many vendors now focus on one side.</p>'+
+   '<p class="small" style="margin:6px 0 0">Analytics engines in the book (2017): Teradata, Vertica, Redshift, Hive, Spark SQL, Impala, Presto. SQL Server and SAP HANA do both.</p>'+CSS);
   L.done();}},
-{part:1,src:'Chapter 3 · The divergence between OLTP databases and data warehouses',run(L){
-  L.h(L.kick('learn','Same SQL, different insides')+'<h1 class="q">A warehouse looks like an OLTP database, until you open it up</h1>'+
-   L.prose('Warehouses are mostly relational, because SQL suits analytic queries. Analysts often use graphical tools that write the SQL for them and let them explore: drill down into detail, or slice and dice the data by different dimensions.')+
-   L.lanes([['eye','On the surface','Both a warehouse and an OLTP database accept SQL queries. They look alike.',2],
-            ['layers','Underneath','The storage and query engines are built very differently, because they serve opposite query patterns.',3]])+
-   L.prose('Many vendors now focus on one side only. Some products, such as Microsoft SQL Server and SAP HANA, support both, but increasingly as two separate engines behind one shared SQL interface.')+
-   '<p class="small">In 2017 the field held commercial warehouses such as Teradata, Vertica and Amazon Redshift, and young open source “SQL-on-Hadoop” projects such as Hive, Spark SQL, Impala and Presto.</p>');
-  L.done();}},
-{part:1,src:'Chapter 3 · Data Warehousing',run(L){
-  L.h(L.kick('ex','An Otterpost story')+'<h1 class="q">Why Linh built the analytics warehouse</h1>');
-  L.beats(L.card,[
-   ['Early days','When Femi ran Otterpost as one app on one database, reports ran straight on it. The data was small, so that was fine.'],
-   ['The scare','One Peak Week, a manager ran “late deliveries per zone, for the whole year” at 2 pm. It scanned millions of rows and slowed bookings and the tracking page for everyone.'],
-   ['The split','Linh built a nightly ETL job: extract from the Parcel DB, dispatch and billing; transform into an analysis-friendly shape; load into the analytics warehouse.'],
-   ['Today','Route-efficiency and on-time reports query the warehouse as hard as they like. The Parcel DB serves couriers, merchants and recipients.']],
-   'The warehouse is '+L.g('derived','derived data')+': a reshaped copy that keeps heavy analytic scans away from the systems the business runs on.');}},
-{part:1,src:'Chapter 3 · Data Warehousing',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A new analyst wants to run a year-long route-efficiency query on the Parcel DB, “just once, at lunchtime.” What should Kwame say?</h1>');
-  L.mc(L.card,['Use the warehouse: big scans slow live work','Go ahead: the SQL is the same on both','Fine, as long as the query uses an index'],0,
-   'A year-long scan competes with couriers, merchants and recipients for the Parcel DB. The warehouse exists so analysts never have to.',
-   'Matching SQL doesn’t make the workloads alike, and an index doesn’t stop a year-long scan from reading millions of rows. Run it on the warehouse, away from live users.');}},
-{part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',run(L){
-  L.h(L.kick('learn','Stars and snowflakes')+'<h1 class="q">Most warehouses lay their tables out like a star</h1>'+
-   L.prose('Warehouses mostly follow one formula, the '+L.g('star-schema','star schema')+' (also called dimensional modelling). In the middle sits a '+L.g('fact-table','fact table')+': each row is one event at a particular time. In the book’s grocery example, each row is one customer buying one product.')+
-   '<div style="display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:6px;margin:14px 0;text-align:center;font-size:13px">'+
-    CELL('')+CELL('dim_date',2)+CELL('')+CELL('dim_hub',2)+CELL('fact_deliveries',1)+CELL('dim_merchant',2)+CELL('')+CELL('dim_courier',2)+CELL('')+'</div>'+
-   L.prose('Some columns are attributes, like the fee charged. Others are foreign keys to '+L.g('dimension-table','dimension tables')+' that describe the event’s who, what, where, when, how and why. Even dates get a table, so it can record things like public holidays.')+
-   '<p class="small">Facts are kept as individual events for maximum flexibility, so fact tables get huge. A <b>snowflake schema</b> splits dimensions into sub-dimensions, such as a separate region table. That is more normalized, but analysts usually find stars simpler to work with.</p>');
-  L.done();}},
+
+/* ---------- PART 2: STARS AND COLUMNS ---------- */
+{part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',
+ solve:async L=>{L.$('#st-day').click();await waitFor(L,()=>!L.$('#st-day').disabled);L.$('#st-snow').click();await L.sleep(60);},
+ run(L){
+  const S={fact:800000000,date:2190,snow:false,days:0,anim:false};
+  L.h(L.kick('learn','Stars and snowflakes')+'<h1 class="q">Linh’s warehouse: one fact table, dimensions around it</h1>'+
+   goals('stg',['Play one day of deliveries','Turn the star into a snowflake'])+
+   '<svg class="ac-svg" id="st-s" viewBox="0 0 320 252" role="img" aria-label="Star schema: fact_deliveries in the middle, five dimension tables around it."></svg>'+
+   '<div class="ac-row" id="st-b"></div>'+
+   '<p class="ac-cap">The '+L.g('fact-table','fact table')+' holds one row per event, here a delivery attempt: values like fee and minutes late, plus keys to the '+L.g('dimension-table','dimension tables')+' around it. Even dates get one, to mark holidays and Peak Week. Row counts are illustrative.</p>'+CSS);
+  const box=(x,y,w,h,a,b,c,kind)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="9" style="fill:'+(kind==='f'?'var(--h1-bg)':kind==='s'?'var(--h3-bg)':'var(--card)')+';stroke:'+(kind==='f'?'var(--h1)':kind==='s'?'var(--h3)':'var(--line2)')+';stroke-width:1.6"/>'+
+    T(x+w/2,y+17,a,'font-weight:700;text-anchor:middle')+T(x+w/2,y+32,b,'text-anchor:middle;fill:var(--muted)')+T(x+w/2,y+46,c,'text-anchor:middle;font-variant-numeric:tabular-nums'+(kind==='g'?';fill:var(--ok);font-weight:700':''));
+  function draw(badge){
+    const D=[['dim_date','when',fmt(S.date)+' rows',114,4],['dim_hub','where','4 rows',2,100],['dim_merchant','who sent it','2,400 rows',226,100],['dim_courier','who carried it','3,000 rows',20,196],['dim_service','how','2 rows',208,196]];
+    let s='';D.forEach(d=>{s+='<path d="M160 126L'+(d[3]+46)+' '+(d[4]+26)+'" style="stroke:var(--line2);stroke-width:2"/>';});
+    if(S.snow)s+='<path d="M48 54V100M272 54V100" style="stroke:var(--h3);stroke-width:2;stroke-dasharray:4 3"/>'+box(2,4,92,50,'dim_region','region of hub','3 rows','s')+box(226,4,92,50,'dim_category','shop category','12 rows','s');
+    D.forEach((d,j)=>{s+=box(d[3],d[4],92,52,d[0],d[1],d[2],j===0&&S.days?'g':'');});
+    s+=box(100,94,120,64,'fact_deliveries',fmt(S.fact)+' rows','120 columns','f');
+    if(badge||S.days)s+=T(160,176,'+400,000 rows today','text-anchor:middle;font-weight:700;fill:var(--ok)');
+    L.$('#st-s').innerHTML=s;}
+  const bx=L.$('#st-b');
+  const bd=mkBtn(bx,L.ic('play')+'Play one day','btn pri',async()=>{if(S.anim)return;S.anim=true;bd.disabled=true;const f0=S.fact;
+    for(let k=1;k<=10;k++){S.fact=f0+40000*k;draw(true);await L.sleep(70);if(!live(bx))return;}
+    S.date++;S.days++;draw(true);S.anim=false;bd.disabled=false;tick(L,'stg',0);chk();},'st-day');
+  const bs=mkBtn(bx,'Snowflake it','btn',()=>{S.snow=!S.snow;bs.classList.toggle('sel',S.snow);bs.textContent=S.snow?'Back to a star':'Snowflake it';draw();if(S.snow)tick(L,'stg',1);chk();},'st-snow');
+  function chk(){if(allTicked(L,'stg')&&!S.told){S.told=true;
+    L.sheet('info','Facts pile up, dimensions barely move','A day adds 400,000 fact rows and one date row (in green). Facts are kept as single events for flexible analysis, so fact tables get huge (an Apple, Walmart or eBay may hold tens of petabytes) and are often over 100 columns wide. Splitting dimensions into sub-dimensions gives a <b>snowflake</b>: more normalized, but analysts usually find the '+L.g('star-schema','star')+' simpler.');L.done();}}
+  draw();}},
+
 {part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',pts:5,run(L){
-  L.h(L.kick('pr','Design the star')+'<h1 class="q">Linh sketches the warehouse tables for deliveries. Where does each one belong?</h1><div id="bk"></div>');
+  const nb=(x,y,w,t,k)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="26" rx="7" style="fill:var(--'+k+'-bg);stroke:var(--'+k+');stroke-width:1.5"/>'+T(x+w/2,y+17,t,'text-anchor:middle;font-weight:700;fill:var(--'+k+')');
+  L.h(L.kick('pr','Design the star')+'<h1 class="q">Linh sketches more warehouse tables. Where does each one belong?</h1>'+
+   '<svg class="ac-svg" viewBox="0 0 320 112" role="img" aria-label="A small star: a fact table of events in the middle, dimension tables around it, and a sub-dimension hanging off one dimension.">'+
+    '<path d="M160 56L52 18M160 56L268 18M160 56L52 94M160 56L207 94" style="stroke:var(--line2);stroke-width:2"/><path d="M246 94H256" style="stroke:var(--h3);stroke-width:2;stroke-dasharray:4 3"/>'+
+    nb(110,43,100,'Fact: events','h1')+nb(8,5,88,'Dimension','h2')+nb(224,5,88,'Dimension','h2')+nb(8,81,88,'Dimension','h2')+nb(168,81,78,'Dimension','h2')+
+    '<rect x="256" y="81" width="62" height="26" rx="7" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5;stroke-dasharray:4 2"/>'+T(287,98,'Sub-dim','text-anchor:middle;font-weight:700;fill:var(--h3);font-size:11px')+
+   '</svg><div id="bk"></div>'+CSS);
   L.buckets(L.$('#bk'),['Fact table','Dimension','Sub-dimension'],[
-   ['One row per delivery attempt: its time, fee and minutes late, plus keys for courier, hub, merchant and date',0,'Each row is one event, so this is the fact table.'],
+   ['One row per scan event: its time, the scanner used, plus keys for parcel, courier and hub',0,'Each row is one event that happened at a particular time, so it’s a fact table.'],
    ['One row per merchant: name, size, signup date, line of business',1,'It describes the “who” behind each delivery.'],
    ['One row per calendar day: weekday, public holiday or not, inside Peak Week or not',1,'Dates get their own dimension, so queries can compare holidays, weekdays and Peak Week.'],
    ['One row per hub: name, number of loading bays, opening date',1,'It describes the “where” of each delivery.'],
    ['One row per region, which the hub table points to instead of storing the region’s name',2,'Splitting a dimension into a smaller table like this turns the star into a snowflake.']],
    'Events in the middle, descriptions around them. Split the descriptions further and the star becomes a snowflake.');}},
-{part:1,src:'Chapter 3 · Stars and Snowflakes: Schemas for Analytics',pts:1,run(L){
-  L.h(L.kick('pr','Growth check')+'<h1 class="q">Which of Linh’s tables grows by about 400,000 rows every day?</h1>');
-  L.mc(L.card,['dim_hub, with one row per hub','fact_deliveries, with one row per delivery','dim_date, with one row per calendar day'],1,
-   'Facts are individual events, so the fact table grows with every delivery. Dimension tables change slowly.',
-   'Hubs and calendar days barely change: those dimensions gain a row now and then. Every delivery is a new event, so the fact table grows by about 400,000 rows a day.');}},
 
-/* ---------- PART 3: COLUMN STORAGE ---------- */
-{part:2,src:'Chapter 3 · Column-Oriented Storage',run(L){
-  L.h(L.kick('learn','Column-oriented storage')+'<h1 class="q">Store each column together, not each row</h1>'+
-   L.prose('Fact tables get enormous, and they are wide: often over 100 columns. Yet a typical warehouse query touches only 4 or 5 of them.')+
-   L.lanes([['list','Row-oriented','Most OLTP databases keep all the values of a row next to each other. Even with an index to find the right rows, the engine must load every one of them, all 100+ columns, parse them and filter them.',4],
-            ['layers','Column-oriented','Keep all the values of each column together, say one file per column. A query reads and parses only the columns it uses.',2]])+
-   L.prose('Every column file keeps the rows in the same order. To rebuild row 23, take the 23rd entry from each column file. That is '+L.g('column-store','column-oriented storage')+'.')+
-   '<p class="small">It isn’t only for relational data: Parquet is a column format that supports a document data model.</p>');
-  L.done();}},
-{part:2,src:'Chapter 3 · Column-Oriented Storage',pts:1,
- solve:async L=>{L.$('#po').children[1].click();L.$('#run').click();await L.sleep(1500);},
+{part:1,src:'Chapter 3 · Column-Oriented Storage',run(L){
+  const D=[['Mon','WC','no','7.50'],['Mon','ED','yes','9.00'],['Tue','WC','no','6.20'],['Tue','WN','yes','8.10']],H=['date','hub','late','fee'],C=['h1','h2','h3','h4'];
+  L.h(L.kick('learn','Rows or columns on disk')+'<h1 class="q">The same table, laid on disk two ways</h1>'+
+   '<svg class="ac-svg" id="rc-s" viewBox="0 0 320 224" role="img" aria-label="A four-row table. Row-oriented: one file with each row’s values side by side. Column-oriented: one file per column."></svg>'+
+   '<div class="ac-row" id="rc-b"><span class="small">Rebuild row:</span></div>'+
+   '<p class="ac-cap"><b>Row-oriented</b> (most OLTP databases, and documents too): a row’s values sit side by side. <b>'+L.g('column-store','Column-oriented')+'</b>: one file per column, every file in the same row order, so row 3 is the 3rd entry of each file.</p>'+CSS);
+  let sel=2;
+  function draw(){let s='';
+    H.forEach((h,c)=>{s+=T(70+c*62,16,h,'font-weight:700;text-anchor:middle;fill:var(--'+C[c]+')');});
+    D.forEach((r,i)=>{s+=T(32,40+i*22,String(i+1),'text-anchor:end;fill:var(--muted)');
+      r.forEach((v,c)=>{s+='<rect x="'+(41+c*62)+'" y="'+(26+i*22)+'" width="58" height="20" rx="4" style="fill:var(--'+C[c]+'-bg);stroke:'+(i===sel?'var(--ink)':'none')+';stroke-width:2"/>'+T(70+c*62,40+i*22,v,'text-anchor:middle');});});
+    s+=T(0,132,'Row-oriented: one file, row after row','font-weight:700');
+    for(let k=0;k<16;k++){const i=Math.floor(k/4),c=k%4;s+='<rect x="'+(2+k*19.8)+'" y="140" width="18.4" height="22" rx="3" style="fill:var(--'+C[c]+'-bg);stroke:'+(i===sel?'var(--ink)':'var(--'+C[c]+')')+';stroke-width:'+(i===sel?2.2:1)+'"/>';}
+    s+=T(0,186,'Column-oriented: one file per column','font-weight:700');
+    for(let c=0;c<4;c++){const x0=2+c*80;for(let j=0;j<4;j++)s+='<rect x="'+(x0+j*18.6)+'" y="194" width="17.2" height="22" rx="3" style="fill:var(--'+C[c]+'-bg);stroke:'+(j===sel?'var(--ink)':'var(--'+C[c]+')')+';stroke-width:'+(j===sel?2.2:1)+'"/>';}
+    L.$('#rc-s').innerHTML=s;}
+  [0,1,2,3].forEach(i=>{const b=mkBtn(L.$('#rc-b'),String(i+1),'chip sm',()=>{sel=sel===i?-1:i;[...L.$('#rc-b').querySelectorAll('.chip')].forEach((x,k)=>x.classList.toggle('sel',k===sel));draw();});b.style.minWidth='42px';b.style.justifyContent='center';if(i===sel)b.classList.add('sel');});
+  draw();L.done();}},
+
+{part:1,src:'Chapter 3 · Column-Oriented Storage',
+ solve:async L=>{['0','1','2'].forEach(c=>L.$('#bx-c'+c).click());L.$('#bx-lrow').click();L.$('#bx-lcol').click();await L.sleep(30);},
  run(L){
-  let p=null;
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Linh’s query, “late deliveries per weekday in Eastvale last year,” needs 3 of fact_deliveries’ 120 columns. Which layout reads less data?</h1><div id="po"></div>'+
-   '<div id="race" hidden><div class="meterrow"><div class="lb">Row store</div><div class="meter"><div id="m0" style="background:var(--h4)"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">Column store</div><div class="meter"><div id="m1" style="background:var(--ok-strong)"></div></div></div>'+
-   '<p class="small" id="rd" style="margin:6px 0 10px">Data read for the same rows</p><button class="btn pri" id="run">'+L.ic('play')+'Run the query</button></div>');
-  ['The row store','The column store','About the same'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
-    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#race').hidden=false;};L.$('#po').appendChild(b);});
-  L.$('#run').onclick=function(){this.remove();let t=0;
-    const iv=setInterval(()=>{const m0=L.$('#m0');if(!m0){clearInterval(iv);return;}t++;
-      m0.style.width=(t*10)+'%';L.$('#m1').style.width=Math.max(3,Math.round(t*0.25))+'%';
-      L.$('#rd').innerHTML='Row store: <b>'+(t*12)+' of 120</b> columns read · Column store: <b>3 of 120</b>';
-      if(t>=10){clearInterval(iv);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'You called it':'The column store reads far less','A row store has to load whole rows, all 120 columns, even though the query uses only 3. The column store opens just 3 column files: for the same rows, about a fortieth of the data.');L.done();}},120);};}},
+  L.h(L.kick('ex','Explore the block map')+'<h1 class="q">Linh’s report needs date, hub and late. Tick them, then flip between the layouts.</h1>'+
+   goals('bxg',['Tick only the columns the report needs','See the read in both layouts'])+
+   '<div class="ac-row" id="bx-lay"></div><div id="bx-m"></div><div class="ac-read" id="bx-rd"></div><div class="ac-lbl">Columns the query needs</div><div class="ac-row" id="bx-cols" style="gap:6px"></div>'+
+   '<p class="small" style="margin:0">fact_deliveries for one year: 146 million rows (400,000 a day), 120 columns. Sizes are illustrative.</p>'+CSS);
+  const M=blockMap(L.$('#bx-m'),'bx-svg');M.S.layout='row';M.draw();const seen={row:false,col:false};
+  [...BM_COLS,'+108 more'].forEach((n,c)=>{mkBtn(L.$('#bx-cols'),n,'chip sm',function(){if(M.S.cols.has(c))M.S.cols.delete(c);else M.S.cols.add(c);this.classList.toggle('sel',M.S.cols.has(c));upd();},'bx-c'+c);});
+  [['row','Row store'],['col','Column store']].forEach(([k,t])=>mkBtn(L.$('#bx-lay'),t,'chip'+(k==='row'?' sel':''),()=>{M.S.layout=k;L.$('#bx-lrow').classList.toggle('sel',k==='row');L.$('#bx-lcol').classList.toggle('sel',k==='col');upd();},'bx-l'+k));
+  function upd(){M.draw();const st=bmStats(M.S),C=M.S.cols;
+    const good=C.has(0)&&C.has(1)&&C.has(2)&&C.size===3;
+    if(good){tick(L,'bxg',0);seen[M.S.layout]=true;if(seen.row&&seen.col)tick(L,'bxg',1);}
+    L.$('#bx-rd').innerHTML=!C.size?'Tick the columns a query needs.':M.S.layout==='row'?'Row store reads <b>'+gb(st.row)+'</b> of '+gb(BM_TOTAL)+': every block, because each block holds whole rows.':'Column store reads <b>'+gb(st.col)+'</b> of '+gb(BM_TOTAL)+': only the files of the ticked columns.';
+    if(allTicked(L,'bxg')&&!M.told){M.told=true;L.sheet('info','Same rows, a fortieth of the bytes','Both layouts visit every delivery of the year. The row store has to drag all 120 columns along; the column store opens just 3 files. Try ticking more columns: the column store’s read grows, the row store’s doesn’t change.');L.done();}}
+  upd();}},
+
+{part:1,src:'Chapter 3 · Column-Oriented Storage',pts:1,
+ solve:async L=>{L.$('#pr-o').children[1].click();await waitFor(L,()=>L.$('#pr-done'));},
+ run(L){
+  let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">The report reads 3 of fact_deliveries’ 120 columns, for every delivery of the year. Which layout reads less data?</h1>'+
+   '<div class="ac-row" id="pr-o"></div><div id="pr-m"></div>'+cmpHtml('pr-c','Data read so far')+'<div id="pr-x"></div>'+CSS);
+  const M=blockMap(L.$('#pr-m'),'pr-svg');M.S.cols=new Set([0,1,2]);M.S.layout='row';M.S.bands=new Set();M.draw();setCmp(L,'pr-c',0,0,'0 GB','0 GB',BM_TOTAL);
+  ['The row store','The column store','About the same'].forEach((t,j)=>mkBtn(L.$('#pr-o'),t,'chip',async function(){if(pick!==null)return;pick=j;this.classList.add('sel');
+    let rv=0,cv=0;
+    for(const lay of ['row','col']){M.S.layout=lay;M.S.bands=new Set();
+      for(let b=0;b<BM_BANDS;b++){M.S.bands.add(b);M.draw();const st=bmStats(M.S);if(lay==='row')rv=st.row;else cv=st.col;setCmp(L,'pr-c',rv,cv,gb(rv),gb(cv),BM_TOTAL);await L.sleep(110);if(!live(L.$('#pr-c')))return;}
+      await L.sleep(250);}
+    const ok=j===1;L.award(ok);L.$('#pr-x').innerHTML='<span id="pr-done"></span>';
+    L.sheet(ok?'ok':'no',ok?'You called it':'The column store reads far less','Even with an index on date, a row store must load every matching row, all 100-plus columns, then parse and filter it. The column store opens 3 files: about a fortieth of the data. The book’s own example is the same shape: fruit versus candy sales by weekday reads 3 columns of its fact table.');L.done();},'pr-o'+j));}},
+
+{part:1,src:'Chapter 3 · Column-Oriented Storage',
+ solve:async L=>{for(const k of ['all','one','wr']){L.$('#ed-p'+k).click();await L.sleep(20);}},
+ run(L){
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does column storage stop helping? Try each case.</h1>'+
+   goals('edg',['SELECT * for a year','Where is OP-48213?','Write one new delivery'])+
+   '<div class="ac-row" id="ed-p" style="gap:6px"></div><div class="ac-row" id="ed-l"></div><div id="ed-m"></div>'+cmpHtml('ed-c','')+'<div class="ac-read" id="ed-rd"></div>'+CSS);
+  const M=blockMap(L.$('#ed-m'),'ed-svg');
+  const P={rep:{t:'Linh’s report',set:S=>{S.mode='read';S.cols=new Set([0,1,2]);S.bands='all';},h:'Data read for a year',r:[BM_TOTAL,BM_TOTAL*3/120],rt:[gb(BM_TOTAL),gb(BM_TOTAL*3/120)],
+      cap:'<b>The sweet spot.</b> A few columns over many rows: the column store reads 3 files out of 120.'},
+   all:{t:'SELECT * for a year',g:0,set:S=>{S.mode='read';S.cols=new Set([0,1,2,3,4,5,6,7,8,9,10,11,12]);S.bands='all';},h:'Data read for a year',r:[BM_TOTAL,BM_TOTAL],rt:[gb(BM_TOTAL),gb(BM_TOTAL)],
+      cap:'<b>The edge is gone.</b> Every column is needed, so both layouts read everything, and the column store must stitch rows back together. Analytics rarely needs SELECT *, which is why the trick works.'},
+   one:{t:'Where is OP-48213?',g:1,set:S=>{S.mode='lookup';S.band=3;},h:'Places on disk read',r:[1,120],rt:['1 block','120 files'],
+      cap:'<b>One parcel, every field: the OLTP pattern.</b> A row store jumps to one place (with an index). A column store must visit all 120 column files to rebuild one row.'},
+   wr:{t:'Write one new delivery',g:2,set:S=>{S.mode='write';},h:'Places on disk rewritten',r:[1,120],rt:['1 block','120 files'],
+      cap:'<b>Writing one row.</b> A row store updates one block. Sorted, compressed column files can’t be changed in place: inserting a row in the middle means rewriting every column file. Part 4 shows the fix.'}};
+  let cur='rep';
+  function show(k){cur=k;const p=P[k];p.set(M.S);M.draw();setCmp(L,'ed-c',p.r[0],p.r[1],p.rt[0],p.rt[1],null,p.h);L.$('#ed-rd').innerHTML=p.cap;
+    [...L.$('#ed-p').children].forEach(x=>x.classList.toggle('sel',x.id==='ed-p'+k));
+    if(p.g!=null)tick(L,'edg',p.g);
+    if(allTicked(L,'edg')&&!M.told){M.told=true;L.sheet('info','Built for one shape of query','Column storage wins when a query reads <b>few columns of many rows</b>. Ask for every column, or one whole row, and the advantage disappears or flips. Writes are the hardest part: you’ll see the fix in part 4. Not every warehouse is a column store, but for ad hoc analytics columns can be much faster, so they’re spreading fast.');L.done();}}
+  Object.keys(P).forEach(k=>mkBtn(L.$('#ed-p'),P[k].t,'chip sm',()=>show(k),'ed-p'+k));
+  [['row','Row store'],['col','Column store']].forEach(([k,t])=>mkBtn(L.$('#ed-l'),'Map: '+t,'chip sm'+(k==='col'?' sel':''),()=>{M.S.layout=k;[...L.$('#ed-l').children].forEach(x=>x.classList.toggle('sel',x.id==='ed-l'+k));M.draw();},'ed-l'+k));
+  show('rep');}},
+
+/* ---------- PART 3: COMPRESS AND SORT ---------- */
 {part:2,src:'Chapter 3 · Column Compression',run(L){
-  L.h(L.kick('learn','Column compression')+'<h1 class="q">Columns compress beautifully</h1>'+
-   L.prose('The values in one column are often repetitive, and repetition compresses well. One technique that works especially well in warehouses is '+L.g('bitmap','bitmap encoding')+'.')+
-   L.prose('A column usually has far fewer distinct values than rows: a retailer may have billions of sales but only 100,000 products. For a column with n distinct values, make n bitmaps, one per value, with one bit per row: 1 if the row has that value. When n is bigger, most bits are 0, so each bitmap can be shrunk further with '+L.g('rle','run-length encoding')+'.')+
-   L.list([['Product is 30, 68 or 69','Load those three bitmaps and combine them with a bitwise OR.'],
-     ['Product 31 sold in store 3','Combine the two bitmaps with a bitwise AND. It works because every column keeps its rows in the same order.']],3)+
-   L.note('<b>It helps the CPU too.</b> A chunk of compressed column data fits in the CPU’s small, fast L1 cache, where the engine runs through it in a tight loop with no function calls. Operators like AND and OR can work on the compressed chunks directly. This is <b>vectorized processing</b>.','bulb'));
+  let mode='bits';
+  L.h(L.kick('learn','Bitmap encoding')+'<h1 class="q">Few distinct values? One bitmap per value.</h1>'+
+   '<svg class="ac-svg" id="bm-s" viewBox="0 0 320 156" role="img" aria-label="The hub column of 12 deliveries, and one bitmap for each hub value."></svg>'+
+   '<div class="ac-row" id="bm-b"></div>'+
+   '<p class="ac-cap">A column has far fewer distinct values than rows (billions of sales, maybe 100,000 products). Keep one '+L.g('bitmap','bitmap')+' per value: 1 where the row has it. Mostly-zero bitmaps shrink further with '+L.g('rle','run-length encoding')+'.</p>'+
+   '<p class="small" style="margin:6px 0 0">WC, WN = Westport Central, North · ED = Eastvale Depot.</p>'+CSS);
+  function draw(){let s=T(0,22,'hub','font-weight:700');
+    HUB12.forEach((h,i)=>{const x=44+i*23;s+='<rect x="'+x+'" y="6" width="21.5" height="24" rx="4" style="fill:var(--soft2)"/>'+T(x+10.75,22,h,'text-anchor:middle;font-size:11.5px');});
+    s+=T(44,50,mode==='bits'?'one bitmap per value, one bit per row':'run lengths: how many 0s, then 1s, then 0s…','fill:var(--muted)');
+    ['WC','WN','ED'].forEach((v,k)=>{const y=60+k*32,b=bitsOf(v);
+      if(mode==='bits')s+=bitRow(y,v,b);
+      else{const r=rle(b);s+=T(0,y+16,v,'font-weight:700')+'<rect x="44" y="'+y+'" width="'+(16+r.join(', ').length*6.4)+'" height="24" rx="4" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.4"/>'+
+        T(52,y+16.5,r.join(', '),'font-weight:700;fill:var(--h2)')+T(318,y+16.5,r.length+' numbers','text-anchor:end;fill:var(--muted)');}});
+    L.$('#bm-s').innerHTML=s;}
+  [['bits','Bitmaps'],['rle','Run-length encoded']].forEach(([k,t])=>mkBtn(L.$('#bm-b'),t,'chip'+(k==='bits'?' sel':''),()=>{mode=k;[...L.$('#bm-b').children].forEach(x=>x.classList.toggle('sel',x.id==='bm-'+k));draw();},'bm-'+k));
+  draw();L.done();}},
+
+{part:2,src:'Chapter 3 · Column Compression',pts:2,
+ solve:async L=>{L.$('#op-and').click();await waitFor(L,()=>L.$('#op-next'));L.$('#op-next').click();await L.sleep(30);L.$('#op-or').click();await waitFor(L,()=>L.$('#op-done'));},
+ run(L){
+  const TASKS=[{q:'Late deliveries at Eastvale Depot',a:['ED',bitsOf('ED')],b:['late',LATE12],op:'and'},
+               {q:'Deliveries at Westport Central or Westport North',a:['WC',bitsOf('WC')],b:['WN',bitsOf('WN')],op:'or'}];
+  let k=0,first=true,busy=false;
+  L.h(L.kick('try','Combine the bitmaps')+'<h1 class="q">Answer each filter by combining two bitmaps. Pick the operation.</h1>'+
+   '<div class="ac-q" id="op-q"></div><svg class="ac-svg" id="op-s" viewBox="0 0 320 132" role="img" aria-label="Two bitmaps and their combined result"></svg>'+
+   '<div class="ac-row" id="op-b"></div><div id="op-x"></div>'+CSS);
+  function draw(res,shown,op){const t=TASKS[k];let s=bitRow(4,t.a[0],t.a[1])+bitRow(34,t.b[0],t.b[1]);
+    s+=T(185,76,op?op.toUpperCase():'AND or OR ?','text-anchor:middle;font-weight:700;fill:var(--pri)');
+    s+='<path d="M44 82H320" style="stroke:var(--line2)"/>'+bitRow(88,'result',res||t.a[1].map(()=>0),'var(--pri)',res?shown:0);
+    L.$('#op-s').innerHTML=s;}
+  function task(){first=true;const t=TASKS[k];L.$('#op-q').innerHTML='<small>Filter '+(k+1)+' of 2</small>'+t.q;L.$('#op-x').innerHTML='';L.$('#op-b').innerHTML='';
+    ['and','or'].forEach(o=>mkBtn(L.$('#op-b'),o.toUpperCase(),'chip',()=>run(o),'op-'+o));draw();}
+  async function run(o){if(busy)return;busy=true;const t=TASKS[k],res=t.a[1].map((x,i)=>o==='and'?x&t.b[1][i]:x|t.b[1][i]);
+    [...L.$('#op-b').children].forEach(x=>x.classList.toggle('sel',x.id==='op-'+o));
+    for(let i=1;i<=12;i++){draw(res,i,o);await L.sleep(45);if(!live(L.$('#op-s')))return;}
+    const ok=o===t.op,rows=res.map((b,i)=>b?i+1:0).filter(Boolean);
+    if(first){L.award(ok);first=false;}
+    L.$('#op-x').innerHTML='';
+    L.fb(L.$('#op-x'),(ok?'<b>Right.</b> ':'<b>Not this one.</b> ')+'Rows '+rows.join(', ')+'. '+(t.op==='and'?(ok?'Both conditions must hold, so AND.':'OR gives rows that are late <i>or</i> at Eastvale. You need both: try AND.'):(ok?'Either hub counts, so OR.':'AND would need a delivery at two hubs at once: no rows. Either hub counts: try OR.')),ok?'ok':'no');
+    busy=false;
+    if(ok){[...L.$('#op-b').children].forEach(x=>x.disabled=true);
+      if(k===0)mkBtn(L.$('#op-x'),'Next filter '+L.ic('arrow'),'btn pri',()=>{k=1;task();},'op-next').style.marginTop='10px';
+      else{L.$('#op-x').insertAdjacentHTML('beforeend','<span id="op-done"></span>');
+        L.sheet('info','Why lining bitmaps up is safe','Bit k means row k in <i>every</i> bitmap, because every column file keeps the rows in the same order. So IN (…) filters become OR, and conditions on two columns become AND: fast bit operations over whole columns.');L.done();}}}
+  task();}},
+
+{part:2,src:'Chapter 3 · Memory bandwidth and vectorized processing',run(L){
+  const bx=(x,t,hl)=>'<rect x="'+x+'" y="8" width="64" height="40" rx="8" style="fill:'+(hl?'var(--h2-bg)':'var(--soft)')+';stroke:'+(hl?'var(--h2)':'var(--line2)')+';stroke-width:1.5"/>'+T(x+32,32,t,'text-anchor:middle;font-weight:700');
+  const ar=(x,n)=>'<path d="M'+x+' 28h14" style="stroke:var(--muted);stroke-width:1.8"/><path d="M'+(x+10)+' 24l4 4-4 4" style="fill:none;stroke:var(--muted);stroke-width:1.8"/>'+(n?'<circle cx="'+(x+7)+'" cy="60" r="8" style="fill:var(--h3-bg);stroke:var(--h3)"/>'+T(x+7,64,n,'text-anchor:middle;font-weight:700;fill:var(--h3)'):'');
+  let s=bx(2,'Disk')+ar(68,'1')+bx(86,'Memory')+ar(152,'2')+bx(170,'L1 cache',1)+ar(236)+bx(254,'CPU');
+  s+=T(2,90,'Row at a time','font-weight:700;fill:var(--h4)');
+  for(let k=0;k<5;k++){const x=2+k*63;s+='<rect x="'+x+'" y="100" width="16" height="16" rx="3" style="fill:var(--h4-bg);stroke:var(--h4)"/>'+T(x+20,113,'call · if','fill:var(--muted)');}
+  s+=T(2,146,'Vectorized','font-weight:700;fill:var(--h2)')+T(84,146,'a compressed column chunk in L1','fill:var(--muted)');
+  s+='<rect x="2" y="156" width="176" height="28" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>';
+  for(let k=0;k<20;k++)s+='<rect x="'+(8+k*8.4)+'" y="162" width="6" height="16" rx="1" style="fill:var(--h2);fill-opacity:'+(.35+.3*((k*7)%3)/2)+'"/>';
+  s+='<path d="M190 176a9 9 0 1 0-2-11" style="fill:none;stroke:var(--h2);stroke-width:2"/><path d="M186 160l2 6 5-3" style="fill:none;stroke:var(--h2);stroke-width:2"/>'+
+    T(210,166,'one tight loop,')+T(210,181,'no function calls');
+  L.h(L.kick('learn','Feeding the CPU')+'<h1 class="q">Compressed columns help the CPU, not just the disk</h1>'+
+   '<svg class="ac-svg" viewBox="0 0 320 192" role="img" aria-label="Data flows from disk to memory to the CPU’s L1 cache. Row at a time: a call and a check per record. Vectorized: one tight loop over a compressed column chunk.">'+s+'</svg>'+
+   '<p class="ac-cap">Two bottlenecks: disk to memory <b>(1)</b>, then memory to CPU cache <b>(2)</b>. A compressed column chunk fits in the CPU’s L1 cache, so one tight loop races through it, even running AND and OR on compressed data: '+L.g('vectorized','vectorized processing')+'.</p>'+CSS);
   L.done();}},
-{part:2,src:'Chapter 3 · Column Compression',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Bitmaps for eight deliveries</h1>');
-  L.beats(L.card,[
-   ['A small column','Eight rows of fact_deliveries. The hub column reads: W1, W1, E2, W1, E2, E2, W1, W1.'],
-   ['One bitmap per value','Hub W1 → 1 1 0 1 0 0 1 1. Hub E2 → 0 0 1 0 1 1 0 0. Each bit is one row, in the same order as every other column.'],
-   ['Run-length encode','Instead of every bit, write how long each run is, starting with zeros. W1 becomes <b>0, 2, 1, 1, 2, 2</b>: no zeros, two ones, one zero, one one, two zeros, two ones. With billions of rows and long runs, this gets very compact.'],
-   ['Answer a query','“Late deliveries at E2?” The late column’s “yes” bitmap is 0 1 1 0 0 1 0 0. AND it with E2’s bitmap: <b>0 0 1 0 0 1 0 0</b>. Rows 3 and 6.']],
-   'Bitmaps turn filters into fast bit operations, and run-length encoding makes them small.');}},
-{part:2,src:'Chapter 3 · Column Compression',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why can the engine simply AND the hub-E2 bitmap with the late-“yes” bitmap?</h1>');
-  L.mc(L.card,['Both bitmaps were compressed the same way','Both columns keep the rows in the same order','The hub column is sorted by late status'],1,
-   'Bit k in every column’s bitmaps refers to the same row k, so lining them up and ANDing them is safe.',
-   'Compression style and sorting aren’t what matters. What matters is that bit k in every column refers to the same row k, so the bitmaps line up.');}},
+
+{part:2,src:'Chapter 3 · Sort Order in Column Storage',
+ solve:async L=>{L.$('#so-o2').click();await L.sleep(30);L.$('#so-f').click();await L.sleep(30);L.$('#so-o3').click();await L.sleep(30);},
+ run(L){
+  L.h(L.kick('ex','Sort the rows')+'<h1 class="q">Forty deliveries stored as four column files. Sort them and watch the runs.</h1>'+
+   goals('sog',['Sort by date, then hub','Filter the last 2 days on sorted data','Try sorting each column on its own'])+
+   '<div class="ac-row" id="so-o" style="gap:6px"></div><div id="so-m"></div><div class="ac-row"><button class="chip sm" id="so-f">Only the last 2 days</button></div><div class="ac-read" id="so-rd"></div>'+
+   '<p class="small" style="margin:0">Each colour is one value. Fewer runs = smaller after run-length encoding.</p>'+CSS);
+  const R=runStrip(L.$('#so-m'),'so-svg');let ord=0;
+  const ORD=[['No order',null],['By date',['date']],['By date, then hub',['date','hub']],['Each column on its own','each']];
+  ORD.forEach(([t,k],j)=>mkBtn(L.$('#so-o'),t,'chip sm'+(j===0?' sel':''),()=>{ord=j;[...L.$('#so-o').children].forEach((x,q)=>x.classList.toggle('sel',q===j));
+    if(k==='each'){R.S.filter=false;L.$('#so-f').classList.remove('sel');R.setEach();tick(L,'sog',2);}else R.setOrder(k);
+    if(j===2)tick(L,'sog',0);upd();},'so-o'+j));
+  L.$('#so-f').onclick=()=>{if(R.S.each)return;R.S.filter=!R.S.filter;L.$('#so-f').classList.toggle('sel',R.S.filter);R.draw();if(R.S.filter&&ord===2)tick(L,'sog',1);upd();};
+  function upd(){const st=R.stats();let t;
+    if(R.S.each){const ids=SF.map(f=>R.S.perm[f][4]);t='<b>Broken.</b> Position 5 now holds the date of delivery #'+(ids[0]+1)+', the hub of #'+(ids[1]+1)+', the merchant of #'+(ids[2]+1)+' and the late flag of #'+(ids[3]+1)+'. Rows only rebuild because entry k of every file is the same row, so rows must be sorted as a whole.';}
+    else if(R.S.filter)t='Last 2 days: those rows sit in <b>'+st.blocks+' of 5</b> blocks'+(ord>=1?'. Sorted by date, the query skips the rest.':', scattered. The query has to read them all.');
+    else t='Runs: date <b>'+st.runs.date+'</b> · hub <b>'+st.runs.hub+'</b> · merch <b>'+st.runs.merch+'</b> · late <b>'+st.runs.late+'</b>'+(ord===2?'. The first sort key shrinks most; the second less; the rest stay jumbled.':ord===1?'. Date now runs one day at a time.':'.');
+    L.$('#so-rd').innerHTML=t;
+    if(allTicked(L,'sog')&&!R.told){R.told=true;L.sheet('info','Sort whole rows, choose the keys','Sorting by date packs each day into one run, so the date column compresses to almost nothing and a “last 2 days” query reads only the blocks it needs. A second key (hub) groups rows within each day, with shorter runs. Later columns stay jumbled. The database admin picks the sort keys from the common queries.');L.done();}}
+  upd();}},
+
+{part:2,src:'Chapter 3 · Several different sort orders',pts:1,
+ solve:async L=>{L.$('#ch-a0').click();L.$('#ch-b1').click();L.$('#ch-go').click();await waitFor(L,()=>L.$('#ch-ok'));},
+ run(L){
+  let a=null,b=null,first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Linh’s most common query: on-time rate per hub, for the last 2 days. Pick the sort order that serves it best.</h1>'+
+   '<div class="ac-lbl">First sort key</div><div class="ac-row" id="ch-a" style="gap:6px"></div><div class="ac-lbl">Second sort key</div><div class="ac-row" id="ch-b" style="gap:6px"></div>'+
+   '<button class="btn pri" id="ch-go" style="margin:4px 0 6px">'+L.ic('play')+'Sort and run the query</button><div id="ch-m"></div><div class="ac-read" id="ch-rd">Fewer blocks read is best. Then: fewer separate hub groups to add up.</div><div id="ch-x"></div>'+CSS);
+  const R=runStrip(L.$('#ch-m'),'ch-svg');R.S.filter=true;R.draw();
+  function chips(id,set){SF.forEach((f,j)=>mkBtn(L.$('#'+id),SF_NAME[f],'chip sm',()=>{set(j);paint();},id+j));}
+  chips('ch-a',j=>{a=j;if(b===j)b=null;});chips('ch-b',j=>{if(j!==a)b=j;});
+  function paint(){[...L.$('#ch-a').children].forEach((x,j)=>x.classList.toggle('sel',j===a));[...L.$('#ch-b').children].forEach((x,j)=>{x.classList.toggle('sel',j===b);x.disabled=j===a;});}
+  paint();
+  L.$('#ch-go').onclick=async()=>{if(a===null||b===null){L.err('Pick a first and a second key');return;}
+    const st=R.setOrder([SF[a],SF[b]]);await L.sleep(650);if(!live(L.$('#ch-rd')))return;
+    L.$('#ch-rd').innerHTML='Sorted by '+SF_NAME[SF[a]]+', then '+SF_NAME[SF[b]]+': reads <b>'+st.blocks+' of 5</b> blocks · <b>'+st.hubGroups+'</b> hub groups to add up · date column in <b>'+st.runs.date+'</b> runs';
+    const ok=a===0&&b===1;
+    if(first){L.award(ok);first=false;}
+    if(ok){L.$('#ch-x').innerHTML='<span id="ch-ok"></span>';L.$('#ch-go').disabled=true;
+      L.sheet('ok','Date first, hub second','Date first means the query reads just the last 2 days’ blocks, and the date column shrinks to one run per day. Hub second keeps each hub’s rows together inside each day, ready to add up. C-Store and Vertica go further: data is copied to several machines anyway, so each copy can be sorted differently, say one by merchant for Bramble & Bolt’s reports. Unlike secondary indexes, there are no pointers to rows elsewhere, just columns of values.');L.done();}
+    else L.sheet('no','Not the best order yet',a!==0?'With '+SF_NAME[SF[a]]+' first, the last 2 days are scattered across the file, so more blocks are read. Put the filtered column first.':'Date first is right: few blocks. But the query groups by hub, and with '+SF_NAME[SF[b]]+' second each hub’s rows are split into more pieces. Pick the column the query groups by.');};}},
+
 {part:2,src:'Chapter 3 · Column-oriented storage and column families',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'True or false?',['True','False'],[
-   ['A column store reads only the columns a query uses.',0,'That’s the whole idea: each column lives in its own file.'],
-   ['Each column file can be sorted on its own, independently of the others.',1,'Then you could no longer line up the kth value of each column into one row. Rows are sorted as a whole.'],
-   ['The “column families” of Bigtable-style databases, such as Cassandra and HBase, make them column-oriented.',1,'Within each column family they store all of a row’s columns together, without column compression. That model is still mostly row-oriented.'],
-   ['Compressing columns can help the CPU, not just the disk.',0,'More rows fit in the CPU’s fast cache, where the engine processes them in tight loops.'],
-   ['A column with few distinct values suits bitmap encoding well.',0,'Few distinct values means few bitmaps, with long runs that compress well.']]);}},
+   ['In a column store, each column file can be sorted on its own, in its own best order.',1,'Then entry k of each file would no longer be the same row, and rows couldn’t be rebuilt. Whole rows are sorted together.'],
+   ['Cassandra’s and HBase’s “column families” make them column-oriented.',1,'Within each column family they store all of a row’s columns together, with no column compression. That model is still mostly row-oriented.'],
+   ['Parquet stores data by column, even for a document data model.',0,'Column storage isn’t only for relational tables: Parquet is a columnar format for documents, based on Google’s Dremel.'],
+   ['Compressing columns helps the CPU, not only the disk.',0,'More rows fit in the CPU’s L1 cache, where a tight loop processes them: vectorized processing.'],
+   ['Keeping several sort orders on replicas works like having several secondary indexes that point to the rows.',1,'It’s similar in spirit, but a column store keeps no pointers to rows elsewhere: each sorted copy is just columns of values.']]);}},
 
-/* ---------- PART 4: SORTING, WRITES AND CUBES ---------- */
-{part:3,src:'Chapter 3 · Sort Order in Column Storage',run(L){
-  L.h(L.kick('learn','Sort order')+'<h1 class="q">Sort whole rows, even though you store columns</h1>'+
-   L.prose('Rows can simply stay in the order they arrived; then adding a row is just an append to each column file. But you can also impose an order, as SSTables do, and use it as an index.')+
-   L.prose('You can’t sort each column on its own, or you’d lose track of which values belong to the same row. Rows are sorted as a whole. The administrator picks sort columns from the common queries. If most queries target date ranges, make the date the first sort key, and a “last month” query reads only last month’s rows. A second key, such as hub, groups the rows that share a date.')+
-   L.note('<b>Sorting helps compression.</b> The first sort key ends up in long runs of the same value, so run-length encoding can shrink it to a few kilobytes even across billions of rows. The second and third keys compress less, and later columns look random.','layers')+
-   '<p class="small">C-Store, and the commercial warehouse Vertica, take this further: data must be copied to several machines anyway, so each copy can be sorted differently, and each query uses the best one. Unlike secondary indexes in a row store, there are no pointers to rows elsewhere, only columns of values.</p>');
-  L.done();}},
-{part:3,src:'Chapter 3 · Sort Order in Column Storage',pts:1,run(L){
-  L.h(L.kick('pr','Pick the sort order')+'<h1 class="q">Nearly every query Linh runs covers a recent date range, and many then group by hub within it. How should fact_deliveries be sorted?</h1>');
-  L.mc(L.card,['Hub first, then date','Each column sorted on its own','Date first, then hub'],2,
-   'Date first lets a “last two weeks” query read one small stretch, and the date column compresses into long runs. Hub second groups each day’s rows by hub.',
-   'Sorting columns separately breaks the rows apart. Hub first scatters every date range across all the hubs’ sections. Date first, then hub, matches how the queries filter.');}},
-{part:3,src:'Chapter 3 · Writing to Column-Oriented Storage',run(L){
-  L.h(L.kick('learn','Writing to column storage')+'<h1 class="q">Fast to read, awkward to write</h1>'+
-   L.prose('Column storage, compression and sorting all speed up reads, and most warehouse load is large read-only queries. The price is paid on writes. Compressed columns can’t be updated in place the way B-tree pages are. Inserting one row in the middle of a sorted table would mean rewriting every column file, since rows are identified by their position in each column.')+
-   L.prose('The fix is the LSM-tree idea from lesson 5:')+
-   L.flow([['pencil','In memory','New writes go into a sorted store in memory. Row or column layout, either works.','',1],['layers','Bulk merge','When enough pile up, they are merged with the column files and written to new files in one go.','',2],['eye','Queries','Read the files on disk and the recent writes in memory, and combine them.','',3]])+
-   L.prose('The query optimizer hides the split, so an analyst sees inserts, updates and deletes in their very next query. This is essentially what Vertica does.'));
-  L.done();}},
+/* ---------- PART 4: WRITES AND CUBES ---------- */
+{part:3,src:'Chapter 3 · Writing to Column-Oriented Storage',
+ solve:async L=>{for(const id of ['wp-b1','wp-b2','wp-b3','wp-b4']){await waitFor(L,()=>L.$('#'+id)&&!L.$('#'+id).disabled);L.$('#'+id).click();await L.sleep(40);}await waitFor(L,()=>L.$('#wp-done'));},
+ run(L){
+  const S={mem:[],ver:1,flash:false,lens:false,busy:false,done:[]};
+  const NEW=[{t:'Tue · Eastvale',k:1},{t:'Wed · W. Central',k:2},{t:'Mon · W. North',k:0}];
+  L.h(L.kick('ex','The write path')+'<h1 class="q">New deliveries arrive all day. How do they get into sorted, compressed column files?</h1>'+
+   goals('wpg',['Try inserting straight into the files','Add 3 rows to memory','Query right away','Merge them in bulk'])+
+   '<svg class="ac-svg" id="wp-s" viewBox="0 0 320 242" role="img" aria-label="An in-memory sorted store above the column files on disk."></svg>'+
+   '<div class="ac-row" id="wp-b" style="gap:6px"></div><div class="ac-read" id="wp-rd">Try the tempting way first: put a new row straight into the files.</div><div id="wp-x"></div>'+CSS);
+  const FILES=['date','hub','late','fee','merch','+115'];
+  function draw(){let s='<rect x="2" y="4" width="316" height="62" rx="10" style="fill:var(--h3-bg);stroke:'+(S.lens?'var(--pri)':'var(--h3)')+';stroke-width:'+(S.lens?2.6:1.5)+'"/>'+T(12,22,'In memory: sorted store of new writes','font-weight:700;fill:var(--h3)');
+    S.mem.forEach((m,i)=>{const x=10+i*101;s+='<rect x="'+x+'" y="32" width="96" height="26" rx="6" style="fill:var(--card);stroke:var(--h3)"/>'+T(x+48,49,m.t,'text-anchor:middle')});
+    if(!S.mem.length)s+=T(160,50,'empty','text-anchor:middle;fill:var(--muted)');
+    s+=T(2,84,'On disk: sorted, compressed column files','font-weight:700')+T(318,84,'files v'+S.ver,'text-anchor:end;font-weight:700;fill:'+(S.ver>1?'var(--ok)':'var(--muted)'));
+    FILES.forEach((f,i)=>{const y=104+i*20;s+=T(0,y+12,f,'fill:var(--muted)')+'<rect x="48" y="'+y+'" width="266" height="15" rx="4" style="fill:'+(S.flash?'var(--no-strong)':'var(--h2-bg)')+';stroke:'+(S.lens?'var(--pri)':S.flash?'var(--no)':'var(--h2)')+';stroke-width:'+(S.lens?2:1.2)+'"/>';
+      S.done.forEach(k=>{s+='<rect x="'+(58+k*52)+'" y="'+(y+1)+'" width="5" height="13" rx="1.5" style="fill:var(--h3)"/>';});});
+    s+=['Mon','Tue','Wed','Thu','Fri'].map((d,j)=>T(48+j*53.2+26.6,99,d,'text-anchor:middle;fill:var(--faint);font-size:11px')).join('');
+    if(S.flash)s+=T(160,236,'rewrite all 120 files, for one row','text-anchor:middle;font-weight:700;fill:var(--no)');
+    L.$('#wp-s').innerHTML=s;}
+  const bx=L.$('#wp-b'),rd=L.$('#wp-rd');
+  const b1=mkBtn(bx,'Insert straight into the files','btn',async()=>{if(S.busy)return;S.busy=true;b1.disabled=true;S.flash=true;draw();
+    rd.innerHTML='The new row belongs in the middle of the sort order. Rows are identified by their position in every column, so all 120 compressed files would most likely have to be rewritten. For one row.';
+    await L.sleep(900);if(!live(bx))return;S.flash=false;draw();S.busy=false;tick(L,'wpg',0);b2.disabled=false;b2.classList.add('pri');},'wp-b1');
+  const b2=mkBtn(bx,'Add 3 rows','btn',async()=>{if(S.busy)return;S.busy=true;b2.disabled=true;b2.classList.remove('pri');
+    for(const n of NEW){S.mem.push(n);S.mem.sort((x,y)=>x.k-y.k);draw();await L.sleep(160);if(!live(bx))return;}
+    rd.innerHTML='3 scans synced late from couriers’ offline phones. They belong on Monday to Wednesday, mid-file, so they go to a sorted store in memory instead. Quick: nothing on disk changes yet. Row or column layout in memory, either works.';
+    S.busy=false;tick(L,'wpg',1);b3.disabled=false;b4.disabled=false;b3.classList.add('pri');},'wp-b2');
+  const b3=mkBtn(bx,'Run the analyst’s query','btn',async()=>{if(S.busy)return;b3.disabled=true;b3.classList.remove('pri');S.lens=true;draw();
+    rd.innerHTML='The query reads the column files <b>and</b> the memory store and combines them: 2,000,000 + 3 rows this week. The query optimizer hides the split, so the analyst sees the new deliveries in their very next query.';
+    tick(L,'wpg',2);await L.sleep(500);if(!live(bx))return;S.lens=false;draw();chk();},'wp-b3');
+  const b4=mkBtn(bx,'Merge into new files','btn',async()=>{if(S.busy)return;S.busy=true;b4.disabled=true;
+    while(S.mem.length){S.done.push(S.mem.shift().k);draw();await L.sleep(160);if(!live(bx))return;}
+    S.ver=2;draw();rd.innerHTML='Enough writes piled up, so they’re merged with the column files and written out as new files in one go (v2). The memory store starts empty again.';
+    S.busy=false;tick(L,'wpg',3);chk();},'wp-b4');
+  b2.disabled=b3.disabled=b4.disabled=true;
+  function chk(){if(allTicked(L,'wpg')&&!S.told){S.told=true;L.$('#wp-x').innerHTML='<span id="wp-done"></span>';
+    L.sheet('info','The LSM-tree idea, again','Writes go to a sorted in-memory store first, then merge with the files on disk in bulk, just like the memtable and SSTables of lesson 5. Queries look at both. This is essentially what Vertica does.');L.done();}}
+  draw();}},
+
 {part:3,src:'Chapter 3 · Aggregation: Data Cubes and Materialized Views',run(L){
-  L.h(L.kick('learn','Precomputed answers')+'<h1 class="q">Materialized views and data cubes</h1>'+
-   L.prose('Many warehouse queries use the same totals (COUNT, SUM, AVG, MIN, MAX). Why crunch the raw data every time? A '+L.g('materialized-view','materialized view')+' stores a query’s results on disk. A normal (virtual) view is only a shortcut: the database expands it into its query each time.')+
-   L.prose('Because it’s a copy, a materialized view must be updated when the data changes. That makes writes more expensive, so OLTP databases rarely use them; read-heavy warehouses can. A common special case is the '+L.g('data-cube','data cube')+': a grid of totals by dimension. Deliveries by hub and day:')+
-   '<div style="overflow-x:auto"><table style="border-collapse:collapse;width:100%;font-size:14px;font-variant-numeric:tabular-nums"><tr><th style="'+TD+';text-align:left">Hub</th><th style="'+TD+'">Mon</th><th style="'+TD+'">Tue</th><th style="'+TD+'">Wed</th><th style="'+TD+'">Total</th></tr>'+
-   [['W1',410,380,450,1240],['W2',300,310,290,900],['E2',220,260,240,720],['Total',930,950,980,2860]].map(r=>'<tr>'+r.map((c,j)=>'<td style="'+TD+(j===0?';text-align:left;font-weight:600':'')+(j===4||r[0]==='Total'?';font-weight:700':'')+'">'+c+'</td>').join('')+'</tr>').join('')+'</table></div>'+
-   '<p class="small" style="margin-top:10px">Sum along a row or column and you get totals with one dimension removed. Real facts have more dimensions (date, hub, merchant, courier…), making a hypercube, but the idea is the same. Fast for the questions it was built for, but no use for anything else. So warehouses keep the raw facts and use cubes only as a speed boost for certain queries.</p>');
+  const v='<rect x="2" y="4" width="152" height="80" rx="10" style="fill:var(--soft);stroke:var(--line2)"/>'+T(78,22,'Virtual view','text-anchor:middle;font-weight:700')+
+   '<rect x="18" y="32" width="40" height="30" rx="4" style="fill:var(--card);stroke:var(--line2)"/><path d="M24 41h28M24 48h22M24 55h26" style="stroke:var(--muted);stroke-width:1.5"/>'+
+   '<path d="M108 47a16 16 0 1 1-4-11" style="fill:none;stroke:var(--h4);stroke-width:2"/><path d="M100 31l5 5-6 3" style="fill:none;stroke:var(--h4);stroke-width:2"/>'+T(78,78,'re-runs on every read','text-anchor:middle;fill:var(--muted)');
+  const m='<rect x="166" y="4" width="152" height="80" rx="10" style="fill:var(--h2-bg);stroke:var(--h2)"/>'+T(242,22,'Materialized view','text-anchor:middle;font-weight:700;fill:var(--h2)')+
+   [0,1,2].map(r=>[0,1,2,3].map(c=>'<rect x="'+(206+c*19)+'" y="'+(31+r*11)+'" width="17" height="9" rx="2" style="fill:var(--h2);fill-opacity:'+(r===2||c===3?.85:.35)+'"/>').join('')).join('')+T(242,78,'stored; updated on writes','text-anchor:middle;fill:var(--muted)');
+  L.h(L.kick('learn','Precomputed answers')+'<h1 class="q">Why add up the same rows again and again?</h1>'+
+   '<svg class="ac-svg" viewBox="0 0 320 88" role="img" aria-label="A virtual view re-runs its query; a materialized view stores the results.">'+v+m+'</svg>'+
+   '<div class="ac-lbl">A data cube: deliveries per hub per day (thousands, illustrative)</div>'+cubeHtml('lc')+
+   '<p class="ac-cap">A '+L.g('materialized-view','materialized view')+' stores a query’s results on disk; keeping it current makes writes costlier, so OLTP databases rarely use them. A '+L.g('data-cube','data cube')+' is one: totals by dimension. Sum a row or a column to drop a dimension.</p>'+CSS);
+  L.$('#lc-3-t').classList.add('hi');L.$('#lc-a-2').classList.add('hi');
   L.done();}},
-{part:3,src:'Chapter 3 · Aggregation: Data Cubes and Materialized Views',pts:1,run(L){
-  L.h(L.kick('pr','Cube or raw facts?')+'<h1 class="q">Femi asks Linh three questions. Which one can’t the hub-by-day cube answer?</h1>');
-  L.mc(L.card,['Deliveries at hub W1 across the whole week','Deliveries on Tuesday across all the hubs','Share of deliveries for parcels over 5 kg'],2,
-   'Weight isn’t a dimension of the cube, so no cell holds that number. Linh must go back to the raw facts, which is why warehouses keep them.',
-   'Hub totals and day totals are the cube’s row and column sums, ready instantly. Parcel weight isn’t a dimension, so that question needs the raw facts.');}},
+
+{part:3,src:'Chapter 3 · Aggregation: Data Cubes and Materialized Views',pts:4,
+ solve:async L=>{const R=[0,1,0,1];for(let q=0;q<4;q++){await waitFor(L,()=>L.$('#cq-'+R[q])&&!L.$('#cq-'+R[q]).disabled);L.$('#cq-'+R[q]).click();await waitFor(L,()=>L.$('#cq-next')||L.$('#cq-done'));if(L.$('#cq-next'))L.$('#cq-next').click();await L.sleep(20);}},
+ run(L){
+  const Q=[{q:'How many deliveries did Eastvale Depot handle this week?',a:0,cells:['3-0','3-1','3-2','3-3','3-4'],ans:'3-t',why:'553 thousand: one cell, already summed along the week.'},
+           {q:'What share of this week’s parcels weighed over 5 kg?',a:1,why:'Weight isn’t a dimension of this cube, so no cell holds it. Back to the raw facts.'},
+           {q:'How many deliveries did all hubs make on Wednesday?',a:0,cells:['0-2','1-2','2-2','3-2'],ans:'a-2',why:'401 thousand: the Wednesday column total, ready to read.'},
+           {q:'Which merchant sent the most parcels this week?',a:1,why:'Merchant isn’t one of this cube’s dimensions. A bigger cube could add it, but anything outside its dimensions needs the raw facts.'}];
+  let k=0,busy=false;
+  L.h(L.kick('pr','Femi’s questions')+'<h1 class="q">Femi asks Linh four questions. Can the hub-by-day cube answer each one?</h1>'+
+   '<div class="ac-q" id="cq-q"></div><div class="ac-row" id="cq-b"></div>'+cubeHtml('cq')+'<div class="ac-read" id="cq-rd">Thousands of deliveries, illustrative.</div><div id="cq-x"></div>'+CSS);
+  const clear=()=>{L.$$('#cq td').forEach(td=>td.classList.remove('hi','hi2'));L.$('#cq').classList.remove('x');};
+  function show(){clear();busy=false;const q=Q[k];L.$('#cq-q').innerHTML='<small>Question '+(k+1)+' of 4</small>'+q.q;L.$('#cq-b').innerHTML='';L.$('#cq-x').innerHTML='';L.$('#cq-rd').textContent='Thousands of deliveries, illustrative.';
+    [['The cube answers it',0],['Needs the raw facts',1]].forEach(([t,j])=>mkBtn(L.$('#cq-b'),t,'chip',()=>pick(j),'cq-'+j));}
+  async function pick(j){if(busy)return;busy=true;const q=Q[k],ok=j===q.a;L.award(ok);
+    [...L.$('#cq-b').children].forEach(x=>{x.disabled=true;});L.$('#cq-'+j).classList.add(ok?'ok':'no');if(!ok)L.$('#cq-'+q.a).classList.add('ok');
+    if(q.a===0){q.cells.forEach(c=>L.$('#cq-'+c).classList.add('hi2'));L.$('#cq-'+q.ans).classList.add('hi');L.$('#cq-rd').innerHTML='Cells read: <b>1</b>. '+q.why;}
+    else{L.$('#cq').classList.add('x');for(let s=1;s<=10;s++){L.$('#cq-rd').innerHTML='Scanning raw facts: <b>'+fmt(200000*s)+'</b> rows of this week’s 2,000,000…';await L.sleep(90);if(!live(L.$('#cq-rd')))return;}
+      L.$('#cq-rd').innerHTML='Rows scanned: <b>2,000,000</b>. '+q.why;}
+    L.fb(L.$('#cq-x'),ok?'<b>Right.</b>':'<b>Not quite.</b> '+(q.a===0?'It’s a row or column of the cube.':'No cell of the cube holds that number.'),ok?'ok':'no');
+    if(k<3)mkBtn(L.$('#cq-x'),'Next question '+L.ic('arrow'),'btn pri',()=>{k++;show();},'cq-next').style.marginTop='10px';
+    else{L.$('#cq-x').insertAdjacentHTML('beforeend','<span id="cq-done"></span>');
+      L.sheet('info','Fast, but only inside its dimensions','A cube answers its own questions instantly because they were computed in advance. Real cubes often have more dimensions (date, hub, merchant, courier…), a hypercube, but the trade-off stays: anything outside them needs the raw data. So warehouses keep as much raw data as they can and use cubes only as a speed boost.');L.done();}}
+  show();}},
+
+{part:3,src:'Chapter 3 · Summary',pts:3,
+ solve:async L=>{const R=['row','row','col'];for(let q=0;q<3;q++){await waitFor(L,()=>L.$('#rt-'+R[q])&&!L.$('#rt-'+R[q]).disabled);L.$('#rt-'+R[q]).click();await waitFor(L,()=>L.$('#rt-next')||L.$('#rt-done'));if(L.$('#rt-next'))L.$('#rt-next').click();await L.sleep(20);}},
+ run(L){
+  const Q=[{q:'Mrs. Okoro refreshes the tracking page for OP-48213',a:'row',set:S=>{S.mode='lookup';S.band=3;},h:'Places on disk read',r:[1,120],rt:['1 block','120 files'],
+     why:'One parcel, every field, found by its code: the OLTP pattern. The column store has to visit all 120 files to rebuild it.'},
+   {q:'Courier Ravi scans OP-48213 as delivered',a:'row',set:S=>{S.mode='write';},h:'Places on disk rewritten',r:[1,120],rt:['1 block','120 files'],
+     why:'A small write from user input. Sorted, compressed column files would all need rewriting; a row store touches one block.'},
+   {q:'Linh’s late deliveries per zone, for the whole year',a:'col',set:S=>{S.mode='read';S.cols=new Set([0,1,2]);S.bands='all';},h:'Data read for a year',r:[BM_TOTAL,BM_TOTAL*3/120],rt:[gb(BM_TOTAL),gb(BM_TOTAL*3/120)],
+     why:'Three columns over every row: the column store reads a fortieth of the data.'}];
+  let k=0,busy=false;
+  L.h(L.kick('pr','Right tool, right job')+'<h1 class="q">Tobias: “Serve everything from the warehouse’s column store.” Route each request and watch the cost.</h1>'+
+   '<div class="ac-q" id="rt-q"></div><div class="ac-row" id="rt-b"></div><div id="rt-m"></div>'+cmpHtml('rt-c','')+'<div id="rt-x"></div>'+CSS);
+  const M=blockMap(L.$('#rt-m'),'rt-svg');
+  function show(){busy=false;const q=Q[k];L.$('#rt-q').innerHTML='<small>Request '+(k+1)+' of 3</small>'+q.q;L.$('#rt-b').innerHTML='';L.$('#rt-x').innerHTML='';
+    M.S.mode='read';M.S.cols=new Set();M.S.bands='all';M.S.layout='row';M.draw();setCmp(L,'rt-c',0,0,'–','–',1,q.h);
+    [['row','Parcel DB · row store'],['col','Warehouse · column store']].forEach(([v,t])=>mkBtn(L.$('#rt-b'),t,'chip',()=>pick(v),'rt-'+v));}
+  function pick(v){if(busy)return;busy=true;const q=Q[k],ok=v===q.a;L.award(ok);
+    [...L.$('#rt-b').children].forEach(x=>{x.disabled=true;});L.$('#rt-'+v).classList.add(ok?'ok':'no');if(!ok)L.$('#rt-'+q.a).classList.add('ok');
+    M.S.layout=v;q.set(M.S);M.draw();setCmp(L,'rt-c',q.r[0],q.r[1],q.rt[0],q.rt[1],null,q.h);
+    L.fb(L.$('#rt-x'),(ok?'<b>Right.</b> ':'<b>Costly.</b> ')+q.why,ok?'ok':'no');
+    if(k<2)mkBtn(L.$('#rt-x'),'Next request '+L.ic('arrow'),'btn pri',()=>{k++;show();},'rt-next').style.marginTop='10px';
+    else{L.$('#rt-x').insertAdjacentHTML('beforeend','<span id="rt-done"></span>');
+      L.sheet('info','So the answer to Tobias is no','Column storage isn’t faster at everything. It wins on few columns over many rows. The tracking page is the opposite: one whole row by key, plus a constant stream of small writes. Keep that on the row-oriented Parcel DB, and send the analysis to the warehouse.');L.done();}}
+  show();}},
+
 {part:3,src:'Chapter 3 · Summary',pts:1,run(L){
   L.h(L.kick('pr','Wrap up the chapter')+'<h1 class="q">Tap each piece until this matches the chapter’s summary: “A typical analytic query…”</h1>');
   L.sentence(L.card,[['scans millions of rows,','fetches a few rows by key,'],['so disk bandwidth is the bottleneck,','so disk seek time is the bottleneck,'],['and column-oriented storage helps.','and more indexes help.']],[0,0,0],
    [['Fetching a few rows by key is the OLTP pattern. An analytic query scans huge numbers of rows.'],['Seek time limits OLTP lookups that jump to scattered records. Scanning millions of rows is limited by bandwidth.'],['Indexes help find a few rows. A scan reads millions, so reading fewer bytes matters more.']],
-   'Analytic queries read millions of rows, so what matters is how many bytes they pull off the disk. Column storage and compression shrink that number.');}}
+   'Analytic queries read millions of rows, so what matters is how many bytes come off the disk. Column storage, compression and sorting shrink that number.');}}
   ]
 });
 </script>

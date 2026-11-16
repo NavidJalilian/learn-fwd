@@ -13,8 +13,437 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0016 only. Two hands-on models used across the lesson:
+   1. Board – two transactions stepped on one shared timeline over a tiny
+      database (row values, uncommitted values, row locks), under a chosen
+      isolation level and fix. It can also try every possible interleaving.
+   2. Shelf – the MVCC versions of the Garden balance row, with a reader
+      whose start and read moments you move; the visibility rules light up.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+`
+.sv{width:100%;display:block;margin:6px 0}.sv text{font-family:var(--sans)}
+.sv .tk{font-size:11px;fill:var(--muted);text-anchor:middle}
+.sv .bt{font-size:11.5px;font-weight:600;fill:var(--ink);text-anchor:middle}
+.sv .mt{font-size:11.5px;fill:var(--muted)}
+.sv .ttl{font-size:13px;font-weight:700;fill:var(--ink)}
+.cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:46px}
+.cap .stp{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}
+.todo{list-style:none;margin:6px 0 8px;padding:0}
+.todo li{display:flex;gap:9px;align-items:flex-start;font-size:14.5px;line-height:1.4;margin:6px 0;color:var(--muted)}
+.todo .bx{flex:none;width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);display:inline-flex;align-items:center;justify-content:center;margin-top:1px}
+.todo li.dn{color:var(--ok)}.todo li.dn .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}
+.todo .bx svg{width:13px;height:13px;stroke-width:3}
+.bd{margin-top:8px}
+.bd-hd{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14px;line-height:1.45}
+.bd-hd b{display:block;font-size:15px}.bd-hd .rl,.ch .rl{color:var(--muted);display:block;font-size:14px;line-height:1.45}
+.bd-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 4px}
+.bd-chips{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}.bd-chips .chip{margin:0;min-height:38px;padding:6px 11px;font-size:14px}
+.bd-cf{font-size:13px;color:var(--muted);margin:8px 0 2px;line-height:1.45}
+.bd-cp{font-size:12.5px;font-weight:700;color:var(--muted);margin:8px 0 0}
+.bd-row{display:flex;flex-wrap:wrap;align-items:center;gap:3px 8px;padding:7px 10px;border:1.5px solid var(--line);border-radius:12px;margin:5px 0;background:var(--card)}
+.bd-row .nm{flex:1 1 100%;font-size:12.5px;color:var(--muted)}
+.bd-row .cv{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.bd-pd{font-size:12.5px;font-weight:600;border:1.5px dashed;border-radius:8px;padding:1px 7px}
+.bd-pd.t1{color:var(--h1);border-color:var(--h1)}.bd-pd.t2{color:var(--h2);border-color:var(--h2)}
+.bd-lk{margin-left:auto;display:inline-flex;align-items:center;gap:3px;font-size:12.5px;font-weight:700;border-radius:99px;padding:2px 8px}
+.bd-lk.t1{background:var(--h1-bg);color:var(--h1)}.bd-lk.t2{background:var(--h2-bg);color:var(--h2)}.bd-lk svg{width:13px;height:13px}
+.bd-tl{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:5px 12px;margin:10px 0;position:relative}
+.bd-tl:before{content:"";position:absolute;left:50%;top:4px;bottom:4px;border-left:1.5px dashed var(--line2)}
+.bd-lh{font-size:13px;font-weight:700;padding:6px 8px;border-radius:10px;position:relative;z-index:1}
+.bd-lh.t1{background:var(--h1-bg);color:var(--h1)}.bd-lh.t2{background:var(--h2-bg);color:var(--h2)}
+.bd-lh small{display:block;font-weight:500;font-size:11.5px;margin-top:3px;line-height:1.5}
+.bd-lh small i{font-style:normal;opacity:.85;white-space:nowrap;margin-right:5px}.bd-lh small i.dn{opacity:.5;text-decoration:line-through}.bd-lh small i.nx{opacity:1;font-weight:700;text-decoration:underline}
+.bd-e{font-size:13px;line-height:1.35;padding:6px 8px;border-radius:10px;border:1.5px solid var(--line);background:var(--card);position:relative;z-index:1;overflow-wrap:anywhere}
+.bd-e.t1{border-color:var(--h1)}.bd-e.t2{border-color:var(--h2)}.bd-e.rt{background:var(--no-bg)}
+.bd-e .n{display:inline-block;min-width:17px;font-weight:700;color:var(--muted);font-size:11.5px}
+.bd-empty{font-size:13px;color:var(--muted);text-align:center;padding:8px;background:var(--card);position:relative;z-index:1;border-radius:10px}
+.bdg{display:inline-block;font-size:11.5px;font-weight:700;border-radius:8px;padding:1px 7px;margin:4px 3px 0 0;background:var(--no-bg);color:var(--no);border:1px solid var(--no-line)}
+.bdg.w{background:var(--soft);color:var(--muted);border-color:var(--line2)}
+.bd-go{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.bd-go .btn{justify-content:center;text-align:center;min-height:48px;padding:6px 8px;font-size:13.5px;line-height:1.25}
+.bd-go .btn.t1{border-color:var(--h1);color:var(--h1)}.bd-go .btn.t2{border-color:var(--h2);color:var(--h2)}
+.bd-go .btn:disabled{opacity:.5;cursor:default}.bd-go .btn svg{width:14px;height:14px;flex:none}
+.bd-ctl{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0 0}.bd-ctl .btn{min-height:40px;padding:7px 12px;font-size:14px}
+.bd-res .fb{margin-top:8px;font-size:14.5px}
+.bd-sum{font-size:14.5px;margin:10px 0 4px}
+.bd-strip{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0}
+.bd-strip button{width:36px;height:36px;border-radius:8px;border:2px solid var(--line2);background:var(--card);padding:0;position:relative}
+.bd-strip button.ok{background:var(--ok-bg);border-color:var(--ok-line)}.bd-strip button.no{background:var(--no-bg);border-color:var(--no-line)}
+.bd-strip button.ser:after{content:"";position:absolute;left:50%;top:50%;width:8px;height:8px;margin:-4px 0 0 -4px;border-radius:50%;background:var(--ink);opacity:.55}
+.bd-strip button.cur{outline:3px solid var(--pri);outline-offset:1px}
+.rng{display:grid;grid-template-columns:104px minmax(0,1fr) 24px;gap:8px;align-items:center;font-size:14.5px;margin:6px 0}
+.rng input{width:100%;accent-color:var(--pri);height:32px}.rng b{text-align:right;font-variant-numeric:tabular-nums}
+.sh-out{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin-top:8px}
+.sh-out p{margin:0 0 6px}.rules{margin:0;padding-left:20px}.rules li{color:var(--muted);margin:3px 0}.rules li.hit{color:var(--ink)}.rules li span{color:var(--pri-deep);font-weight:600}
+.nmg{display:grid;gap:7px;margin:8px 0}
+.nmr{display:grid;grid-template-columns:minmax(0,1fr) 20px minmax(0,1fr);gap:6px;align-items:center}
+.nml{background:var(--card);border:1.5px solid var(--line2);border-radius:12px;padding:6px 10px;font-size:14px;font-weight:600}
+.nml small{display:block;color:var(--muted);font-size:12.5px;font-weight:500}
+.nmr .ar{color:var(--muted);text-align:center;font-weight:700}
+.nmt{border-radius:12px;padding:9px 8px;font-size:14px;font-weight:600;text-align:center}
+.nmt.si{background:var(--h3-bg);color:var(--h3)}.nmt.se{background:var(--ok-bg);color:var(--ok)}
+.pl{font-size:12px;font-weight:600;border-radius:7px;padding:2px 7px;border:1.5px solid var(--line2);background:var(--card)}
+.pl.a{border-color:var(--h1);color:var(--h1);background:var(--h1-bg)}.pl.b{border-color:var(--h2);color:var(--h2);background:var(--h2-bg)}
+.pl.w{border-style:dashed;color:var(--muted)}.pl.x{border-color:var(--no-line);color:var(--no);background:var(--no-bg)}.pl.k{border-color:var(--ok-line);color:var(--ok);background:var(--ok-bg)}
+.rp{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0 4px}
+.rp-c{border-radius:14px;padding:10px;background:var(--h1-bg);font-size:14px;text-align:center}.rp-c+.rp-c{background:var(--h2-bg)}
+.rp-c small{display:block;color:var(--muted);font-weight:600}.rp-c b{display:block;font-size:16px}
+.rp-ar{text-align:center;color:var(--muted);font-size:13px;font-weight:600;margin:2px 0}.rp-ar svg{width:15px;height:15px;vertical-align:-3px}
+.rp-o{border-radius:14px;padding:10px 13px;background:var(--soft);font-size:15px;line-height:1.5;margin:6px 0}
+.ok-t{color:var(--ok)}.no-t{color:var(--no)}
+.cdw{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin:6px 0}
+.cdw .pl{font-size:13px;padding:5px 9px}.cdw .ar{color:var(--muted);font-weight:700}
+.cdw-n{font-size:13px;color:var(--no);font-weight:600;margin:0 0 8px}
+.ph{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}
+.phc{border-radius:14px;padding:9px 10px;font-size:13.5px;line-height:1.4;color:var(--ink)}
+.phc b{display:block;font-size:14px;margin-bottom:4px}.phc ul{margin:0;padding-left:16px}.phc .phf{display:block;margin-top:6px;font-weight:700;font-size:13.5px}
+.phc.y{background:var(--ok-bg)}.phc.y .phf{color:var(--ok)}.phc.n{background:var(--no-bg)}.phc.n .phf{color:var(--no)}
+.ch{border:1.5px solid var(--line);border-radius:14px;padding:10px 12px;margin:8px 0;background:var(--card)}
+.ch b{display:block;font-size:15px}.ch .bd-chips{margin-top:6px}.ch-out{font-size:14px;line-height:1.45;margin-top:4px}
+.ill{display:inline-block;font-family:var(--sans);font-style:normal;font-size:11.5px;font-weight:600;line-height:1.5;color:var(--muted);border:1px dashed var(--line2);border-radius:7px;padding:0 6px;vertical-align:2px;white-space:nowrap}
+.why2{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0}
+.why2 div{border-radius:12px;padding:8px 10px;background:var(--no-bg);font-size:13px;line-height:1.4;color:var(--ink)}
+.why2 b{display:block;font-size:13.5px;color:var(--no);margin-bottom:3px}.why2 .pl{display:inline-block;margin:0 2px 4px 0}
+.nc{border:1.5px dashed var(--line2);border-radius:12px;padding:8px 10px;margin:8px 0;font-size:13.5px;line-height:1.4}
+.nc>b{display:block;font-size:13.5px;color:var(--muted);margin-bottom:4px}.nc .cdw{margin:2px 0 4px}.nc .cdw .pl{font-size:12.5px;padding:3px 7px}
+.mini{display:flex;flex-wrap:wrap;gap:3px;margin:6px 0 4px}.mini i{width:13px;height:13px;border-radius:3px}.mini i.ok{background:var(--ok-strong)}.mini i.no{background:var(--no-strong)}
+`+'</style>');
+
+/* ---------- shared names ---------- */
+const money=v=>v==null?'—':'$'+Number(v).toLocaleString('en-US');
+const OPN={read:'read',readU:'read FOR UPDATE',set:'write',count:'check',countU:'check FOR UPDATE',insert:'insert',atomic:'atomic −$8',cas:'compare-and-set',commit:'commit'};
+const LVN={none:'No isolation',ru:'Read uncommitted',rc:'Read committed',si:'Snapshot isolation'};
+const FIXN={plain:'No fix',atomic:'Atomic write',lock:'FOR UPDATE',cas:'Compare-and-set',detect:'Auto-detect',mat:'Materialize conflict'};
+
+/* ---------- 1. scenarios on the board (Otterpost retellings of the book’s stories) ---------- */
+const SCN={
+ claim:{t:'Ravi and Mia claim parcel OP-48213',rule:'the parcel row and the handover slip name the same courier.',who:['Ravi','Mia'],
+  rows:()=>({parcel:'nobody',slip:'nobody'}),names:{parcel:'Parcel OP-48213 · carried by',slip:'Hub handover slip · signed by'},fmt:v=>v,
+  steps:x=>{const n=x?'Mia':'Ravi';return [{op:'set',key:'parcel',val:n,lab:()=>'parcel row → '+n},{op:'set',key:'slip',val:n,lab:()=>'slip → '+n},{op:'commit'}];},
+  check:S=>{const p=fin(S,'parcel'),s=fin(S,'slip');return p===s?{ok:true,msg:'Parcel row and slip both say '+p+'.'}:{ok:false,tag:'Dirty write',msg:'The parcel row says '+p+', but the slip says '+s+'.'};}},
+ transfer:{t:'A $100 transfer while Linh’s report runs',rule:'Bramble & Bolt’s two accounts always hold $1,000 in total.',who:['Transfer','Linh’s report'],
+  rows:()=>({hw:500,gd:500}),names:{hw:'Homewares account',gd:'Garden account'},fmt:money,
+  steps:x=>x===0?[{op:'set',key:'gd',val:400,lab:()=>'Garden → $400'},{op:'set',key:'hw',val:600,lab:()=>'Homewares → $600'},{op:'commit'}]
+   :[{op:'read',key:'hw',lab:v=>'read Homewares: '+money(v)},{op:'read',key:'gd',lab:v=>'read Garden: '+money(v)},{op:'commit',lab:l=>'commit · total '+money(l.hw+l.gd)}],
+  check:S=>{const l=S.tx[1].loc,tot=l.hw+l.gd,dirty=S.log.some(e=>e.b.indexOf('dirty read')>=0);
+   return tot===1000?{ok:true,msg:S.who[1]+' adds up to $1,000.'}:{ok:false,tag:dirty?'Dirty read':'Read skew',msg:S.who[1]+' adds up to '+money(tot)+'. '+(dirty?'It saw a change that wasn’t committed yet.':'Every value it read was committed, just at different moments.')};}},
+ credit:{t:'Two flash-sale bookings, $8 each',rule:'two bookings take $16, so $1,000 becomes $984.',who:['Booking 1','Booking 2'],
+  rows:()=>({cr:1000}),names:{cr:'Bramble & Bolt’s credit balance'},fmt:money,
+  na:()=>'Nothing to materialize: the credit row already exists. Lock it with FOR UPDATE instead.',
+  why:{},
+  steps:(x,fix)=>{const c={op:'commit'};if(fix==='mat')return null;
+   if(fix==='atomic')return [{op:'atomic',key:'cr',f:v=>v-8,lab:(v,b)=>'credit = credit − $8 → '+money(v)},c];
+   const rd={op:fix==='lock'?'readU':'read',key:'cr',as:'b',lab:v=>(fix==='lock'?'read FOR UPDATE: ':'read credit: ')+money(v)};
+   if(fix==='cas')return [rd,{op:'cas',key:'cr',as:'b',f:l=>l.b-8,lab:(v,l)=>'write '+money(v)+' if still '+money(l.b)},c];
+   return [rd,{op:'set',key:'cr',f:l=>l.b-8,lab:v=>'write credit: '+money(v)},c];},
+  check:S=>{const v=fin(S,'cr');return v===984?{ok:true,msg:'Credit is $984. Both $8 charges counted.'}:{ok:false,tag:'Lost update',msg:'Credit is '+money(v)+', not $984. One $8 charge was lost.'};}},
+ shifts:{t:'Ravi and Mia end their shifts in zone W2',rule:'zone W2 always has at least one courier on duty.',who:['Ravi','Mia'],
+  rows:fix=>Object.assign({'on:Ravi':'on duty','on:Mia':'on duty'},fix==='mat'?{zone:'lock row'}:{}),
+  names:{'on:Ravi':'Ravi · zone W2','on:Mia':'Mia · zone W2',zone:'Zone W2 · lock row (holds no data)'},fmt:v=>v,
+  na:fix=>fix==='atomic'?'No single-row atomic write can say “keep one courier on duty”: the rule spans two rows.':'Compare-and-set checks one row; the rule spans two.',
+  why:{detect:'Each transaction wrote a different row, so there was no lost update to detect.',plain:'Both checks counted 2 before either committed.'},
+  steps:(x,fix)=>{const me=x?'Mia':'Ravi';if(fix==='atomic'||fix==='cas')return null;
+   const s=[{op:fix==='lock'?'countU':'count',pre:'on:',is:v=>v==='on duty',need:n=>n>=2,lab:(n,ok)=>(fix==='lock'?'check FOR UPDATE: ':'check: ')+n+' on duty'+(ok?' · OK to leave':' · must stay')},
+     {op:'set',key:'on:'+me,val:'off duty',lab:()=>me+' → off duty'},{op:'commit'}];
+   if(fix==='mat')s.unshift({op:'readU',key:'zone',lab:()=>'lock the zone W2 row'});return s;},
+  check:S=>{const n=['Ravi','Mia'].filter(p=>fin(S,'on:'+p)==='on duty').length;return n?{ok:true,msg:n+' courier'+(n>1?'s':'')+' still on duty in W2.'}:{ok:false,tag:'Write skew',msg:'Nobody is on duty in zone W2.'};}},
+ locker:{t:'Two recipients book locker L4, 14:00–16:00',rule:'locker L4 holds one booking at a time.',who:['Mrs. Okoro','Tariq'],empty:'Bookings for locker L4, 14:00–16:00',
+  rows:fix=>fix==='mat'?{lk:'lock row'}:{},names:{lk:'L4 · 14:00–16:00 · lock rows (hold no data)',bk0:'Booking for L4, 14:00–16:00',bk1:'Booking for L4, 14:00–16:00'},fmt:v=>v,
+  na:()=>'An atomic write changes a row that exists. This check is about a row that doesn’t exist yet.',
+  why:{detect:'Two new rows and no shared row: nothing for detection to catch.',lock:'The check found zero rows, so FOR UPDATE locked nothing.',plain:'Both checks found the locker free.'},
+  steps:(x,fix)=>{const nm=x?'Tariq':'Mrs. Okoro';if(fix==='atomic'||fix==='cas')return null;
+   const s=[{op:fix==='lock'?'countU':'count',pre:'bk',is:v=>!!v,need:n=>n===0,lab:(n,ok)=>(fix==='lock'?'check FOR UPDATE: ':'check: ')+n+' booking'+(n===1?'':'s')+(fix==='lock'&&!n?', nothing locked':'')+(ok?' · free':' · taken')},
+     {op:'insert',key:'bk'+x,val:nm,lab:()=>'insert booking: '+nm},{op:'commit'}];
+   if(fix==='mat')s.unshift({op:'readU',key:'lk',lab:()=>'lock L4’s 14:00–16:00 rows'});return s;},
+  check:S=>{const n=['bk0','bk1'].filter(k=>fin(S,k)).length;return n<2?{ok:true,msg:n?'One booking. Locker L4 is fine.':'No booking made.'}:{ok:false,tag:'Phantom, then write skew',msg:'Locker L4 is double-booked.'};}}
+};
+
+/* ---------- the engine: pure functions, so the board can replay or try every timing ---------- */
+function mkS(c){
+  const sc=SCN[c.sc],fix=c.fix||'plain',S={c,sc,who:c.who||sc.who,lv:c.lv||'rc',detect:!!c.detect,casOld:!!c.casOld,rep:!!c.rep,t:0,log:[],tx:[],dbs:[],na:null,over:false};
+  const one=()=>{const d={},r=sc.rows(fix);for(const k in r)d[k]={vers:[{v:r[k],t:-1,by:0}],pend:null,lock:null};return d;};
+  S.dbs.push(one());if(S.rep)S.dbs.push(one());
+  for(let x=0;x<2;x++){const st=sc.steps(x,fix);if(!st)S.na=sc.na(fix);S.tx.push({x,steps:st||[],pc:0,loc:{},start:null,done:!st,end:st?'':'na',tries:0,wait:false});}
+  S.over=S.tx.every(t=>t.done);return S;}
+const DBX=(S,x)=>S.dbs[S.rep?x:0];
+const lastV=r=>r.vers[r.vers.length-1];
+function see(S,x,k){
+  const r=DBX(S,x)[k];if(!r)return {v:undefined};
+  if(r.pend&&r.pend.by===x)return {v:r.pend.v};
+  if(S.lv==='none'){const l=lastV(r);if(!l)return {v:undefined};return {v:l.v,dirty:l.by>0&&l.by-1!==x&&!S.tx[l.by-1].done};}
+  if(S.lv==='ru'&&r.pend)return {v:r.pend.v,dirty:true};
+  let vs=r.vers;if(S.lv==='si'){const st=S.tx[x].start==null?S.t+1:S.tx[x].start;vs=vs.filter(z=>z.t<st);}
+  const l=vs[vs.length-1];return {v:l?l.v:undefined};}
+function cur(S,x,k){const r=DBX(S,x)[k];if(!r)return undefined;if(r.pend&&r.pend.by===x)return r.pend.v;const l=lastV(r);return l?l.v:undefined;}
+function matchRows(S,x,st){const d=DBX(S,x),ks=[];let dirty=false;
+  Object.keys(d).forEach(k=>{if(k.indexOf(st.pre)!==0)return;const s=see(S,x,k);if(st.is(s.v)){ks.push(k);if(s.dirty)dirty=true;}});return {ks,dirty};}
+function needs(S,x){const X=S.tx[x],st=X.steps[X.pc];if(!st||S.lv==='none')return [];
+  if(st.op==='set'||st.op==='atomic'||st.op==='readU'||st.op==='cas')return [st.key];
+  if(st.op==='countU')return matchRows(S,x,st).ks;return [];}
+function blocker(S,x){if(S.tx[x].done)return -1;const d=DBX(S,x);for(const k of needs(S,x)){const r=d[k];if(r&&r.lock!==null&&r.lock!==x)return r.lock;}return -1;}
+const canRun=(S,x)=>!S.tx[x].done&&blocker(S,x)<0;
+function release(S,x,keep){const d=DBX(S,x);for(const k in d){const r=d[k];if(r.pend&&r.pend.by===x){if(keep)r.vers.push({v:r.pend.v,t:S.t,by:x+1});r.pend=null;}if(r.lock===x)r.lock=null;}}
+function restart(S,x,e,why){const X=S.tx[x];release(S,x,false);e.b.push(why);e.rt=true;X.tries++;X.pc=0;X.loc={};X.start=null;if(X.tries>3){X.done=true;X.end='gave up';}}
+function exec(S,x){
+  const X=S.tx[x],st=X.steps[X.pc],d=DBX(S,x);S.t++;if(X.start===null)X.start=S.t;
+  const e={x,n:S.log.length+1,txt:'',b:[]};if(X.wait){e.b.push('waited for the lock');X.wait=false;}
+  let adv=true;
+  const lock=k=>{if(S.lv!=='none'&&d[k])d[k].lock=x;};
+  const put=(k,v)=>{if(!d[k])d[k]={vers:[],pend:null,lock:null};const r=d[k];
+    if(S.lv==='none'){const l=lastV(r);if(l&&l.by>0&&l.by-1!==x&&!S.tx[l.by-1].done)e.b.push('dirty write');r.vers.push({v,t:S.t,by:x+1});return;}
+    lock(k);r.pend={v,by:x};};
+  switch(st.op){
+   case 'read':{const s=see(S,x,st.key);X.loc[st.as||st.key]=s.v;if(s.dirty)e.b.push('dirty read');e.txt=st.lab(s.v);break;}
+   case 'readU':{lock(st.key);const v=cur(S,x,st.key);X.loc[st.as||st.key]=v;e.txt=st.lab(v);break;}
+   case 'count':case 'countU':{const m=matchRows(S,x,st);if(st.op==='countU')m.ks.forEach(lock);if(m.dirty)e.b.push('dirty read');
+     const n=m.ks.length,ok=st.need(n);e.txt=st.lab(n,ok);if(!ok){release(S,x,false);X.done=true;X.end='refused';adv=false;}break;}
+   case 'set':{const v=st.f?st.f(X.loc):st.val;
+     if(S.lv==='si'&&S.detect&&d[st.key].vers.some(z=>z.by>0&&z.by!==x+1&&z.t>=X.start)){e.txt='write '+S.sc.fmt(v);restart(S,x,e,'lost update detected: abort, retry');adv=false;break;}
+     put(st.key,v);e.txt=st.lab(v,X.loc);break;}
+   case 'insert':{put(st.key,st.val);e.txt=st.lab();break;}
+   case 'atomic':{lock(st.key);const b=cur(S,x,st.key),v=st.f(b);put(st.key,v);e.txt=st.lab(v,b);break;}
+   case 'cas':{lock(st.key);const now=S.casOld?see(S,x,st.key).v:cur(S,x,st.key),v=st.f(X.loc);
+     if(now===X.loc[st.as]){put(st.key,v);e.txt=st.lab(v,X.loc)+' ✓';}else{e.txt=st.lab(v,X.loc);restart(S,x,e,'value changed: no effect, retry');adv=false;}break;}
+   case 'commit':{release(S,x,true);X.done=true;X.end='commit';adv=false;e.txt=st.lab?st.lab(X.loc):'commit';break;}
+  }
+  if(adv)X.pc++;
+  S.log.push(e);
+  for(let y=0;y<2;y++)if(blocker(S,y)>=0)S.tx[y].wait=true;
+  S.over=S.tx.every(t=>t.done);return e;}
+function fin(S,k){let best=null;S.dbs.forEach(d=>{const r=d[k];if(!r)return;const l=lastV(r);if(l&&(!best||l.t>best.t))best=l;});return best?best.v:undefined;}
+function result(S){if(S.na)return {ok:false,tag:'Doesn’t apply',msg:S.na};if(S.tx.some(t=>t.end==='gave up'))return {ok:false,tag:'Gave up',msg:'A transaction kept retrying.'};return S.sc.check(S);}
+function replay(c,seq){const S=mkS(c);for(const x of seq){if(S.over)break;if(canRun(S,x))exec(S,x);}return S;}
+function allRuns(c){const out=[];if(mkS(c).na)return out;
+  (function dfs(seq){if(out.length>=150)return;const S=replay(c,seq);
+    if(S.over){out.push({seq,res:result(S)});return;}
+    const nx=[0,1].filter(x=>canRun(S,x));
+    if(!nx.length){out.push({seq,res:{ok:false,tag:'Stuck',msg:'Both transactions wait.'}});return;}
+    nx.forEach(x=>dfs(seq.concat([x])));})([]);
+  return out;}
+
+/* ---------- the board UI ---------- */
+function Board(L,host,o){
+  o=Object.assign({id:'b',sc:'credit',lv:'rc',detect:false,fix:'plain',levels:null,fixes:null,strip:false,serial:false,replay:false,on:()=>{}},o);
+  const ID=o.id,c={sc:o.sc,lv:o.lv,detect:o.detect,fix:o.fix,casOld:o.casOld,rep:o.rep,who:o.who};
+  let S,seq=[],lastSeq=null,tok=0,busy=false,ended=false,tag='';
+  host.insertAdjacentHTML('beforeend','<div class="bd" id="'+ID+'"><div class="bd-hd" id="'+ID+'-hd"></div>'+
+    (o.levels?'<div class="bd-lbl">Isolation level</div><div class="bd-chips" id="'+ID+'-lv"></div>':'')+
+    (o.fixes?'<div class="bd-lbl">Fix</div><div class="bd-chips" id="'+ID+'-fx"></div>':'')+
+    '<div class="bd-cf" id="'+ID+'-cf"></div><div id="'+ID+'-db"></div><div class="bd-tl" id="'+ID+'-tl"></div>'+
+    '<div class="bd-go"><button class="btn t1" id="'+ID+'-n0"></button><button class="btn t2" id="'+ID+'-n1"></button></div>'+
+    '<div class="bd-ctl"><button class="btn" id="'+ID+'-rs">'+L.ic('cycle')+'Reset</button>'+
+     (o.replay?'<button class="btn" id="'+ID+'-rp">'+L.ic('play')+'Replay last timing</button>':'')+
+     (o.serial?'<button class="btn" id="'+ID+'-se">'+L.ic('play')+'Run Tobias’s test</button>':'')+
+     (o.strip?'<button class="btn pri" id="'+ID+'-al">'+L.ic('layers')+'Try every timing</button>':'')+'</div>'+
+    '<div class="bd-res" id="'+ID+'-res" aria-live="polite"></div><div id="'+ID+'-st"></div></div>');
+  const $=q=>host.querySelector(q),alive=()=>!!$('#'+ID)&&$('#'+ID).isConnected;
+  function chips(){
+    if(o.levels){const b=$('#'+ID+'-lv');if(!b.children.length){b.innerHTML=o.levels.map(l=>'<button class="chip" data-v="'+l+'">'+LVN[l]+'</button>').join('');
+      [...b.children].forEach(ch=>ch.onclick=()=>{c.lv=ch.dataset.v;reset(true);o.on({type:'lv',c});});}
+      [...b.children].forEach(ch=>ch.classList.toggle('sel',ch.dataset.v===c.lv));}
+    if(o.fixes){const b=$('#'+ID+'-fx');if(!b.children.length){b.innerHTML=o.fixes.map(f=>'<button class="chip" data-v="'+f+'">'+FIXN[f]+'</button>').join('');
+      [...b.children].forEach(ch=>ch.onclick=()=>{const f=ch.dataset.v;c.fix=f;c.lv=f==='detect'?'si':o.lv;c.detect=f==='detect';reset(true);o.on({type:'fix',c});});}
+      [...b.children].forEach(ch=>ch.classList.toggle('sel',ch.dataset.v===c.fix));}
+  }
+  function script(X){if(X.end==='na')return '<i>not possible</i>';
+    return X.steps.map((st,j)=>'<i class="'+((X.done&&X.end==='commit')||j<X.pc?'dn':(j===X.pc&&!X.done?'nx':''))+'">'+OPN[st.op]+'</i>').join(' ')+(X.tries?' <i>retry '+X.tries+'</i>':'');}
+  function rowsHTML(){const sc=SCN[c.sc];let h='';
+    S.dbs.forEach((d,j)=>{if(S.rep)h+='<div class="bd-cp">'+(j?'Eastvale copy (Booking 2 writes here)':'Westport copy (Booking 1 writes here)')+'</div>';
+      const ks=Object.keys(d);if(!ks.length)h+='<div class="bd-row"><span class="nm">'+(sc.empty||'')+'</span><span class="cv" style="font-weight:500;font-size:14px;color:var(--muted)">none yet</span></div>';
+      ks.forEach(k=>{const r=d[k],l=lastV(r);let ex='';
+        if(r.pend)ex+='<span class="bd-pd t'+(r.pend.by+1)+'">→ '+sc.fmt(r.pend.v)+' · T'+(r.pend.by+1)+', not committed</span>';
+        if(S.lv==='none'&&l&&l.by>0&&!S.tx[l.by-1].done)ex+='<span class="bd-pd t'+l.by+'">written by T'+l.by+', not committed</span>';
+        if(r.lock!==null)ex+='<span class="bd-lk t'+(r.lock+1)+'" aria-label="locked by T'+(r.lock+1)+'">'+L.ic('lock')+'T'+(r.lock+1)+'</span>';
+        h+='<div class="bd-row"><span class="nm">'+(sc.names[k]||k)+'</span><span class="cv">'+(l?sc.fmt(l.v):'<span style="font-weight:500;font-size:14px;color:var(--muted)">new row</span>')+'</span>'+ex+'</div>';});});
+    return h;}
+  function draw(){if(!alive())return;const sc=SCN[c.sc];
+    $('#'+ID+'-hd').innerHTML='<b>'+(o.title||sc.t)+'</b><span class="rl">Rule: '+sc.rule+'</span>';
+    $('#'+ID+'-cf').innerHTML='Running under <b>'+LVN[c.lv]+(c.lv==='si'&&c.detect?' + lost-update detection':'')+'</b>'+(c.fix&&c.fix!=='plain'?' · fix: <b>'+FIXN[c.fix]+'</b>':'')+(c.casOld?' · the check reads <b>an old snapshot</b>':'')+(c.rep?' · <b>two copies, synced by last write wins</b>':'');
+    $('#'+ID+'-db').innerHTML=rowsHTML();
+    let h='';[0,1].forEach(x=>{h+='<div class="bd-lh t'+(x+1)+'">T'+(x+1)+' · '+S.who[x]+'<small>'+script(S.tx[x])+'</small></div>';});
+    S.log.forEach((e,j)=>{h+='<div class="bd-e t'+(e.x+1)+(e.rt?' rt':'')+'" style="grid-column:'+(e.x+1)+';grid-row:'+(j+2)+'"><span class="n">'+e.n+'</span>'+e.txt+(e.b.length?'<br>'+e.b.map(b=>'<span class="bdg'+(b.indexOf('waited')===0?' w':'')+'">'+b+'</span>').join(''):'')+'</div>';});
+    if(!S.log.length&&!S.na)h+='<div class="bd-empty" style="grid-column:1/3;grid-row:2">Tap a transaction’s button to run its next step. Time runs down.</div>';
+    $('#'+ID+'-tl').innerHTML=h;
+    [0,1].forEach(x=>{const b=$('#'+ID+'-n'+x),X=S.tx[x],bl=blocker(S,x);let t;
+      if(X.end==='na')t='T'+(x+1)+': not possible';
+      else if(X.done)t='T'+(x+1)+' '+({commit:'committed',refused:'refused',na:'',['gave up']:'gave up'}[X.end]);
+      else if(bl>=0)t=L.ic('lock')+'T'+(x+1)+' waits for T'+(bl+1)+'’s lock';
+      else t='▶ T'+(x+1)+': '+OPN[X.steps[X.pc].op];
+      b.innerHTML=t;b.disabled=X.done||bl>=0||busy;});
+    const r=$('#'+ID+'-res');
+    if(S.na)r.innerHTML='<div class="fb no"><b>Doesn’t apply.</b> '+S.na+'</div>';
+    else if(S.over){const R=result(S);r.innerHTML='<div class="fb '+(R.ok?'ok':'no')+'"><b>'+(R.ok?'Rule holds.':R.tag+'.')+'</b> '+R.msg+'</div>';}
+    else r.innerHTML='';
+    const rp=$('#'+ID+'-rp');if(rp)rp.disabled=!lastSeq||busy;}
+  function after(){draw();for(let y=0;y<2;y++)if(blocker(S,y)>=0)o.on({type:'blocked',x:y,c});o.on({type:'step',S,c});
+    if(S.over&&!ended&&!S.na){ended=true;lastSeq=seq.slice();draw();o.on({type:'end',res:result(S),S,c,seq:seq.slice(),tag});}}
+  function reset(clear){tok++;busy=false;ended=false;tag='';S=mkS(c);seq=[];chips();if(clear&&alive())$('#'+ID+'-st').innerHTML='';draw();}
+  function step(x){if(busy||!canRun(S,x))return;exec(S,x);seq.push(x);after();}
+  async function play(q,ms,tg){reset(false);const my=tok;busy=true;tag=tg||'';draw();
+    for(const x of q){if(my!==tok||!alive())return;if(S.over)break;if(canRun(S,x)){exec(S,x);seq.push(x);if(ms){draw();await L.sleep(ms);}}}
+    if(my!==tok||!alive())return;busy=false;after();}
+  function strip(){const runs=allRuns(c),st=$('#'+ID+'-st');
+    if(!runs.length){st.innerHTML='';o.on({type:'all',runs,bad:0,c});return;}
+    const bad=runs.filter(r=>!r.res.ok).length;
+    st.innerHTML='<div class="bd-sum"><b>'+bad+' of '+runs.length+'</b> possible timings break the rule.</div><div class="bd-strip">'+runs.map((r,j)=>'<button class="'+(r.res.ok?'ok':'no')+(j===0||j===runs.length-1?' ser':'')+'" data-j="'+j+'" aria-label="Timing '+(j+1)+': '+(r.res.ok?'rule holds':'rule broken')+'"></button>').join('')+'</div><p class="small" style="margin:4px 0 0">Each square is one order of the steps. Tap one to replay it. The dotted squares run one transaction fully, then the other, like a test does.</p>';
+    st.querySelectorAll('button').forEach(b=>b.onclick=()=>{const j=+b.dataset.j;st.querySelectorAll('button').forEach(z=>z.classList.toggle('cur',z===b));play(runs[j].seq,0);o.on({type:'cell',j,res:runs[j].res});});
+    o.on({type:'all',runs,bad,c});}
+  [0,1].forEach(x=>{$('#'+ID+'-n'+x).onclick=()=>step(x);});
+  $('#'+ID+'-rs').onclick=()=>reset(false);
+  if(o.replay)$('#'+ID+'-rp').onclick=()=>{if(lastSeq)play(lastSeq,200);};
+  if(o.serial)$('#'+ID+'-se').onclick=()=>{play(Array(9).fill(0).concat(Array(9).fill(1)),200,'serial');};
+  if(o.strip)$('#'+ID+'-al').onclick=strip;
+  reset(true);
+  return {play,strip,reset,c,get S(){return S;}};
+}
+
+/* ---------- 2. the MVCC shelf: Garden’s row versions (txn 13 is the book’s; txn 15 is illustrative) ---------- */
+const MV={tx:{3:{s:-9,e:-8,ok:true},13:{s:1.5,e:4.5,ok:true},15:{s:6.5,e:8.5,ok:false}},
+  vers:[{v:500,c:3,d:13},{v:400,c:13,d:15},{v:350,c:15,d:null}]};
+const rid=s=>s<1.5?12:s<6.5?14:16;
+function mvEff(id,lv,s,r){const T=MV.tx[id];
+  if(lv==='si'){if(id>rid(s))return {ok:false,rule:3};if(T.s<=s&&s<T.e)return {ok:false,rule:1};if(!T.ok)return {ok:false,rule:2};return {ok:true};}
+  if(T.s>r)return {ok:false,why:'not started'};if(r<T.e)return {ok:false,why:'running'};if(!T.ok)return {ok:false,why:'aborted'};return {ok:true};}
+const mvVis=(v,lv,s,r)=>mvEff(v.c,lv,s,r).ok&&!(v.d&&mvEff(v.d,lv,s,r).ok);
+function Shelf(L,host,o){
+  o=Object.assign({id:'s',mode:'free',lv:'si',s:3,r:8,ctl:true,on:()=>{}},o);
+  const ID=o.id,free=o.mode==='free',st={lv:o.lv,s:o.s,r:Math.max(o.r,o.s),stage:0};
+  host.insertAdjacentHTML('beforeend','<div class="sh"><svg class="sv" id="'+ID+'-svg" viewBox="0 0 320 272" role="img" aria-label="Transactions on a timeline above the stacked versions of the Garden balance row"></svg>'+
+    (free&&o.ctl?'<div class="bd-chips" id="'+ID+'-lv"><button class="chip" data-v="si">Snapshot isolation</button><button class="chip" data-v="rc">Read committed</button></div>'+
+     '<div class="rng"><label for="'+ID+'-s">Reader starts</label><input type="range" id="'+ID+'-s" min="0" max="10" step="1"><b id="'+ID+'-sv"></b></div>'+
+     '<div class="rng"><label for="'+ID+'-r">Reader reads</label><input type="range" id="'+ID+'-r" min="0" max="10" step="1"><b id="'+ID+'-rv"></b></div>':'')+
+    (free?'<div class="sh-out" id="'+ID+'-out" aria-live="polite"></div>':'')+'</div>');
+  const $=q=>host.querySelector(q),X=t=>20+t*28;
+  function draw(){const svg=$('#'+ID+'-svg');if(!svg||!svg.isConnected)return;let h='';svg.setAttribute('viewBox','0 0 320 '+(free?272:222));
+    for(let t=0;t<=10;t++)h+='<text x="'+X(t)+'" y="11" class="tk">'+t+'</text><line x1="'+X(t)+'" y1="15" x2="'+X(t)+'" y2="21" style="stroke:var(--line2)"/>';
+    h+='<line x1="20" y1="18" x2="300" y2="18" style="stroke:var(--line2);stroke-width:1.5"/>';
+    const bar=(a,b,lbl,sub,kind)=>{const f=kind==='ab'?'var(--no-bg)':kind==='ok'?'var(--h3-bg)':'var(--card)',s=kind==='ab'?'var(--no)':'var(--h3)';
+      return '<rect x="'+X(a)+'" y="28" width="'+(X(b)-X(a))+'" height="20" rx="6" style="fill:'+f+';stroke:'+s+';stroke-width:1.6'+(kind!=='ok'?';stroke-dasharray:4 3':'')+'"/><text x="'+X((a+b)/2)+'" y="42" class="bt">'+lbl+'</text><text x="'+X((a+b)/2)+'" y="62" class="tk" style="fill:'+s+'">'+sub+'</text>';};
+    if(free)h+='<line x1="'+X(st.lv==='si'?st.s:st.r)+'" y1="14" x2="'+X(st.lv==='si'?st.s:st.r)+'" y2="84" style="stroke:var(--pri);stroke-width:1.6;stroke-dasharray:4 3"/>';
+    if(free||st.stage>=1)h+=bar(1.5,4.5,'txn 13',free||st.stage>=4?'−$100 · commits':'−$100 · running',free||st.stage>=4?'ok':'run');
+    if(free)h+=bar(6.5,8.5,'txn 15','−$50 · aborts','ab');
+    if(free){const lb=(x,t)=>'<text x="'+Math.max(34,Math.min(286,x))+'" y="100" class="tk" style="fill:var(--pri);font-weight:600">'+t+'</text>';
+      h+='<line x1="'+X(st.s)+'" y1="82" x2="'+X(st.r)+'" y2="82" style="stroke:var(--pri);stroke-width:3;stroke-linecap:round"/>';
+      h+='<circle cx="'+X(st.s)+'" cy="82" r="6" style="fill:var(--pri)"/><circle cx="'+X(st.r)+'" cy="82" r="6" style="fill:var(--card);stroke:var(--pri);stroke-width:2.5"/>';
+      h+=st.r-st.s>=2?lb(X(st.s),'start')+lb(X(st.r),'read'):lb(X((st.s+st.r)/2),st.r===st.s?'start = read':'start · read');}
+    h+='<text x="8" y="120" class="mt" style="font-weight:600">Garden account row · versions kept side by side</text>';
+    MV.vers.forEach((v,j)=>{const show=free||j===0||(j===1&&st.stage>=3);if(!show)return;
+      const y=128+j*48;let vis=false,stt='',gone=false;const del=v.d&&(free||(j===0&&st.stage>=2));
+      if(free){vis=mvVis(v,st.lv,st.s,st.r);if(vis)stt='✓ visible';else{const e=mvEff(v.c,st.lv,st.s,st.r);stt=e.ok?'hidden · deleted':'hidden'+(e.rule?' · rule '+e.rule:'');}}
+      else if(j===0&&st.stage>=5){gone=true;stt='garbage-collected';}else if(j===1&&st.stage===3)stt='new version';
+      h+='<g style="opacity:'+(gone?0.4:(free&&!vis?0.62:1))+'"><rect x="8" y="'+y+'" width="304" height="40" rx="10" style="fill:'+(vis?'var(--ok-bg)':'var(--card)')+';stroke:'+(vis?'var(--ok-line)':'var(--line2)')+';stroke-width:'+(vis?2.2:1.4)+'"/>'+
+        '<text x="20" y="'+(y+26)+'" style="font-size:17px;font-weight:700;fill:var(--ink)">'+money(v.v)+'</text>'+
+        '<text x="84" y="'+(y+(del?17:25))+'" class="mt">created by txn '+v.c+'</text>'+
+        (del?'<text x="84" y="'+(y+32)+'" class="mt" style="fill:var(--no)">deleted by txn '+v.d+'</text>':'')+
+        (stt?'<text x="304" y="'+(y+25)+'" class="mt" style="text-anchor:end;font-weight:700;fill:'+(vis?'var(--ok)':'var(--muted)')+'">'+stt+'</text>':'')+'</g>';});
+    svg.innerHTML=h;
+    if(free){const vis=MV.vers.find(v=>mvVis(v,st.lv,st.s,st.r));let out;
+      if(st.lv==='si'){const hit={1:[],2:[],3:[],4:[]};[3,13,15].forEach(id=>{const e=mvEff(id,'si',st.s,st.r);hit[e.ok?4:e.rule].push('txn '+id);});
+        out='<p><b>Reader = txn '+rid(st.s)+'</b>. Its snapshot is taken when it starts (at '+st.s+'), so it sees <b>'+money(vis.v)+'</b> whenever it reads.</p><ol class="rules">'+
+          [['Ignore writes by transactions still running when I started',hit[1]],['Ignore writes by aborted transactions',hit[2]],['Ignore writes by transactions with a later ID',hit[3]],['Everything else is visible',hit[4]]]
+          .map(a=>'<li class="'+(a[1].length?'hit':'')+'">'+a[0]+(a[1].length?' <span>→ '+a[1].join(', ')+'</span>':'')+'</li>').join('')+'</ol>';}
+      else{const ok=[],no=[];[3,13,15].forEach(id=>(mvEff(id,'rc',st.s,st.r).ok?ok:no).push('txn '+id));
+        out='<p><b>Read committed</b> takes a fresh snapshot at each read (at '+st.r+'), so this read sees <b>'+money(vis.v)+'</b>.</p><ul class="rules"><li class="hit">Committed by the read <span>→ '+ok.join(', ')+'</span></li><li class="'+(no.length?'hit':'')+'">Running, not started or aborted: ignored'+(no.length?' <span>→ '+no.join(', ')+'</span>':'')+'</li></ul>';}
+      $('#'+ID+'-out').innerHTML=out;o.on({type:'chg',lv:st.lv,s:st.s,r:st.r,see:vis.v});}}
+  function sync(){if(!free||!o.ctl)return;$('#'+ID+'-s').value=st.s;$('#'+ID+'-r').value=st.r;$('#'+ID+'-sv').textContent=st.s;$('#'+ID+'-rv').textContent=st.r;
+    [...$('#'+ID+'-lv').children].forEach(ch=>ch.classList.toggle('sel',ch.dataset.v===st.lv));}
+  if(free&&o.ctl){
+    $('#'+ID+'-s').addEventListener('input',e=>{st.s=+e.target.value;if(st.r<st.s)st.r=st.s;sync();draw();});
+    $('#'+ID+'-r').addEventListener('input',e=>{st.r=Math.max(+e.target.value,st.s);sync();draw();});
+    [...$('#'+ID+'-lv').children].forEach(ch=>ch.onclick=()=>{st.lv=ch.dataset.v;sync();draw();});}
+  sync();draw();
+  return {st,set(p){Object.assign(st,p);if(st.r<st.s)st.r=st.s;sync();draw();},stage(n){st.stage=n;draw();}};
+}
+
+/* ---------- small helpers ---------- */
+function todo(L,host,items,fin){host.innerHTML='<ul class="todo">'+items.map(t=>'<li><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';
+  const got=new Set();return j=>{if(got.has(j)||!host.isConnected)return;got.add(j);const li=host.querySelectorAll('li')[j];li.classList.add('dn');li.querySelector('.bx').innerHTML=L.ic('check');if(got.size===items.length)fin();};}
+function pick(L,host,opts,right,cb){const box=document.createElement('div');box.className='opts';host.appendChild(box);let a=false;
+  opts.forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';
+    b.onclick=()=>{if(a)return;a=true;const ok=j===right;[...box.children].forEach((z,k)=>{z.setAttribute('aria-disabled','true');if(k!==j&&k!==right)z.classList.add('dim');});
+      b.classList.add(ok?'ok':'no');if(!ok)box.children[right].classList.add('ok');L.award(ok);cb(ok);};box.appendChild(b);});}
+const blk=(x,y,w,t,f,s,dash)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="22" rx="6" style="fill:var(--'+f+');stroke:var(--'+s+');stroke-width:1.5'+(dash?';stroke-dasharray:4 3':'')+'"/><text x="'+(x+w/2)+'" y="'+(y+15)+'" class="bt">'+t+'</text>';
+const arrowDefs=(id,col)=>'<marker id="'+id+'" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--'+col+')"/></marker>';
+
+/* ---------- static pictures ---------- */
+function visLadder(){
+  const R=[['Serializable','as if transactions ran one at a time','ok-bg','ok-line','next lesson'],['Snapshot isolation','each transaction reads one frozen moment','h3-bg','h3','this lesson'],
+    ['Read committed','a common default','h3-bg','h3','this lesson'],['Read uncommitted','stops dirty writes only','h3-bg','h3','this lesson'],['No isolation','anything can interleave','soft','line2','']];
+  let s='<svg class="sv" viewBox="0 0 320 240" role="img" aria-label="A ladder of isolation levels: no isolation, read uncommitted, read committed, snapshot isolation, serializable"><defs>'+arrowDefs('lad-a','muted')+'</defs>'+
+    '<line x1="12" y1="232" x2="12" y2="10" style="stroke:var(--muted);stroke-width:2" marker-end="url(#lad-a)"/><text transform="translate(27 121) rotate(-90)" class="tk">safer, but slower</text>';
+  R.forEach((r,j)=>{const y=6+j*46;s+='<rect x="38" y="'+y+'" width="276" height="38" rx="10" style="fill:var(--'+r[2]+');stroke:var(--'+r[3]+');stroke-width:1.5"/>'+
+    '<text x="50" y="'+(y+16)+'" style="font-size:13px;font-weight:700;fill:var(--ink)">'+r[0]+'</text><text x="50" y="'+(y+31)+'" class="mt">'+r[1]+'</text>'+
+    (r[4]?'<text x="304" y="'+(y+16)+'" style="font-size:11px;font-weight:700;text-anchor:end;fill:var(--'+(j?'h3':'ok')+')">'+r[4]+'</text>':'');});
+  return s+'</svg>';}
+function visPromises(){
+  let s='<svg class="sv" viewBox="0 0 320 198" role="img" aria-label="Two timelines. Top: a reader gets the old value 2 while T1’s set x = 3 is uncommitted, and 3 after the commit. Bottom: Mia’s write waits for Ravi’s lock until Ravi commits.">';
+  s+='<text x="316" y="13" class="tk" style="text-anchor:end">time →</text>';
+  s+='<text x="0" y="13" class="ttl" style="fill:var(--h3)">No dirty reads</text>';
+  s+='<text x="0" y="39" class="mt" style="font-weight:600">T1</text><text x="0" y="71" class="mt" style="font-weight:600">Reader</text>';
+  s+=blk(48,24,90,'set x = 3','h1-bg','h1')+'<line x1="138" y1="35" x2="176" y2="35" style="stroke:var(--line2);stroke-dasharray:3 3"/>'+blk(176,24,56,'commit','ok-bg','ok-line');
+  s+=blk(142,56,58,'x → 2','soft','line2')+blk(244,56,58,'x → 3','soft','line2');
+  s+='<text x="171" y="94" class="tk">old value</text><text x="273" y="94" class="tk">new value</text>';
+  s+='<text x="0" y="122" class="ttl" style="fill:var(--h3)">No dirty writes</text>';
+  s+='<text x="0" y="147" class="mt" style="font-weight:600">Ravi</text><text x="0" y="179" class="mt" style="font-weight:600">Mia</text>';
+  s+=blk(48,132,90,'write parcel','h1-bg','h1')+'<line x1="138" y1="143" x2="176" y2="143" style="stroke:var(--line2);stroke-dasharray:3 3"/>'+blk(176,132,56,'commit','ok-bg','ok-line');
+  s+=blk(140,164,92,'waits for lock','card','line2',true)+blk(236,164,80,'write parcel','h2-bg','h2');
+  return s+'</svg>';}
+function visBackup(){
+  const X=m=>20+m/180*280;let s='<svg class="sv" viewBox="0 0 320 190" role="img" aria-label="A three-hour backup copies Homewares at 0:20 ($500) and Garden at 2:40 ($400); a $100 transfer commits at 1:30 in between.">';
+  ['0h','1h','2h','3h'].forEach((t,j)=>{s+='<text x="'+X(j*60)+'" y="12" class="tk">'+t+'</text>';});
+  s+='<line x1="20" y1="20" x2="300" y2="20" style="stroke:var(--line2);stroke-width:1.5"/><rect x="20" y="26" width="280" height="14" rx="7" style="fill:var(--h1-bg);stroke:var(--h1)"/><text x="160" y="37" class="tk" style="fill:var(--h1);font-weight:600">backup copying rows, one after another</text>';
+  s+='<line x1="'+X(20)+'" y1="40" x2="'+X(20)+'" y2="68" style="stroke:var(--h1);stroke-width:1.5"/><text x="24" y="82" class="mt" style="fill:var(--ink)">copies Homewares</text><text x="24" y="98" style="font-size:15px;font-weight:700;fill:var(--h1)">$500</text>';
+  s+='<line x1="'+X(160)+'" y1="40" x2="'+X(160)+'" y2="68" style="stroke:var(--h1);stroke-width:1.5"/><text x="300" y="82" class="mt" style="fill:var(--ink);text-anchor:end">copies Garden</text><text x="300" y="98" style="font-size:15px;font-weight:700;fill:var(--h1);text-anchor:end">$400</text>';
+  s+='<line x1="'+X(90)+'" y1="40" x2="'+X(90)+'" y2="108" style="stroke:var(--no);stroke-width:2;stroke-dasharray:4 3"/><text x="160" y="122" class="tk" style="fill:var(--no);font-weight:700">$100 transfer commits</text>';
+  s+='<rect x="8" y="138" width="304" height="46" rx="10" style="fill:var(--no-bg);stroke:var(--no-line)"/><text x="160" y="157" style="font-size:12.5px;font-weight:700;fill:var(--no);text-anchor:middle">The backup holds $500 + $400 = $900</text><text x="160" y="174" style="font-size:12px;fill:var(--no);text-anchor:middle">Restore it, and $100 is gone for good</text>';
+  return s+'</svg>';}
+function visIndexes(){
+  let s='<svg class="sv" viewBox="0 0 320 244" role="img" aria-label="Two ways to index many versions: an index pointing to every version, or a copy-on-write B-tree with an old root and a new root sharing unchanged pages."><defs>'+arrowDefs('ix-a','muted')+arrowDefs('ix-p','pri')+'</defs>';
+  s+='<text x="0" y="13" class="ttl">1 · Index points to every version</text>';
+  s+='<rect x="4" y="30" width="80" height="44" rx="10" style="fill:var(--soft);stroke:var(--line2)"/><text x="44" y="49" class="bt">index</text><text x="44" y="65" class="tk">“Garden”</text>';
+  s+='<rect x="150" y="24" width="166" height="24" rx="8" style="fill:var(--card);stroke:var(--line2)"/><text x="233" y="40" class="bt">$500 · deleted by 13</text>';
+  s+='<rect x="150" y="56" width="166" height="24" rx="8" style="fill:var(--card);stroke:var(--line2)"/><text x="233" y="72" class="bt">$400 · created by 13</text>';
+  s+='<line x1="84" y1="48" x2="148" y2="37" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ix-a)"/><line x1="84" y1="56" x2="148" y2="68" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ix-a)"/>';
+  s+='<text x="160" y="100" class="tk">each query filters out versions it can’t see</text>';
+  s+='<text x="0" y="128" class="ttl">2 · Copy-on-write B-tree</text>';
+  s+='<rect x="30" y="140" width="84" height="24" rx="8" style="fill:var(--card);stroke:var(--line2)"/><text x="72" y="156" class="bt">old root</text>';
+  s+='<rect x="200" y="140" width="84" height="24" rx="8" style="fill:var(--pri-bg);stroke:var(--pri)"/><text x="242" y="156" class="bt">new root</text>';
+  s+='<rect x="4" y="196" width="88" height="24" rx="8" style="fill:var(--card);stroke:var(--line2)"/><text x="48" y="212" class="bt">page A</text>';
+  s+='<rect x="114" y="196" width="88" height="24" rx="8" style="fill:var(--card);stroke:var(--line2)"/><text x="158" y="212" class="bt">page B</text>';
+  s+='<rect x="224" y="196" width="92" height="24" rx="8" style="fill:var(--pri-bg);stroke:var(--pri)"/><text x="270" y="212" class="bt">copy of B</text>';
+  s+='<line x1="64" y1="164" x2="50" y2="194" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ix-a)"/><line x1="82" y1="164" x2="150" y2="194" style="stroke:var(--muted);stroke-width:1.5" marker-end="url(#ix-a)"/>';
+  s+='<line x1="216" y1="164" x2="70" y2="194" style="stroke:var(--pri);stroke-width:1.5;stroke-dasharray:4 3" marker-end="url(#ix-p)"/><line x1="252" y1="164" x2="266" y2="194" style="stroke:var(--pri);stroke-width:1.5" marker-end="url(#ix-p)"/>';
+  s+='<text x="160" y="238" class="tk" style="fill:var(--pri)">the new root shares page A; only B is copied</text>';
+  return s+'</svg>';}
+function visSameReads(){
+  let s='<svg class="sv" viewBox="0 0 320 222" role="img" aria-label="Top: two transactions write the same credit row. Bottom: two transactions read both Ravi’s and Mia’s rows, then each writes a different row."><defs>'+arrowDefs('sr1','h1')+arrowDefs('sr2','h2')+'</defs>';
+  const tx=(y,n,c)=>'<rect x="6" y="'+y+'" width="70" height="26" rx="8" style="fill:var(--'+c+'-bg);stroke:var(--'+c+')"/><text x="41" y="'+(y+17)+'" class="bt">'+n+'</text>';
+  const row=(y,n)=>'<rect x="214" y="'+y+'" width="100" height="26" rx="8" style="fill:var(--card);stroke:var(--line2)"/><text x="264" y="'+(y+17)+'" class="bt">'+n+'</text>';
+  s+='<text x="0" y="13" class="ttl">Lost update: two writes, one row</text>';
+  s+=tx(24,'Booking 1','h1')+tx(60,'Booking 2','h2')+row(42,'credit');
+  s+='<line x1="76" y1="37" x2="212" y2="51" style="stroke:var(--h1);stroke-width:2.2" marker-end="url(#sr1)"/><line x1="76" y1="73" x2="212" y2="61" style="stroke:var(--h2);stroke-width:2.2" marker-end="url(#sr2)"/>';
+  s+='<text x="160" y="104" class="tk">the later write clobbers the earlier one</text>';
+  s+='<text x="0" y="130" class="ttl">Write skew: same reads, different rows</text>';
+  s+=tx(142,'Ravi','h1')+tx(180,'Mia','h2')+row(142,'Ravi on duty')+row(180,'Mia on duty');
+  s+='<line x1="76" y1="160" x2="212" y2="188" style="stroke:var(--line2);stroke-width:1.4;stroke-dasharray:4 3"/><line x1="76" y1="188" x2="212" y2="160" style="stroke:var(--line2);stroke-width:1.4;stroke-dasharray:4 3"/>';
+  s+='<line x1="76" y1="152" x2="212" y2="152" style="stroke:var(--h1);stroke-width:2.2" marker-end="url(#sr1)"/><line x1="76" y1="196" x2="212" y2="196" style="stroke:var(--h2);stroke-width:2.2" marker-end="url(#sr2)"/>';
+  s+='<text x="160" y="220" class="tk">dashed: each also read the other’s row · solid: writes</text>';
+  return s+'</svg>';}
+function visMaterialize(){
+  const T=['14:00','14:15','14:30','14:45','15:00','15:15','15:30','15:45'],X0=40,W=34;
+  let s='<svg class="sv" viewBox="0 0 320 190" role="img" aria-label="A table of pre-made lock rows: one per locker per 15 minutes. Mrs. Okoro’s booking locks locker L4 from 14:00 to 16:00; Tariq’s booking for the same rows waits.">';
+  T.forEach((t,j)=>{if(j%2===0)s+='<text x="'+(X0+j*W+2)+'" y="12" class="mt" style="font-size:11px">'+t+'</text>';});
+  ['L2','L3','L4'].forEach((n,r)=>{const y=20+r*32,on=r===2;s+='<text x="4" y="'+(y+17)+'" class="mt" style="font-weight:700;fill:var(--'+(on?'h1':'ink')+')">'+n+'</text>';
+    T.forEach((t,j)=>{s+='<rect x="'+(X0+j*W)+'" y="'+y+'" width="'+(W-3)+'" height="26" rx="5" style="fill:var(--'+(on?'h1-bg':'card')+');stroke:var(--'+(on?'h1':'line2')+');stroke-width:'+(on?1.8:1)+'"/>';});});
+  s+='<text x="40" y="128" style="font-size:12px;font-weight:700;fill:var(--h1)">locked by Mrs. Okoro’s booking</text>';
+  s+='<line x1="282" y1="140" x2="282" y2="112" style="stroke:var(--h2);stroke-width:1.6;stroke-dasharray:3 3"/>';
+  s+='<rect x="122" y="140" width="190" height="28" rx="8" style="fill:var(--h2-bg);stroke:var(--h2);stroke-dasharray:4 3"/><text x="217" y="158" class="bt" style="fill:var(--h2)">Tariq: same rows → waits</text>';
+  s+='<text x="314" y="184" class="tk" style="text-anchor:end">one row per locker per 15 minutes</text><text x="4" y="184" class="tk" style="text-anchor:start;font-style:italic">illustrative</text>';
+  return s+'</svg>';}
+
 Course.lesson({
-  id:'0016', title:'Weak isolation levels', minutes:20, icon:'layers',
+  id:'0016', title:'Weak isolation levels', minutes:22, icon:'layers',
   goals:['Say which race conditions read committed and snapshot isolation stop, and which they let through','Pick a fix for a lost update: atomic write, lock, automatic detection or compare-and-set','Spot write skew and phantoms, and know why only serializable isolation fully stops them'],
   parts:['Read committed','Snapshots','Lost updates','Write skew'],
   read:'Read the “Weak Isolation Levels” section of chapter 7 for the on-call doctors, the meeting-room bookings and the details of MVCC.',
@@ -34,51 +463,38 @@ Course.lesson({
     '<b>Read skew</b>: parts of the database seen at different moments. Fine for a person who reloads, fatal for backups and long analytic queries.',
     '<b>Snapshot isolation</b>: each transaction reads a consistent snapshot from its start, built with MVCC (transaction IDs, created-by, deleted-by). Readers and writers don’t block each other.',
     'Names are a mess: “repeatable read”, and even “serializable”, may mean snapshot isolation. Read your database’s docs.',
-    '<b>Lost update</b>: two read-modify-write cycles, one clobbers the other. Fixes: atomic write, explicit lock (FOR UPDATE), automatic detection, compare-and-set. With replicas: merge siblings; last write wins loses updates.',
-    '<b>Write skew</b>: check → decide → write, where the write changes what the check would now find. Atomic operations and lost-update detection don’t catch it.',
+    '<b>Lost update</b>: two read-modify-write cycles, one clobbers the other. Fixes: atomic write, explicit lock (FOR UPDATE), automatic detection, compare-and-set. With replicas: merge; last write wins loses updates.',
+    '<b>Write skew</b>: check → decide → write, where the write changes what the check would now find. Atomic operations and lost-update detection don’t catch it; lock the rows you read.',
     '<b>Phantom</b>: when the check looks for rows that don’t exist yet, there is nothing to lock. Materialize the conflict as a last resort, or use serializable isolation.'
   ],
   steps:[
 /* ---------- PART 1: READ COMMITTED ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two support agents sometimes edit the same parcel at the same moment. Tobias’s tests ran that code 1,000 times without a problem. Is it safe?</h1>');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two support agents sometimes edit the same parcel at the same moment. Tobias’s tests ran that code 1,000 times <span class="ill">illustrative</span> without a problem. Is it safe?</h1>');
   L.mc(L.card,['Yes: a thousand passing runs prove it','Not necessarily: timing bugs hide from tests'],1,
    'Concurrency bugs only appear with unlucky timing, so they are rare in tests and hard to reproduce. That’s why it matters to know exactly what your database protects you from.',
    'A test only exercises the timings it happens to hit. Concurrency bugs need unlucky timing, which may never show up in tests.');}},
 {part:0,src:'Chapter 7 · Weak Isolation Levels',run(L){
-  L.h(L.kick('learn','Why “weak” isolation exists')+'<h1 class="q">Most databases trade some safety for speed</h1>'+
-   L.prose('Race conditions only matter when one transaction reads data another is changing, or when two change the same data. With full serializable isolation you could pretend concurrency doesn’t exist. But that costs performance, so many databases default to weaker '+L.g('isolation','isolation levels')+' that stop some problems and not others.')+
-   L.note('These bugs are not theoretical. The book cites weak isolation causing lost money, an investigation by financial auditors and corrupted customer data. “Just use an ACID database” misses the point: many popular relational databases use weak isolation too.','alert')+
-   L.prose('So you need to know which race conditions each level lets through. This lesson covers the two most common levels, <b>read committed</b> and <b>snapshot isolation</b>, and the bugs they don’t stop.'));
+  L.h(L.kick('learn','Why “weak” isolation exists')+'<h1 class="q">Most databases trade some safety for speed</h1>'+visLadder()+
+   L.prose('Serializable '+L.g('isolation','isolation')+' lets you pretend transactions run one at a time, but it costs speed. So many databases default lower, “ACID” ones included. Read committed is the default in Oracle 11g, PostgreSQL, SQL Server 2012 and MemSQL.')+
+   L.note('Weak isolation bugs have lost real money, drawn financial auditors and corrupted customer data.','alert'));
   L.done();}},
 {part:0,src:'Chapter 7 · Read Committed',run(L){
-  L.h(L.kick('learn','The most basic level')+'<h1 class="q">Read committed makes two promises</h1>'+
-   L.tiers([['eye','No dirty reads','When you read, you only see data that has been committed.','Another transaction’s writes appear all at once, when it commits.'],
-            ['pencil','No dirty writes','When you write, you only overwrite data that has been committed.','If another transaction has an uncommitted write on that row, you wait.']])+
-   L.prose('Why block '+L.g('dirty-read','dirty reads')+'? Two reasons. A transaction that updates several objects could be seen half done, like a new parcel in the dashboard list while the counter hasn’t moved. And if that transaction aborts, you would have acted on data that was never really there.')+
-   '<p class="small">An even weaker level, read uncommitted, stops dirty writes but not dirty reads.</p>');
+  L.h(L.kick('learn','The most basic level')+'<h1 class="q">Read committed makes two promises</h1>'+visPromises()+
+   L.prose('You only <b>see</b> committed data (no '+L.g('dirty-read','dirty reads')+'), and you only <b>overwrite</b> committed data (no '+L.g('dirty-write','dirty writes')+'). Readers take no lock, so one long write can’t stall them all; they get the old committed value.')+
+   '<div class="why2"><div><b>Why: half-done</b><span class="pl k">scan ✓</span><span class="pl x">counter ✗</span><br>You see part of a change and decide wrongly.</div>'+
+   '<div><b>Why: may abort</b><span class="pl a">x = 3</span><span class="pl x">rolled back</span><br>You used a value that never existed.</div></div>'+
+   '<div class="nc"><b>Not covered</b><div class="cdw"><span class="pl w">T1, T2 both read 42</span><span class="ar">→</span><span class="pl a">T1 writes 43, commits</span><span class="ar">→</span><span class="pl b">T2 writes 43</span><span class="ar">→</span><span class="pl x">43, not 44</span></div>T2’s write comes after T1 commits, so it isn’t dirty. It’s a lost update (part 3).</div>');
   L.done();}},
-{part:0,src:'Chapter 7 · Read Committed · No dirty writes',run(L){
-  L.h(L.kick('ex','A dirty write at the hub')+'<h1 class="q">Two couriers claim the same parcel at the same instant</h1>');
-  L.beats(L.card,[
-   ['The book’s story','Two people buy the same used car at once. Buying writes the listing and the invoice. With dirty writes allowed, the car goes to one buyer and the invoice to the other.'],
-   ['At Otterpost','Couriers Ravi and Mia both tap “take this parcel”. A claim writes two objects: the <b>parcel row</b> (who carries it) and the hub’s <b>handover slip</b> (who signs for it).'],
-   ['Interleaved','Ravi writes the parcel row; Mia overwrites it before Ravi commits. Mia writes the slip; Ravi overwrites that before Mia commits.'],
-   ['The mess','The parcel row says Mia, the slip says Ravi. Each overwrote the other’s <b>uncommitted</b> write: a '+L.g('dirty-write','dirty write')+'. Read committed prevents this by making the second writer wait.'],
-   ['Not covered','The counter race (both read 42, both write 43) is different. The second write comes after the first transaction committed, so it isn’t dirty. Read committed lets it through. Part 3 covers it.']],
-   'Read committed keeps uncommitted writes from being seen or overwritten. It does not make every concurrent pattern safe.');}},
-{part:0,src:'Chapter 7 · Read Committed · Implementing read committed',run(L){
-  L.h(L.kick('learn','How databases do it')+'<h1 class="q">Locks for writers, old values for readers</h1>'+
-   L.lanes([['lock','Stopping dirty writes','A transaction must take a <b>row lock</b> before writing and hold it until it commits or aborts. Anyone else who wants to write that row waits.',2],
-            ['eye','Stopping dirty reads','The database keeps the <b>old committed value</b> next to the new uncommitted one. Readers get the old value until the writer commits.',3]])+
-   L.prose('Why not make readers take the lock too? Because one long-running write would make many readers wait. Response times suffer, and a slowdown in one part of the app spreads to unrelated parts.')+
-   L.prose('Read committed is the default in Oracle 11g, PostgreSQL, SQL Server 2012, MemSQL and many other databases.'));
-  L.done();}},
-{part:0,src:'Chapter 7 · Read Committed · Implementing read committed',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Under read committed, a transaction is changing a balance from $500 to $400 and hasn’t committed yet. Signe opens that balance now. What do they see in most databases?</h1>');
-  L.mc(L.card,['$400, the newest value','They wait until the change commits','$500, the last committed value'],2,
-   'The database keeps the old committed value for readers, so Signe doesn’t wait and doesn’t see uncommitted data.',
-   'Seeing $400 would be a dirty read. Waiting would mean read locks, which most databases avoid because one slow writer would hold up every reader. They get $500.');}},
+{part:0,src:'Chapter 7 · Read Committed · No dirty writes',
+ solve:async L=>{L.$('#b3-lv [data-v="none"]').click();for(const x of [0,1,1,0,0,1])L.$('#b3-n'+x).click();await L.sleep(20);L.$('#b3-lv [data-v="rc"]').click();L.$('#b3-n0').click();await L.sleep(20);},
+ run(L){
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Ravi and Mia tap “take this parcel” at the same instant. Each claim writes two rows.</h1><div id="t3"></div><div id="c3"></div>');
+  const T=todo(L,L.$('#t3'),['With <b>no isolation</b>, make the parcel row and the slip disagree','Switch to <b>read committed</b> and watch a writer wait'],()=>{
+    L.sheet('info','What you saw','With no isolation, each claim overwrote the other’s <b>uncommitted</b> write: a dirty write. The book’s version: one buyer gets the car, the other gets the invoice. Read committed makes the second writer wait for the row lock. Readers don’t take that lock, since one long write would stall them all; they get the old committed value.');L.done();});
+  Board(L,L.$('#c3'),{id:'b3',sc:'claim',lv:'none',levels:['none','rc'],on:ev=>{
+    if(ev.type==='end'&&ev.c.lv==='none'&&!ev.res.ok)T(0);
+    if(ev.type==='blocked'&&ev.c.lv==='rc')T(1);}});}},
 {part:0,src:'Chapter 7 · Read Committed',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Dirty read, dirty write, or neither?',['Dirty read','Dirty write','Neither'],[
@@ -88,62 +504,67 @@ Course.lesson({
    ['The tracking page shows “out for delivery” only once the scan’s transaction has committed.',2,'That’s read committed working as intended.']]);}},
 
 /* ---------- PART 2: SNAPSHOTS ---------- */
-{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',run(L){
-  L.h(L.kick('ex','A problem read committed allows')+'<h1 class="q">$100 seems to vanish into thin air</h1>');
-  L.beats(L.card,[
-   ['Two accounts','Bramble & Bolt keeps $1,000 of Otterpost credit in two merchant accounts, Homewares and Garden, with $500 each.'],
-   ['A transfer','A transaction moves $100 from Garden to Homewares.'],
-   ['Linh’s report','At that moment, Linh’s report reads Homewares <b>before</b> the $100 arrives ($500) and Garden <b>after</b> it left ($400).'],
-   ['$900?','The report shows a total of $900. Every value it read was committed, so read committed allows this. Read Homewares again and it says $600. This is a <b>nonrepeatable read</b>, or '+L.g('read-skew','read skew')+'.'],
-   ['Usually harmless','A person who reloads a few seconds later sees $1,000. (“Skew” here means a timing problem, not the uneven load of partitioning.)']],
-   'Read skew: one transaction sees different parts of the database as they were at different moments.');}},
-{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',run(L){
-  L.h(L.kick('learn','When a reload won’t fix it')+'<h1 class="q">Some jobs can’t live with read skew</h1>'+
-   L.list([['box','Backups','Copying a large database takes hours while writes continue. Some parts end up older than others. Restore that backup and the missing $100 is gone for good.'],
-     ['trend','Analytics and integrity checks','A query that scans much of the database gives nonsense if it sees different parts at different moments.']],2)+
-   L.prose('The usual fix is <b>'+L.g('snapshot-isolation','snapshot isolation')+'</b>. Each transaction reads from a <b>consistent snapshot</b>: all data committed when it started. Changes made later by others are invisible to it, however long it runs.')+
-   L.prose('That makes long read-only queries much easier to reason about. PostgreSQL, MySQL with InnoDB, Oracle, SQL Server and others support it.'));
-  L.done();}},
-{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Implementing snapshot isolation',run(L){
-  L.h(L.kick('learn','Many versions side by side')+'<h1 class="q">The database keeps old versions instead of overwriting</h1>'+
-   L.prose('Writers still take write locks, so two writers to one row still wait for each other. But reads take no locks at all. The key principle: <b>readers never block writers, and writers never block readers.</b> Long reports and normal writes run side by side.')+
-   L.prose('To give each transaction its own point in time, the database keeps several committed versions of a row: '+L.g('mvcc','multi-version concurrency control (MVCC)')+'. With MVCC, read committed typically takes a fresh snapshot for each query; snapshot isolation uses one snapshot for the whole transaction.')+
-   L.list([['Transaction IDs','Each transaction gets an always-increasing ID when it starts.'],
-     ['Created by, deleted by','Each row version records who created it and who deleted it. A delete only fills in “deleted by”; garbage collection removes the row later, once nobody can see it.'],
-     ['Update = delete + create','Txn 13 changes Garden from $500 to $400: the $500 version gets “deleted by 13” and a new $400 version is “created by 13”.']],3));
-  L.done();}},
-{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Visibility rules for observing a consistent snapshot',pts:1,
- solve:async L=>{[...L.$('#rd').children].forEach(b=>b.click());},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',
+ solve:async L=>{for(const x of [1,0,0,0,1,1])L.$('#b5-n'+x).click();await L.sleep(20);L.$('#b5-lv [data-v="si"]').click();for(const x of [1,0,0,0,1,1])L.$('#b5-n'+x).click();},
  run(L){
-  const V=[['$500','created by txn 3 · deleted by txn 13'],['$400','created by txn 13']];
-  const R=[['Txn 12','started just before 13',0,'Txn 13 has a later ID. Writes by transactions that started after you are ignored, so both its delete and its new row are invisible.'],
-           ['Txn 14','started while 13 was running',0,'13 was still in progress when you started. Its writes stay invisible to you, even after it commits.'],
-           ['Txn 16','started after 13 committed',1,'13 had committed before you started, so you see its delete of the $500 version and its new $400 version.']];
-  const seen=new Set();
-  L.h(L.kick('pr','See the snapshot')+'<h1 class="q">Txn 13 moves $100 out of Garden. Tap each reader to see which version of the Garden row it can see.</h1>'+
-   L.note('A version is visible to you if its creator had committed when you started, and it is either not deleted or its deleter had not committed when you started.','eye')+
-   '<div id="vr" style="margin-top:12px"></div><div id="rd" style="margin-top:6px"></div><div class="fb info" id="why">Choose a reader.</div><div id="vq"></div>');
-  const draw=k=>{L.$('#vr').innerHTML=V.map((v,j)=>'<div class="rung'+(k===j?' cur':'')+'" style="margin-bottom:6px;'+(k!==null&&k!==j?'opacity:.4':'')+'"><small>Garden version '+(j+1)+'</small>'+v[0]+' <span class="small">· '+v[1]+'</span></div>').join('');};draw(null);
-  R.forEach((r,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML='<b>'+r[0]+'</b>&nbsp;'+r[1];
-    b.onclick=()=>{[...L.$('#rd').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);draw(r[2]);
-      L.$('#why').innerHTML='<b>'+r[0]+' sees '+V[r[2]][0]+'.</b> '+r[3];
-      if(seen.size===3&&!L.$('#vq').innerHTML){const q=L.$('#vq');q.innerHTML='<h2 class="sub">Txn 14 is Linh’s backup, and it runs for three hours. Which Garden balance does it copy at the end?</h2>';
-        L.mc(q,['$400, the latest committed value','$500, as it was when the backup began'],1,
-         'Its snapshot stays frozen at its start. It also sees Homewares before the $100 arrived, so the backup adds up to $1,000.',
-         'A transaction keeps one snapshot for its whole life. 13 was still running when the backup started, so the backup never sees its writes, and its totals stay consistent.');}};
-    L.$('#rd').appendChild(b);});}},
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">$100 moves from Garden to Homewares while Linh’s report reads both balances.</h1><div id="t5"></div><div id="c5"></div>');
+  const T=todo(L,L.$('#t5'),['Under <b>read committed</b>, make the report add up to $900','Run an overlapping timing under <b>snapshot isolation</b>'],()=>{
+    L.sheet('info','Read skew',L.g('read-skew','Read skew')+', or a nonrepeatable read: the report read Homewares before the transfer and Garden after it. Each value was committed, so read committed allows it. A person who reloads sees $1,000; a snapshot fixes it for good. (“Skew” here means timing, not partition hot spots.)');L.done();});
+  const over=S=>{const ci=S.log.findIndex(e=>e.x===0&&e.txt==='commit'),t2=S.log.map((e,j)=>e.x===1?j:-1).filter(j=>j>=0);return ci>=0&&t2[0]<ci&&t2[1]>ci;};
+  Board(L,L.$('#c5'),{id:'b5',sc:'transfer',lv:'rc',levels:['ru','rc','si'],replay:true,on:ev=>{
+    if(ev.type!=='end')return;
+    if(ev.c.lv==='rc'&&!ev.res.ok)T(0);
+    if(ev.c.lv==='si'&&ev.res.ok&&over(ev.S))T(1);}});}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',run(L){
+  L.h(L.kick('learn','When a reload won’t fix it')+'<h1 class="q">A backup can’t live with read skew</h1>'+visBackup()+
+   L.prose('A backup copies for hours while writes continue, so it mixes moments, and restoring makes the error permanent. Long analytic queries and integrity checks give nonsense the same way. The fix: '+L.g('snapshot-isolation','snapshot isolation')+', where each transaction reads the database as it was when it started.'));
+  L.done();}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Implementing snapshot isolation',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#m7n').click();await L.sleep(10);}},
+ run(L){
+  const C=['Garden holds $500. That version was created by txn 3, long ago.',
+   'Txn 13 starts. It will move $100 out of Garden. Every transaction gets an ever-increasing ID when it starts.',
+   'It doesn’t overwrite $500. It marks that version “deleted by 13”…',
+   '…and adds a new $400 version, “created by 13”. An update is a delete plus a create.',
+   'Txn 13 commits. Both versions stay, so each reader can still get the one that fits its snapshot.',
+   'Later, garbage collection removes the $500 version, once no transaction can still see it.'];
+  L.h(L.kick('learn','Many versions side by side')+'<h1 class="q">The database keeps old versions instead of overwriting</h1><div id="m7"></div><div class="cap" id="m7c"></div><button class="btn pri" id="m7n">Next</button>'+
+   L.prose('This is '+L.g('mvcc','multi-version concurrency control (MVCC)')+'. Writers still lock rows, but readers take no locks: readers and writers don’t hold each other up. PostgreSQL, MySQL (InnoDB), Oracle and SQL Server all offer snapshot isolation.'));
+  const sh=Shelf(L,L.$('#m7'),{id:'s7',mode:'build'});let k=0;
+  const show=()=>{L.$('#m7c').innerHTML='<span class="stp">Step '+(k+1)+' of '+C.length+'</span>'+C[k];sh.stage(k);};show();
+  L.$('#m7n').onclick=()=>{if(k<C.length-1){k++;show();}if(k===C.length-1){L.$('#m7n').disabled=true;L.done();}};}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Visibility rules for observing a consistent snapshot',
+ solve:async L=>{const set=(id,v)=>{const i=L.$(id);i.value=v;i.dispatchEvent(new Event('input'));};set('#s8-s',3);set('#s8-r',8);L.$('#s8-lv [data-v="rc"]').click();L.$('#s8-lv [data-v="si"]').click();set('#s8-s',9);},
+ run(L){
+  L.h(L.kick('pr','Explore the shelf')+'<h1 class="q">Move a reader along the timeline. Which Garden version does it see?</h1><p class="small" style="margin:0">Dot: when the reader starts. Ring: when it reads. Dashed line: the moment its snapshot comes from. Txn 15 is <i>illustrative</i>.</p><div id="t8"></div><div id="c8"></div>');
+  const T=todo(L,L.$('#t8'),['Find a reader that reads <b>after</b> txn 13 commits, yet still sees $500','Switch to <b>read committed</b>: what does that same reader see now?','Start a reader after txn 15 aborts. Which rule hides $350?'],()=>{
+    L.sheet('info','Start time is what counts','Snapshot isolation uses one snapshot from the transaction’s start; read committed takes a fresh one for each read. And nobody ever sees txn 15’s $350: while it runs it’s in progress, and then it aborts.');L.done();});
+  Shelf(L,L.$('#c8'),{id:'s8',lv:'si',s:0,r:2,on:e=>{
+    if(e.lv==='si'&&e.see===500&&e.r>=5)T(0);
+    if(e.lv==='rc'&&e.s<=4&&e.r>=5)T(1);
+    if(e.lv==='si'&&e.s>=9)T(2);}});}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',pts:1,
+ solve:async L=>{L.$('#p9 .opt:nth-child(2)').click();},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Linh’s backup starts at 3 and copies Homewares at once: $500. It reaches Garden at 9. Under <b>read committed</b>, what total does the backup hold?</h1><p class="small" style="margin:0">Txn 15 (−$50, aborts) and the times are <i>illustrative</i>; the book has no txn 15.</p><div id="p9"></div><div id="c9"></div><div class="cap" id="w9">Make your prediction.</div>');
+  const sh=Shelf(L,L.$('#c9'),{id:'s9',lv:'rc',s:3,r:3,ctl:false});
+  pick(L,L.$('#p9'),['$1,000','$900','$850'],1,async ok=>{
+    for(let r=4;r<=9;r++){await L.sleep(150);if(!L.$('#s9-svg'))return;sh.set({r});}
+    L.$('#w9').innerHTML='<b>Read committed:</b> Garden read at 9 is $400 (txn 15 aborted, so its $350 never counts). $500 + $400 = <b>$900</b>.';
+    await L.sleep(650);if(!L.$('#s9-svg'))return;sh.set({lv:'si'});
+    L.$('#w9').innerHTML+='<br><b>Snapshot isolation:</b> the backup reads as of its start, 3. $500 + $500 = <b>$1,000</b>.';
+    L.sheet(ok?'ok':'no',ok?'Right: $900':'It holds $900','Under read committed each read sees what’s committed at that moment, so the backup mixes before and after the transfer. With snapshot isolation, the backup keeps its start-time view for all three hours and adds up.');L.done();});}},
+{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Indexes and snapshot isolation',run(L){
+  L.h(L.kick('learn','Indexes over many versions')+'<h1 class="q">Two ways to index a multi-version database</h1>'+visIndexes()+
+   L.prose('An '+L.g('index','index')+' can point to every version and let each query filter. Or, as in CouchDB, Datomic and LMDB, a write copies only the pages it changes, up to a new root. Each root is a consistent snapshot. Both need background garbage collection.'));
+  L.done();}},
 {part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Repeatable read and naming confusion',run(L){
-  L.h(L.kick('learn','Indexes, and a naming mess')+'<h1 class="q">Same idea, many names</h1>'+
-   L.prose('<b>Indexes.</b> One approach: an '+L.g('index','index')+' points to every version of a row and each query filters out the versions it can’t see. CouchDB, Datomic and LMDB instead use append-only B-trees: a write copies the pages it changes, up to a new root. Each root is a consistent snapshot. Both need background garbage collection.')+
-   L.prose('<b>Names.</b> The SQL standard was based on System R’s 1975 definitions, before snapshot isolation was invented. It defines “repeatable read”, which looks similar. So:')+
-   L.list([['Oracle','calls snapshot isolation “serializable”.'],['PostgreSQL and MySQL','call it “repeatable read”.'],['IBM DB2','uses “repeatable read” for real serializability.']],4)+
+  const R=[['Oracle','“serializable”','snapshot isolation','si'],['PostgreSQL','“repeatable read”','snapshot isolation','si'],['MySQL (InnoDB)','“repeatable read”','snapshot isolation','si'],['IBM DB2','“repeatable read”','serializable','se']];
+  L.h(L.kick('learn','A naming mess')+'<h1 class="q">The setting’s name doesn’t tell you what you get</h1><div class="nmg">'+
+   R.map(r=>'<div class="nmr"><div class="nml">'+r[1]+'<small>'+r[0]+'</small></div><span class="ar">→</span><div class="nmt '+r[3]+'">'+r[2]+'</div></div>').join('')+'</div>'+
+   L.prose('The SQL standard follows System R’s 1975 definitions, written before snapshot isolation existed. Its “repeatable read” looks similar, and products implementing it differ widely.')+
    L.quote('…nobody really knows what repeatable read means.','Martin Kleppmann, chapter 7'));
   L.done();}},
-{part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read · Repeatable read and naming confusion',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab sees a database set to “repeatable read”. What should they conclude?</h1>');
-  L.mc(L.card,['It is serializable, as the SQL standard says','Check the docs: the name differs by database','It means the database has no isolation'],1,
-   'Exactly Zainab’s habit. The same name means snapshot isolation in one database and serializability in another, and implementations differ.',
-   'The name isn’t reliable. PostgreSQL and MySQL use it for snapshot isolation, DB2 for serializability. Read what this database actually guarantees.');}},
 {part:1,src:'Chapter 7 · Snapshot Isolation and Repeatable Read',pts:5,run(L){
   L.h(L.kick('pr','Which level is enough?')+'<h1 class="q">Sort each Otterpost job.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Read committed is fine','Needs snapshot isolation'],[
@@ -155,95 +576,133 @@ Course.lesson({
    'Short reads by people: read committed is fine. Long scans, backups and checks: they need a consistent snapshot.');}},
 
 /* ---------- PART 3: LOST UPDATES ---------- */
-{part:2,src:'Chapter 7 · Preventing Lost Updates',run(L){
-  L.h(L.kick('ex','Two writers, one balance')+'<h1 class="q">How a flash sale loses money</h1>');
-  L.beats(L.card,[
-   ['Read','Tobias’s booking code reads Bramble & Bolt’s credit balance: $1,000.'],
-   ['Modify','It subtracts the parcel price, $8, in the app: $992.'],
-   ['Write','It writes $992 back. This is a <b>read-modify-write cycle</b>.'],
-   ['Twice at once','In a flash sale, two bookings do this together. Both read $1,000, both write $992. One $8 charge has vanished: a '+L.g('lost-update','lost update')+'. The later write clobbered the earlier one.'],
-   ['Same shape elsewhere','Adding an item to a list inside a JSON document. Two people editing a wiki page, each saving the whole page.']],
-   'So far we covered what readers see. Lost updates are a conflict between two writers, and both levels so far can let them through.');}},
-{part:2,src:'Chapter 7 · Preventing Lost Updates',run(L){
-  L.h(L.kick('learn','Four fixes')+'<h1 class="q">Ways to stop a lost update</h1>'+
-   L.list([['Atomic write','Let the database do the arithmetic: <b>set balance = balance − 8</b>. Usually the best choice when it fits. Watch out: ORMs make it easy to write the unsafe read-modify-write by accident.'],
-     ['Explicit lock','Read with <b>SELECT … FOR UPDATE</b>, check your rules in code, then write. Others wait. Useful when the logic can’t be one query, like checking a move in a multiplayer game. Easy to forget a lock.'],
-     ['Automatic detection','Let both run, and the database aborts the one that would lose an update; it retries. PostgreSQL’s repeatable read, Oracle’s serializable and SQL Server’s snapshot level do this. MySQL/InnoDB’s repeatable read doesn’t.'],
-     ['Compare-and-set','Write only if the value is still what you read, otherwise retry. Careful: if the check can read an old snapshot, it may not protect you.']],3)+
-   '<p class="small" style="margin-top:10px">Automatic detection is less error-prone: nobody has to remember anything in the code.</p>');
-  L.done();}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates',pts:1,
+ solve:async L=>{L.$('#p13 .opt').click();},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">In a flash sale, two bookings each read Bramble & Bolt’s credit, subtract $8 in the app and write it back, at the same moment. Under <b>read committed</b>, can one $8 charge be lost?</h1><div id="p13"></div><div id="c13"></div>');
+  pick(L,L.$('#p13'),['Yes: one charge can vanish','No: read committed prevents it'],0,ok=>{
+    const B=Board(L,L.$('#c13'),{id:'b13',sc:'credit',lv:'rc',levels:['rc','si']});
+    B.play([0,1,0,0,1,1],320).then(()=>{if(!L.$('#b13'))return;
+      L.sheet(ok?'ok':'no',ok?'Yes, it vanishes':'It slips through','Both read a committed $1,000. Booking 2 wrote after Booking 1 committed, so nothing was dirty, yet its $992 clobbered Booking 1’s. That '+L.g('lost-update','lost update')+' comes from a <b>read-modify-write cycle</b>. Same shape: adding to a list in a JSON document, or two people saving a whole wiki page. Plain snapshot isolation lets it through too: try it.');L.done();});});}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates',
+ solve:async L=>{for(const b of [...L.$('#fx14').children]){b.click();await L.sleep(10);}},
+ run(L){
+  /* blocks: [lane, x, width, label, kind]; kind a=Booking 1, b=Booking 2, w=waiting, x=failed, k=commit */
+  const K={a:['h1-bg','h1'],b:['h2-bg','h2'],w:['card','line2',1],x:['no-bg','no-line'],k:['ok-bg','ok-line']};
+  const F=[['Atomic write','UPDATE … SET credit = credit − 8',[[0,40,104,'−$8 → $992','a'],[1,40,104,'waits','w'],[1,150,104,'−$8 → $984','b']],'$984: both charges count',
+     '<b>Best:</b> the database does the math under a lock; usually the right choice. <b>Catch:</b> ORMs make the unsafe read-then-write easy to write by accident.'],
+   ['Explicit lock','SELECT … FOR UPDATE',[[0,40,78,'read + lock','a'],[0,122,48,'write','a'],[0,174,56,'commit','k'],[1,40,186,'waits for the lock','w'],[1,230,84,'read $992','b']],'$984: Booking 2 starts from $992',
+     '<b>Best:</b> logic one query can’t express, like the book’s multiplayer game checking that a move is legal. <b>Catch:</b> forget one lock and the bug is back.'],
+   ['Automatic detection','both run; the database aborts the loser',[[0,40,48,'read','a'],[0,92,48,'write','a'],[0,144,56,'commit','k'],[1,40,48,'read','b'],[1,204,62,'write ✗','x'],[1,270,44,'retry','b']],'$984 after the retry',
+     '<b>Best:</b> least error-prone, since no code has to remember it. PostgreSQL (repeatable read), Oracle (serializable) and SQL Server (snapshot) do it. <b>Catch:</b> MySQL’s repeatable read doesn’t.'],
+   ['Compare-and-set','write only if the value is unchanged',[[0,40,48,'read','a'],[0,92,110,'set if $1,000 ✓','a'],[1,40,48,'read','b'],[1,206,110,'set if $1,000 ✗','x']],'$984: Booking 2 rereads $992, retries',
+     '<b>Best:</b> databases without transactions. <b>Catch:</b> safe only if the check reads the current value, not an old snapshot.']];
+  L.h(L.kick('learn','Four fixes')+'<h1 class="q">Make the cycles take turns, or catch the loser</h1><p class="small" style="margin:0">Tap each fix to watch the two $8 bookings again.</p>'+
+   '<div class="bd-chips" id="fx14"></div><div id="fx14v"></div><div class="cap" id="fx14c" aria-live="polite"></div>');
+  const seen=new Set();
+  const show=j=>{const f=F[j];[...L.$('#fx14').children].forEach((c,k)=>c.classList.toggle('sel',k===j));
+    let s='<svg class="sv" viewBox="0 0 320 104" role="img" aria-label="'+f[0]+': Booking 1 and Booking 2 on a timeline. Result: '+f[3]+'"><text x="316" y="11" class="tk" style="text-anchor:end">time →</text>'+
+      '<text x="0" y="37" class="mt" style="font-weight:700;fill:var(--h1)">B1</text><text x="0" y="69" class="mt" style="font-weight:700;fill:var(--h2)">B2</text>';
+    f[2].forEach(b=>{const k=K[b[4]];s+=blk(b[1],22+b[0]*32,b[2],b[3],k[0],k[1],k[2]);});
+    s+='<rect x="40" y="82" width="274" height="20" rx="7" style="fill:var(--ok-bg);stroke:var(--ok-line)"/><text x="177" y="96" class="bt" style="fill:var(--ok)">'+f[3]+'</text>';
+    L.$('#fx14v').innerHTML=s+'</svg>';
+    L.$('#fx14c').innerHTML='<span class="stp">'+f[1]+'</span>'+f[4];
+    if(!seen.has(j)){seen.add(j);if(seen.size===F.length)L.done();}};
+  F.forEach((f,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=f[0];b.onclick=()=>show(j);L.$('#fx14').appendChild(b);});
+  show(0);}},
+{part:2,src:'Chapter 7 · Preventing Lost Updates · Automatically detecting lost updates',
+ solve:async L=>{L.$('#b15-se').click();await L.sleep(1500);L.$('#b15-al').click();await L.sleep(10);L.$('#b15-fx [data-v="atomic"]').click();L.$('#b15-al').click();},
+ run(L){
+  L.h(L.kick('pr','Tests versus timing')+'<h1 class="q">Tobias’s booking code passed every test. Run his test, then try every possible timing.</h1><div id="t15"></div><div id="c15"></div>');
+  const T=todo(L,L.$('#t15'),['Run Tobias’s test: one booking, then the other','Try every timing with <b>no fix</b>','Pick a fix that keeps <b>every</b> timing green'],()=>{
+    L.sheet('info','Why tests miss it','A test runs one booking after the other: the dotted squares, which always pass. Real traffic overlaps only now and then, so the bad orders turn up rarely and are hard to reproduce. Every fix here makes all timings safe: atomic write, FOR UPDATE, compare-and-set and automatic detection (abort, then retry).');L.done();});
+  Board(L,L.$('#c15'),{id:'b15',sc:'credit',lv:'rc',fixes:['plain','atomic','lock','cas','detect'],strip:true,serial:true,on:ev=>{
+    if(ev.type==='end'&&ev.tag==='serial'&&ev.res.ok)T(0);
+    if(ev.type==='all'&&ev.c.fix==='plain'&&ev.bad>0)T(1);
+    if(ev.type==='all'&&ev.c.fix!=='plain'&&ev.runs.length&&ev.bad===0)T(2);}});}},
 {part:2,src:'Chapter 7 · Preventing Lost Updates · Conflict resolution and replication',run(L){
-  L.h(L.kick('learn','With several copies')+'<h1 class="q">Locks don’t work when there isn’t one up-to-date copy</h1>'+
-   L.prose('Locks and compare-and-set assume one current copy of the data. With multi-leader or leaderless '+L.g('replication','replication')+', writes can happen on different nodes at once and be copied later. There is no single copy to lock.')+
-   L.flow([['layers','Keep siblings','Let concurrent writes create several versions','',1],['cycle','Merge later','App code or special data types combine them','',2]])+
-   L.prose('<b>Commutative</b> atomic operations work well here: ones you can apply in any order and get the same result, like adding to a counter or adding to a set. Riak 2.0’s datatypes merge concurrent updates like this without losing any.')+
-   L.note('<b>Last write wins</b> loses updates by design, and it is the default in many replicated databases.','alert'));
+  L.h(L.kick('learn','With several copies')+'<h1 class="q">Two copies each take a charge. Then they sync.</h1>'+
+   '<div class="rp"><div class="rp-c"><small>Westport copy</small><b>$1,000 − $8</b>= $992</div><div class="rp-c"><small>Eastvale copy</small><b>$1,000 − $8</b>= $992</div></div>'+
+   '<div class="rp-ar">'+L.ic('down')+' sync the copies</div><div class="bd-chips" id="rp16"><button class="chip sel" data-v="lww">Last write wins</button><button class="chip" data-v="op">Merge the “−$8” operations</button></div><div class="rp-o" id="rpo16"></div>'+
+   L.prose('Locks and compare-and-set assume one up-to-date copy. With multi-leader or leaderless '+L.g('replication','replication')+', copies take writes at once: keep both versions and merge them, or use commutative operations (Riak 2.0). Last write wins, a common default, loses updates.'));
+  const O={lww:'<b class="no-t">$992.</b> One copy’s value replaces the other’s. A charge is lost.',op:'<b class="ok-t">$984.</b> Both “subtract $8” operations apply. Order doesn’t matter, so nothing is lost.'};
+  const set=v=>{[...L.$('#rp16').children].forEach(c=>c.classList.toggle('sel',c.dataset.v===v));L.$('#rpo16').innerHTML=O[v];};
+  [...L.$('#rp16').children].forEach(c=>c.onclick=()=>set(c.dataset.v));set('lww');
   L.done();}},
-{part:2,src:'Chapter 7 · Preventing Lost Updates · Atomic write operations',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What is the simplest safe fix for Tobias’s “deduct $8 from the balance” code?</h1>');
-  L.mc(L.card,['Let the database subtract, in one atomic update','Read and write faster, so the gap is smaller','Run each booking twice, just to be sure'],0,
-   'The database applies “balance − 8” safely even when bookings arrive together. No read-modify-write cycle in the app.',
-   'A smaller gap only makes the bug rarer, and running twice charges twice. Let the database do the subtraction atomically.');}},
 {part:2,src:'Chapter 7 · Preventing Lost Updates',pts:4,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which fix fits best?',['Atomic write','Explicit lock','Compare-and-set','Merge siblings'],[
+  L.quick(L.$('#qk'),'Which fix fits best?',['Atomic write','Explicit lock','Compare-and-set','Merge versions'],[
    ['Add 1 to a merchant’s “parcels today” counter.',0,'Simple arithmetic the database can do in one atomic operation.'],
    ['Dispatch moves a parcel to another route, but code must first check van capacity and courier hours.',1,'The check is app logic, so lock the rows (FOR UPDATE), check, then write.'],
    ['Signe’s team saves a delivery note only if nobody changed it since the agent opened it.',2,'Write only if the value is unchanged; if it changed, reload and retry.'],
    ['Offline courier phones each add scans to a parcel’s history, and the copies sync later.',3,'There’s no single copy to lock. Adding to a set is commutative, so the versions can be merged without loss.']]);}},
 
 /* ---------- PART 4: WRITE SKEW ---------- */
-{part:3,src:'Chapter 7 · Write Skew and Phantoms',run(L){
-  L.h(L.kick('ex','A subtler race')+'<h1 class="q">Two couriers end their shifts, and the zone is empty</h1>');
-  L.beats(L.card,[
-   ['The book’s story','A hospital must always have at least one doctor on call. Two on-call doctors, both ill, ask to go off call at the same moment. Each check sees two on call. Both go off, and nobody is left.'],
-   ['Otterpost’s rule','Zone W3 in Westport must always have at least one courier on duty. Tonight only Ravi and Mia are on.'],
-   ['Both check','Both feel ill and tap “end shift” together. Each transaction counts the couriers on duty in W3. Under snapshot isolation, both see <b>2</b>.'],
-   ['Both write','Each sets only <b>their own</b> row to off duty. Different rows, so it’s neither a dirty write nor a lost update. Both commit.'],
-   ['Result','Nobody is on duty in W3. Had they run one after the other, the second would have been refused. This is '+L.g('write-skew','write skew')+'.']],
-   'Each transaction was correct alone. Only running them at the same time broke the rule.');}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms',
+ solve:async L=>{for(const x of [0,1,0,0,1,1])L.$('#b18-n'+x).click();},
+ run(L){
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Only Ravi and Mia are on duty in zone W2. Both feel ill and tap “end shift” together. Can you leave W2 empty?</h1><p class="small" style="margin:0">The app lets a courier leave only if their check counts at least 2 on duty.</p><div id="c18"></div>');
+  let shown=false;
+  Board(L,L.$('#c18'),{id:'b18',sc:'shifts',lv:'si',detect:true,strip:true,on:ev=>{if(ev.type==='end'&&!ev.res.ok&&!shown){shown=true;
+    L.sheet('info','That’s write skew','Both checks counted 2 before either committed. Each changed only their own row: not a dirty write, not a lost update, and detection stayed silent. One after the other, the second would be refused. This is '+L.g('write-skew','write skew')+', the book’s two on-call doctors.');L.done();}}});}},
 {part:3,src:'Chapter 7 · Write Skew and Phantoms · Characterizing write skew',run(L){
-  L.h(L.kick('learn','What makes it write skew')+'<h1 class="q">Same reads, different writes</h1>'+
-   L.prose('Write skew happens when two transactions read the same objects, then each updates some of them, possibly different ones. If they happen to update the <i>same</i> object, you get a dirty write or a lost update instead. So write skew is a broader form of the lost update.')+
-   L.list([['Atomic operations','Don’t help: several objects are involved.'],
-     ['Lost-update detection','Doesn’t help either. PostgreSQL’s and MySQL’s repeatable read, Oracle’s serializable and SQL Server’s snapshot level don’t detect write skew.'],
-     ['A constraint','“At least one on duty” spans many rows. Most databases can’t express that, though triggers or materialized views sometimes can.'],
-     ['Lock what you read','Second best: select W3’s on-duty couriers <b>FOR UPDATE</b>, so the other transaction must wait.']],4)+
-   L.note('The real fix is serializable isolation, the next lesson.','shield'));
+  L.h(L.kick('learn','What makes it write skew')+'<h1 class="q">Same reads, different writes</h1>'+visSameReads()+
+   L.prose('Write skew is a broader lost update. Atomic writes and lost-update detection don’t help, and most databases can’t enforce a rule spanning many rows (triggers sometimes can). Second best: lock the rows you read, FOR UPDATE. The real fix: serializable isolation.'));
   L.done();}},
-{part:3,src:'Chapter 7 · Write Skew and Phantoms · Characterizing write skew',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two transactions read the same zone’s rows, and each updates a <i>different</i> courier’s row. Together they break the zone’s rule. What is this?</h1>');
-  L.mc(L.card,['A lost update: one write wipes out the other','Write skew: different rows, one shared rule','A dirty write: uncommitted data overwritten'],1,
-   'Neither write touched the other’s row, so nothing was overwritten. The shared premise they both read is what broke.',
-   'Lost updates and dirty writes need both transactions to write the <i>same</i> object. Here they wrote different rows: write skew.');}},
 {part:3,src:'Chapter 7 · Write Skew and Phantoms · Phantoms causing write skew',run(L){
   L.h(L.kick('learn','The pattern, and phantoms')+'<h1 class="q">Check, decide, write</h1>'+
-   L.flow([['eye','1 · Check','Search for rows matching a condition','“on-duty couriers in W3”',1],['bulb','2 · Decide','App code chooses to go ahead','',2],['pencil','3 · Write','Insert, update or delete, which changes what step 1 would find','',3]])+
-   L.prose('The book gives more cases: booking a meeting room with no overlaps, moving two game pieces to one square, claiming a username, and spending money or points you might not have. At Otterpost, two recipients can each see 19 of 20 places taken in a delivery slot, and each book one.')+
-   L.prose('A write that changes the result of another transaction’s search is a '+L.g('phantom','phantom')+'. In the courier case, the rows already exist, so you can lock them. But a room check looks for the <i>absence</i> of bookings. If it finds no rows, FOR UPDATE has nothing to lock. Snapshot isolation stops phantoms for read-only queries, not in read-write ones like these.')+
-   '<p class="small">For usernames there’s an easy way out: a unique constraint makes the second insert fail.</p>');
+   '<div class="cdw"><span class="pl a">1 · check: search rows</span><span class="ar">→</span><span class="pl a">2 · decide</span><span class="ar">→</span><span class="pl b">3 · write</span></div><p class="cdw-n">↺ The write changes what step 1 would now find.</p>'+
+   '<div class="ph"><div class="phc y"><b>The check finds rows</b><ul><li>Two doctors on call?</li><li>Two couriers on duty in W2?</li></ul><span class="phf">Lock them: FOR UPDATE</span></div>'+
+   '<div class="phc n"><b>The check finds nothing</b><ul><li>Meeting room free at noon?</li><li>Game square empty?</li><li>Username free?</li><li>Money left to spend?</li></ul><span class="phf">Nothing to lock</span></div></div>'+
+   L.prose('A write that changes another transaction’s search result is a '+L.g('phantom','phantom')+'. Snapshot isolation stops phantoms only in read-only queries. In the book’s game, a lock per piece can’t stop two pieces landing on one square. For usernames, a unique constraint is enough.'));
   L.done();}},
 {part:3,src:'Chapter 7 · Write Skew and Phantoms · Materializing conflicts',run(L){
-  L.h(L.kick('learn','A last resort')+'<h1 class="q">No row to lock? Create one</h1>'+
-   L.prose('The Westport hub has loading bays that vans book in 15-minute windows. Two drivers could book the same bay and time, because each check finds no booking to lock.')+
-   L.flow([['list','Pre-make rows','One row per bay per 15 minutes, for the next six months','',1],['lock','Lock first','A booking locks its bay-and-time rows FOR UPDATE','',2],['check','Then check','Look for overlaps and insert as before','',3]])+
-   L.prose('The extra table holds no booking data. It is purely a set of locks. This is called <b>materializing conflicts</b>: turning a phantom into a lock conflict on real rows.')+
-   L.note('It is hard and error-prone to design, and it lets concurrency control leak into your data model. Use it only if nothing else works. Serializable isolation is much better in most cases.','alert'));
+  L.h(L.kick('learn','A last resort')+'<h1 class="q">No row to lock? Create the rows first</h1>'+visMaterialize()+
+   L.prose('Pre-make one row per locker per 15 minutes (the book uses meeting rooms). A booking locks its rows FOR UPDATE, then checks and inserts. This is <b>materializing conflicts</b>: hard to get right, and it leaks concurrency control into the data model. Serializable isolation is much better.'));
   L.done();}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms',
+ solve:async L=>{for(const b of [...L.$('#e22').children]){b.click();await L.sleep(30);}},
+ run(L){
+  const P=[['Nightly backup, read committed',{sc:'transfer',lv:'rc',who:['Transfer','Linh’s backup'],title:'A $100 transfer during Linh’s nightly backup'},[1,0,0,0,1,1],'The backup mixes before and after. Restore it and $100 is gone for good. Backups need a snapshot.'],
+   ['“Repeatable read” in MySQL',{sc:'credit',lv:'si'},[0,1,0,0,1,1],'MySQL’s repeatable read is snapshot isolation without lost-update detection. A charge is lost.'],
+   ['“Repeatable read” in PostgreSQL',{sc:'credit',lv:'si',detect:true},[0,1,0,0,1,1,1,1],'Same name, different behavior: PostgreSQL detects the lost update, aborts Booking 2, and it retries. (IBM DB2 uses the name for serializable.)'],
+   ['Compare-and-set reads an old snapshot',{sc:'credit',lv:'si',fix:'cas',casOld:true},[0,1,0,0,1,1],'If the database lets the check read an old snapshot, “only if still $1,000” passes for both, and a charge is lost. Check before relying on it.'],
+   ['Lost update with two copies',{sc:'credit',lv:'rc',fix:'lock',rep:true},[0,1,0,0,1,1],'Each region locked only its own copy, so nobody waited. Syncing by last write wins kept one $992. Locks need one up-to-date copy.'],
+   ['Write skew under snapshot isolation',{sc:'shifts',lv:'si',detect:true},[0,1,0,0,1,1],'Snapshot isolation plus lost-update detection still leaves W2 empty: the two writes touched different rows.'],
+   ['The check finds zero rows',{sc:'locker',lv:'rc',fix:'lock'},[0,1,0,0,1,1],'FOR UPDATE locks the rows a check returns. It returned none, so nothing was locked, and L4 is double-booked.']];
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where do the weak levels and fixes stop protecting you? Run each case.</h1><div class="bd-chips" id="e22"></div><div class="cap" id="e22c">Pick a case. The board plays the unlucky timing.</div><div id="c22"></div>');
+  const seen=new Set();let fin=false,bn=0;
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#e22').children].forEach(z=>z.classList.toggle('sel',z===b));L.$('#c22').innerHTML='';
+      Board(L,L.$('#c22'),Object.assign({id:'b22x'+(++bn)},p[1])).play(p[2],220);
+      L.$('#e22c').innerHTML='<span class="stp">Case '+(j+1)+' of '+P.length+'</span>'+p[3];seen.add(j);
+      if(seen.size===P.length&&!fin){fin=true;L.sheet('info','Where protection stops','Read committed lets backups mix moments. A level’s name tells you little. Compare-and-set and locks need a current, single copy. Lost-update detection misses write skew. And FOR UPDATE can’t lock rows that don’t exist yet.');L.done();}};
+    L.$('#e22').appendChild(b);});}},
+{part:3,src:'Chapter 7 · Write Skew and Phantoms · Materializing conflicts',pts:3,
+ solve:async L=>{const p=(s,f)=>L.$('#h23-'+s+' [data-v="'+f+'"]').click();p('credit','atomic');p('shifts','lock');p('locker','mat');L.$('#h23go').click();},
+ run(L){
+  const SC=['credit','shifts','locker'],F=['atomic','detect','lock','mat'],sel={};let graded=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Serializable isolation isn’t available yet. Pick one fix per bug so that <b>every</b> timing keeps the rule.</h1>'+
+   SC.map(s=>'<div class="ch" id="h23-'+s+'"><b>'+SCN[s].t+'</b><span class="rl">Rule: '+SCN[s].rule+'</span><div class="bd-chips">'+F.map(f=>'<button class="chip" data-v="'+f+'">'+FIXN[f]+'</button>').join('')+'</div><div class="ch-out"></div></div>').join('')+
+   '<button class="btn pri" id="h23go" disabled>'+L.ic('layers')+'Run every timing</button>');
+  SC.forEach(s=>{const box=L.$('#h23-'+s);[...box.querySelectorAll('.chip')].forEach(ch=>ch.onclick=()=>{sel[s]=ch.dataset.v;box.querySelectorAll('.chip').forEach(z=>z.classList.toggle('sel',z===ch));box.querySelector('.ch-out').innerHTML='';L.$('#h23go').disabled=SC.some(k=>!sel[k]);});});
+  L.$('#h23go').onclick=()=>{let n=0;
+    SC.forEach(s=>{const f=sel[s],c={sc:s,fix:f,lv:f==='detect'?'si':'rc',detect:f==='detect'},S0=mkS(c),out=L.$('#h23-'+s+' .ch-out');let ok=false,h;
+      if(S0.na)h='<b class="no-t">Doesn’t apply.</b> '+S0.na;
+      else{const runs=allRuns(c),bad=runs.filter(r=>!r.res.ok).length;ok=bad===0;
+        h='<div class="mini" aria-hidden="true">'+runs.map(r=>'<i class="'+(r.res.ok?'ok':'no')+'"></i>').join('')+'</div>'+(ok?'<b class="ok-t">'+(runs.length===2?'Both possible timings keep the rule: the lock makes them take turns.':'All '+runs.length+' timings keep the rule.')+'</b>':'<b class="no-t">'+bad+' of '+runs.length+' timings break it.</b> '+(SCN[s].why[f]||''));}
+      if(ok)n++;out.innerHTML=h;});
+    if(!graded){graded=true;L.awardMany(n,3);
+      L.sheet(n===3?'ok':'info',n+' of 3 safe','Flash sale: an atomic write is usually best; FOR UPDATE and automatic detection also work. Shifts: detection misses write skew, so lock the rows the check reads. Locker: the check finds no rows to lock, so materialize the conflict, as a last resort. Serializable isolation (next lesson) stops all three on its own.');L.done();}};}},
 {part:3,src:'Chapter 7 · Weak Isolation Levels',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Name the race condition',['Dirty read','Lost update','Read skew','Write skew'],[
-   ['Two recipients each see 19 of 20 places taken in the 14:00 slot, and each books one. Now there are 21.',3,'Same check, separate inserts, a shared limit broken.'],
+   ['Two recipients each see 19 of 20 places taken in the 14:00 slot, and each books one. Now there are 21. <span class="ill">illustrative</span>',3,'Same check, separate inserts, a shared limit broken.'],
    ['Two app servers read a balance of $1,000, and each writes back $992.',1,'Two read-modify-write cycles on one value. One change is lost.'],
    ['Linh’s backup copies Homewares before a transfer and Garden after it.',2,'Different parts seen at different moments. A snapshot would fix it.'],
    ['A merchant’s dashboard shows a parcel from a booking that later aborts.',0,'It saw an uncommitted write.'],
    ['Two merchants each check that a custom tracking code is free, then both insert it.',3,'Check for absence, then insert: write skew via a phantom. A unique constraint solves this one.'],
-   ['The last two couriers on duty in a zone both end their shifts at once.',3,'Both read “2 on duty”, each changed their own row.']]);}},
-{part:3,src:'Chapter 7 · Write Skew and Phantoms · Materializing conflicts',pts:1,run(L){
-  L.h(L.kick('pr','Zainab’s call')+'<h1 class="q">Recipients reserve compartments in Otterpost’s parcel lockers for time windows. Two must never overlap. The check usually finds zero rows, and switching to serializable isn’t possible yet. What should Zainab try?</h1><div id="hq"></div>');
-  L.mc(L.$('#hq'),['Lock the rows the check returns, FOR UPDATE','Pre-create a lock row per compartment and time','Rely on automatic lost-update detection'],1,
-   'That’s materializing the conflict: now there is a real row to lock. Keep it as a stopgap; serializable isolation is the cleaner fix.',
-   'When the check returns zero rows, FOR UPDATE locks nothing, and lost-update detection doesn’t catch write skew. Creating lock rows gives the transactions something real to collide on.');}}
+   ['The last two couriers on duty in a zone both end their shifts at once.',3,'Both read “2 on duty”, each changed their own row.']]);}}
   ]
 });
 </script>

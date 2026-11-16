@@ -13,11 +13,153 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0022 only. Signature model: the CAUSAL WEB.
+   Otterpost events are cards joined by “caused” arrows. Tap a card to
+   light its causal past (teal) and future (amber); the rest is concurrent.
+   The same web FLATTENS into one line, ordered by whatever numbering
+   scheme is chosen; arrows that point backwards in the line turn red.
+   A second visual, the shared-log race, shows total order broadcast.
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const NODES={W:{name:'Westport',id:1},E:{name:'Eastvale',id:2}};
+const CW=102,CH=50;
+/* the Haddad scenario: x,y = place in the free-form web */
+const MAIN={H:284,run:['F','A','G','C','B','H','D','E'],ev:{
+  A:{t:'Haddad asks',n:'W',c:[],x:109,y:4,d:'Mr. Haddad messages Ravi: “Can you leave it at number 12?”'},
+  B:{t:'Ravi: “Sure!”',n:'E',c:['A'],x:2,y:80,d:'Ravi reads the question and replies “Sure!”'},
+  C:{t:'Route note',n:'W',c:['A'],x:109,y:80,d:'Dispatch reads the request and adds “leave at no. 12” to Ravi’s route.'},
+  D:{t:'Drop-off scan',n:'E',c:['B','C'],x:55,y:156,d:'Ravi follows the note and scans OP-48213 as delivered at number 12.'},
+  E:{t:'Text sent',n:'W',c:['D'],x:55,y:232,d:'The notification service reads the scan and texts Mr. Haddad.'},
+  F:{t:'Slot request',n:'W',c:[],x:216,y:4,d:'Mrs. Okoro asks for the 14:00 slot for a different parcel.'},
+  G:{t:'Signe’s note',n:'E',c:[],x:216,y:156,d:'Signe adds a note to another parcel, OP-50110.'},
+  H:{t:'Slot booked',n:'E',c:['F'],x:216,y:80,d:'Dispatch books Mrs. Okoro into the 14:00 slot.'}}};
+/* numbering schemes (illustrative numbers) */
+const GEN={
+  leader:{F:1,A:2,G:3,C:4,B:5,H:6,D:7,E:8},
+  oddeven:{F:41,A:43,C:45,E:47,G:2,B:4,H:6,D:8},
+  clock:{F:4,A:5,G:2,C:6,B:3.5,H:4.5,D:5.5,E:10},
+  block:{F:1004,A:1005,C:1006,E:1007,G:12,B:13,H:14,D:15},
+  random:{A:'c4',B:'1e',C:'7a',D:'e9',E:'05',F:'3b',G:'a2',H:'58'},
+  lamport:{F:6,A:7,G:1,C:8,B:8,H:9,D:10,E:11}};
+const CSS='<style>'+
+ '.cw svg,.cwfig{width:100%;display:block}.cwfig{margin:4px 0 6px}svg text{font-family:var(--sans)}'+
+ '.cw svg{touch-action:manipulation}.cwg{cursor:pointer;outline:none}.cwg:focus-visible rect.bd{stroke:var(--pri)!important;stroke-width:3.2!important}'+
+ '.cwcap{font-size:15.5px;line-height:1.5;margin:6px 0 4px}'+
+ '.cwrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.cwrow .btn{min-height:42px;padding:8px 12px;margin:0}.cwrow .chip{margin:0;min-height:40px}'+
+ '.cwout{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:46px}'+
+ '.cwout .st{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.cwleg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:6px 0 2px}'+
+ '.cwleg span{display:inline-flex;align-items:center;gap:5px}.cwleg i{display:inline-block;width:13px;height:13px;border-radius:4px;border:1.5px solid}'+
+ '.cwrng{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr) 30px;gap:8px;align-items:center;font-size:14px;line-height:1.25;margin:4px 0}'+
+ '.cwrng input{width:100%;accent-color:var(--pri);height:34px;margin:0}.cwrng b{text-align:right;font-variant-numeric:tabular-nums;font-size:15px}.cwrng small{color:var(--muted);font-size:12px;display:block}'+
+ '.cwctr{display:flex;gap:8px;margin:6px 0}.cwctr div{flex:1;border-radius:12px;background:var(--soft);padding:6px 10px;font-size:13px;color:var(--muted)}.cwctr b{font-size:18px;color:var(--ink);margin-left:4px;font-variant-numeric:tabular-nums}'+
+ '.cwq{font-size:15px;font-weight:600;margin:8px 0 6px}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '</style>';
+
+/* ---- small SVG helpers for the picture screens ---- */
+const F=n=>'font-size:'+n+'px;',B='font-weight:700;',M='text-anchor:middle;',E2='text-anchor:end;';
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+(st||F(12)+'fill:var(--ink)')+'">'+s+'</text>';
+const rc=(x,y,w,h,f,s,ex)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+((ex&&ex.rx)!=null?ex.rx:10)+'" style="fill:'+f+';stroke:'+s+';stroke-width:'+((ex&&ex.sw)||1.6)+((ex&&ex.dash)?';stroke-dasharray:'+ex.dash:'')+'"/>';
+function ar(x1,y1,x2,y2,col,w,dash){const a=Math.atan2(y2-y1,x2-x1),c=Math.cos(a),s=Math.sin(a),ex=x2-7*c,ey=y2-7*s;
+  return '<line x1="'+x1+'" y1="'+y1+'" x2="'+ex+'" y2="'+ey+'" style="stroke:'+col+';stroke-width:'+(w||2)+(dash?';stroke-dasharray:'+dash:'')+'"/>'+
+   '<path d="M'+x2+' '+y2+'L'+(x2-9*c+4.5*s)+' '+(y2-9*s-4.5*c)+'L'+(x2-9*c-4.5*s)+' '+(y2-9*s+4.5*c)+'Z" style="fill:'+col+'"/>';}
+const fig=(h,inner,aria)=>'<svg class="cwfig" viewBox="0 0 320 '+h+'" role="img" aria-label="'+aria+'">'+inner+'</svg>';
+const cap=t=>'<p class="cwcap">'+t+'</p>';
+const ease=p=>p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+
+/* ================= the causal web ================= */
+function Web(L,host,o){
+  o=Object.assign({id:'w',sc:MAIN,mode:null,stamps:null,layout:'web',onTap:null,paint:null,aria:'Causal web of Otterpost events'},o||{});
+  const sc=o.sc,ids=Object.keys(sc.ev),ID=o.id,VH=Math.max(sc.H||0,6+ids.length*34);
+  host.insertAdjacentHTML('beforeend','<div class="cw"><svg id="'+ID+'-svg" viewBox="0 0 320 '+VH+'" role="group" aria-label="'+o.aria+'"></svg></div>');
+  const svg=host.querySelector('#'+ID+'-svg');
+  const S={mode:o.mode,stamps:o.stamps,layout:o.layout,sel:null,anim:false,hl:new Set()};
+  const pos={};
+  const ev=id=>sc.ev[id];
+  const alive=()=>svg.isConnected;
+  const anc=id=>{const out=new Set(),st=[...ev(id).c];while(st.length){const x=st.pop();if(!out.has(x)){out.add(x);st.push(...ev(x).c);}}return out;};
+  const desc=id=>{const out=new Set();let grow=true;out.add(id);while(grow){grow=false;ids.forEach(k=>{if(!out.has(k)&&ev(k).c.some(c=>out.has(c))){out.add(k);grow=true;}});}out.delete(id);return out;};
+  const stamp=id=>{const m=S.stamps||(S.mode&&GEN[S.mode]);return m?m[id]:undefined;};
+  const fmt=id=>{const v=stamp(id);if(v==null)return '';const md=S.mode;
+    if(md==='lamport')return '('+v+', '+NODES[ev(id).n].id+')';
+    if(md==='leader')return '#'+v;
+    if(md==='clock')return v.toFixed(1)+' s';
+    if(md==='random')return 'id '+v;
+    if(md==='block')return v.toLocaleString('en-US');
+    return String(v);};
+  const cmp=(a,b)=>{const x=stamp(a),y=stamp(b);if(x==null||y==null)return sc.run.indexOf(a)-sc.run.indexOf(b);
+    if(x<y)return -1;if(x>y)return 1;return NODES[ev(a).n].id-NODES[ev(b).n].id;};
+  const order=()=>ids.slice().sort(cmp);
+  const edges=()=>{const e=[];ids.forEach(b=>ev(b).c.forEach(a=>e.push([a,b])));return e;};
+  const backward=()=>{const o2=order();return edges().filter(([a,b])=>o2.indexOf(a)>o2.indexOf(b));};
+  const webT=()=>{const t={};ids.forEach(id=>t[id]={x:ev(id).x,y:ev(id).y,w:CW,h:CH});return t;};
+  const lineT=()=>{const t={};order().forEach((id,k)=>t[id]={x:56,y:6+k*34,w:208,h:28});return t;};
+  Object.assign(pos,S.layout==='line'?lineT():webT());
+  function card(id,p,past,fut){
+    const e=ev(id),pt=o.paint&&o.paint(id),line=p.w>140;
+    let f='var(--card)',st='var(--line2)',tc='var(--ink)',mc='var(--muted)',sc2='var(--pri)',dash='',sw=1.6;
+    if(pt){f=pt.f||f;st=pt.s||st;tc=pt.t||tc;mc=pt.t||mc;sc2=pt.sc||sc2;dash=pt.dash||'';}
+    else if(S.sel){if(id===S.sel){f='var(--pri)';st='var(--pri)';tc=mc=sc2='var(--pri-ink)';}
+      else if(past.has(id)){f='var(--h2-bg)';st='var(--h2)';}
+      else if(fut.has(id)){f='var(--h3-bg)';st='var(--h3)';}
+      else{f='var(--soft)';dash='4 3';tc='var(--muted)';}}
+    if(S.hl.has(id)){st='var(--pri)';sw=3.2;}
+    const tag=pt&&pt.tag!=null?pt.tag:fmt(id);
+    let s='<g data-id="'+id+'"'+(o.onTap?' class="cwg" tabindex="0" role="button" aria-label="'+e.t.replace(/“|”/g,'')+', '+NODES[e.n].name+(tag?', '+tag:'')+'"':'')+'>';
+    s+='<rect class="bd" x="'+p.x+'" y="'+p.y+'" width="'+p.w+'" height="'+p.h+'" rx="'+(line?9:11)+'" style="fill:'+f+';stroke:'+st+';stroke-width:'+sw+(dash?';stroke-dasharray:'+dash:'')+'"/>';
+    if(line){
+      s+='<circle cx="'+(p.x+14)+'" cy="'+(p.y+p.h/2)+'" r="9" style="fill:'+(e.n==='W'?'var(--h1-bg)':'var(--h4-bg)')+';stroke:'+(e.n==='W'?'var(--h1)':'var(--h4)')+';stroke-width:1.2"/>'+
+        tx(p.x+14,p.y+p.h/2+4,e.n,F(11)+B+M+'fill:'+(e.n==='W'?'var(--h1)':'var(--h4)'))+
+        tx(p.x+29,p.y+p.h/2+4.5,e.t,F(12.5)+B+'fill:'+tc)+tx(p.x+p.w-12,p.y+p.h/2+4.5,tag,F(12)+B+E2+'fill:'+sc2);
+    }else{
+      s+=tx(p.x+8,p.y+17,e.t,F(12)+B+'fill:'+tc)+tx(p.x+8,p.y+31,NODES[e.n].name,F(11)+'fill:'+mc)+(tag?tx(p.x+8,p.y+44,tag,F(11.5)+B+'fill:'+sc2):'');
+    }
+    return s+'</g>';}
+  function draw(){
+    if(!alive())return;
+    const past=S.sel?anc(S.sel):new Set(),fut=S.sel?desc(S.sel):new Set();
+    let s='';
+    if(!S.anim){
+      if(S.layout==='line'){const o2=order();
+        edges().forEach(([a,b])=>{const i=o2.indexOf(a),j=o2.indexOf(b),ya=pos[a].y+14,yb=pos[b].y+14,d=Math.min(56,10+8*Math.abs(i-j));
+          if(i<j){s+='<path d="M266 '+ya+'C'+(266+d)+' '+ya+' '+(266+d)+' '+yb+' 272 '+yb+'" style="fill:none;stroke:var(--ok-strong);stroke-width:2"/><path d="M267 '+yb+'l8 -4.5v9z" style="fill:var(--ok-strong)"/>';}
+          else{s+='<path d="M54 '+ya+'C'+(54-d)+' '+ya+' '+(54-d)+' '+yb+' 48 '+yb+'" style="fill:none;stroke:var(--no-strong);stroke-width:2.6"/><path d="M53 '+yb+'l-8 -4.5v9z" style="fill:var(--no-strong)"/>';}});}
+      else edges().forEach(([a,b])=>{const pa=pos[a],pb=pos[b];
+        let col='var(--line2)',w=1.8;
+        if(S.sel){if((past.has(a)||a===S.sel)&&(past.has(b)||b===S.sel)){col='var(--h2)';w=2.4;}else if((fut.has(a)||a===S.sel)&&(fut.has(b)||b===S.sel)){col='var(--h3)';w=2.4;}}
+        s+=ar(pa.x+pa.w/2,pa.y+pa.h,pb.x+pb.w/2,pb.y-1,col,w);});
+    }
+    ids.forEach(id=>{s+=card(id,pos[id],past,fut);});
+    svg.innerHTML=s;
+    if(o.focus){const g=svg.querySelector('[data-id="'+o.focus+'"]');if(g)g.focus({preventScroll:true});o.focus=null;}
+  }
+  function tween(to,ms){
+    return new Promise(res=>{const from={};ids.forEach(id=>from[id]=Object.assign({},pos[id]));S.anim=true;const t0=performance.now();
+      (function step(){if(!alive()){res();return;}const p=Math.min(1,(performance.now()-t0)/ms),e=ease(p);
+        ids.forEach(id=>{const a=from[id],b=to[id];pos[id]={x:a.x+(b.x-a.x)*e,y:a.y+(b.y-a.y)*e,w:a.w+(b.w-a.w)*e,h:a.h+(b.h-a.h)*e};});
+        if(p<1){draw();setTimeout(step,16);}else{S.anim=false;draw();res();}})();});}
+  const pick=id=>{if(o.onTap)o.onTap(id);};
+  svg.addEventListener('click',e=>{const g=e.target.closest('[data-id]');if(g)pick(g.dataset.id);});
+  svg.addEventListener('keydown',e=>{if(e.key!=='Enter'&&e.key!==' ')return;const g=e.target.closest('[data-id]');if(g){e.preventDefault();o.focus=g.dataset.id;pick(g.dataset.id);}});
+  draw();
+  return {S,draw,alive,anc,desc,order,backward,stamp,fmt,ev,ids,
+    tap:id=>{const g=svg.querySelector('[data-id="'+id+'"]');if(g)g.dispatchEvent(new MouseEvent('click',{bubbles:true}));},
+    select:id=>{S.sel=id;draw();},
+    flatten:(ms)=>{S.sel=null;S.layout='line';return tween(lineT(),ms==null?700:ms);},
+    unflatten:(ms)=>{S.layout='web';return tween(webT(),ms==null?600:ms);},
+    relayout:(ms)=>tween(S.layout==='line'?lineT():webT(),ms==null?300:ms)};
+}
+const legend='<div class="cwleg"><span><i style="background:var(--pri);border-color:var(--pri)"></i>tapped</span><span><i style="background:var(--h2-bg);border-color:var(--h2)"></i>before it (could have caused it)</span><span><i style="background:var(--h3-bg);border-color:var(--h3)"></i>after it (it could affect)</span><span><i style="background:var(--soft);border-color:var(--line2);border-style:dashed"></i>concurrent</span></div>';
+const lineLegend='<div class="cwleg"><span><i style="background:var(--ok-strong);border-color:var(--ok-strong)"></i>arrow points down the line: cause first</span><span><i style="background:var(--no-strong);border-color:var(--no-strong)"></i>arrow points back up: effect sorted before its cause</span></div>';
+const conTxt=(w,id)=>{const p=w.anc(id).size,f=w.desc(id).size,c=w.ids.length-1-p-f;return p+' before · '+f+' after · '+c+' concurrent';};
+
 Course.lesson({
   id:'0022', title:'Ordering and causality', minutes:20, icon:'list',
-  goals:['Tell causally related events from concurrent ones','Explain why Lamport timestamps respect causality but can’t enforce uniqueness','Use total order broadcast to build a uniqueness check, and say why it equals consensus'],
-  parts:['Why order','Partial and total','Sequence numbers','Total order broadcast'],
-  read:'Read the “Ordering Guarantees” section of chapter 9 of the book for the full Lamport timestamp diagram and the proofs it points to.',
+  goals:['Tell causally related events from concurrent ones, and say why causality is only a partial order','Explain why common sequence-number schemes break causality and how Lamport timestamps fix it','Say why deciding “who was first” on the spot needs total order broadcast, and what that log can build'],
+  parts:['Cause and effect','Partial and total','Numbering events','Agreeing on order'],
+  read:'Read the “Ordering Guarantees” section of chapter 9 of the book, including Figure 9-8 on Lamport timestamps and the two directions between total order broadcast and linearizable storage.',
   glossary:{
     causality:'Causality: the rule that a cause comes before its effect. If one operation could have known about another (it read it, or built on it), the first happened before the second.',
     causal:'Causal consistency: a promise that if you can see an operation, you can also see everything that happened before it. Concurrent operations may appear in any order.',
@@ -27,240 +169,515 @@ Course.lesson({
     lamport:'Lamport timestamp: a pair (counter, node ID). Every node and client carries the highest counter it has seen, so the numbers always respect causality.',
     'version-vector':'Version vector: a version number for each replica, kept with each key. It lets the database tell an overwrite from a concurrent write.',
     tob:'Total order broadcast: a way of sending messages so that none are lost and every node gets them in exactly the same order. Also called atomic broadcast.',
-    smr:'State machine replication: every replica starts in the same state and applies the same writes in the same order, so all replicas end up the same.'
+    smr:'State machine replication: every replica starts in the same state and applies the same writes in the same order, so all replicas end up the same.',
+    fencing:'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already processed.'
   },
   cheatsheet:[
-    '<b>Causality</b> orders events: cause before effect, question before answer. Concurrent events have no causal link.',
+    '<b>Causality</b> orders events: cause before effect, question before answer. Events with no causal link either way are <b>concurrent</b>.',
     'Causality is a <b>partial order</b>; linearizability is a <b>total order</b>, and it implies causality.',
-    '<b>Causal consistency</b> is the strongest model that stays fast and available during network faults.',
-    'Per-node counters, clock timestamps and preallocated blocks are unique but <b>not causal</b>.',
-    '<b>Lamport timestamps</b> (counter, node ID): carry the max counter everywhere. Total order consistent with causality, but compact and blind to concurrency.',
-    'A total order isn’t enough for uniqueness: you must also know <b>when the order is final</b>.',
-    '<b>Total order broadcast</b> = no message lost + same order everywhere, fixed at delivery. It’s a log.',
-    'Linearizable compare-and-set, total order broadcast and consensus are <b>equivalent</b>: solve one, solve all.'
+    '<b>Causal consistency</b> (see an effect, see its causes) is the strongest model that stays fast and available during network faults.',
+    'A replica keeps causality by <b>holding</b> an operation until everything it depends on has been applied.',
+    'Odd/even counters, clock timestamps and preallocated blocks give unique numbers that are <b>not causal</b>: a busy node, a skewed clock or a higher block lets an effect sort before its cause.',
+    '<b>Lamport timestamps</b> (counter, node ID): carry the biggest counter seen on every request. One total order that respects causality, compact, but blind to concurrency.',
+    'A total order isn’t enough to say yes on the spot: you must know <b>when the order is final</b>. <b>Total order broadcast</b> (reliable delivery + same order everywhere) fixes the order at delivery: it’s a log.',
+    'That log gives state machine replication, serializable stored procedures, fencing tokens and unique claims; linearizable compare-and-set, total order broadcast and <b>consensus</b> are equivalent.'
   ],
   steps:[
-/* ---------- PART 1: WHY ORDER ---------- */
+/* ---------- PART 1: CAUSE AND EFFECT ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A recipient, Mr. Haddad, messages their courier: “Can you leave it at number 12?” The courier replies: “Sure, done!” Signe’s support screen shows the reply first, then the question. What’s wrong?</h1>');
-  L.mc(L.card,['The courier replied far too quickly','The answer appears before its question'],1,
-   'An answer can only exist because someone saw the question. Showing it first breaks cause and effect. That idea is this lesson’s backbone.',
-   'Speed isn’t the issue. The courier could only answer after seeing the question, so showing the answer first breaks cause and effect.');}},
+  const b=(x,y,w,who,t,f,c)=>rc(x,y,w,46,f,c,{rx:14})+tx(x+12,y+18,who,F(11.5)+B+'fill:'+c)+tx(x+12,y+35,t,F(13)+'fill:var(--ink)');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Signe’s support screen shows this chat about parcel OP-48213. What’s wrong with it?</h1>'+CSS+
+   fig(150,rc(2,2,316,146,'var(--soft)','var(--line)',{rx:16})+tx(16,24,'Support view · OP-48213',F(12)+B+'fill:var(--muted)')+
+     b(110,38,196,'Ravi (courier)','Sure, done!','var(--h2-bg)','var(--h2)')+b(14,94,250,'Mr. Haddad','Can you leave it at number 12?','var(--card)','var(--h1)'),
+     'A chat window where Ravi’s reply “Sure, done!” is listed above Mr. Haddad’s question “Can you leave it at number 12?”'));
+  L.mc(L.card,['Ravi replied far too quickly','The answer shows before its question'],1,
+   'Ravi could only answer because they saw the question. Showing the answer first breaks cause and effect. That idea runs through this whole lesson.',
+   'Speed isn’t the issue. Ravi could only answer after seeing the question, so showing the answer first breaks cause and effect.');}},
+
 {part:0,src:'Chapter 9 · Ordering Guarantees',run(L){
-  L.h(L.kick('learn','A thread through the whole book')+'<h1 class="q">“What came first?” keeps coming back</h1>'+
-   L.prose('A linearizable store acts as if every operation takes effect at one instant, so operations fall in one well-defined order. Order has shown up again and again before this:')+
-   L.list([['list','Replication','The '+L.g('leader','leader')+'’s main job in single-leader replication is to set the order of writes in the replication log. Without one leader, concurrent writes can conflict.'],
-     ['lock','Serializability','Transactions must behave as if run in some sequential order, either literally, or by locking or aborting when they clash.'],
-     ['clock','Timestamps and clocks','Chapter 8’s attempts to say which of two writes happened later.']],2)+
-   L.prose('The book shows that ordering, linearizability and consensus are deeply connected. It’s more abstract than most of the book, but it clarifies what systems can and can’t do.'));
+  let s='';
+  const pan=(x,t)=>rc(x,22,100,120,'var(--soft)','var(--line)',{rx:12})+tx(x+50,16,t,F(12)+B+M+'fill:var(--ink)');
+  s+=pan(4,'Replication')+pan(110,'Serializability')+pan(216,'Clocks');
+  s+=rc(16,36,76,26,'var(--h1-bg)','var(--h1)')+tx(54,53,'Leader',F(12)+B+M+'fill:var(--h1)');
+  [0,1,2].forEach(k=>{s+=ar(54,64,22+k*28+10,88,'var(--line2)',1.4);s+=rc(14+k*28,90,24,24,'var(--card)','var(--h1)',{rx:6})+tx(26+k*28,106,String(k+1),F(12)+B+M+'fill:var(--h1)');});
+  s+=tx(54,132,'sets write order',F(11)+M+'fill:var(--muted)');
+  ['T1','T2','T3'].forEach((t,k)=>{const y=36+k*30;s+=rc(132,y,56,22,'var(--h2-bg)','var(--h2)',{rx:7})+tx(160,y+15,t,F(11.5)+B+M+'fill:var(--h2)');if(k)s+=ar(160,y-8,160,y-1,'var(--h2)',1.4);});
+  s+=tx(160,132,'as if one at a time',F(11)+M+'fill:var(--muted)');
+  ['10:00:01','10:00:00'].forEach((t,k)=>{const y=34+k*42;s+=rc(224,y,84,36,'var(--h3-bg)','var(--h3)',{rx:8})+tx(266,y+15,'write '+'AB'[k],F(11.5)+B+M+'fill:var(--h3)')+tx(266,y+29,t,F(11)+M+'fill:var(--h3)');});
+  s+=tx(266,124,'which was later?',F(11)+M+'fill:var(--muted)');
+  L.h(L.kick('learn','A thread through the book')+'<h1 class="q">“What came first?” keeps coming back</h1>'+CSS+
+   fig(146,s,'Three panels: a leader numbering writes 1, 2, 3; transactions T1, T2, T3 in a row; two writes with clock times asking which was later')+
+   cap('A '+L.g('leader','leader')+' sets the order of writes. Serializability makes transactions act as if run one at a time. Clocks try to say which write was later. This lesson shows how ordering ties to '+L.g('linearizability','linearizability')+' and '+L.g('consensus','consensus')+'.'));
   L.done();}},
+
+{part:0,src:'Chapter 9 · Ordering and Causality',
+ solve:async L=>{for(let k=0;k<4;k++){L.$('#g3t'+k).click();await L.sleep(10);}},
+ run(L){
+  const G=[
+   ['Chat',['Question','asked'],['Answer','shown'],'Chapter 5, consistent prefix reads: an observer saw an answer before the question it answers.'],
+   ['Overtaking',['Row','created'],['Row','updated'],'Chapter 5, multi-leader: one write overtook another, so a replica saw an update to a row that didn’t exist yet.'],
+   ['Happens-before',['Write A'],['Write B,','built on A'],'Chapter 5: if A happened before B, B might have known about A. If neither knew about the other, they were concurrent.'],
+   ['Snapshot',['Question','in the data'],['Answer','in the data'],'Chapter 7: a “consistent” snapshot means consistent with causality. Read skew shows a state that breaks it.'],
+   ['On call',['Sees colleague','on call'],['Goes','off call'],'Chapter 7, write skew: a doctor went off call because of what they saw. SSI catches this by tracking such dependencies.'],
+   ['Two channels',['Score','announced'],['Friend shouts','the score'],'Chapter 9: Bob heard Alice shout the score, so his refresh should show it too. The image resizer was the same pattern.']];
+  const seen=new Set();
+  L.h(L.kick('learn','Effect without its cause')+'<h1 class="q">You’ve met this bug before. Tap at least four of the earlier cases.</h1>'+CSS+
+   '<div id="g3f"></div><div class="cwrow" id="g3t"></div><div class="cwout" id="g3o" aria-live="polite"></div>');
+  const RED='var(--no-strong)',MU='var(--muted)',INK='var(--ink)';
+  const FIG=[
+   ()=>[rc(60,4,200,122,'var(--soft)','var(--line)',{rx:16})+tx(160,21,'What an observer sees',F(11.5)+B+M+'fill:'+MU)+
+     rc(104,30,146,38,'var(--card)',RED,{rx:14,sw:2.4})+tx(116,46,'Ravi: “Sure!”',F(12.5)+B+'fill:'+INK)+tx(116,61,'answer · shown first',F(11)+B+'fill:var(--no)')+
+     rc(70,78,170,38,'transparent','var(--line2)',{rx:14,dash:'5 4'})+tx(82,94,'Haddad: “No. 12?”',F(12.5)+B+'fill:'+MU)+tx(82,109,'question · not here yet',F(11)+'fill:'+MU),
+     'An observer’s chat shows Ravi’s answer while Mr. Haddad’s question has not arrived yet'],
+   ()=>[rc(4,10,82,34,'var(--h1-bg)','var(--h1)')+tx(45,32,'Leader 1',F(12)+B+M+'fill:var(--h1)')+
+     rc(4,86,82,34,'var(--h4-bg)','var(--h4)')+tx(45,108,'Leader 2',F(12)+B+M+'fill:var(--h4)')+
+     ar(88,27,196,50,'var(--line2)',1.8,'4 3')+tx(142,26,'create row 7 · late',F(11)+M+'fill:'+MU)+
+     ar(88,103,196,82,RED,2.2)+tx(142,118,'update row 7 · first',F(11)+B+M+'fill:var(--no)')+
+     rc(198,30,118,70,'var(--card)',RED,{sw:2.4})+tx(257,50,'Replica',F(12)+B+M+'fill:'+INK)+tx(257,69,'update row 7?',F(11.5)+B+M+'fill:var(--no)')+tx(257,86,'no such row yet',F(11)+M+'fill:'+MU),
+     'Leader 1’s create row 7 is delayed; leader 2’s update row 7 reaches the replica first, which has no such row yet'],
+   ()=>[rc(14,6,120,32,'var(--h2-bg)','var(--h2)')+tx(74,27,'Write A',F(12.5)+B+M+'fill:var(--h2)')+ar(74,40,74,64,'var(--h2)',2)+
+     rc(14,66,120,40,'var(--h2-bg)','var(--h2)')+tx(74,83,'Write B',F(12.5)+B+M+'fill:var(--h2)')+tx(74,99,'read A, built on it',F(11)+M+'fill:'+INK)+
+     tx(74,124,'A happened before B',F(11)+B+M+'fill:var(--h2)')+
+     rc(186,6,120,32,'var(--soft)','var(--line2)',{dash:'4 3'})+tx(246,27,'Write C',F(12.5)+B+M+'fill:'+MU)+tx(246,58,'no link',F(11)+M+'fill:'+MU)+
+     rc(186,70,120,32,'var(--soft)','var(--line2)',{dash:'4 3'})+tx(246,91,'Write D',F(12.5)+B+M+'fill:'+MU)+
+     tx(246,124,'C, D: concurrent',F(11)+B+M+'fill:'+MU),
+     'Left: write B read write A and built on it, so A happened before B. Right: writes C and D have no link, so they are concurrent'],
+   ()=>[rc(64,4,192,122,'var(--soft)','var(--line)',{rx:12,dash:'6 4'})+tx(160,22,'Snapshot taken mid-change',F(11.5)+B+M+'fill:'+MU)+
+     rc(80,32,160,36,'var(--card)',RED,{rx:8,sw:2.4})+tx(92,48,'Answer row',F(12)+B+'fill:'+INK)+tx(92,62,'captured',F(11)+B+'fill:var(--no)')+
+     rc(80,76,160,36,'transparent','var(--line2)',{rx:8,dash:'4 3'})+tx(92,92,'Question row',F(12)+B+'fill:'+MU)+tx(92,106,'not captured',F(11)+'fill:'+MU)+
+     tx(228,56,'✗',F(16)+B+E2+'fill:var(--no)'),
+     'A snapshot taken mid-change holds the answer row but not the question row it depends on'],
+   ()=>[rc(90,4,140,38,'var(--card)','var(--line2)')+tx(160,19,'On-call roster',F(11.5)+B+M+'fill:'+INK)+tx(160,35,'Alice ✓   Bob ✓',F(11.5)+B+M+'fill:var(--ok)')+
+     ar(104,44,72,54,'var(--line2)',1.6)+ar(216,44,248,54,'var(--line2)',1.6)+
+     rc(4,56,140,36,'var(--h1-bg)','var(--h1)')+tx(14,72,'Alice',F(12)+B+'fill:var(--h1)')+tx(14,86,'sees Bob · goes off',F(11)+'fill:'+INK)+
+     rc(176,56,140,36,'var(--h4-bg)','var(--h4)')+tx(186,72,'Bob',F(12)+B+'fill:var(--h4)')+tx(186,86,'sees Alice · goes off',F(11)+'fill:'+INK)+
+     ar(72,94,104,102,RED,1.8)+ar(248,94,216,102,RED,1.8)+
+     rc(90,100,140,28,'var(--no-bg)','var(--no-line)')+tx(160,118,'Nobody on call',F(12)+B+M+'fill:var(--no)'),
+     'Alice and Bob both read a roster showing both on call; each goes off call because of what they saw, so nobody is on call'],
+   ()=>[rc(4,6,110,40,'var(--h1-bg)','var(--h1)')+tx(14,23,'Alice',F(12)+B+'fill:var(--h1)')+tx(14,38,'sees final score',F(11)+'fill:'+INK)+
+     ar(116,26,200,26,'var(--ok-strong)',2)+tx(158,18,'shouts it',F(11)+B+M+'fill:var(--ok)')+
+     rc(204,6,112,40,'var(--h4-bg)','var(--h4)')+tx(214,23,'Bob',F(12)+B+'fill:var(--h4)')+tx(214,38,'refreshes page',F(11)+'fill:'+INK)+
+     ar(260,48,260,72,'var(--line2)',1.8)+
+     rc(4,76,110,46,'var(--soft)','var(--line2)')+tx(14,94,'Leader',F(12)+B+'fill:'+INK)+tx(14,110,'has final score',F(11)+'fill:'+MU)+
+     ar(116,99,200,99,'var(--line2)',1.6,'4 3')+tx(158,92,'copying · slow',F(11)+M+'fill:'+MU)+
+     rc(204,76,112,46,'var(--card)',RED,{sw:2.4})+tx(214,94,'Lagging copy',F(12)+B+'fill:'+INK)+tx(214,110,'“game still on”',F(11)+B+'fill:var(--no)'),
+     'Alice sees the final score and shouts it to Bob; Bob refreshes and hits a lagging copy that still says the game is on']];
+  const drawF=k=>{const g=G[k],f=FIG[k]();
+    L.$('#g3f').innerHTML=fig(130,f[0],f[1]);
+    L.$('#g3o').innerHTML='<span class="st">'+(seen.size>=4?'Same bug every time':'Seen '+seen.size+' of at least 4')+'</span>'+g[3];};
+  G.forEach((g,k)=>{const b=document.createElement('button');b.className='chip';b.id='g3t'+k;b.textContent=g[0];
+    b.onclick=()=>{seen.add(k);[...L.$('#g3t').children].forEach((x,j)=>{x.classList.toggle('sel',j===k);});drawF(k);
+      if(seen.size===4){L.sheet('info','One idea, many names','Each case shows an effect without its cause. '+L.g('causality','Causality')+' means a cause comes before its effect: a message is sent before it’s received, a question comes before its answer. Chains of “read something, then write because of it” define what happened before what.');L.done();}};
+    L.$('#g3t').appendChild(b);});
+  drawF(0);L.$('#g3o').innerHTML='<span class="st">Pick a case</span>Each case has its own picture. Look for the effect that’s visible while its cause isn’t.';}},
+
+{part:0,src:'Chapter 9 · Ordering and Causality',
+ solve:async L=>{const w=L.web;for(const id of ['D','B','F']){w.tap(id);await L.sleep(10);}},
+ run(L){
+  const tapped=new Set();
+  L.h(L.kick('ex','Explore the causal web')+'<h1 class="q">Each arrow means “caused”. Tap <b>Drop-off scan</b>, then two other cards. Which cards stay grey?</h1>'+CSS+'<div id="w4"></div>'+legend+'<div class="cwout" id="w4o" aria-live="polite"></div>');
+  const w=L.web=Web(L,L.$('#w4'),{id:'w4',onTap:id=>{w.select(id);tapped.add(id);const e=w.ev(id);
+    L.$('#w4o').innerHTML='<span class="st">'+e.t.replace(/“|”/g,'')+' · '+NODES[e.n].name+' · '+conTxt(w,id)+'</span>'+e.d;
+    if(tapped.has('D')&&tapped.size>=3&&!w.done){w.done=true;
+      L.sheet('info','Some pairs have no order at all','Teal is everything that could have influenced the card: its causes. Amber is everything it could influence. Grey cards are <b>concurrent</b> with it: no chain of arrows links them, so neither knew about the other. Mrs. Okoro’s slot request happened first on the clock, yet it is concurrent with the drop-off scan.');L.done();}}});
+  L.$('#w4o').innerHTML='<span class="st">Otterpost, this afternoon</span>Mr. Haddad asks Ravi to leave parcel OP-48213 at number 12. Elsewhere, unrelated things happen at the same time.';}},
+
 {part:0,src:'Chapter 9 · Ordering and Causality',run(L){
-  L.h(L.kick('learn','Causality: cause before effect')+'<h1 class="q">One big reason order matters: it keeps '+L.g('causality','causality')+'</h1>'+
-   L.prose('A message is sent before it’s received; a question comes before its answer. Earlier chapters met this idea under different names. Tap each card.'));
-  L.flips(L.card,[
-   ['Consistent prefix reads','An observer saw an answer before its question. The answer <i>depends</i> on the question.'],
-   ['Multi-leader overtaking','A write overtook another, so a replica saw an update to a row that didn’t exist yet. Create must come before update.'],
-   ['Happens-before','For two operations, A came before B, B before A, or they were concurrent: neither knew about the other.'],
-   ['Snapshot isolation','A “consistent” snapshot means consistent with causality: if it shows an answer, it shows the question too. Read skew breaks that.'],
-   ['Write skew','A doctor went off call <i>because</i> they saw a colleague on call. The action depended on what they observed.'],
-   ['Two channels','The friend who refreshed after hearing the score, and the photo preview: effects that outran their causes.']],
-   'Same idea every time: an effect must never be visible without its cause.');}},
-{part:0,src:'Chapter 9 · Ordering and Causality',run(L){
-  L.h(L.kick('ex','A causal chain at Otterpost')+'<h1 class="q">One thing leads to another</h1>');
-  L.beats(L.card,[
-   ['1 · Write','Ravi scans parcel P-77: “out for delivery”.'],
-   ['2 · Read, then write','Dispatch reads that scan and books P-77 into the 14:00 slot.'],
-   ['3 · Read, then write','The notification service reads the slot and texts Mr. Haddad.'],
-   ['4 · Read, then write','Mr. Haddad reads the text and asks to leave P-77 at number 12.'],
-   ['The causal order','Each step read something, then wrote something because of it. These chains define what happened before what.'],
-   ['The promise','A system that respects this order is <b>causally consistent</b>: any replica that shows step 4 must also show steps 1 to 3. Snapshot isolation gives you this.']],
-   'If you can see an effect, you must be able to see everything that caused it.');}},
-{part:0,src:'Chapter 9 · Ordering and Causality',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which pair of Otterpost events is causally related?</h1>');
-  L.mc(L.card,['A merchant books parcel P-90, then it gets scanned','A scan in Westport and an unrelated one in Eastvale','Two couriers each start their shifts at 07:00'],0,
-   'The pickup scan is of a parcel that only exists because it was booked. The scan depends on the booking.',
-   'Same time doesn’t mean related. Unrelated scans and two couriers starting shifts never knew about each other: they’re concurrent. A parcel must be booked before it can be scanned.');}},
-{part:0,src:'Chapter 9 · Ordering and Causality',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Causal or concurrent?',['One happened before the other','Concurrent'],[
-   ['Signe reads a complaint about P-77, then adds a refund note.',0,'The note was written because of the complaint.'],
-   ['Two couriers in different zones scan different parcels, unaware of each other.',1,'Neither knew about the other: no causal link.'],
-   ['Two support agents edit the same parcel’s note at once, neither seeing the other’s edit.',1,'Same record, but neither saw the other. That’s what concurrent means.'],
-   ['Mrs. Okoro sees “Delivered”, then rates the delivery five stars.',0,'They rated because they saw the delivery: cause, then effect.'],
-   ['Kwame’s Eastvale replica replays a write that it learned from Westport.',0,'The replica could only apply it after Westport’s write existed.']]);}},
+  let s='';
+  const pan=(x,t,ok)=>rc(x,24,152,150,'var(--soft)',ok?'var(--ok-line)':'var(--no-line)',{rx:12,sw:2})+tx(x+76,16,t,F(12)+B+M+'fill:var(--ink)');
+  const row=(x,y,t,st)=>{const st2={have:['var(--card)','var(--line2)','var(--ink)',''],miss:['transparent','var(--line2)','var(--muted)','4 3']}[st];
+    return rc(x+8,y,136,24,st2[0],st2[1],{rx:7,dash:st2[3]})+tx(x+16,y+16,t,F(11.5)+(st==='have'?B:'')+'fill:'+st2[2])+(st==='miss'?tx(x+138,y+16,'missing',F(11)+E2+'fill:var(--muted)'):'');};
+  s+=pan(4,'Replica 1',false)+pan(164,'Replica 2',true);
+  [['Haddad asks','miss'],['Route note','miss'],['Drop-off scan','have'],['Signe’s note','have']].forEach(([t,st],k)=>{s+=row(4,34+k*30,t,st);});
+  [['Haddad asks','have'],['Route note','have'],['Drop-off scan','have'],['Signe’s note','miss']].forEach(([t,st],k)=>{s+=row(164,34+k*30,t,st);});
+  s+=tx(80,166,'scan without its cause ✗',F(11)+B+M+'fill:var(--no)')+tx(240,166,'concurrent gap: fine ✓',F(11)+B+M+'fill:var(--ok)');
+  L.h(L.kick('learn','Causal consistency')+'<h1 class="q">See an effect, see its causes</h1>'+CSS+
+   fig(178,s,'Replica 1 shows the drop-off scan but is missing Mr. Haddad’s request and the route note: broken. Replica 2 shows the request, the note and the scan but not Signe’s unrelated note: fine.')+
+   cap('A system is '+L.g('causal','causally consistent')+' if, whenever you see something, you can also see everything that caused it. Concurrent things may show up in any order. Snapshot isolation gives you this.'));
+  L.done();}},
+
+{part:0,src:'Chapter 9 · Ordering and Causality',pts:3,
+ solve:async L=>{for(let k=0;k<3;k++){L.$('#p6'+[1,0,1][k]).click();await L.sleep(20);const n=L.$('#p6n');if(n)n.click();await L.sleep(10);}},
+ run(L){
+  const P=[['B','C',1,'Both reacted to Mr. Haddad’s question, but neither saw the other. A shared cause doesn’t link them.'],
+           ['A','E',0,'A chain links them: question → route note → scan → text. The question’s amber future reaches the text.'],
+           ['F','D',1,'Mrs. Okoro’s request happened first on the clock, but no chain of arrows leads from it to the scan. Earlier isn’t the same as “caused”.']];
+  let k=0;
+  L.h(L.kick('pr','Predict, then reveal')+'<h1 class="q">For each pair outlined in purple: did one cause the other, or are they concurrent?</h1>'+CSS+
+   '<div class="cwq" id="p6q"></div><div id="w6"></div><div class="cwrow" id="p6b"><button class="btn" id="p60">'+L.ic('arrow')+'One caused the other</button><button class="btn" id="p61">'+L.ic('cycle')+'Concurrent</button></div><div id="p6f" aria-live="polite"></div>');
+  const w=Web(L,L.$('#w6'),{id:'w6'});
+  const show=()=>{const p=P[k];w.S.hl=new Set([p[0],p[1]]);w.select(null);L.$('#p6f').innerHTML='';
+    L.$('#p6q').textContent='Pair '+(k+1)+' of 3: “'+w.ev(p[0]).t.replace(/“|”/g,'')+'” and “'+w.ev(p[1]).t.replace(/“|”/g,'')+'”';L.$('#p6b').style.display='';};
+  [0,1].forEach(a=>{L.$('#p6'+a).onclick=()=>{const p=P[k],ok=a===p[2];L.award(ok);w.select(p[0]);L.$('#p6b').style.display='none';
+    L.$('#p6f').innerHTML='';L.fb(L.$('#p6f'),'<b>'+(ok?'Right: ':'Not quite: ')+(p[2]?'concurrent.':'one caused the other.')+'</b> '+p[3],ok?'ok':'no');
+    if(k<2){const n=document.createElement('button');n.className='btn pri';n.id='p6n';n.style.marginTop='8px';n.innerHTML='Next pair '+L.ic('arrow');n.onclick=()=>{k++;show();};L.$('#p6f').appendChild(n);}
+    else{L.sheet('info','Causality orders some pairs, not all','Two events are ordered only if a chain of “caused” arrows joins them. Otherwise they’re concurrent, however close or far apart they were in time.');L.done();}};});
+  show();}},
 
 /* ---------- PART 2: PARTIAL AND TOTAL ---------- */
 {part:1,src:'Chapter 9 · The causal order is not a total order',run(L){
-  L.h(L.kick('learn','Two kinds of order')+'<h1 class="q">Can you always say which came first?</h1>'+
-   L.lanes([['list','Total order','Any two items can be compared. Numbers: 13 is greater than 5, always.',1],
-            ['layers','Partial order','Some pairs can’t be compared. Is the set {a, b} bigger than {b, c}? Neither contains the other.',2]])+
-   L.prose('<b>Linearizability</b> gives a '+L.g('totalorder','total order')+': one copy, one timeline, so any two operations have a first and a second. There’s no concurrency in what clients can observe.')+
-   L.prose('<b>Causality</b> gives a '+L.g('partialorder','partial order')+': related events are ordered, concurrent ones aren’t. The timeline branches and merges, much like a Git history where people commit on separate branches and later merge.'));
+  let s='';
+  s+=tx(4,16,'Total order: numbers',F(12)+B+'fill:var(--h1)');
+  s+='<line x1="14" y1="48" x2="306" y2="48" style="stroke:var(--line2);stroke-width:2"/>';
+  [0,5,10,15,20].forEach(n=>{const x=14+n*14.6;s+='<line x1="'+x+'" y1="43" x2="'+x+'" y2="53" style="stroke:var(--line2);stroke-width:1.5"/>'+tx(x,68,String(n),F(11)+M+'fill:var(--muted)');});
+  [[5,'5'],[13,'13']].forEach(([n,t])=>{const x=14+n*14.6;s+='<circle cx="'+x+'" cy="48" r="9" style="fill:var(--h1)"/>'+tx(x,52,t,F(11)+B+M+'fill:var(--pri-ink)');});
+  s+=tx(160,34,'13 is bigger than 5. Any two can be compared.',F(11.5)+M+'fill:var(--ink)');
+  s+=tx(4,98,'Partial order: sets',F(12)+B+'fill:var(--h2)');
+  const set=(x,t)=>rc(x,112,74,32,'var(--h2-bg)','var(--h2)',{rx:16})+tx(x+37,133,t,F(13)+B+M+'fill:var(--h2)');
+  s+=set(8,'{a}')+set(120,'{a, b}')+set(232,'{b, c}');
+  s+=ar(84,128,118,128,'var(--h2)',2)+tx(101,160,'inside: smaller',F(11)+M+'fill:var(--muted)');
+  s+=tx(213,134,'?',F(20)+B+M+'fill:var(--no)')+tx(240,160,'neither contains the other',F(11)+M+'fill:var(--no)');
+  L.h(L.kick('learn','Two kinds of order')+'<h1 class="q">Can you always say which comes first?</h1>'+CSS+
+   fig(168,s,'A number line where 13 is clearly bigger than 5, and three sets: {a} is inside {a, b}, but {a, b} and {b, c} can’t be compared')+
+   cap('In a '+L.g('totalorder','total order')+' any two items compare, like numbers. In a '+L.g('partialorder','partial order')+' some pairs are incomparable: is {a, b} bigger than {b, c}? Neither contains the other, so neither is.'));
   L.done();}},
-{part:1,src:'Chapter 9 · Linearizability is stronger than causal consistency',run(L){
-  L.h(L.kick('learn','The middle ground')+'<h1 class="q">Linearizability implies causality, but you can get causality without it</h1>'+
-   L.prose('Any linearizable system keeps causality automatically, even across several channels like the photo storage and the queue. That’s why it’s easy to understand. But it costs speed and availability, especially across distant datacenters.')+
-   L.tiers([['shield','Linearizable','Total order. Preserves causality. Slow over distance, and unavailable to replicas cut off during a partition.'],
-            ['cycle','Causally consistent','Partial order. The strongest model that doesn’t slow down for network delays and stays available during network failures.','CAP doesn’t apply here.',true,'Sweet spot'],
-            ['clock','Eventually consistent','Only promises replicas converge some day.']])+
-   '<p class="small" style="margin-top:10px">Many systems that seem to need linearizability really need only causal consistency. The research is recent, so few production systems offer it yet.</p>');
+
+{part:1,src:'Chapter 9 · The causal order is not a total order',run(L){
+  let s='';
+  s+=tx(4,16,'Linearizable: one timeline',F(12)+B+'fill:var(--h1)');
+  s+='<line x1="14" y1="40" x2="306" y2="40" style="stroke:var(--h1);stroke-width:2.5"/>';
+  ['w','r','w','r','r','w'].forEach((t,k)=>{const x=24+k*54;s+='<circle cx="'+x+'" cy="40" r="11" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+tx(x,44.5,t+(k+1),F(11)+B+M+'fill:var(--h1)');});
+  s+=tx(4,82,'Causal: branches and merges, like Git',F(12)+B+'fill:var(--h2)');
+  const dot=(x,y,c)=>'<circle cx="'+x+'" cy="'+y+'" r="9" style="fill:'+(c||'var(--h2-bg)')+';stroke:var(--h2);stroke-width:2"/>';
+  s+='<path d="M24 130H296" style="stroke:var(--h2);stroke-width:2.5;fill:none"/><path d="M78 130C100 130 100 104 124 104H200C224 104 224 130 246 130" style="stroke:var(--h2);stroke-width:2.5;fill:none"/>';
+  s+=dot(24,130)+dot(78,130)+dot(140,104,'var(--h3-bg)')+dot(190,104,'var(--h3-bg)')+dot(160,130,'var(--h4-bg)')+dot(246,130)+dot(296,130);
+  s+=tx(165,94,'branch',F(11)+M+'fill:var(--muted)')+tx(160,154,'concurrent with the branch',F(11)+M+'fill:var(--muted)')+tx(250,112,'merge',F(11)+M+'fill:var(--muted)');
+  L.h(L.kick('learn','Two consistency models')+'<h1 class="q">One line, or a branching history?</h1>'+CSS+
+   fig(162,s,'Top: six operations on one straight timeline. Bottom: a history that branches into two lines and merges back, like Git commits')+
+   cap('Linearizability is a total order: one copy, one timeline, no concurrency. Causality is a partial order: the history branches when things happen concurrently and merges when someone sees both, like commits in Git.'));
   L.done();}},
-{part:1,src:'Chapter 9 · The causal order is not a total order',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Two Otterpost operations were concurrent. In a linearizable store, how are they ordered?</h1>');
-  L.mc(L.card,['They stay unordered, like concurrent events','Only if one caused the other','They’re ordered one way or the other'],2,
-   'A linearizable store acts as one copy on one timeline, so every pair gets a first and a second, even if they started out concurrent.',
-   'That describes causality, a partial order. A linearizable store puts every operation on a single timeline, so any two are ordered.');}},
-{part:1,src:'Chapter 9 · Capturing causal dependencies',run(L){
-  L.h(L.kick('learn','How a replica keeps causality')+'<h1 class="q">Don’t apply an effect before its causes</h1>'+
-   L.prose('Concurrent operations may be applied in any order. But if A happened before B, every replica must apply A first. When an operation arrives early, the replica <b>waits</b> until everything before it has been applied.')+
-   L.prose('To know what came before what, the system tracks each node’s “knowledge”, a bit like a fraud trial: did the manager know about X when they decided Y?')+
-   L.list([['Track the whole database','Detecting concurrent writes to one key used '+L.g('version-vector','version vectors')+'. Causal consistency must track dependencies across <i>every</i> key, so version vectors are generalised.'],
-     ['Know what was read','The database needs to know which version the app read. That’s why a write carries back the version number it read, and why SSI checks at commit whether what a transaction read is still current.']],3));
-  L.done();}},
-{part:1,src:'Chapter 9 · Capturing causal dependencies',pts:1,
- solve:async L=>{for(const a of [1,0,0,0]){const b=L.$('#wr'+a);if(b)b.click();await L.sleep(5);}},
+
+{part:1,src:'Chapter 9 · Linearizability is stronger than causal consistency',
+ solve:async L=>{L.$('#m9cut').click();await L.sleep(10);},
  run(L){
-  const OPS={a:'Create parcel P-77',b:'Put P-77 on Ravi’s route',c:'Add Ravi’s note to P-77',d:'Create parcel P-80'};
-  const NEED={a:[],b:['a'],c:['b'],d:[]};
-  const ARR=['c','d','a','b'];
-  let k=0,miss=false;const applied=[],held=[];
-  L.h(L.kick('pr','The waiting room')+'<h1 class="q">The Eastvale replica gets four operations out of order. For each one, apply it now or hold it?</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:6px 0 10px"><div class="small" style="margin-bottom:6px">The route needs the parcel. The note needs the route. P-80 needs nothing.</div><div id="ap"></div><div id="hd"></div></div>'+
-   '<h2 class="sub" id="cur"></h2><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn pri" id="wr0">'+L.ic('check')+'Apply now</button><button class="btn" id="wr1">'+L.ic('clock')+'Hold it</button></div><div id="wf"></div>');
-  const ready=o=>NEED[o].every(x=>applied.includes(x));
-  const draw=()=>{L.$('#ap').innerHTML='<b class="small">Applied:</b> '+(applied.length?applied.map(o=>'<span class="chip static ok">'+OPS[o]+'</span>').join(''):'<span class="small">nothing yet</span>');
-    L.$('#hd').innerHTML='<b class="small">Waiting:</b> '+(held.length?held.map(o=>'<span class="chip static">'+L.ic('clock')+OPS[o]+'</span>').join(''):'<span class="small">nothing</span>');
-    L.$('#cur').innerHTML=k<ARR.length?'Arrives: '+OPS[ARR[k]]:'All four have arrived';};
-  const flush=()=>{let moved=true;while(moved){moved=false;for(let j=0;j<held.length;j++){if(ready(held[j])){applied.push(held.splice(j,1)[0]);moved=true;break;}}}};
+  let cut=false;
+  L.h(L.kick('ex','The middle ground')+'<h1 class="q">You can keep causality without paying for linearizability. Cut the network link and see.</h1>'+CSS+
+   '<div id="m9f"></div>'+cap('Linearizability implies causality but is slow over distance. Causal consistency is the strongest model that stays fast and available. Many apps that seem to need linearizability only need causality; little of this is in production yet.')+
+   '<div class="cwrow"><button class="btn pri" id="m9cut">'+L.ic('x')+'Cut the link</button></div><div class="cwout" id="m9o" aria-live="polite"></div>');
+  const draw=()=>{let s='';
+    s+=rc(30,2,286,24,cut?'var(--no-bg)':'var(--ok-bg)',cut?'var(--no-line)':'var(--ok-line)',{rx:12})+tx(173,18,cut?'Westport ✂ Eastvale: link cut':'Westport ↔ Eastvale: link up',F(11.5)+B+M+'fill:'+(cut?'var(--no)':'var(--ok)'));
+    const tier=(y,t,sub,tag,f,c,star)=>rc(30,y,286,50,f,c,{rx:12,sw:star?2.6:1.6})+tx(42,y+21,t,F(13)+B+'fill:var(--ink)')+tx(42,y+38,sub,F(11.5)+'fill:var(--muted)')+tx(306,y+21,tag,F(11)+B+E2+'fill:'+c);
+    s+=tier(34,'Linearizable','total order · preserves causality',cut?'stalls ✗':'answers, slower',cut?'var(--no-bg)':'var(--card)',cut?'var(--no)':'var(--h1)',cut);
+    s+=tier(92,'Causally consistent','partial order · still fast',cut?'keeps answering ✓':'answers, fast','var(--ok-bg)','var(--ok)',true);
+    s+=tier(150,'Eventually consistent','copies agree some day',cut?'keeps answering':'answers, fast','var(--card)','var(--muted)');
+    s+=ar(22,200,22,36,'var(--line2)',2)+'<text x="10" y="118" transform="rotate(-90 10 118)" style="'+F(11)+M+'fill:var(--muted)">stronger</text>';
+    L.$('#m9f').innerHTML=fig(206,s,cut?'Link cut: linearizable stalls; causally consistent and eventually consistent keep answering':'Link up: all three models answer; linearizable is slower over distance');
+    L.$('#m9o').innerHTML=cut?'<span class="st">Link cut</span>Linearizable copies cut off from the others must stop: CAP’s trade-off. Causal consistency keeps answering; CAP doesn’t apply to it.'
+      :'<span class="st">Link up</span>All three answer; linearizable adds a delay over distance. Now cut the link.';};
   draw();
-  [0,1].forEach(a=>{L.$('#wr'+a).onclick=()=>{if(k>=ARR.length)return;const o=ARR[k],right=ready(o)?0:1;L.$('#wf').innerHTML='';
-    if(a!==right){miss=true;L.fb(L.$('#wf'),right===1?'<b>Not yet.</b> “'+OPS[o]+'” depends on something this replica hasn’t applied. Applying it now would show an effect without its cause.':'<b>No need to wait.</b> Everything “'+OPS[o]+'” depends on is already here (or it depends on nothing), so it can go in now.','no');return;}
-    if(right===0){applied.push(o);flush();}else held.push(o);k++;draw();
-    if(k===ARR.length){L.$('#wr0').remove();L.$('#wr1').remove();L.award(!miss);
-      L.sheet(miss?'info':'ok',miss?'All applied, in causal order':'Spot on','The note waited until the route existed, and the route waited for the parcel. P-80 had no causes, so it never waited. Concurrent operations can go in any order; causal ones can’t.');L.done();}};});}},
+  L.$('#m9cut').onclick=function(){cut=!cut;this.innerHTML=cut?L.ic('cycle')+'Restore the link':L.ic('x')+'Cut the link';draw();
+    if(cut&&!this.dataset.d){this.dataset.d='1';L.done();}};}},
 
-/* ---------- PART 3: SEQUENCE NUMBERS ---------- */
-{part:2,src:'Chapter 9 · Sequence Number Ordering',run(L){
-  L.h(L.kick('learn','A cheaper way to keep order')+'<h1 class="q">Number every operation instead of tracking every dependency</h1>'+
-   L.prose('Tracking all dependencies gets impractical: apps read lots of data before writing, and it’s unclear which reads the write depended on. Instead, give each operation a <b>sequence number</b> from a '+L.g('logical-clock','logical clock')+': a counter, not the time of day.')+
-   L.prose('Sequence numbers are small and form a total order. We can make that order <b>consistent with causality</b>: if A happened before B, A gets the lower number. Concurrent operations may be ordered either way.')+
-   L.flow([['person','Single leader','Adds 1 to a counter for each write','',1],['list','Replication log','Writes numbered 1, 2, 3…','',2],['check','Followers','Apply in that order: always causally consistent, even when lagging','',3]]));
+{part:1,src:'Chapter 9 · Capturing causal dependencies',run(L){
+  let s='';
+  s+=rc(4,8,150,64,'var(--h4-bg)','var(--h4)')+tx(14,28,'Drop-off scan',F(13)+B+'fill:var(--h4)')+tx(14,46,'written by Ravi’s app',F(11.5)+'fill:var(--ink)')+tx(14,62,'carries what it read:',F(11.5)+'fill:var(--muted)');
+  s+=rc(14,80,130,24,'var(--card)','var(--h4)',{rx:12})+tx(79,96,'reply v4 · note v7',F(11.5)+B+M+'fill:var(--h4)');
+  s+=ar(156,46,190,46,'var(--line2)',2);
+  s+=rc(192,8,124,140,'var(--soft)','var(--line)',{rx:12})+tx(254,28,'Eastvale replica',F(12)+B+M+'fill:var(--ink)');
+  s+=rc(200,40,108,30,'var(--ok-bg)','var(--ok-line)',{rx:8})+tx(208,59,'reply v4 ✓',F(12)+B+'fill:var(--ok)');
+  s+=rc(200,76,108,30,'var(--h3-bg)','var(--h3)',{rx:8,dash:'4 3'})+tx(208,95,'note v7 ?',F(12)+B+'fill:var(--h3)');
+  s+=tx(254,128,'hold the scan',F(11.5)+B+M+'fill:var(--h3)')+tx(254,142,'until v7 is here',F(11)+M+'fill:var(--muted)');
+  L.h(L.kick('learn','How a replica keeps causality')+'<h1 class="q">Know what each writer had seen</h1>'+CSS+
+   fig(152,s,'The drop-off scan carries the versions it read: reply v4 and note v7. The Eastvale replica has v4 but not v7, so it holds the scan')+
+   cap('Like a fraud inquiry (“did they know X when they did Y?”), a write carries the versions its author read. '+L.g('version-vector','Version vectors')+', generalized to the whole database, track this. A missing cause means wait.'));
   L.done();}},
-{part:2,src:'Chapter 9 · Noncausal sequence number generators',run(L){
-  L.h(L.kick('learn','Without a single leader')+'<h1 class="q">Three popular ways to make unique numbers, and their shared flaw</h1>'+
-   L.prose('With several leaders, leaderless replication, or a '+L.g('partition','partitioned')+' database, there’s no single counter. Three common tricks scale better than one leader:')+
-   L.list([['Each node has its own numbers','E.g. one node uses odd numbers, the other even, or a few bits hold the node’s ID. <b>Flaw:</b> a busy node’s counter races ahead of a quiet one’s.'],
-     ['Time-of-day timestamps','High-resolution clock readings, as used by last write wins. <b>Flaw:</b> clock skew can give a later operation a lower timestamp.'],
-     ['Preallocated blocks','Node A takes 1–1,000, node B takes 1,001–2,000. <b>Flaw:</b> a later operation can get a number from the lower block.']],4)+
-   L.note('All three give unique, roughly increasing numbers. None of them is <b>consistent with causality</b>: they don’t capture order across nodes.','alert'));
-  L.done();}},
-{part:2,src:'Chapter 9 · Noncausal sequence number generators',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias numbers scan events: Westport uses odd numbers, Eastvale even. Westport is far busier. Ravi’s Eastvale scan happens after a Westport scan they saw. What can go wrong?</h1>');
-  L.mc(L.card,['Two scans could get the same number','His later scan may get a lower number','Nothing; the numbers stay causal'],1,
-   'Westport’s counter has raced ahead, so Eastvale’s next even number can be lower, even though Ravi’s scan came later.',
-   'Odd and even never collide, so the numbers are unique. But they aren’t causal: busy Westport’s counter runs ahead, so Ravi’s later scan can get a lower number.');}},
-{part:2,src:'Chapter 9 · Lamport timestamps',run(L){
-  L.h(L.kick('learn','Lamport timestamps')+'<h1 class="q">A simple fix from 1978: carry the biggest number you’ve seen</h1>'+
-   L.prose('Leslie Lamport proposed this in one of the most cited papers in distributed systems. Each node has an ID and a counter of operations it has processed. A '+L.g('lamport','Lamport timestamp')+' is the pair <b>(counter, node ID)</b>.')+
-   L.list([['Compare','Higher counter wins. Equal counters? The higher node ID wins. So any two timestamps can be ordered.'],
-     ['The key idea','Every node <i>and every client</i> remembers the highest counter it has seen, and sends it with every request.'],
-     ['Catch up','A node that receives a higher counter than its own jumps straight to it. Its next operation gets that number plus one.']],1)+
-   L.prose('Every causal step carries the number forward, so effects always get bigger timestamps than their causes.'));
-  L.done();}},
-{part:2,src:'Chapter 9 · Lamport timestamps',pts:3,
- solve:async L=>{for(const q of [1,0,1]){const b=L.$('#lq').children[q];if(b)b.click();await L.sleep(5);const nx=L.$('#lf .btn');if(nx)nx.click();await L.sleep(5);}},
+
+{part:1,src:'Chapter 9 · Capturing causal dependencies',pts:1,
+ solve:async L=>{for(let k=0;k<6;k++){const r=L.web11.right();L.$('#wr'+r).click();await L.sleep(15);}},
  run(L){
-  const Q=[
-   {s:{w:1,e:5,c:5},t:'Busy Eastvale (node 2) was at 4. Tobias’s courier app sent it a scan, stamped <b>(5, 2)</b>. The reply told the app “max 5”.',
-    q:'The app now sends a scan to quiet Westport (node 1, counter 1), carrying max 5. Which timestamp does Westport give it?',o:['(2, 1)','(6, 1)','(5, 1)'],r:1,
-    y:'Westport jumps from 1 to 5, the highest it has heard of, then adds one: <b>(6, 1)</b>. The later scan gets the bigger number.',
-    n:'Westport must first jump to the max it was sent (5), then add one for the new operation: (6, 1). Without the jump it would look older than its cause.'},
-   {s:{w:6,e:6,c:6},t:'Meanwhile Eastvale handles a scan from another courier, who never talked to Westport. It is stamped <b>(6, 2)</b>.',
-    q:'Which comes first in the total order: (6, 1) or (6, 2)?',o:['(6, 1) comes first','(6, 2) comes first','They can’t be compared'],r:0,
-    y:'Equal counters, so the node ID breaks the tie: node 1 is lower, so (6, 1) comes first.',
-    n:'Lamport timestamps can always be compared. With equal counters, the lower node ID comes first, so (6, 1) is first.'},
-   {s:{w:6,e:6,c:6},t:'So (6, 1) sits before (6, 2) in the order.',
-    q:'Does that mean Westport’s scan caused Eastvale’s?',o:['Yes, a lower stamp means cause','No, they may be concurrent'],r:1,
-    y:'Right. The two scans were concurrent; the tie-break just picked an order. Lamport timestamps can’t tell concurrent from causal. '+L.g('version-vector','Version vectors')+' can, but they’re bigger.',
-    n:'The other courier never heard of Westport’s scan, so they’re concurrent. Lamport timestamps force an order anyway, and you can’t tell concurrent from causal by looking at them.'}];
-  let k=0,first=true,got=false;
-  L.h(L.kick('pr','Run the counters')+'<h1 class="q">Follow the counters as messages move between nodes.</h1>'+
-   '<div id="ls" style="display:flex;gap:8px;margin:6px 0 10px"></div><div class="fb info" id="lt"></div><h2 class="sub" id="lqq"></h2><div id="lq" style="display:flex;flex-wrap:wrap"></div><div id="lf"></div>');
-  const box=(n,v)=>'<div style="flex:1;text-align:center;border-radius:14px;padding:8px 4px;border:2px solid var(--line);background:var(--card)"><div class="small" style="line-height:1.3">'+n+'</div><div class="week" style="margin:2px 0 0;font-size:24px">'+v+'</div></div>';
-  const show=()=>{const s=Q[k];L.$('#ls').innerHTML=box('Westport<br>node 1',s.s.w)+box('Eastvale<br>node 2',s.s.e)+box('Courier app<br>max seen',s.s.c);
-    L.$('#lt').innerHTML=s.t;L.$('#lqq').textContent=s.q;L.$('#lq').innerHTML='';L.$('#lf').innerHTML='';first=true;got=false;
-    s.o.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;
-      b.onclick=()=>{if(got)return;if(j===s.r){got=true;b.classList.add('ok');if(first)L.award(true);L.$('#lf').innerHTML='';L.fb(L.$('#lf'),s.y,'ok');
-          if(k<Q.length-1){const nx=document.createElement('button');nx.className='btn pri';nx.style.marginTop='10px';nx.innerHTML='Next '+L.ic('arrow');nx.onclick=()=>{k++;show();};L.$('#lf').appendChild(nx);}
-          else{L.sheet('info','The pattern','Lamport timestamps give one total order that respects causality, at the cost of a few bytes. But that order can’t show which events were really concurrent.');L.done();}}
-        else{if(first)L.award(false);first=false;b.classList.add('no');L.$('#lf').innerHTML='';L.fb(L.$('#lf'),s.n,'no');}};
-      L.$('#lq').appendChild(b);});};
+  const ARR=['B','G','A','D','C','E'];
+  const st={F:'applied',H:'applied'};let k=0,miss=false;
+  L.h(L.kick('pr','The waiting room')+'<h1 class="q">Eastvale’s replica gets six operations out of order. Apply each one now, or hold it?</h1>'+CSS+
+   '<div class="cwq" id="wrq" aria-live="polite"></div><div class="cwrow"><button class="btn pri" id="wr0">'+L.ic('check')+'Apply now</button><button class="btn" id="wr1">'+L.ic('clock')+'Hold it</button></div><div id="w11"></div><div id="wrf" aria-live="polite"></div>');
+  const paint=id=>{const s=st[id];
+    if(s==='applied')return {f:'var(--ok-bg)',s:'var(--ok-line)',sc:'var(--ok)',tag:'applied'};
+    if(s==='held')return {f:'var(--h3-bg)',s:'var(--h3)',sc:'var(--h3)',dash:'5 3',tag:'waiting'};
+    return {f:'var(--card)',s:'var(--line2)',t:'var(--muted)',sc:'var(--muted)',dash:'3 3',tag:'not here yet'};};
+  const w=Web(L,L.$('#w11'),{id:'w11',paint});
+  const ready=id=>w.ev(id).c.every(c=>st[c]==='applied');
+  w.right=()=>ready(ARR[k])?0:1;L.web11=w;
+  const flush=()=>{let moved=true;while(moved){moved=false;Object.keys(st).forEach(id=>{if(st[id]==='held'&&ready(id)){st[id]='applied';moved=true;}});}};
+  const show=()=>{w.S.hl=new Set(k<ARR.length?[ARR[k]]:[]);w.draw();
+    L.$('#wrq').innerHTML=k<ARR.length?'Arrives ('+(k+1)+' of 6): <b>'+w.ev(ARR[k]).t+'</b>':'All six have arrived.';};
+  [0,1].forEach(a=>{L.$('#wr'+a).onclick=()=>{if(k>=ARR.length)return;const id=ARR[k],r=ready(id)?0:1;L.$('#wrf').innerHTML='';
+    if(a!==r){miss=true;const need=w.ev(id).c.filter(c=>st[c]!=='applied').map(c=>'“'+w.ev(c).t+'”');
+      L.fb(L.$('#wrf'),r===1?'<b>Not yet.</b> It depends on '+need.join(' and ')+', which this replica hasn’t applied. Applying it now would show an effect without its cause.':'<b>No need to wait.</b> Everything it depends on is already applied (or it depends on nothing), so it can go in now.','no');return;}
+    if(r===0){st[id]='applied';flush();}else st[id]='held';k++;show();
+    if(k===ARR.length){L.$('#wr0').parentNode.style.display='none';L.award(!miss);
+      L.sheet(miss?'info':'ok',miss?'All applied, in causal order':'Spot on','The reply waited for the question, and the scan waited for the route note. Signe’s note had no causes, so it never waited. Concurrent operations can go in any order; causal ones can’t.');L.done();}};});
   show();}},
-{part:2,src:'Chapter 9 · Timestamp ordering is not sufficient',run(L){
-  L.h(L.kick('learn','The limit of timestamps')+'<h1 class="q">A total order isn’t enough to say “yes” right now</h1>'+
-   L.prose('Two merchants book parcels at the same moment, one via Westport and one via Eastvale, and both nodes pick tracking code OP-7Q4K. One booking must succeed and one must fail.')+
-   L.prose('Lamport timestamps look like the answer: the lower timestamp wins. That works <b>after the fact</b>, once you’ve collected every operation. But Eastvale must answer its merchant <b>now</b>, and it can’t know whether Westport is claiming the same code with a lower timestamp at this very moment.')+
-   L.note('To be sure, Eastvale would have to ask every other node. If one node is down or unreachable, bookings grind to a halt. That’s not fault-tolerant.','alert')+
-   L.prose('The missing piece: you need to know <b>when the order is final</b>, meaning nobody can still slip an earlier claim in ahead of yours.'));
-  L.done();}},
-{part:2,src:'Chapter 9 · Timestamp ordering is not sufficient',pts:1,run(L){
-  L.h(L.kick('pr','Review Tobias’s design')+'<h1 class="q">Tobias proposes: “Each node checks its own claims and Lamport timestamps, and answers the merchant at once.” What breaks?</h1>');
-  L.mc(L.card,['The node can’t know an earlier claim isn’t still coming','Lamport timestamps can collide, giving two winners','Lamport timestamps ignore causality between bookings'],0,
-   'The order only becomes final once you’ve seen every node’s operations. Answering at once means guessing.',
-   'Lamport timestamps never collide (the node ID breaks ties) and they do respect causality. The flaw is timing: an earlier claim from another node may still be on its way.');}},
 
-/* ---------- PART 4: TOTAL ORDER BROADCAST ---------- */
+/* ---------- PART 3: NUMBERING EVENTS ---------- */
+{part:2,src:'Chapter 9 · Sequence Number Ordering',run(L){
+  let s='';
+  s+=rc(4,8,84,48,'var(--h1-bg)','var(--h1)')+tx(46,28,'Leader',F(13)+B+M+'fill:var(--h1)')+tx(46,46,'counter + 1',F(11)+M+'fill:var(--h1)');
+  s+=tx(104,18,'Replication log',F(11.5)+B+'fill:var(--muted)');
+  [1,2,3,4,5].forEach((n,k)=>{s+=rc(104+k*42,26,36,30,'var(--card)','var(--h1)',{rx:7})+tx(122+k*42,46,String(n),F(13)+B+M+'fill:var(--h1)');});
+  s+=ar(90,41,102,41,'var(--h1)',2);
+  const fol=(y,name,upto,lag)=>{let r=rc(4,y,84,40,'var(--soft)','var(--line2)')+tx(46,y+17,name,F(12)+B+M+'fill:var(--ink)')+tx(46,y+32,lag?'lagging':'up to date',F(11)+M+'fill:var(--muted)');
+    [1,2,3,4,5].forEach((n,k)=>{const on=n<=upto;r+=rc(104+k*42,y+5,36,30,on?'var(--ok-bg)':'transparent',on?'var(--ok-line)':'var(--line2)',{rx:7,dash:on?'':'3 3'})+tx(122+k*42,y+25,String(n),F(12)+B+M+'fill:'+(on?'var(--ok)':'var(--muted)'));});return r;};
+  s+=fol(70,'Follower 1',5,false)+fol(118,'Follower 2',3,true);
+  s+=tx(160,176,'applied in log order, even a lagging copy is causal',F(11)+M+'fill:var(--muted)');
+  L.h(L.kick('learn','A cheaper way to keep order')+'<h1 class="q">Number the operations instead of tracking every dependency</h1>'+CSS+
+   fig(184,s,'A leader numbers writes 1 to 5 in its replication log. Follower 1 has applied all five; follower 2 has applied 1 to 3 and is lagging')+
+   cap('Tracking every dependency is impractical: apps read lots before writing. Instead, number operations with a '+L.g('logical-clock','logical clock')+'. Numbers are compact and totally ordered. A single leader just counts, and followers that apply in that order stay causally consistent.'));
+  L.done();}},
+
+{part:2,src:'Chapter 9 · Sequence Number Ordering',
+ solve:async L=>{L.$('#f13').click();for(let i=0;i<60&&!L.$('#f13').dataset.done;i++)await L.sleep(30);},
+ run(L){
+  L.h(L.kick('ex','Flatten the web')+'<h1 class="q">The Parcel DB leader numbered every event (#1 = first). Flatten the web into one line in that order.</h1>'+CSS+
+   '<div class="cwrow"><button class="btn pri" id="f13">'+L.ic('down')+'Flatten</button><button class="btn" id="u13" disabled>'+L.ic('cycle')+'Back to the web</button></div><div id="w13"></div><div id="w13l"></div><div class="cwout" id="w13o" aria-live="polite"></div>');
+  const w=Web(L,L.$('#w13'),{id:'w13',mode:'leader'});
+  L.$('#w13o').innerHTML='<span class="st">What to watch</span>Every arrow is a cause → effect link. After flattening, does any arrow point back up the line?';
+  L.$('#f13').onclick=async function(){if(w.S.anim)return;this.disabled=true;await w.flatten();if(!w.alive())return;
+    L.$('#w13l').innerHTML=lineLegend;L.$('#u13').disabled=false;this.dataset.done='1';
+    L.$('#w13o').innerHTML='<span class="st">'+(w.backward().length?'':'<span class="ok-t">No arrow points back up</span>')+'</span>Unrelated <b>Signe’s note</b> landed between the question and the route note: more order than causality needs, and that’s fine.';
+    L.sheet('info','A total order that respects causality','Read top to bottom, this line never puts an effect before its cause. Concurrent events got an order too, an arbitrary one. The catch: every write had to pass through one leader to get its number.');L.done();};
+  L.$('#u13').onclick=async function(){if(w.S.anim)return;this.disabled=true;L.$('#w13l').innerHTML='';await w.unflatten();if(w.alive())L.$('#f13').disabled=false;};}},
+
+{part:2,src:'Chapter 9 · Noncausal sequence number generators',
+ solve:async L=>{for(let k=0;k<3;k++){L.$('#g14'+k).click();for(let i=0;i<60&&L.web14.S.anim;i++)await L.sleep(30);await L.sleep(40);}},
+ run(L){
+  const P=[['oddeven','Odd/even','Westport counts in odd numbers, Eastvale in even. Busy Westport’s counter races ahead, so Ravi’s reply (4) sorts before the question (43).'],
+   ['clock','Skewed clocks','Each event gets its datacenter’s clock reading (example readings, in seconds). Here Eastvale’s clock runs a little slow, so its events look older than they are. Ravi’s reply sorts before the question.'],
+   ['block','Blocks','Eastvale holds numbers 1–1,000; busy Westport used up a block and took 1,001–2,000. A later event can get a number from the lower block.'],
+   ['random','Bonus: random IDs','A side note in the book: random IDs (like UUIDs) also sort into a valid total order, but it tells you nothing about which event happened first, or which were concurrent.']];
+  const tried=new Set();
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Without a single leader, nodes need faster ways to number events. Try the book’s three schemes.</h1>'+CSS+
+   '<div class="cwrow" id="g14"></div><div id="w14"></div><div id="w14l"></div><div class="cwout" id="g14o" aria-live="polite"></div>');
+  const w=L.web14=Web(L,L.$('#w14'),{id:'w14',mode:null,layout:'web'});
+  L.$('#g14o').innerHTML='<span class="st">Pick a scheme</span>The first three are the schemes the book lists; the fourth is a bonus. Each gives every event a unique number (the numbers are made-up examples). Watch for red arrows after it flattens.';
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='g14'+j;b.textContent=p[1];
+    b.onclick=async()=>{if(w.S.anim)return;[...L.$('#g14').children].forEach(x=>x.classList.toggle('sel',x===b));w.S.mode=p[0];w.draw();
+      await (w.S.layout==='line'?w.relayout(500):w.flatten());if(!w.alive())return;
+      const bk=w.backward();if(j<3)tried.add(j);L.$('#w14l').innerHTML=lineLegend;
+      L.$('#g14o').innerHTML='<span class="st">'+p[1]+': <span class="no-t">'+bk.length+' red arrow'+(bk.length===1?'':'s')+'</span> · tried '+tried.size+' of 3</span>'+p[2];
+      if(tried.size===3&&!w.done14){w.done14=true;L.sheet('info','Unique, but not causal','Odd/even counters, clock timestamps and preallocated blocks all scale better than one leader, and all give unique, roughly increasing numbers. None is consistent with causality, because none captures order across nodes.');L.done();}};
+    L.$('#g14').appendChild(b);});}},
+
+{part:2,src:'Chapter 9 · Lamport timestamps',run(L){
+  let s='';
+  const box=(y,t,a,b,f,c)=>rc(4,y,200,52,f,c)+tx(14,y+20,t,F(12.5)+B+'fill:'+c)+tx(14,y+38,a,F(12)+'fill:var(--ink)')+(b?tx(196,y+30,b,F(15)+B+E2+'fill:'+c):'');
+  s+=box(4,'Eastvale (node 2)','counter at 4','(5, 2)','var(--h4-bg)','var(--h4)');
+  s+=ar(104,58,104,82,'var(--line2)',2)+rc(214,58,96,26,'var(--card)','var(--h4)',{rx:13})+tx(262,75,'reply: max 5',F(11.5)+B+M+'fill:var(--h4)');
+  s+=box(84,'Courier app (client)','remembers max 5','','var(--soft)','var(--muted)');
+  s+=ar(104,138,104,162,'var(--line2)',2)+rc(214,138,96,26,'var(--card)','var(--h1)',{rx:13})+tx(262,155,'sends: max 5',F(11.5)+B+M+'fill:var(--h1)');
+  s+=box(164,'Westport (node 1)','counter 1, jumps to 5','(6, 1)','var(--h1-bg)','var(--h1)');
+  s+=tx(4,238,'Compare: bigger counter wins; on a tie, bigger node ID.',F(11.5)+'fill:var(--muted)');
+  L.h(L.kick('learn','Lamport timestamps')+'<h1 class="q">Carry the biggest number you’ve seen</h1>'+CSS+
+   fig(246,s,'Eastvale at counter 4 stamps an operation (5, 2) and replies max 5. The courier app remembers 5 and sends it to Westport, which jumps from 1 to 5 and stamps its next operation (6, 1)')+
+   cap('Leslie Lamport’s 1978 idea: a '+L.g('lamport','Lamport timestamp')+' is (counter, node ID). Everyone sends the biggest counter they’ve seen with every request. A node that hears a bigger one jumps to it, so an effect always outnumbers its cause.'));
+  L.done();}},
+
+{part:2,src:'Chapter 9 · Lamport timestamps',pts:3,
+ solve:async L=>{for(let q=0;q<3;q++){L.$('#l16go').click();for(let i=0;i<120&&!L.$('#l16c .chip');i++)await L.sleep(30);const r=L.$('#l16c').dataset.r;L.$('#l16c').children[r].click();await L.sleep(20);}for(let i=0;i<100&&!L.$('#l16c').dataset.end;i++)await L.sleep(30);},
+ run(L){
+  const RUN=MAIN.run,CNT={W:5,E:0},st={};let k=0,first=true;
+  const Q={B:{q:'Ravi’s reply reaches Eastvale (counter 1). The question it answers carried max 7. Which counter does the reply get?',o:['2','8','7'],r:1,
+      y:'Eastvale jumps from 1 to 7, the biggest it has heard of, then adds one: (8, 2).',n:'Eastvale must first jump to the max it was sent (7), then add one: 8. Plain counting would give 2, which looks older than the question.'},
+    D:{q:'The scan’s causes carried max 8 (reply (8, 2), route note (8, 1)). Eastvale’s own counter is already 9. Which counter?',o:['9','11','10'],r:2,
+      y:'Take the bigger of Eastvale’s own 9 and the carried 8, then add one: 10. Counters only ever move forward.',n:'Take the bigger of Eastvale’s own counter (9) and the max carried (8), then add one: 10.'},
+    E:{q:'Westport (counter 8) sends the text because of the scan, which carried max 10. Which counter?',o:['11','9','12'],r:0,
+      y:'Westport jumps from 8 to 10, then adds one: (11, 1). The text sorts after the scan that caused it.',n:'Jump to the biggest seen (10), then add one: 11.'}};
+  L.h(L.kick('pr','Run the counters')+'<h1 class="q">Events happen in clock order. Run them; at three of the crossings between datacenters, you pick the stamp.</h1>'+CSS+
+   '<div class="cwctr"><div>Westport <b id="l16w">5</b></div><div>Eastvale <b id="l16e">0</b></div></div>'+
+   '<div class="cwrow"><button class="btn pri" id="l16go">'+L.ic('play')+'Run to the next crossing</button></div><div class="cwq" id="l16q" aria-live="polite"></div><div class="cwrow" id="l16c"></div><div id="l16f"></div><div id="w16"></div>');
+  const paint=id=>st[id]!=null?null:{f:'var(--card)',s:'var(--line2)',t:'var(--muted)',dash:'3 3',tag:'—'};
+  const w=Web(L,L.$('#w16'),{id:'w16',mode:'lamport',stamps:st,paint});
+  const ctr=()=>{L.$('#l16w').textContent=CNT.W;L.$('#l16e').textContent=CNT.E;};
+  const stampIt=id=>{const e=w.ev(id),mx=Math.max(CNT[e.n],...e.c.map(c=>st[c]));CNT[e.n]=mx+1;st[id]=mx+1;ctr();w.S.hl=new Set([id]);w.draw();};
+  async function finish(){L.$('#l16go').style.display='none';L.$('#l16q').textContent='';await L.sleep(300);if(!w.alive())return;w.S.hl=new Set();await w.flatten();if(!w.alive())return;
+    L.$('#l16c').dataset.end='1';L.fb(L.$('#l16f'),'Flattened by (counter, node ID): every arrow points down. '+(w.backward().length?'':'No red arrows.'),'ok');
+    L.sheet('info','Causal, with no leader','Each node counted on its own, yet the stamps respect every cause → effect link, because every message carried the biggest counter seen. Note (8, 1) and (8, 2): equal counters, so the node ID breaks the tie.');L.done();}
+  L.$('#l16go').onclick=async function(){this.disabled=true;L.$('#l16f').innerHTML='';
+    while(k<RUN.length){const id=RUN[k];if(Q[id]){
+        const q=Q[id];w.S.hl=new Set([id]);w.draw();L.$('#l16q').textContent=q.q;L.$('#l16c').dataset.r=q.r;first=true;
+        q.o.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{
+          if(j===q.r){if(first)L.award(true);L.$('#l16c').innerHTML='';L.$('#l16f').innerHTML='';L.fb(L.$('#l16f'),q.y,'ok');stampIt(id);k++;L.$('#l16q').textContent='';
+            if(k>=RUN.length)finish();else L.$('#l16go').disabled=false;}
+          else{if(first)L.award(false);first=false;b.classList.add('no');L.$('#l16f').innerHTML='';L.fb(L.$('#l16f'),q.n,'no');}};L.$('#l16c').appendChild(b);});
+        return;}
+      stampIt(id);k++;await L.sleep(260);if(!w.alive())return;}
+    finish();};}},
+
+{part:2,src:'Chapter 9 · Lamport timestamps',pts:1,run(L){
+  let s='';
+  const c=(y,t,n,st,col)=>rc(40,y,240,34,'var(--card)',col,{rx:9})+tx(52,y+22,t,F(13)+B+'fill:var(--ink)')+tx(268,y+22,st,F(13)+B+E2+'fill:'+col)+tx(30,y+22,n,F(11)+E2+'fill:var(--muted)');
+  s+=c(10,'Route note','4th','(8, 1)','var(--h1)')+c(52,'Ravi: “Sure!”','5th','(8, 2)','var(--h4)');
+  s+='<path d="M284 27C312 27 312 69 284 69" style="fill:none;stroke:var(--line2);stroke-width:2;stroke-dasharray:4 3"/>'+tx(312,52,'?',F(18)+B+E2+'fill:var(--no)');
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In the Lamport line, “Route note” (8, 1) sits right before “Ravi: Sure!” (8, 2). What can Zainab conclude from that?</h1>'+CSS+
+   fig(96,s,'Two adjacent cards in the flattened line: Route note stamped (8, 1), then Ravi’s reply stamped (8, 2), with a question mark between them'));
+  L.mc(L.card,['The route note caused Ravi’s reply','Just an order: they may be concurrent','Westport wrote the note first on the clock'],1,
+   'Right. They’re concurrent (both reacted to the question); the node ID just broke the tie. Lamport timestamps always force an order, so you can’t tell concurrent from causal by looking. '+L.g('version-vector','Version vectors')+' can, but Lamport timestamps are more compact.',
+   'Lamport timestamps force an order on every pair, including concurrent ones, and say nothing about clock time. These two are concurrent: the tie on 8 was broken by node ID. Only version vectors can tell concurrent from causal.');}},
+
+{part:2,src:'Chapter 9 · Lamport timestamps',pts:1,
+ solve:async L=>{const v={Z:1,X:42,Y:43};for(const id of ['Z','X','Y']){const r=L.$('#c18'+id);r.value=v[id];r.dispatchEvent(new Event('input',{bubbles:true}));await L.sleep(20);}
+   for(let i=0;i<40&&L.web18.S.anim;i++)await L.sleep(30);L.$('#c18chk').click();},
+ run(L){
+  const SC={H:0,run:['P','Z','X','Y','Q'],ev:{
+    P:{t:'New booking',n:'W',c:[],d:''},Z:{t:'Signe’s note',n:'E',c:[],d:''},X:{t:'Hub scan',n:'E',c:['P'],d:''},
+    Y:{t:'Out for delivery',n:'E',c:['X'],d:''},Q:{t:'Shop webhook',n:'W',c:['Y'],d:''}}};
+  const st={P:41,Z:1,X:2,Y:3,Q:45};let tried=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Busy Westport’s events are already numbered 41 and 45. Set quiet Eastvale’s three counters so no arrow points back up.</h1>'+CSS+
+   [['Z','Signe’s note','Eastvale’s 1st event'],['X','Hub scan','2nd · caused by the booking'],['Y','Out for delivery','3rd · caused by the hub scan']].map(([id,t,sub])=>
+     '<div class="cwrng"><label for="c18'+id+'">'+t+'<small>'+sub+'</small></label><input type="range" id="c18'+id+'" min="1" max="60" value="'+st[id]+'"><b id="c18'+id+'v">'+st[id]+'</b></div>').join('')+
+   '<div class="cwout" id="c18o" aria-live="polite"></div><div id="w18"></div>'+lineLegend+'<div class="cwrow"><button class="btn pri" id="c18chk">'+L.ic('check')+'Check my numbers</button></div>');
+  const w=L.web18=Web(L,L.$('#w18'),{id:'w18',sc:SC,mode:'lamport',stamps:st,layout:'line',aria:'The five events flattened into one line by Lamport timestamp'});
+  const up=()=>st.Z<st.X&&st.X<st.Y;
+  const say=()=>{const bk=w.backward();L.$('#c18o').innerHTML='<span class="st">'+(bk.length?'<span class="no-t">'+bk.length+(bk.length>1?' arrows point':' arrow points')+' back up</span>':'<span class="ok-t">No arrows point back up</span>')+' · '+(up()?'Eastvale’s counter only goes up ✓':'<span class="no-t">Eastvale’s counter must go up with each event</span>')+'</span>'+
+    (bk.length?bk.map(([a,b])=>'“'+w.ev(a).t+'” '+w.fmt(a)+' should come before “'+w.ev(b).t+'” '+w.fmt(b)+'.').join(' '):'Drag a slider and watch the line re-sort.');};
+  ['Z','X','Y'].forEach(id=>{L.$('#c18'+id).addEventListener('input',e=>{st[id]=+e.target.value;L.$('#c18'+id+'v').textContent=st[id];w.relayout(220);say();});});
+  say();
+  L.$('#c18chk').onclick=()=>{const ok=!w.backward().length&&up();if(!tried){tried=true;L.award(ok);}
+    if(ok){L.$('#c18chk').disabled=true;['Z','X','Y'].forEach(id=>L.$('#c18'+id).disabled=true);
+      L.sheet('ok','Causal, no leader needed','Lamport’s rule finds this without coordination: when the booking’s 41 reaches Eastvale, its counter jumps from 1 to 41, so the hub scan gets 42 and the next event 43. Too high fails too: 45 would tie with the webhook, and (45, 2) sorts after (45, 1).');L.done();}
+    else L.sheet('no','Not yet',up()?'Look for the red arrow: a cause must get a smaller (counter, node ID) than its effect. Hint: the hub scan must beat 41; the out-for-delivery scan must stay under the webhook’s 45.':'A node’s counter never goes backwards: Signe’s note, then the hub scan, then out for delivery must get rising numbers.');};}},
+
+/* ---------- PART 4: AGREEING ON ORDER ---------- */
+{part:3,src:'Chapter 9 · Timestamp ordering is not sufficient',run(L){
+  let s='';
+  s+=rc(4,4,148,46,'var(--h1-bg)','var(--h1)')+tx(14,22,'Westport',F(12.5)+B+'fill:var(--h1)')+tx(14,40,'claim: Bramble & Bolt',F(11)+'fill:var(--ink)');
+  s+=rc(168,4,148,46,'var(--h4-bg)','var(--h4)')+tx(178,22,'Eastvale',F(12.5)+B+'fill:var(--h4)')+tx(178,40,'claim: Ada’s shop',F(11)+'fill:var(--ink)');
+  s+=rc(150,64,166,46,'var(--card)','var(--line2)',{rx:16})+tx(233,83,'Anyone claiming OP-48213',F(11.5)+M+'fill:var(--ink)')+tx(233,99,'with a lower stamp now?',F(11.5)+M+'fill:var(--ink)');
+  s+='<circle cx="240" cy="58" r="3" style="fill:var(--line2)"/>';
+  s+=rc(4,128,148,40,'var(--soft)','var(--line2)')+tx(78,152,'Westport: “hmm?”',F(12)+M+'fill:var(--muted)');
+  s+=rc(168,128,148,40,'var(--soft)','var(--no-line)',{dash:'5 4'})+tx(242,146,'Nordhaven',F(12)+B+M+'fill:var(--muted)')+tx(242,161,'unreachable',F(11)+B+M+'fill:var(--no)');
+  s+=ar(220,112,120,126,'var(--line2)',1.6,'4 3')+ar(250,112,250,126,'var(--no-strong)',1.6,'4 3');
+  s+=tx(160,186,'Ask every node first? Then one unreachable',F(11)+M+'fill:var(--no)')+tx(160,200,'node stalls every booking.',F(11)+M+'fill:var(--no)');
+  L.h(L.kick('learn','The limit of timestamps')+'<h1 class="q">A total order isn’t enough to say yes right now</h1>'+CSS+
+   fig(206,s,'Westport and Eastvale both get a claim for tracking code OP-48213. Eastvale wonders if another node has a lower stamp right now; asking every node fails because Nordhaven is unreachable')+
+   cap('“Lowest timestamp wins” works after the fact, once you’ve collected every claim. But Eastvale must answer Ada now, and can’t know what other nodes are stamping. You also need to know <b>when the order is final</b>.'));
+  L.done();}},
+
+{part:3,src:'Chapter 9 · Using total order broadcast',pts:2,
+ solve:async L=>{L.$('#b20a2').click();for(let i=0;i<100&&!L.$('#b20b0');i++)await L.sleep(30);L.$('#b20b0').click();for(let i=0;i<120&&!L.$('#b20').dataset.end;i++)await L.sleep(30);},
+ run(L){
+  const box=(x,name,who,c,f,ans,ansc)=>rc(x,4,150,64,f,c)+tx(x+10,22,name,F(12.5)+B+'fill:'+c)+tx(x+10,38,who,F(11)+'fill:var(--ink)')+(ans?rc(x+8,44,134,20,'var(--card)',ansc,{rx:10})+tx(x+75,58,ans,F(11.5)+B+M+'fill:'+ansc):'');
+  const S={ans:{},log:[['scan','OP-48177','var(--muted)'],['booking','OP-48190','var(--muted)'],null,null,null],cur:{W:0,E:0},msg:''};
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble &amp; Bolt (via Westport) and Ada’s shop Pip &amp; Thistle (via Eastvale) claim tracking code OP-48213 at the same moment.</h1>'+CSS+
+   '<div id="b20"><svg class="cwfig" id="b20s" viewBox="0 0 320 196" role="img" aria-label="Westport and Eastvale nodes above a shared log of five slots"></svg></div><div class="cwout" id="b20o" aria-live="polite"></div><div class="cwq" id="b20q"></div><div class="cwrow" id="b20c"></div>');
+  const sv=L.$('#b20s');
+  const draw=extra=>{if(!sv.isConnected)return;let s=box(4,'Westport','Bramble & Bolt','var(--h1)','var(--h1-bg)',S.ans.W&&S.ans.W[0],S.ans.W&&S.ans.W[1])+box(166,'Eastvale','Pip & Thistle (Ada)','var(--h4)','var(--h4-bg)',S.ans.E&&S.ans.E[0],S.ans.E&&S.ans.E[1]);
+    s+=tx(4,96,'Shared log (total order broadcast)',F(11.5)+B+'fill:var(--muted)');
+    S.log.forEach((m,k)=>{const x=4+k*63;s+=rc(x,104,59,46,m?'var(--card)':'transparent',m?m[2]:'var(--line2)',{rx:8,dash:m?'':'4 3',sw:m&&m[2]!=='var(--muted)'?2.4:1.4})+tx(x+6,117,String(k+1),F(11)+B+'fill:var(--muted)');
+      if(m)s+=tx(x+30,131,m[0],F(11)+B+M+'fill:'+m[2])+tx(x+30,144,m[1],F(10.5)+M+'fill:var(--ink)');});
+    [['W','var(--h1)',166],['E','var(--h4)',184]].forEach(([n,c,y])=>{const p=S.cur[n];if(!p)return;const x=4+(p-1)*63+30;s+='<path d="M'+x+' '+(y-12)+'l-6 9h12z" style="fill:'+c+'"/>'+tx(x+9,y-3,n==='W'?'Westport reads':'Eastvale reads',F(11)+B+'fill:'+c);});
+    if(S.msg)s+=tx(160,192,S.msg,F(11.5)+B+M+'fill:var(--no)');
+    sv.innerHTML=s+(extra||'');};
+  const fly=(x1,y1,x2,y2,col,ms)=>new Promise(res=>{const t0=performance.now();(function st(){if(!sv.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/ms),e=ease(p);
+    draw('<circle cx="'+(x1+(x2-x1)*e)+'" cy="'+(y1+(y2-y1)*e)+'" r="6" style="fill:'+col+'"/>');if(p<1)setTimeout(st,16);else{draw();res();}})();});
+  const out=(h,t)=>{L.$('#b20o').innerHTML='<span class="st">'+t+'</span>'+h;};
+  const ask=(q,opts,right,id,after)=>{L.$('#b20q').textContent=q;const c=L.$('#b20c');c.innerHTML='';
+    opts.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.id=id+j;b.textContent=o;b.onclick=async()=>{L.award(j===right);c.innerHTML='';L.$('#b20q').textContent='';await after(j===right,o);};c.appendChild(b);});};
+  draw();out('Each node has a Lamport counter at 11. First try Tobias’s design: each node checks its own claims and answers at once.','Round 1 · answer now');
+  ask('With “answer now”, how many merchants are told yes?',['None','One','Both'],2,'b20a',async(ok,o)=>{
+    out('Westport stamps its claim (12, 1); Eastvale stamps its claim (12, 2). Neither has seen a rival claim…','Round 1 · playing');
+    await L.sleep(500);if(!sv.isConnected)return;S.ans={W:['yes · (12, 1)','var(--ok)'],E:['yes · (12, 2)','var(--ok)']};S.msg='Two parcels now share OP-48213';draw();
+    out((ok?'<span class="ok-t">You called it.</span> ':'<span class="no-t">It’s both.</span> ')+'After the fact, (12, 1) &lt; (12, 2) says Bramble &amp; Bolt won, but Ada was already told yes. The order wasn’t final when Eastvale answered.','Round 1 · result');
+    await L.sleep(400);if(!sv.isConnected)return;
+    ask('Round 2: each node appends its claim to the shared log and waits until it is delivered back. Who gets OP-48213?',['Whoever’s claim is first in the log','Both, like before','Neither: the claims cancel out'],0,'b20b',async(ok2)=>{
+      S.ans={};S.msg='';draw();out('Ada’s claim reaches the log first, then Bramble &amp; Bolt’s. Every node is delivered the same messages in the same order.','Round 2 · playing');
+      await fly(241,68,161,127,'var(--h4)',420);if(!sv.isConnected)return;S.log[2]=['claim','OP-48213','var(--h4)'];draw();
+      await fly(79,68,224,127,'var(--h1)',420);if(!sv.isConnected)return;S.log[3]=['claim','OP-48213','var(--h1)'];draw();
+      for(let p=1;p<=4;p++){S.cur={W:p,E:Math.min(p,3)};draw();await L.sleep(190);if(!sv.isConnected)return;}
+      S.ans={E:['yes: first claim','var(--ok)'],W:['no: already taken','var(--no)']};draw();
+      out((ok2?'<span class="ok-t">Right.</span> ':'<span class="no-t">Not quite.</span> ')+'Eastvale read up to its own claim, found it was the first for OP-48213, and said yes. Westport read past Ada’s claim to its own and aborted; Bramble &amp; Bolt gets another code.','Round 2 · result');
+      L.$('#b20').dataset.end='1';
+      L.sheet('info','The order was final when it said yes','Every node reads the same log in the same order, so all agree which claim came first. Once your own message has been delivered back, nothing can be slipped in ahead of it. That’s what timestamps couldn’t give.');L.done();});});}},
+
 {part:3,src:'Chapter 9 · Total Order Broadcast',run(L){
-  L.h(L.kick('learn','Total order broadcast')+'<h1 class="q">Every node gets every message, in the same order</h1>'+
-   L.prose('On one CPU core, the order is just the order things ran. A single leader gives a total order the same way. The hard parts are scaling past one leader and failing over when it dies. The general problem is called '+L.g('tob','total order broadcast')+' (or atomic broadcast, a confusing name unrelated to ACID).')+
-   L.list([['arrow','Reliable delivery','No message is lost: if one node gets it, every node gets it.'],
-     ['list','Totally ordered delivery','Every node gets the messages in the same order.']],2)+
-   L.prose('Both must hold even when nodes or the network fail. During an outage messages wait; they’re retried and delivered, still in order, once it’s fixed.')+
-   L.note('<b>Scope.</b> Partitioned databases with one leader per partition usually order writes <i>within</i> each partition only, so they can’t promise things like consistent snapshots or foreign keys across partitions. Ordering across all partitions takes extra coordination.','info'));
+  let s='';
+  s+=rc(4,62,70,56,'var(--h1-bg)','var(--h1)')+tx(39,86,'Messages',F(11.5)+B+M+'fill:var(--h1)')+tx(39,102,'m1 m2 m3',F(11)+M+'fill:var(--h1)');
+  const nd=(y,name,cut)=>{let r=rc(120,y,196,42,'var(--soft)',cut?'var(--no-line)':'var(--line)',{rx:10})+tx(130,y+26,name,F(12)+B+'fill:var(--ink)');
+    ['m1','m2','m3'].forEach((m,k)=>{const late=cut&&k===2;r+=rc(204+k*36,y+9,32,24,late?'transparent':'var(--card)',late?'var(--h3)':'var(--h1)',{rx:6,dash:late?'4 3':''})+tx(220+k*36,y+25,m,F(11)+B+M+'fill:'+(late?'var(--h3)':'var(--h1)'));});return r;};
+  s+=nd(6,'Westport')+nd(68,'Eastvale')+nd(130,'Nordhaven',true);
+  s+=ar(76,80,118,30,'var(--line2)',1.6)+ar(76,90,118,90,'var(--line2)',1.6)+ar(76,100,118,148,'var(--no-strong)',1.6,'4 3');
+  s+=tx(220,190,'m3 is retried: late, but never lost',F(11)+M+'fill:var(--h3)');
+  s+=tx(4,140,'① none lost',F(11.5)+B+'fill:var(--ok)')+tx(4,156,'② same order',F(11.5)+B+'fill:var(--ok)')+tx(4,172,'   everywhere',F(11.5)+B+'fill:var(--ok)');
+  L.h(L.kick('learn','Total order broadcast')+'<h1 class="q">Every node gets every message, in the same order</h1>'+CSS+
+   fig(198,s,'Three messages go to Westport, Eastvale and Nordhaven. All three nodes hold m1, m2, m3 in the same order; Nordhaven’s link is cut, so m3 waits and is retried')+
+   cap('One leader orders everything until it’s overloaded or fails; per-partition leaders order only within a partition. The general fix is '+L.g('tob','total order broadcast')+' (also called atomic broadcast): if one node gets a message, every node does, in the same order.'));
   L.done();}},
-{part:3,src:'Chapter 9 · Using total order broadcast',run(L){
-  L.h(L.kick('learn','What it gives you')+'<h1 class="q">It’s a log that every node reads the same way</h1>'+
-   L.prose('Delivering a message is like appending to a '+L.g('log','log')+'. ZooKeeper and etcd actually implement total order broadcast, a hint of its link to consensus.')+
-   L.list([['layers','Replication','If each message is a write and every replica applies them in the same order, replicas stay consistent. This is '+L.g('smr','state machine replication')+'.'],
-     ['lock','Serializable transactions','If each message is a deterministic stored procedure, every node runs them in the same order.'],
-     ['shield','Fencing tokens','Each lock request is a message; its position in the log only grows, so it works as a fencing token. ZooKeeper calls it the zxid.']],1)+
-   L.note('The order is <b>fixed at delivery</b>. No node may slip a message in ahead of ones already delivered. That makes it stronger than timestamp ordering.','check'));
-  L.done();}},
-{part:3,src:'Chapter 9 · Implementing linearizable storage using total order broadcast',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Unique tracking codes, built on the log</h1>');
-  L.beats(L.card,[
-   ['The idea','Picture one register per tracking code, starting empty. Claiming a code is a compare-and-set from “empty” to a parcel ID. The log can provide that.'],
-   ['1 · Append','Eastvale appends a message to the log: “claim OP-7Q4K for parcel P-77”.'],
-   ['2 · Wait','It reads the log until its own message is delivered back to it.'],
-   ['3 · Check','It looks for the <b>first</b> claim for OP-7Q4K. If that’s its own, it commits and tells the merchant yes. If Westport’s claim came first, it aborts.'],
-   ['Why it works','Every node sees the log in the same order, so all agree which claim came first. The order is final once delivered.'],
-   ['The catch: reads','Writes are now linearizable, but a read from a store fed by the log may lag. Fixes: put the read through the log too, or ask for the latest log position and wait until you’ve caught up, or read from a replica updated synchronously.']],
-   'Total order broadcast plus “first claim wins” gives you a uniqueness check that every node agrees on.');}},
+
+{part:3,src:'Chapter 9 · Using total order broadcast',
+ solve:async L=>{for(const k of [0,1,2]){L.$('#u23'+k).click();await L.sleep(20);}},
+ run(L){
+  const LOG=[['write','OP-48177'],['write','OP-48190'],['lock?','Planner 1'],['write','OP-48201'],['lock?','Planner 2'],['write','OP-48213']];
+  const U=[
+   ['Replicas','Each replica applies the log in order, so all end in the same state: '+L.g('smr','state machine replication')+'.'],
+   ['Stored procedures','If each message is a deterministic transaction, running them in log order gives serializable results on every node.'],
+   ['Fencing tokens','A lock request’s position only grows, so it is a '+L.g('fencing','fencing token')+' (ZooKeeper’s zxid). Planner 1 woke from a pause with token 3; the store has seen 5, so it refuses.']];
+  const seen=new Set();
+  L.h(L.kick('learn','What the log gives you')+'<h1 class="q">One log, read the same way everywhere. Tap each use.</h1>'+CSS+
+   '<div class="cwrow" id="u23"></div><div id="u23f"></div><div class="cwout" id="u23o" aria-live="polite"></div>');
+  const draw=k=>{let s=tx(44,14,'The log',F(12)+B+M+'fill:var(--muted)');
+    const hot=j=>k===2?LOG[j][0]==='lock?':LOG[j][0]==='write';
+    LOG.forEach((m,j)=>{const y=22+j*30,h=hot(j),lk=m[0]==='lock?';
+      s+=rc(4,y,82,26,h?(lk?'var(--h3-bg)':'var(--h1-bg)'):'var(--card)',h?(lk?'var(--h3)':'var(--h1)'):'var(--line2)',{rx:7,sw:h?2:1.2})+
+        tx(12,y+17,String(j+1),F(11)+B+'fill:var(--muted)')+tx(25,y+12,m[0],F(11)+B+'fill:'+(h?(lk?'var(--h3)':'var(--h1)'):'var(--muted)'))+tx(25,y+23,m[1],F(10.5)+'fill:'+(h?'var(--ink)':'var(--muted)'));});
+    s+=ar(90,100,116,100,'var(--line2)',2);
+    if(k===0){['Westport','Eastvale','Nordhaven'].forEach((n,j)=>{const y=14+j*56;s+=rc(120,y,196,48,'var(--soft)','var(--line)')+tx(130,y+19,n,F(12)+B+'fill:var(--ink)')+
+        tx(130,y+36,'applied 1–6',F(11)+'fill:var(--muted)')+rc(232,y+10,74,28,'var(--ok-bg)','var(--ok-line)',{rx:8})+tx(269,y+29,'state #6',F(11.5)+B+M+'fill:var(--ok)');});
+      s+=tx(218,192,'same order in → same state out',F(11)+B+M+'fill:var(--ok)');}
+    else if(k===1){[0,1,3,5].forEach((j,i)=>{const y=12+i*40;s+=rc(120,y,196,32,'var(--h2-bg)','var(--h2)',{rx:9})+tx(132,y+20,'run #'+(j+1)+' · '+LOG[j][1],F(11.5)+B+'fill:var(--h2)')+(i?ar(218,y-7,218,y-1,'var(--h2)',1.4):'');});
+      s+=tx(218,192,'one at a time, same order everywhere',F(11)+B+M+'fill:var(--h2)');}
+    else{s+=rc(120,10,196,56,'var(--soft)','var(--line)')+tx(130,30,'Lock service',F(12)+B+'fill:var(--ink)')+tx(130,47,'Planner 1 → token 3',F(11.5)+'fill:var(--h3)')+tx(130,61,'Planner 2 → token 5',F(11.5)+'fill:var(--h3)');
+      s+=rc(120,80,196,44,'var(--card)','var(--h1)')+tx(130,98,'Route store',F(12)+B+'fill:var(--h1)')+tx(130,115,'highest token seen: 5',F(11.5)+'fill:var(--ink)');
+      s+=rc(120,138,196,40,'var(--no-bg)','var(--no-line)')+tx(130,155,'Planner 1 writes, token 3',F(11.5)+B+'fill:var(--no)')+tx(130,170,'3 < 5 → refused',F(11.5)+'fill:var(--no)');
+      s+=ar(218,126,218,136,'var(--no-strong)',1.6);}
+    L.$('#u23f').innerHTML=fig(200,s,k===0?'Three replicas each apply log entries 1 to 6 in order and reach the same state':k===1?'Write messages run one at a time as stored procedures in log order':'Lock requests at log positions 3 and 5 become tokens 3 and 5; the route store has seen 5 and refuses Planner 1’s write with token 3');
+    L.$('#u23o').innerHTML='<span class="st">'+U[k][0]+(seen.size<3?' · seen '+seen.size+' of 3':'')+'</span>'+U[k][1];};
+  U.forEach((u,k)=>{const b=document.createElement('button');b.className='chip';b.id='u23'+k;b.textContent=u[0];
+    b.onclick=()=>{seen.add(k);[...L.$('#u23').children].forEach((x,j)=>x.classList.toggle('sel',j===k));draw(k);
+      if(seen.size===3&&!L.$('#u23').dataset.d){L.$('#u23').dataset.d='1';L.sheet('info','The order is fixed at delivery','Delivering a message is like appending to a '+L.g('log','log')+': every node reads the same entries in the same order. ZooKeeper and etcd implement total order broadcast this way.');L.done();}};
+    L.$('#u23').appendChild(b);});
+  seen.add(0);L.$('#u23').children[0].classList.add('sel');draw(0);}},
+
 {part:3,src:'Chapter 9 · Implementing linearizable storage using total order broadcast',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Put the steps for claiming a tracking code in order.</h1>');
-  L.order(L.card,['Append a claim for OP-7Q4K to the log','Wait for your own claim to be delivered back','Find the first claim for OP-7Q4K in the log','Commit if that claim is yours; otherwise abort'],
-   'You can only judge “first” after your own message has come back, because by then everything ahead of it is fixed.');}},
-{part:3,src:'Chapter 9 · Implementing total order broadcast using linearizable storage',run(L){
-  L.h(L.kick('learn','And the other way round')+'<h1 class="q">Linearizable storage can build total order broadcast, too</h1>'+
-   L.prose('Take a linearizable register holding a number, with an atomic <b>increment-and-get</b>. For each message, get the next number, attach it, and send the message to every node. Nodes deliver messages in number order.')+
-   L.lanes([['list','Total order broadcast','Numbers have <b>no gaps</b>. Delivered 4 and message 6 arrives? Wait for 5.',2],
-            ['clock','Lamport timestamps','Numbers have gaps. Seeing 6 tells you nothing about whether a 5 exists.',4]])+
-   L.prose('The hard part is that register. On one node it’s easy, until that node fails or gets cut off. Think hard enough about it and you end up with a consensus algorithm.')+
-   L.note('It can be proved: a linearizable compare-and-set (or increment-and-get) register, total order broadcast and '+L.g('consensus','consensus')+' are <b>equivalent</b>. Solve one and you can turn it into a solution for the others.','bulb'));
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab builds the tracking-code check on the log. Put the steps for one claim in order.</h1>');
+  L.order(L.card,['Append a claim for OP-48213 to the log','Wait for your own claim to be delivered back','Find the first claim for OP-48213 in the log','Commit if that claim is yours; otherwise abort'],
+   'You can only judge “first” once your own message has come back, because by then everything ahead of it is fixed. This gives a linearizable compare-and-set: “set this code’s owner, only if nobody owns it yet.”');}},
+
+{part:3,src:'Chapter 9 · Implementing linearizable storage using total order broadcast',run(L){
+  let s='';
+  s+=tx(4,14,'Log',F(11.5)+B+'fill:var(--muted)');
+  for(let k=1;k<=8;k++){const x=4+(k-1)*39,me=k===7;s+=rc(x,20,35,30,me?'var(--ok-bg)':'var(--card)',me?'var(--ok-line)':'var(--h1)',{rx:7,sw:me?2.4:1.4})+tx(x+17.5,40,String(k),F(12)+B+M+'fill:'+(me?'var(--ok)':'var(--h1)'));}
+  s+=tx(256,66,'7: claim committed',F(11)+B+M+'fill:var(--ok)');
+  s+=rc(4,76,150,40,'var(--soft)','var(--no-line)')+tx(14,93,'Store fed from the log',F(11.5)+B+'fill:var(--ink)')+tx(14,108,'applied up to 5: stale',F(11)+B+'fill:var(--no)');
+  s+=ar(79,52,79,74,'var(--line2)',1.6,'4 3');
+  const fx=(y,n,t)=>rc(166,y,150,32,'var(--card)','var(--h2)',{rx:9})+tx(176,y+20,n+' '+t,F(11)+'fill:var(--ink)');
+  s+=fx(72,'①','read via the log (etcd)')+fx(110,'②','catch up first (sync)')+fx(148,'③','sync-updated replica');
+  s+=tx(80,140,'reading here may',F(11)+M+'fill:var(--muted)')+tx(80,154,'miss the claim',F(11)+M+'fill:var(--muted)');
+  L.h(L.kick('learn','The catch: reads')+'<h1 class="q">Writes are linearizable now. Reads aren’t, yet.</h1>'+CSS+
+   fig(186,s,'A log where position 7 holds the committed claim, and a store fed from the log that has only applied up to 5, so reads there are stale. Three fixes listed')+
+   cap('Total order broadcast promises the order, not <b>when</b> a message arrives. A store fed from the log may lag, so a read can miss a committed claim (sequential consistency). Linearizability promises recency; each of the three fixes restores it.'));
   L.done();}},
+
+{part:3,src:'Chapter 9 · Implementing total order broadcast using linearizable storage',run(L){
+  L.h(L.kick('learn','And the other way round')+'<h1 class="q">A gap-free counter builds total order broadcast</h1>'+CSS+
+   '<div class="cwrow" id="r25"><button class="chip sel" id="r25a">Register numbers</button><button class="chip" id="r25b">Lamport timestamps</button></div><div id="r25f"></div>'+
+   cap('Turn it round: give each message the next number from a linearizable increment-and-get register; nodes deliver in number order. No gaps, unlike Lamport timestamps. Make that register survive failures and you’ve built consensus: these problems are equivalent.'));
+  const draw=reg=>{let s='';s+=tx(4,14,'Nordhaven has delivered:',F(11.5)+B+'fill:var(--muted)');
+    const nums=reg?[1,2,3,4]:[3,8,9,14];
+    nums.forEach((n,k)=>{s+=rc(4+k*44,22,38,32,'var(--ok-bg)','var(--ok-line)',{rx:8})+tx(23+k*44,43,String(n),F(13)+B+M+'fill:var(--ok)');});
+    s+=rc(184,22,38,32,'transparent',reg?'var(--h3)':'var(--line2)',{rx:8,dash:'4 3'})+tx(203,43,reg?'5':'?',F(13)+B+M+'fill:'+(reg?'var(--h3)':'var(--muted)'));
+    s+=rc(232,22,38,32,'var(--card)','var(--h1)',{rx:8,sw:2.4})+tx(251,43,reg?'6':'16',F(13)+B+M+'fill:var(--h1)')+tx(251,70,'just arrived',F(11)+M+'fill:var(--h1)');
+    s+=tx(160,96,reg?'Numbers have no gaps: 5 must exist. Wait for it.':'Gaps are normal: is a 15 still coming? Can’t tell.',F(12)+B+M+'fill:'+(reg?'var(--h3)':'var(--no)'));
+    L.$('#r25f').innerHTML=fig(106,s,reg?'Delivered 1 to 4; message 6 arrives; slot 5 is shown as missing, so the node waits':'Delivered 3, 8, 9, 14; message 16 arrives; nothing says whether another number is still coming');};
+  draw(true);
+  [['#r25a',true],['#r25b',false]].forEach(([id,reg])=>{L.$(id).onclick=()=>{L.$('#r25a').classList.toggle('sel',reg);L.$('#r25b').classList.toggle('sel',!reg);draw(reg);};});
+  L.done();}},
+
 {part:3,src:'Chapter 9 · Total Order Broadcast',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which tool fits?',['Lamport timestamps','Total order broadcast'],[
-   ['A node has delivered message 4. Message 6 arrives, and it knows to wait for 5.',1,'Gap-free numbering is the key difference from timestamps.'],
+   ['Nordhaven has delivered message 4. Message 6 arrives, and it knows to wait for 5.',1,'Gap-free numbering is the key difference from timestamps.'],
    ['Compact (counter, node ID) pairs that respect causality, with no coordination.',0,'That’s exactly a Lamport timestamp.'],
    ['Eastvale can confirm a tracking code as soon as its own claim comes back.',1,'Once delivered, the order ahead of you is fixed.'],
-   ['The final order appears only after you’ve collected every node’s operations.',0,'That’s why timestamps can’t answer a uniqueness question on the spot.'],
-   ['Every Parcel DB replica applies the same writes in the same order.',1,'State machine replication rides on total order broadcast.']]);}},
-{part:3,src:'Chapter 9 · Using total order broadcast',pts:1,run(L){
-  L.h(L.kick('pr','Kwame’s fencing tokens')+'<h1 class="q">Kwame wants fencing tokens for the route planner’s region lock, so a paused old planner can’t overwrite routes. Where should the token come from?</h1>');
-  L.mc(L.card,['A random ID generated for each lock request','The planner machine’s time-of-day clock','The lock request’s position in the log'],2,
-   'Log positions only grow and every node sees the same order, so storage can reject a write carrying an older token.',
-   'A random ID gives an order that says nothing about which request came first, and clocks can be skewed or jump. A log position only grows, which is what a fencing token needs.');}}
+   ['Kwame needs a fencing token for the route planner’s region lock.',1,'The lock request’s position in the log only grows, so it works as a fencing token.'],
+   ['The final order appears only after you’ve collected every node’s operations.',0,'That’s why timestamps can’t answer a uniqueness question on the spot.']]);}}
   ]
 });
 </script>

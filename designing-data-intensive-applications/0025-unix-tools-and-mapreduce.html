@@ -13,27 +13,304 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-const CODE=t=>'<code style="background:var(--soft);padding:1px 6px;border-radius:6px;font-size:14px;overflow-wrap:anywhere">'+t+'</code>';
+/* =====================================================================
+   Lesson 0025 only. Two hands-on models used across the lesson:
+   1. Pipe  – a snap-together Unix pipeline over a sample of Otterpost’s
+              tracking-page access log. Every joint shows the live stream
+              (line count and first lines); the tools really run in JS.
+              Plus a memory gauge: hash table vs sort-and-spill.
+   2. Board – a MapReduce shuffle board: three machines holding
+              replicated blocks, three map tasks, partition by hash of
+              key, sort, shuffle, merge and reduce. Presets: a dead disk,
+              a hot merchant key, three reducers.
+   ===================================================================== */
+const uxEsc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const CP={h1:['--h1-bg','--h1'],h2:['--h2-bg','--h2'],h3:['--h3-bg','--h3'],h4:['--h4-bg','--h4'],ok:['--ok-bg','--ok-line'],no:['--no-bg','--no-line'],pri:['--pri-bg','--pri'],soft:['--soft','--line2'],card:['--card','--line2']};
+const T=(x,y,s,o)=>{o=o||{};return '<text x="'+x+'" y="'+y+'" style="font-size:'+(o.s||12)+'px;font-weight:'+(o.w||400)+';fill:var(--'+(o.c||'ink')+');text-anchor:'+(o.a||'start')+(o.m?';font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace':'')+'"'+(o.id?' id="'+o.id+'"':'')+'>'+s+'</text>';};
+const RX=(x,y,w,h,c,r,ex)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(r==null?9:r)+'" style="fill:var('+CP[c][0]+');stroke:var('+CP[c][1]+');stroke-width:2'+(ex||'')+'"/>';
+const CYL=(cx,y,w,h,c)=>{const e=7,x=cx-w/2,st='fill:var('+CP[c][0]+');stroke:var('+CP[c][1]+');stroke-width:2';return '<path d="M'+x+' '+(y+e)+' v'+(h-2*e)+' a'+(w/2)+' '+e+' 0 0 0 '+w+' 0 v'+(-(h-2*e))+'" style="'+st+'"/><ellipse cx="'+cx+'" cy="'+(y+e)+'" rx="'+(w/2)+'" ry="'+e+'" style="'+st+'"/>';};
+const DEFS=id=>'<defs><marker id="'+id+'" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" style="fill:var(--muted)"/></marker></defs>';
+const AR=(x1,y1,x2,y2,id,dash)=>'<path d="M'+x1+' '+y1+' L'+x2+' '+y2+'" style="fill:none;stroke:var(--muted);stroke-width:1.8'+(dash?';stroke-dasharray:4 3':'')+'" marker-end="url(#'+id+')"/>';
+const goals=(id,items)=>'<ul class="ux-goals" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';
+const tick=(L,id,j)=>{const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').textContent='✓';}};
+const allTicked=(L,id)=>{const ls=L.$$('#'+id+' li');return ls.length>0&&ls.every(x=>x.classList.contains('done'));};
+const setRange=(L,id,v)=>{const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input'));};
+
+const CSS='<style>'+
+ '.ux-fig{margin:4px 0 2px}.ux-fig svg{width:100%;display:block}.ux-fig svg text{font-family:var(--sans)}'+
+ '.ux-cap{font-size:15.5px;line-height:1.5;margin:10px 0 4px}'+
+ '.ux-m{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}'+
+ '.ux-ctl{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.ux-ctl .chip,.ux-ctl .btn{margin:0;min-height:40px}'+
+ '.ux-ctl .chip[aria-disabled="true"]{opacity:.45}'+
+ '.ux-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:44px}'+
+ '.ux-read .small{margin:0}.ux-read.bad{background:var(--no-bg);color:var(--no)}.ux-read.good{background:var(--ok-bg);color:var(--ok)}'+
+ '.ux-hint{font-size:13px;color:var(--muted);margin:8px 0 4px}'+
+ '.ux-goals{margin:6px 0 8px;padding:0;list-style:none}.ux-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0;color:var(--muted)}'+
+ '.ux-goals .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700}'+
+ '.ux-goals li.done{color:var(--ok)}.ux-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}'+
+ /* pipe */
+ '.ux-blk{display:flex;align-items:center;gap:8px;border:2px solid var(--pri);border-bottom-width:3px;background:var(--pri-bg);color:var(--pri-deep);border-radius:12px;padding:5px 6px 5px 12px;font-size:14px;font-weight:600;min-height:40px;animation:uxin .35s}'+
+ '.ux-blk.src{border-color:var(--line2);background:var(--soft);color:var(--ink);animation:none}'+
+ '.ux-x{margin-left:auto;width:38px;height:32px;border-radius:9px;border:1.5px solid var(--line2);background:var(--card);color:var(--muted);font-size:17px;line-height:1;flex:none;cursor:pointer}'+
+ '.ux-jt{display:block;margin:0 0 0 20px;border:0;border-left:3px solid var(--line2);padding:3px 0 3px 12px;min-width:0;background:none;text-align:left;color:var(--ink);font:inherit;width:calc(100% - 20px)}'+
+ 'button.ux-jt{cursor:pointer;border-left-style:dashed}button.ux-jt.open{border-left:3px solid var(--pri);background:var(--pri-bg);border-radius:0 10px 10px 0}'+
+ '.ux-jt .n{font-family:var(--sans);font-size:11.5px;font-weight:700;color:var(--muted)}button.ux-jt .n{color:var(--pri)}'+
+ '.ux-ln{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.4;white-space:pre;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}'+
+ '.ux-jt.q .ux-ln{color:var(--muted)}'+
+ '.ux-out{border:2px solid var(--line);border-radius:12px;padding:7px 12px;margin-top:2px;background:var(--card)}.ux-out.hit{border-color:var(--ok-line);background:var(--ok-bg)}.ux-out.bad{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.ux-out .n{font-size:12px;font-weight:700;color:var(--muted);margin-bottom:2px}.ux-out .ux-ln{font-size:13px}'+
+ '.ux-pal{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.ux-pal .chip{margin:0;font-size:13px;padding:7px 10px;min-height:40px}'+
+ '@keyframes uxin{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:none}}'+
+ /* log field picker */
+ '.ux-tok{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0}'+
+ '.ux-tk{display:inline-flex;flex-direction:column;align-items:flex-start;border:2px solid var(--line);border-bottom-width:3px;border-radius:10px;padding:3px 8px;background:var(--card);min-height:42px;font:inherit;color:var(--ink);max-width:100%;cursor:pointer}'+
+ '.ux-tk .d{font-size:11px;font-weight:700;color:var(--muted)}.ux-tk .v{font-size:12.5px;word-break:break-all;text-align:left}.ux-tk.sel{border-color:var(--pri);background:var(--pri-bg)}.ux-tk.sel .d{color:var(--pri-deep)}'+
+ /* systems map */
+ '.ux-sys{display:block;width:100%;text-align:left;border:2px solid var(--line2);border-bottom-width:3px;border-radius:14px;padding:8px 10px;background:var(--card);font:inherit;color:var(--ink);min-height:44px;cursor:pointer}'+
+ '.ux-sys b{font-size:14px;display:block}.ux-sys .st{font-size:12.5px;color:var(--muted);display:block;line-height:1.35;margin-top:2px}'+
+ '.ux-sys .bar{display:block;height:7px;border-radius:4px;background:var(--soft2);margin-top:6px;overflow:hidden}.ux-sys .bar i{display:block;height:100%;background:var(--h2);transition:width .6s}'+
+ '.ux-sys.rec{border-color:var(--h1);background:var(--h1-bg)}.ux-sys.rec .bar i{background:var(--h1)}'+
+ '.ux-sys.gone{border-style:dashed;background:var(--soft)}.ux-sys.fail{border-color:var(--no-line);background:var(--no-bg)}.ux-sys.fail .st{color:var(--no)}'+
+ '.ux-g{display:grid;gap:6px}.ux-g2{grid-template-columns:repeat(2,minmax(0,1fr))}.ux-g3{grid-template-columns:repeat(3,minmax(0,1fr))}'+
+ '.ux-dn{text-align:center;color:var(--muted);font-size:12.5px;margin:5px 0}'+
+ /* sliders */
+ '.ux-rng{display:grid;grid-template-columns:1fr auto;gap:0 10px;align-items:center;font-size:14.5px;margin:6px 0}.ux-rng b{font-variant-numeric:tabular-nums}.ux-rng input{grid-column:1/3;width:100%;accent-color:var(--pri);height:30px}'+
+ /* board */
+ '.ux-bh{font-size:12.5px;font-weight:700;color:var(--muted);margin:10px 0 5px}'+
+ '.ux-leg{font-size:11.5px;color:var(--muted);line-height:1.4;margin:2px 0 0}'+
+ '.ux-mc{border:2px solid var(--line2);border-radius:12px;padding:6px 7px;background:var(--card);font-size:12.5px;min-width:0}'+
+ '.ux-mc.dn{border-style:dashed;background:var(--no-bg);border-color:var(--no-line)}.ux-mc.dn .ux-bk{text-decoration:line-through;opacity:.55}'+
+ '.ux-bk{display:inline-block;font-size:11.5px;font-weight:700;border-radius:6px;padding:1px 6px;margin:4px 4px 0 0;background:var(--soft);border:1.5px solid var(--line2)}'+
+ '.ux-capl{font-size:11.5px;color:var(--muted);margin-top:4px}.ux-capl.over{color:var(--no);font-weight:700}'+
+ '.ux-task{margin-top:5px;font-size:11.5px;font-weight:600;line-height:1.3;border-radius:7px;padding:3px 5px;background:var(--pri-bg);color:var(--pri-deep);animation:uxin .3s}.ux-task.far{background:var(--no-bg);color:var(--no)}'+
+ '.ux-col{border-radius:12px;background:var(--soft);padding:6px;min-width:0}'+
+ '.ux-ch{font-weight:700;font-size:12px;margin-bottom:3px}'+
+ '.ux-rec{font-size:11.5px;line-height:1.55;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}'+
+ '.ux-rr{font-size:11.5px;line-height:1.4;margin-top:2px}'+
+ '.ux-kv{display:inline-block;font-size:11.5px;font-weight:700;border-radius:6px;padding:0 5px;margin:2px 2px 0 0;border:1.5px solid var(--line2);background:var(--card);color:var(--ink);white-space:nowrap;animation:uxin .3s}'+
+ '.ux-kv.r0{background:var(--h1-bg);border-color:var(--h1);color:var(--h1)}.ux-kv.r1{background:var(--h2-bg);border-color:var(--h2);color:var(--h2)}.ux-kv.r2{background:var(--h4-bg);border-color:var(--h4);color:var(--h4)}'+
+ '.ux-kv.hl{outline:2.5px solid var(--ink);outline-offset:1px}'+
+ '.ux-file{border:1.5px dashed var(--line2);border-radius:8px;padding:2px 4px 3px;margin-top:4px;background:var(--card)}'+
+ '.ft{font-size:11px;color:var(--muted);font-weight:600}'+
+ '.ux-red{border-radius:12px;border:2px solid;padding:6px;min-width:0;background:var(--card)}.ux-red.r0{border-color:var(--h1)}.ux-red.r1{border-color:var(--h2)}.ux-red.r2{border-color:var(--h4)}'+
+ '.ux-res{font-weight:700;font-size:12.5px;margin-top:4px}.ux-res.hl{text-decoration:underline;text-decoration-thickness:2px}'+
+ '.ux-asg{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:6px 0}.ux-asg .lb{font-size:14px;font-weight:600;min-width:104px}.ux-asg .chip{margin:0;min-height:40px;min-width:52px;justify-content:center}'+
+ '</style>';
+
+/* ---------- the access log (illustrative sample, 57 lines) ---------- */
+const COUNTS=[['/favicon.ico',11],['/track/OP-48213',9],['/css/site.css',8],['/track/OP-48207',7],['/track/OP-48230',6],['/track/OP-48219',5],['/track/OP-48202',4],['/',3],['/track/OP-48241',2],['/track/OP-48255',1],['/track/OP-48226',1]];
+const IPS=['203.0.113.7','198.51.100.4','192.0.2.33','203.0.113.52','198.51.100.19','192.0.2.8','203.0.113.90'];
+const LOG=(()=>{const urls=[];COUNTS.forEach(([u,n])=>{for(let k=0;k<n;k++)urls.push(u);});
+  let s=7;const rnd=()=>(s=(s*16807)%2147483647)/2147483647;
+  for(let i=urls.length-1;i>0;i--){const j=Math.floor(rnd()*(i+1));[urls[i],urls[j]]=[urls[j],urls[i]];}
+  return urls.map((u,i)=>IPS[(i*5+2)%IPS.length]+' - - [14/Nov/2026:07:'+String(2+Math.floor(i/6)).padStart(2,'0')+':'+String((i*13+11)%60).padStart(2,'0')+' +0000] "GET '+u+' HTTP/1.1" 200 '+(u.startsWith('/track')?5120+i*7:u==='/favicon.ico'?318:u==='/'?8410:2264));})();
+const pad4=n=>String(n).padStart(4,' ');
+const leadNum=s=>{const m=/^\s*(\d+)/.exec(s);return m?+m[1]:0;};
+const TOOLS={
+  awk7:{t:"awk '{print $7}'",f:a=>a.map(l=>l.trim().split(/\s+/)[6]||'')},
+  awk1:{t:"awk '{print $1}'",f:a=>a.map(l=>l.trim().split(/\s+/)[0]||'')},
+  grep:{t:'grep /track/',f:a=>a.filter(l=>l.includes('/track/'))},
+  sort:{t:'sort',f:a=>a.slice().sort()},
+  uniq:{t:'uniq -c',f:a=>{const o=[];let p=null,n=0;for(const l of a){if(l===p)n++;else{if(p!==null)o.push(pad4(n)+' '+p);p=l;n=1;}}if(p!==null)o.push(pad4(n)+' '+p);return o;}},
+  sortrn:{t:'sort -r -n',f:a=>a.slice().sort((x,y)=>leadNum(y)-leadNum(x)||(x<y?1:x>y?-1:0))},
+  head:{t:'head -n 5',f:a=>a.slice(0,5)}
+};
+const runPipe=(list,src)=>list.reduce((a,k)=>TOOLS[k].f(a),src||LOG);
+const sameOut=(a,b)=>a.length===b.length&&a.every((x,i)=>x===b[i]);
+const lines=(a,n)=>a.slice(0,n).map(l=>'<div class="ux-ln">'+(uxEsc(l)||'&nbsp;')+'</div>').join('')+(a.length>n?'<div class="ux-ln" style="color:var(--muted)">… '+(a.length-n)+' more</div>':'');
+
+/* ---------- signature 1: the snap-together pipe ---------- */
+function Pipe(L,host,o){
+  const id=o.id,P={list:(o.list||[]).slice(),src:null,open:-1,mask:o.mask==null?99:o.mask,cls:'',fresh:-1};
+  host.innerHTML=(o.palette?'<div class="ux-hint">Tap a block to snap it onto the bottom of the pipe. × takes one off.</div><div class="ux-pal" id="'+id+'-pal"></div>':'')+'<div id="'+id+'-p"></div>';
+  if(o.palette){const pal=L.$('#'+id+'-pal');o.palette.forEach(k=>{const b=document.createElement('button');b.className='chip ux-m';b.id=id+'-a-'+k;b.textContent=TOOLS[k].t;
+    b.onclick=()=>{if(P.list.length>=8){L.err('Eight blocks is plenty');return;}P.list.push(k);P.fresh=P.list.length-1;P.draw();};pal.appendChild(b);});}
+  P.run=()=>{const st=[P.src||LOG];P.list.forEach(k=>st.push(TOOLS[k].f(st[st.length-1])));return st;};
+  function joint(a,j){const masked=j>=P.mask,open=P.open===j;
+    const inner='<div class="n">'+(masked?'? lines':a.length+' line'+(a.length===1?'':'s'))+(o.inspect&&!masked?(open?' · open in less ▴':' · tap to look ▾'):'')+'</div>'+(masked?'<div class="ux-ln">?</div>':lines(a,open?10:2));
+    return o.inspect?'<button class="ux-jt'+(open?' open':'')+'" data-j="'+j+'" aria-expanded="'+open+'">'+inner+'</button>':'<div class="ux-jt'+(masked?' q':'')+'">'+inner+'</div>';}
+  P.draw=()=>{const box=L.$('#'+id+'-p');if(!box)return;const st=P.run(),out=st[st.length-1];
+    if(o.judge)P.cls=o.judge(out,P);
+    let h='<div class="ux-blk src ux-m">cat access.log</div>';
+    P.list.forEach((k,j)=>{h+=joint(st[j],j)+'<div class="ux-blk ux-m"'+(P.fresh===j?'':' style="animation:none"')+'><span>'+uxEsc(TOOLS[k].t)+'</span>'+(o.edit?'<button class="ux-x" data-j="'+j+'" aria-label="Remove '+uxEsc(TOOLS[k].t)+'">×</button>':'')+'</div>';});
+    const hide=P.list.length>=P.mask&&P.list.length>0;
+    h+='<div class="ux-jt" style="padding:2px 0 2px 12px"></div><div class="ux-out '+P.cls+'"><div class="n">'+(hide?'Output · ?':'Output · '+out.length+' line'+(out.length===1?'':'s'))+'</div>'+(hide?'<div class="ux-ln">?</div>':lines(out,6))+'</div>';
+    box.innerHTML=h;P.fresh=-1;
+    box.querySelectorAll('.ux-x').forEach(b=>b.onclick=()=>{P.list.splice(+b.dataset.j,1);P.draw();});
+    box.querySelectorAll('button.ux-jt').forEach(b=>b.onclick=()=>{const j=+b.dataset.j;P.open=P.open===j?-1:j;P.draw();if(o.onInspect)o.onInspect(j);});
+    if(o.onChange)o.onChange(P,out,st);};
+  P.draw();return P;}
+
+/* ---------- signature 2: the MapReduce shuffle board ---------- */
+const BLK=[[['48201','at hub','WC','BB'],['48202','at hub','ED','BB'],['48203','delivered','','PT'],['48204','at hub','WC','BB']],
+  [['48205','at hub','WN','BB'],['48206','at hub','WC','LL'],['48207','out for delivery','','BB'],['48208','at hub','ED','BB']],
+  [['48209','at hub','WC','BB'],['48210','at hub','WN','BB'],['48211','at hub','WS','BB'],['48212','delivered','','PT']]];
+const HOLD=[[0,2],[0,1],[1,2]];
+const PART={hub2:{ED:0,WN:0,WC:1,WS:1},hub3:{ED:0,WC:1,WN:2,WS:2},mer2:{BB:0,PT:1,LL:1},mer3:{BB:0,PT:1,LL:2}};
+const RCOL=['h1','h2','h4'];
+const BCAP={hub:['One day’s scan file is split into blocks B1–B3. HDFS keeps each block on two machines. One map task per block.',
+  'The scheduler runs each map task on a machine that already holds a copy of its block, after copying Linh’s code there. The input never crosses the network.',
+  'Each mapper sees one record at a time and remembers nothing between them. An “at hub” scan emits (hub, 1); other scans emit nothing.',
+  'Each map task splits its pairs by a hash of the key, one file per reducer, and sorts each file on its own local disk.',
+  'When a mapper finishes, every reducer downloads its file from it. Partition, sort, copy: that’s the shuffle. Nothing random about it.',
+  'Each reducer merges its sorted files, so equal keys sit side by side, and calls Linh’s reducer once per key. The output goes back to HDFS.']};
+const STEPL=['Place the map tasks','Run the mappers','Partition and sort','Shuffle','Merge and reduce'];
+function Board(L,host,o){
+  o=o||{};const B={};
+  B.reset=()=>{B.S={stage:0,R:2,key:'hub',down:-1,place:[0,1,2],mask:[],hl:null};};B.reset();
+  const emit=t=>BLK[t].map(r=>B.S.key==='hub'?(r[1]==='at hub'?r[2]:null):r[3]);
+  const part=k=>PART[B.S.key+B.S.R][k];
+  const kv=(k,r)=>'<span class="ux-kv'+(r==null?'':' r'+r)+(B.S.hl===k?' hl':'')+'">'+k+' 1</span>';
+  B.files=t=>{const out=[];for(let r=0;r<B.S.R;r++)out.push(emit(t).filter(k=>k&&part(k)===r).sort());return out;};
+  B.alive=()=>host.isConnected;
+  B.draw=()=>{if(!host.isConnected)return;const S=B.S;let h='';
+    if(!o.only)h+='<div class="ux-leg">'+(S.key==='hub'?'<b>WC</b> Westport Central · <b>WN</b> Westport North · <b>WS</b> Westport South · <b>ED</b> Eastvale Depot':'<b>BB</b> Bramble &amp; Bolt · <b>PT</b> Pip &amp; Thistle · <b>LL</b> Little Lantern')+'</div>';
+    h+='<div class="ux-bh">Machines · HDFS keeps each block on two of them</div><div class="ux-g ux-g3">';
+    for(let m=0;m<3;m++){const dn=S.down===m,tasks=S.stage>=1?[0,1,2].filter(t=>S.place[t]===m):[],over=o.cap&&tasks.length>o.cap[m];
+      h+='<div class="ux-mc'+(dn?' dn':'')+'"><b>M'+(m+1)+'</b>'+(dn?' <span style="color:var(--no);font-weight:700;font-size:11.5px">disk died</span>':'')+
+        '<div>'+HOLD[m].map(b=>'<span class="ux-bk">B'+(b+1)+'</span>').join('')+'</div>'+
+        (o.cap?'<div class="ux-capl'+(over?' over':'')+'">'+(over?'over capacity!':'room for '+o.cap[m]+' task'+(o.cap[m]>1?'s':''))+'</div>':'')+
+        tasks.map(t=>{const local=!dn&&HOLD[m].includes(t);return '<div class="ux-task'+(local&&!over?'':' far')+'">m'+(t+1)+(dn?' can’t run here':local?' reads B'+(t+1)+' locally':' pulls B'+(t+1)+' over the network')+'</div>';}).join('')+'</div>';}
+    h+='</div>';
+    if(!o.only){
+      h+='<div class="ux-bh">'+(S.stage<2?'Map tasks · one per input block':S.stage<3?'Mappers emit (key, 1)':'Mapper output: one sorted file per reducer, on local disk')+'</div><div class="ux-g ux-g3">';
+      for(let t=0;t<3;t++){const masked=S.mask.includes(t);
+        h+='<div class="ux-col"><div class="ux-ch">m'+(t+1)+' · B'+(t+1)+(S.stage>=1?' · M'+(S.place[t]+1):'')+'</div>';
+        if(S.stage<2)h+=BLK[t].map(r=>'<div class="ux-rec">'+r[0]+' '+(S.key==='hub'?(r[1]==='at hub'?'hub '+r[2]:r[1]):r[3])+'</div>').join('');
+        else if(S.stage===2||masked)h+=BLK[t].map((r,j)=>{const k=emit(t)[j];return '<div class="ux-rec"><span class="ft">…'+r[0].slice(2)+'</span> → '+(k?kv(k,null):'<span class="ft">nothing</span>')+'</div>';}).join('')+(masked?'<div class="ft" style="margin-top:3px">partitions: ?</div>':'');
+        else h+=B.files(t).map((f,r)=>'<div class="ux-file"><div class="ft">to R'+(r+1)+'</div>'+(f.length?f.map(k=>kv(k,r)).join(''):'<span class="ft">empty</span>')+'</div>').join('');
+        h+='</div>';}
+      h+='</div>';
+      if(S.stage>=4){const xs=[53,160,267],rx=S.R===2?[80,240]:[53,160,267];let ln='';
+        for(let t=0;t<3;t++)B.files(t).forEach((f,r)=>{if(f.length)ln+='<line x1="'+xs[t]+'" y1="2" x2="'+rx[r]+'" y2="32" style="stroke:var(--'+RCOL[r]+');stroke-width:2.2"/>';});
+        h+='<svg viewBox="0 0 320 34" preserveAspectRatio="none" style="width:100%;height:34px;display:block;margin:2px 0" aria-hidden="true">'+ln+'</svg>';
+        h+='<div class="ux-bh" style="margin-top:0">'+(S.stage<5?'Reducers download their files: the shuffle':'Reducers merge, then count each key')+'</div><div class="ux-g ux-g'+S.R+'">';
+        for(let r=0;r<S.R;r++){const got=[0,1,2].map(t=>B.files(t)[r]),all=[].concat(...got).sort();
+          h+='<div class="ux-red r'+r+'"><div class="ux-ch" style="color:var(--'+RCOL[r]+')">R'+(r+1)+' · '+all.length+' pair'+(all.length===1?'':'s')+'</div>';
+          if(S.stage===4)h+=got.map((f,t)=>f.length?'<div class="ux-rr"><span class="ft">from m'+(t+1)+'</span> '+f.map(k=>kv(k,r)).join('')+'</div>':'').join('');
+          else{const cnt={};all.forEach(k=>cnt[k]=(cnt[k]||0)+1);
+            h+='<div>'+all.map(k=>kv(k,r)).join('')+'</div>'+(Object.keys(cnt).sort().map(k=>'<div class="ux-res'+(S.hl===k?' hl':'')+'">'+k+' → '+cnt[k]+'</div>').join('')||'<div class="ft">no keys</div>')+'<div class="ft" style="margin-top:3px">→ written to HDFS</div>';}
+          h+='</div>';}
+        h+='</div>';}}
+    host.innerHTML=h;};
+  B.play=async(from,to,ms)=>{for(let s=from;s<=to;s++){if(!B.alive())return false;B.S.stage=s;B.draw();if(s<to)await L.sleep(ms);}return B.alive();};
+  B.draw();return B;}
+
+/* ---------- figures for Learn screens ---------- */
+function FIG_MANY(){
+  return '<div class="ux-fig"><svg viewBox="0 0 320 196" role="img" aria-label="Left: in parts one and two, the Otterpost app uses one database. Right: the real app uses the Parcel DB, a tracking cache, a support search index and an analytics warehouse, with data copied from the Parcel DB into the others.">'+DEFS('mA')+
+   T(60,14,'Parts I–II',{s:12,w:700,a:'middle',c:'muted'})+T(225,14,'Real Otterpost',{s:12,w:700,a:'middle',c:'muted'})+
+   '<line x1="122" y1="6" x2="122" y2="190" style="stroke:var(--line);stroke-width:1.5"/>'+
+   RX(15,28,90,30,'pri')+T(60,47,'Otterpost app',{s:11.5,w:600,a:'middle'})+AR(60,58,60,84,'mA')+
+   CYL(60,88,76,58,'h1')+T(60,124,'Parcel DB',{s:11.5,w:700,a:'middle'})+T(60,176,'one database',{s:11.5,a:'middle',c:'muted'})+
+   RX(180,26,92,28,'pri')+T(226,44,'Otterpost app',{s:11.5,w:600,a:'middle'})+
+   CYL(168,82,64,46,'h1')+T(168,113,'Parcel DB',{s:11,w:700,a:'middle'})+
+   RX(240,84,76,40,'h2')+T(278,101,'Tracking',{s:11,w:600,a:'middle'})+T(278,115,'cache',{s:11,w:600,a:'middle'})+
+   RX(132,148,72,40,'h2')+T(168,165,'Support',{s:11,w:600,a:'middle'})+T(168,179,'search',{s:11,w:600,a:'middle'})+
+   RX(240,148,76,40,'h3')+T(278,165,'Analytics',{s:11,w:600,a:'middle'})+T(278,179,'warehouse',{s:11,w:600,a:'middle'})+
+   AR(204,54,182,78,'mA')+AR(250,54,272,80,'mA')+
+   AR(201,104,236,104,'mA',1)+AR(168,128,168,144,'mA',1)+AR(196,124,244,146,'mA',1)+'</svg></div>';}
+
+function FIG_SOR(){
+  const ys=[22,64,106,148],nm=[['Tracking-page','cache'],['Support search','index'],['Nightly on-time','report'],['ETA','predictions']];
+  return '<div class="ux-fig"><svg viewBox="0 0 320 214" role="img" aria-label="The Parcel DB, the system of record, on the left. Arrows lead to four derived systems on the right: the tracking-page cache, the support search index, the nightly on-time report and the ETA predictions. Each can be rebuilt.">'+DEFS('mS')+
+   T(60,14,'System of record',{s:12,w:700,a:'middle',c:'h1'})+T(251,14,'Derived data',{s:12,w:700,a:'middle',c:'h2'})+
+   CYL(60,40,100,84,'h1')+T(60,84,'Parcel DB',{s:13,w:700,a:'middle'})+T(60,100,'source of truth',{s:11,a:'middle',c:'muted'})+
+   T(4,146,'• new data lands here first',{s:11})+T(4,162,'• each fact stored once',{s:11})+T(4,178,'• right when copies disagree',{s:11})+
+   ys.map((y,j)=>AR(112,84,184,y+17,'mS')+RX(186,y,130,34,'h2')+T(196,y+15,nm[j][0],{s:11.5,w:600})+T(196,y+28,nm[j][1],{s:11,c:'muted'})+T(306,y+23,'↻',{s:14,w:700,a:'middle',c:'h2'})).join('')+
+   T(316,206,'↻ = can be rebuilt from the source',{s:11,a:'end',c:'muted'})+'</svg></div>';}
+
+function FIG_KINDS(){
+  const row=(y,name,l2,l3,col,dia,hl)=>(hl?'<rect x="0" y="'+(y-3)+'" width="320" height="66" rx="10" style="fill:var(--soft)"/>':'')+T(6,y+18,name,{s:12.5,w:700,c:col})+T(6,y+34,l2,{s:11,c:'muted'})+T(6,y+49,l3,{s:11,c:'muted'})+dia;
+  const box=(y,t,c)=>RX(198,y+12,64,32,c,8)+T(230,y+32,t,{s:11.5,w:600,a:'middle'});
+  const y1=4,y2=76,y3=148;
+  return '<div class="ux-fig"><svg viewBox="0 0 320 218" role="img" aria-label="Three kinds of system. A service answers a waiting person’s request. A batch job turns a pile of input into output, often nightly. A stream processor handles events soon after they arrive.">'+DEFS('mK')+
+   row(y1,'Service','online, someone waits','measure: response time','h1',
+     '<circle cx="152" cy="'+(y1+18)+'" r="7" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/><path d="M140 '+(y1+44)+' q12 -18 24 0" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+
+     AR(170,y1+22,195,y1+22,'mK')+AR(195,y1+36,170,y1+36,'mK')+box(y1,'service','h1')+T(272,y1+26,'asks,',{s:11,c:'muted'})+T(272,y1+40,'waits',{s:11,c:'muted'}))+
+   row(y2,'Batch job','offline, often nightly','measure: throughput','h2',
+     RX(142,y2+10,28,24,'card',4)+RX(146,y2+15,28,24,'card',4)+RX(150,y2+20,28,24,'card',4)+AR(180,y2+30,196,y2+30,'mK')+box(y2,'job','h2')+AR(262,y2+30,276,y2+30,'mK')+RX(278,y2+16,34,28,'card',4)+T(295,y2+58,'output',{s:11,a:'middle',c:'muted'}),1)+
+   row(y3,'Stream processor','near-real-time','soon after each event','h3',
+     [146,160,174].map(x=>'<circle cx="'+x+'" cy="'+(y3+28)+'" r="4.5" style="fill:var(--h3)"/>').join('')+AR(181,y3+28,196,y3+28,'mK')+box(y3,'processor','h3')+AR(262,y3+28,276,y3+28,'mK')+RX(278,y3+14,34,28,'card',4)+T(295,y3+56,'output',{s:11,a:'middle',c:'muted'}))+
+   '</svg></div>';}
+
+function FIG_HS(){
+  const rows=[['/favicon.ico','11'],['/track/OP-48213','9'],['/css/site.css','8'],['/track/OP-48207','7']];
+  const srt=['/css/site.css','/css/site.css','/css/site.css','/favicon.ico','/favicon.ico','/favicon.ico'];
+  return '<div class="ux-fig"><svg viewBox="0 0 320 206" role="img" aria-label="Left: a hash table in memory with one row and counter per distinct page. Right: the sorted list, where repeats sit next to each other, so uniq only compares neighbouring lines.">'+
+   T(4,14,'Hash table in memory',{s:12,w:700,c:'h2'})+
+   rows.map((r,i)=>'<rect x="4" y="'+(24+i*22)+'" width="148" height="20" rx="4" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>'+T(10,24+i*22+14,r[0],{s:11,m:1})+T(146,24+i*22+14,r[1],{s:11.5,w:700,a:'end'})).join('')+
+   T(4,126,'… one row per distinct page',{s:11,c:'muted'})+T(4,152,'memory grows with the',{s:11.5,w:600})+T(4,167,'number of distinct keys',{s:11.5,w:600})+
+   T(4,188,'a million views of one page',{s:11,c:'muted'})+T(4,202,'still take just one row',{s:11,c:'muted'})+
+   '<line x1="160" y1="6" x2="160" y2="200" style="stroke:var(--line);stroke-width:1.5"/>'+
+   T(168,14,'Sort, then count',{s:12,w:700,c:'h3'})+
+   srt.map((s,i)=>T(174,24+i*18+13,s,{s:11,m:1})).join('')+
+   '<rect x="168" y="58" width="148" height="38" rx="6" style="fill:none;stroke:var(--pri);stroke-width:2;stroke-dasharray:4 3"/>'+
+   T(168,152,'uniq compares only',{s:11.5,w:600})+T(168,167,'neighbouring lines',{s:11.5,w:600})+
+   T(168,188,'sort spills sorted chunks',{s:11,c:'muted'})+T(168,202,'to disk, then merges them',{s:11,c:'muted'})+'</svg></div>';}
+
+function FIG_HOSE(){
+  const lab=['1 · Do one thing well','2 · Output feeds an unknown program','3 · Try it early; rebuild clumsy parts','4 · Build tools, even throwaway ones'];
+  const d='M44 22 H276 A23 23 0 0 1 276 68 H44 A23 23 0 0 0 44 114 H276 A23 23 0 0 1 276 160 H44';
+  return '<div class="ux-fig"><svg viewBox="0 0 320 182" role="img" aria-label="A garden hose snakes down in four segments, one for each Unix principle: do one thing well; output feeds an unknown program; try it early and rebuild clumsy parts; build tools, even throwaway ones.">'+
+   '<path d="'+d+'" style="fill:none;stroke:var(--h3);stroke-width:32;stroke-linecap:round"/><path d="'+d+'" style="fill:none;stroke:var(--h3-bg);stroke-width:27;stroke-linecap:round"/>'+
+   [22,68,114,160].map((y,i)=>T(160,y+4,lab[i],{s:11.5,w:600,a:'middle'})+(i<3?'<rect x="'+(i%2?36:276)+'" y="'+(y-17)+'" width="8" height="34" rx="2" style="fill:var(--h3)"/>':'')).join('')+
+   '<circle cx="20" cy="160" r="5" style="fill:var(--h3)"/>'+'</svg></div>';}
+
+function FIG_HDFS(){
+  const mach=[0,1,2].map(m=>{const x=8+m*106;return '<line x1="'+(x+46)+'" y1="100" x2="'+(x+46)+'" y2="112" style="stroke:var(--line2);stroke-width:2"/>'+RX(x,112,92,90,'card')+T(x+46,128,'M'+(m+1),{s:12.5,w:700,a:'middle'})+T(x+46,142,'daemon',{s:11,a:'middle',c:'muted'})+
+    CYL(x+46,148,76,46,'soft')+HOLD[m].map((b,j)=>RX(x+14+j*34,166,30,18,'h3',4)+T(x+29+j*34,179,'B'+(b+1),{s:11,w:700,a:'middle'})).join('');}).join('');
+  return '<div class="ux-fig"><svg viewBox="0 0 320 206" role="img" aria-label="HDFS, an open-source copy of Google’s GFS, similar to object stores such as S3: a NameNode records which machines hold each block. Three ordinary machines on a datacenter network each run a daemon and store two blocks; every block is on two machines.">'+
+   RX(80,4,160,76,'pri')+T(160,22,'NameNode',{s:12.5,w:700,a:'middle'})+T(160,40,'B1 → M1, M2',{s:11.5,a:'middle',m:1})+T(160,55,'B2 → M2, M3',{s:11.5,a:'middle',m:1})+T(160,70,'B3 → M1, M3',{s:11.5,a:'middle',m:1})+
+   '<line x1="160" y1="80" x2="160" y2="100" style="stroke:var(--line2);stroke-width:2"/><line x1="12" y1="100" x2="308" y2="100" style="stroke:var(--line2);stroke-width:3"/>'+
+   T(4,18,'HDFS',{s:12.5,w:700,c:'pri'})+T(4,34,'open-source',{s:11,c:'muted'})+T(4,48,'copy of',{s:11,c:'muted'})+T(4,62,'Google’s GFS',{s:11,c:'muted'})+
+   T(316,34,'S3-style',{s:11,a:'end',c:'muted'})+T(316,48,'object stores',{s:11,a:'end',c:'muted'})+T(316,62,'are similar',{s:11,a:'end',c:'muted'})+
+   T(12,94,'ordinary network',{s:11,c:'muted'})+mach+'</svg></div>';}
+
+function FIG_MAP(){
+  const left=['cat access.log',"awk '{print $7}'",'sort','uniq -c','sort -r -n','head -n 5'];
+  const right=[['1 · split into records','soft'],['2 · mapper','h2'],['3 · sort by key','soft'],['4 · reducer','h2']];
+  const y=i=>28+i*30;
+  return '<div class="ux-fig"><svg viewBox="0 0 320 232" role="img" aria-label="The Unix pipeline on the left lines up with one MapReduce job on the right: cat matches splitting into records, awk matches the mapper, sort matches the built-in sort by key, uniq -c matches the reducer. The second sort and head need a second job.">'+
+   T(68,16,'Unix pipe',{s:12,w:700,a:'middle',c:'muted'})+T(247,16,'One MapReduce job',{s:12,w:700,a:'middle',c:'muted'})+
+   left.map((c,i)=>RX(4,y(i),128,24,'soft',7)+T(68,y(i)+16,c,{s:11.5,a:'middle',m:1})).join('')+
+   right.map((r,i)=>'<line x1="132" y1="'+(y(i)+12)+'" x2="178" y2="'+(y(i)+12)+'" style="stroke:var(--muted);stroke-width:1.6"/>'+RX(178,y(i),138,24,r[1],7)+T(247,y(i)+16,r[0],{s:11.5,w:600,a:'middle'})).join('')+
+   '<line x1="132" y1="'+(y(4)+12)+'" x2="178" y2="'+(y(4)+26)+'" style="stroke:var(--muted);stroke-width:1.6"/><line x1="132" y1="'+(y(5)+12)+'" x2="178" y2="'+(y(4)+30)+'" style="stroke:var(--muted);stroke-width:1.6"/>'+
+   RX(178,y(4),138,54,'card',7,';stroke-dasharray:5 4')+T(247,y(4)+24,'a second job',{s:11.5,w:700,a:'middle'})+T(247,y(4)+40,'(rank needs a 2nd sort)',{s:11,a:'middle',c:'muted'})+
+   RX(58,214,12,12,'h2',3)+T(76,224,'you write it',{s:11})+RX(160,214,12,12,'soft',3)+T(178,224,'the framework does it',{s:11})+'</svg></div>';}
+
+function FIG_WF(){
+  const job=(x,y,a,b)=>RX(x,y,92,40,'h2')+T(x+46,y+17,a,{s:12,w:700,a:'middle'})+T(x+46,y+32,b,{s:11,a:'middle',c:'muted'});
+  const dir=(x,y,a)=>'<path d="M'+x+' '+(y+4)+' h26 l5 5 h55 v31 h-86 z" style="fill:var(--soft);stroke:var(--line2);stroke-width:2"/>'+T(x+43,y+29,a,{s:11,a:'middle',m:1});
+  return '<div class="ux-fig"><svg viewBox="0 0 320 196" role="img" aria-label="A workflow scheduler, such as Oozie or Airflow, above three chained jobs. Job 1 writes the directory /clean/scans, which job 2 reads; job 2 writes /counts, which job 3 reads to rank hubs into /top-hubs.">'+DEFS('mW')+
+   RX(4,4,312,36,'pri')+T(160,19,'Workflow scheduler (Oozie, Airflow, Luigi…)',{s:12,w:700,a:'middle'})+T(160,33,'starts each job once its inputs are complete',{s:11,a:'middle'})+
+   job(4,56,'Job 1','clean scans')+AR(97,76,112,76,'mW')+dir(114,56,'/clean/scans')+AR(201,76,222,76,'mW')+job(224,56,'Job 2','count per hub')+
+   AR(270,97,270,121,'mW')+dir(224,124,'/counts')+AR(223,145,209,145,'mW')+job(114,124,'Job 3','rank hubs')+AR(113,145,93,145,'mW')+dir(4,124,'/top-hubs')+
+   T(160,188,'Each step is written in full to files, unlike a pipe',{s:11,a:'middle',c:'muted'})+'</svg></div>';}
+
 Course.lesson({
   id:'0025', title:'Batch processing with Unix tools and MapReduce', minutes:20, icon:'layers',
-  goals:['Tell a system of record from derived data','Explain why a sort-based pipeline copes with data bigger than memory','Trace one MapReduce job from input blocks to reducer output'],
-  parts:['Derived data','Unix tools','Unix philosophy','MapReduce'],
-  read:'Read the Part III introduction and the first half of chapter 10 (up to “MapReduce workflows”) for the full log-analysis walkthrough.',
+  goals:['Tell a system of record from derived data, and rebuild what is derived','Build a Unix pipeline and explain why sorting copes with data bigger than memory','Trace a MapReduce job from input blocks through the shuffle to reducer output'],
+  parts:['Derived data','Unix pipes','Unix philosophy','MapReduce'],
+  read:'Read the Part III introduction and chapter 10 up to the end of “MapReduce workflows” for the full log-analysis walkthrough and the Unix philosophy in the book’s own words.',
   glossary:{
-    batch:'Batch job: a program that reads a large, fixed set of input data, processes all of it and writes output. Nobody waits for it; it usually runs on a schedule, such as nightly.',
+    batch:'Batch job: a program that reads a large, fixed set of input data, processes all of it and writes output. Nobody waits for it; it usually runs on a schedule, such as nightly. Batch is old: punch-card machines tallied the 1890 US census. MapReduce (2004) took it to clusters of ordinary machines; its importance is now declining, but it shows clearly why batch is useful.',
     workingset:'Working set: the amount of memory a job needs random access to at the same time.',
-    hdfs:'HDFS (Hadoop Distributed File System): one big filesystem made from the disks of many ordinary machines. Files are split into blocks, and each block is kept on several machines.',
-    mapper:'Mapper: in MapReduce, your function that is called once for every input record and pulls a key and a value out of it.',
+    stdio:'stdin and stdout: a program’s standard input and standard output. The program just reads one and writes the other; whoever runs it decides where they are connected.',
+    hdfs:'HDFS (Hadoop Distributed File System): one big filesystem made from the disks of many ordinary machines, an open-source copy of Google’s GFS. Files are split into blocks, and each block is kept on several machines, as full copies or with erasure coding. The biggest deployments span tens of thousands of machines and hundreds of petabytes. Object stores such as Amazon S3 work in a similar way.',
+    'shared-nothing':'Shared-nothing: an architecture where each machine has its own CPU, memory and disks, and machines coordinate only over an ordinary network.',
+    mapper:'Mapper: in MapReduce, your function that runs on each input record and pulls out a key and a value.',
     reducer:'Reducer: in MapReduce, your function that is called once per key, with all the values for that key, and writes output records.',
+    workflow:'Workflow: a chain of batch jobs where one job’s output directory is the next job’s input. Schedulers such as Oozie, Azkaban, Luigi, Airflow and Pinball run the jobs in order. Workflows of 50 to 100 jobs are common for recommendation systems, and tools such as Pig, Hive, Cascading, Crunch and FlumeJava set up multi-stage workflows for you.',
     shuffle:'Shuffle: the MapReduce step that splits mapper output by key, sorts it and copies each part to the right reducer. Despite the name, nothing is random.'
   },
   cheatsheet:[
-    '<b>System of record</b> = the authoritative copy, written first. <b>Derived data</b> (caches, indexes, reports, predictions) can be rebuilt from it. Which one a database is depends on how you use it, not on the tool.',
-    '<b>Services</b> are judged by response time, <b>batch jobs</b> by throughput, <b>stream processors</b> sit in between with low delay.',
-    'A <b>hash table</b> of counts works while the distinct keys fit in memory. <b>Sorting</b> spills sorted chunks to disk and merges them, so it keeps going when they don’t.',
-    'Unix philosophy: small tools that do one thing well, a <b>uniform interface</b> (bytes, one record per line), <b>logic separate from wiring</b>, and immutable inputs that make experiments safe.',
-    '<b>HDFS</b> is a shared-nothing filesystem: a NameNode tracks which machine holds each block, and blocks are copied to several machines.',
-    '<b>MapReduce</b>: the mapper pulls out a key and value → the framework partitions by a hash of the key, sorts and shuffles → the reducer combines all values for each key.',
+    '<b>System of record</b> = the authoritative copy, written first. <b>Derived data</b> (caches, indexes, reports, predictions) is built from it and can be rebuilt. Which one a database is depends on how you use it, not on the tool.',
+    '<b>Services</b> are judged by response time, <b>batch jobs</b> by throughput, and <b>stream processors</b> sit in between, acting soon after each event.',
+    'A <b>hash table</b> of counts needs memory for every distinct key. <b>Sorting</b> spills sorted chunks to disk and merges them, so it keeps going when the keys don’t fit.',
+    'Unix philosophy: small tools that do one thing well, a <b>uniform interface</b> (bytes, one record per line), <b>logic separate from wiring</b> (stdin/stdout), and <b>immutable inputs</b> that make experiments safe.',
+    '<b>HDFS</b> is a shared-nothing filesystem: a NameNode tracks which machine holds each block, and every block is copied to several machines.',
+    '<b>MapReduce</b>: the mapper pulls out a key and value → the framework partitions by a hash of the key, sorts and shuffles → the reducer combines all values for each key. Map tasks run where their block is stored.',
     'Jobs chain into <b>workflows</b> through directory names. A job’s output only counts once the whole job has succeeded.'
   ],
   steps:[
@@ -44,24 +321,35 @@ Course.lesson({
    'The cache only held copies. Every status still lives in the Parcel DB, so the cache simply fills up again. That difference between the original and its copies opens this part of the book.',
    'The cache only held copies. Every status still lives in the Parcel DB, so the cache fills up again from there. Nothing is lost for good.');}},
 {part:0,src:'Part III · Derived Data',run(L){
-  L.h(L.kick('learn','Part III begins')+'<h1 class="q">Real applications use many data systems, not one</h1>'+
-   L.prose('The first two parts of the book quietly assumed an application has <b>one</b> database. Real systems rarely look like that. A big application needs to read and process its data in many different ways, and no single database does all of them well.')+
-   L.prose('So applications combine several datastores, indexes, caches and analytics systems, and move data from one to another. Otterpost already does this:')+
-   L.flow([['box','Parcel DB','Bookings, parcels, couriers'],['eye','Support search','Find a parcel by name or postcode'],['trend','Analytics warehouse','Nightly on-time reports']])+
-   L.prose('Part III is about fitting systems like these together into one coherent design. The book notes that vendors who claim one product does everything tend to skip this, yet it is some of the most important work in a real application.'));
+  L.h(L.kick('learn','Part III begins')+'<h1 class="q">One app, many data systems</h1>'+CSS+FIG_MANY()+
+   '<p class="ux-cap">Parts I and II assumed an app has one database. Real apps need their data in many shapes, and no single database does all of it well. So they combine several systems and copy data between them. Part III is about fitting them together.</p>');
   L.done();}},
 {part:0,src:'Part III · Systems of Record and Derived Data',run(L){
-  L.h(L.kick('learn','Two kinds of data system')+'<h1 class="q">The original, and everything built from it</h1>'+
-   L.lanes([['shield','System of record','Also called the <b>source of truth</b>. New data is written here first. Each fact is stored once, usually normalized. If another system disagrees with it, the system of record is right by definition.',1],
-            ['layers','Derived data','Built by taking data from another system and transforming it. If you lose it, you can rebuild it from the source. Caches, indexes, denormalized values and materialized views are all derived. So are predictions computed from usage logs.',2]])+
-   L.prose('Derived data is technically redundant: it repeats what the source already says. But it is often what makes reads fast, and you can derive several different views from one source.')+
-   L.note('<b>It’s about use, not the tool.</b> A database is just a tool. The same kind of database can be a system of record in one place and '+L.g('derived','derived data')+' in another. Being clear about which data comes from where makes a confusing architecture much easier to follow.','info'));
+  L.h(L.kick('learn','Two kinds of data system')+'<h1 class="q">The original, and everything built from it</h1>'+CSS+FIG_SOR()+
+   '<p class="ux-cap">The Parcel DB holds the authoritative version; if a copy disagrees, the Parcel DB wins by definition. Everything on the right is '+L.g('derived','derived')+': redundant, reshaped for fast reads, rebuildable. Record or derived depends on use, not on the software.</p>');
   L.done();}},
-{part:0,src:'Part III · Systems of Record and Derived Data',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Support search shows Mrs. Okoro’s phone number ending in 412. The Parcel DB says it ends in 417. Which one is right?</h1>');
-  L.mc(L.card,['The search index, since support uses it every day','Whichever of the two was changed most recently','The Parcel DB, so the search index needs fixing'],2,
-   'The Parcel DB is the system of record, so it is right by definition. The search index is derived from it and should be rebuilt or corrected from it.',
-   'When copies disagree, the system of record wins by definition. The Parcel DB is Otterpost’s system of record; the search index is derived from it and gets fixed from it.');}},
+{part:0,src:'Part III · Systems of Record and Derived Data',
+ solve:async L=>{L.$('#w4-d0').click();L.$('#w4-d0').click();await L.sleep(750);L.$('#w4-db').click();L.$('#w4-d1').click();L.$('#w4-d1').click();},
+ run(L){
+  const NM=['Tracking-page cache','Support search','Analytics warehouse','ETA model'];
+  const S={db:true,d:[1,1,1,1],busy:false};
+  L.h(L.kick('pr','Hands on')+'<h1 class="q">Wipe Otterpost’s systems. Which ones come back?</h1>'+CSS+
+   goals('w4g',['Wipe a derived system, then rebuild it','Wipe the Parcel DB, then try to rebuild something'])+
+   '<button class="ux-sys rec" id="w4-db"></button><div class="ux-dn">▼ built from the Parcel DB ▼</div><div class="ux-g ux-g2" id="w4-grid"></div>'+
+   '<p class="ux-hint">Tap a system to wipe it. Tap a wiped one to rebuild it.</p>');
+  L.$('#w4-grid').innerHTML=NM.map((n,k)=>'<button class="ux-sys" id="w4-d'+k+'"></button>').join('');
+  const db=L.$('#w4-db');
+  const drawDb=()=>{db.className='ux-sys rec'+(S.db?'':' gone fail');db.innerHTML='<b>Parcel DB</b><span class="st">'+(S.db?'system of record · parcels, addresses, scans':'wiped: the only authoritative copy is gone. Tap to undo (this is a sandbox)')+'</span><span class="bar"><i style="width:'+(S.db?100:0)+'%"></i></span>';};
+  const drawD=(k,st,cls)=>{const b=L.$('#w4-d'+k);if(!b)return;b.className='ux-sys'+(cls?' '+cls:'');b.innerHTML='<b>'+NM[k]+'</b><span class="st">'+st+'</span><span class="bar"><i style="width:'+(S.d[k]*100)+'%"></i></span>';};
+  drawDb();NM.forEach((n,k)=>drawD(k,'derived · full'));
+  const check=()=>{if(allTicked(L,'w4g')&&!S.fin){S.fin=true;
+    L.sheet('info','Copies come back; the original doesn’t','Derived data is redundant on purpose: it repeats the source in a shape that makes reads fast, and losing it costs only the time to rebuild. The system of record is the copy everything else is built from, so when two systems disagree, it is right by definition.');L.done();}};
+  db.onclick=()=>{if(S.busy)return;S.db=!S.db;drawDb();};
+  NM.forEach((n,k)=>{L.$('#w4-d'+k).onclick=()=>{if(S.busy)return;
+    if(S.d[k]===1){S.d[k]=0;drawD(k,'wiped: empty. Tap to rebuild','gone');return;}
+    if(!S.db){drawD(k,'can’t rebuild: nothing left to copy from','gone fail');L.shake(L.$('#w4-d'+k));tick(L,'w4g',1);check();return;}
+    S.busy=true;S.d[k]=1;drawD(k,'rebuilding from the Parcel DB…','gone');
+    setTimeout(()=>{S.busy=false;if(!L.$('#w4-d'+k))return;drawD(k,'rebuilt: same data as before');tick(L,'w4g',0);check();},650);};});}},
 {part:0,src:'Part III · Systems of Record and Derived Data',pts:6,run(L){
   L.h(L.kick('pr','Record or derived?')+'<h1 class="q">Sort each part of Otterpost’s data.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['System of record','Derived data'],[
@@ -73,13 +361,10 @@ Course.lesson({
    ['Delivery-window predictions computed from past scan history',1,'Predictions summarised from history are derived: rerun the computation and you get them back.']],
    'Ask two questions: is new data written here first, and could I rebuild this from somewhere else? That tells you which way the data flows.');}},
 
-/* ---------- PART 2: UNIX TOOLS ---------- */
+/* ---------- PART 2: UNIX PIPES ---------- */
 {part:1,src:'Chapter 10 · Batch Processing',run(L){
-  L.h(L.kick('learn','Three kinds of system')+'<h1 class="q">Not every system waits for a request</h1>'+
-   L.tiers([['person','Service (online)','Waits for a request, handles it as fast as it can and sends a response. Judged mainly by <b>response time</b>; availability matters a lot.','Otterpost: the tracking page, the merchant API'],
-            ['layers','Batch job (offline)','Takes a large set of input data, runs a job over all of it and writes output. Takes minutes to days, so nobody waits; often scheduled, say once a day. Judged mainly by <b>throughput</b>.','Otterpost: Linh’s nightly jobs',true,'This chapter'],
-            ['cycle','Stream processor (near-real-time)','Between the two. Like a batch job it consumes inputs and produces outputs, but it works on events shortly after they happen, so its delay is lower.','Chapter 11']])+
-   '<p class="small" style="margin-top:10px">Batch processing is old: punch-card machines counted the 1890 US census this way. MapReduce, published in 2004, made it work at huge scale on ordinary hardware. The book notes its importance is now declining, but it shows clearly why batch processing is useful.</p>');
+  L.h(L.kick('learn','Three kinds of system')+'<h1 class="q">Not every system waits for a request</h1>'+CSS+FIG_KINDS()+
+   '<p class="ux-cap">Services answer while someone waits. A '+L.g('batch','batch job')+' crunches a fixed pile of input, often nightly, so nobody waits; it is judged by throughput. Stream processors act soon after each event. This chapter is batch.</p>');
   L.done();}},
 {part:1,src:'Chapter 10 · Batch Processing',pts:6,run(L){
   L.h('<div id="qk"></div>');
@@ -90,67 +375,169 @@ Course.lesson({
    ['Retraining the ETA model each night on every past delivery.',1,'A big, fixed input, run nightly. Throughput matters, not response time.'],
    ['A merchant’s server calls the API to book a parcel.',0,'A client sends a request and expects an answer quickly.'],
    ['A count of late parcels per zone that updates as scans arrive.',2,'It consumes events as they come in and keeps its output current.']]);}},
-{part:1,src:'Chapter 10 · Simple Log Analysis',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh finds the five most-viewed tracking pages with six small Unix tools</h1>'+
-   L.prose('The tracking page’s web server adds one line to its log for every request. Each line holds the visitor’s address, the time, the page asked for and more. Linh chains six commands with pipes (<b>|</b>), each feeding the next.'));
-  L.beats(L.card,[
-   [CODE('cat access.log'),'Read the log file, line by line.'],
-   [CODE('awk &#39;{print $7}&#39;'),'Split each line on spaces and keep only the 7th field: the requested page, like '+CODE('/track/OP-48213')+'.'],
-   [CODE('sort'),'Sort the list. If a page was viewed 300 times, its 300 copies now sit in a row.'],
-   [CODE('uniq -c'),'Collapse each run of identical neighbouring lines into one, with a count: '+CODE('300 /track/OP-48213')+'.'],
-   [CODE('sort -r -n'),'Sort again, by the number at the start, biggest first.'],
-   [CODE('head -n 5'),'Keep the first five lines. Done: the top five pages.']],
-   'It looks cryptic, but it chews through gigabytes of logs in seconds, and it is easy to change. Count visitor addresses instead? Print field 1 instead of field 7.');}},
-{part:1,src:'Chapter 10 · Simple Log Analysis',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tap the stages of Linh’s pipeline in order.</h1>');
-  L.order(L.card,['Read the log file','Keep only the requested page','Sort so repeats sit together','Count each run of repeats','Sort by count, biggest first','Keep the first five lines'],
-   'The first sort is what makes counting possible: the counting step only compares each line with the one right before it.');}},
-{part:1,src:'Chapter 10 · Sorting versus in-memory aggregation',run(L){
-  L.h(L.kick('learn','Two ways to count')+'<h1 class="q">Same answer, very different use of memory</h1>'+
-   L.prose('Tobias could write the same report as a short program: read each line and add 1 to a counter for that page, kept in a <b>hash table</b> in memory. The book shows a version in Ruby. Which way is better? It depends on how many <i>different</i> pages there are.')+
-   L.lanes([['box','Hash table in memory','Needs one counter per <b>distinct</b> page. A million views of one page still take one entry. If that '+L.g('workingset','working set')+' fits in memory, this is fine, even on a laptop.',2],
-            ['list','Sort, then count','Needs no table. When the data is bigger than memory, sort writes sorted chunks to disk and then merges them, reading and writing in long sequential runs that disks handle well.',3]])+
-   L.prose('That chunk-and-merge trick is the same one behind SSTables and LSM-trees in chapter 3. The standard Linux <b>sort</b> spills to disk on its own and uses several CPU cores, so the plain pipeline scales to large datasets. The slowest part is usually just reading the input file from disk.'));
-  L.done();}},
-{part:1,src:'Chapter 10 · Sorting versus in-memory aggregation',pts:1,
- solve:async L=>{L.$('#ja').click();L.$('#jb').click();},
+{part:1,src:'Chapter 10 · Simple Log Analysis',
+ solve:async L=>{L.$('#f8-6').click();},
  run(L){
-  const J=[['ja','Job A · scans per hub, all year','about 880 million lines · a few dozen distinct hubs',4,'Fits easily: one counter per hub.','var(--ok-strong)'],
-           ['jb','Job B · GPS pings per courier per minute, all year','billions of lines · hundreds of millions of distinct courier-minutes',100,'Out of memory: one counter per courier-minute needs far more than 1 GB.','var(--no)']];
-  let n=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh runs two counting jobs as hash tables on a machine with 1 GB of memory. Run each one.</h1>'+
-   J.map((j,k)=>'<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0"><b>'+j[1]+'</b><div class="small">'+j[2]+'</div><div class="meterrow"><div class="lb">Memory</div><div class="meter"><div id="m'+k+'" style="width:0;transition:width .8s;background:'+j[5]+'"></div></div></div><div class="small" id="r'+k+'"></div><button class="btn" id="'+j[0]+'" style="margin-top:8px">'+L.ic('play')+'Run with a hash table</button></div>').join('')+'<div id="wq"></div>');
-  J.forEach((j,k)=>{L.$('#'+j[0]).onclick=function(){this.remove();const m=L.$('#m'+k);requestAnimationFrame(()=>{m.style.width=j[3]+'%';});
-    setTimeout(()=>{const r=L.$('#r'+k);if(!r)return;r.innerHTML='<b style="color:'+j[5]+'">'+j[4]+'</b>';n++;
-      if(n===2){const q=L.$('#wq');q.innerHTML='<h2 class="sub">Both logs are huge. Why did only job B run out of memory?</h2>';
-        L.mc(q,['It has far more distinct keys to count','It has far more lines in its input','Its log lines are longer and messier'],0,
-         'The hash table needs one entry per distinct key, however many lines mention it. For job B, Linh should sort instead: sort spills sorted chunks to disk and merges them, so it finishes.',
-         'Line count barely matters: a million pings for one key still take one counter. The number of distinct keys sets the working set. For job B, Linh should sort instead, which spills to disk and merges.');}},900);};});}},
+  const toks=LOG[0].split(/\s+/);
+  const NM=['the visitor’s address','user (none)','login (none)','the time','the time zone','the method','the page asked for','the protocol','the status (200 = OK)','the reply size in bytes'];
+  L.h(L.kick('ex','Meet the log')+'<h1 class="q">The tracking page’s server writes one line per request. Which field is the page that was asked for?</h1>'+CSS+
+   '<div class="ux-hint">One line of access.log, split on spaces. Tap a field.</div><div class="ux-tok" id="f8"></div><div id="f8o"></div>');
+  L.$('#f8').innerHTML=toks.map((t,j)=>'<button class="ux-tk" id="f8-'+j+'"><span class="d">$'+(j+1)+'</span><span class="v ux-m">'+uxEsc(t)+'</span></button>').join('');
+  const show=j=>{L.$$('#f8 .ux-tk').forEach((b,k)=>b.classList.toggle('sel',k===j));
+    L.$('#f8o').innerHTML='<div class="ux-read"><div class="ux-m" style="font-weight:700;font-size:14px">awk \'{print $'+(j+1)+'}\'</div><div class="small" style="margin:2px 0 6px">keeps field '+(j+1)+', '+NM[j]+', from every line:</div>'+lines(LOG.slice(0,4).map(l=>l.split(/\s+/)[j]),4)+'<div class="ux-ln" style="color:var(--muted)">… 53 more</div>'+
+     (j===0?'<div class="small" style="margin-top:6px">The book’s other example: print $1 to count top visitors instead of top pages.</div>':'')+'</div>';
+    if(j===6){L.sheet('info','Field 7: the page','<b>awk \'{print $7}\'</b> keeps field 7 of every line: the page asked for. Swap in $1 and the same pipeline counts visitors instead. It works, but “$7” isn’t very readable: nothing in it says “page”.');L.done();}};
+  toks.forEach((t,j)=>{L.$('#f8-'+j).onclick=()=>show(j);});}},
+{part:1,src:'Chapter 10 · Simple Log Analysis',
+ solve:async L=>{for(let k=0;k<5;k++){const b=L.$('#e9go');if(b)b.click();await L.sleep(20);}},
+ run(L){
+  const SEQ=['awk7','sort','uniq','sortrn','head'];
+  const CAP=['57 sample lines of this morning’s log (illustrative; the real one has millions). Snap on the first tool.',
+   '<b>awk</b> splits each line on spaces and keeps field 7: just the page.',
+   '<b>sort</b> puts the lines in order. All 9 copies of /track/OP-48213 now sit in a row.',
+   '<b>uniq -c</b> compares each line with the one before it and collapses every run of repeats into one line with a count.',
+   '<b>sort -r -n</b> sorts by the number at the start: numerically (-n), biggest first (-r).',
+   '<b>head -n 5</b> keeps the first five lines. Done: the top five pages. On a real server this chews through gigabytes in seconds.'];
+  let k=0;
+  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh finds the five most-viewed pages by snapping small tools together</h1>'+CSS+
+   '<div class="ux-read" id="e9c"></div><div id="e9b"></div><div id="e9p" style="margin-top:8px"></div>');
+  const P=Pipe(L,L.$('#e9p'),{id:'e9',judge:(out,P)=>P.list.length===5?'hit':''});
+  const upd=()=>{L.$('#e9c').innerHTML='<span class="small" style="font-weight:700;display:block">Step '+k+' of 5</span>'+CAP[k];
+    L.$('#e9b').innerHTML=k<5?'<button class="btn pri ux-m" id="e9go">+ '+uxEsc(TOOLS[SEQ[k]].t)+'</button>':'';
+    const b=L.$('#e9go');if(b)b.onclick=()=>{P.list.push(SEQ[k]);P.fresh=k;k++;P.draw();upd();
+      if(k===5){L.sheet('info','Six tools, one report','Each joint is a stream of plain text lines passed straight to the next tool through a small memory buffer; the whole stream is never written to disk. To count visitors instead of pages, change $7 to $1. To skip CSS files, change only the awk part. Small tools make the analysis easy to bend.');L.done();}};};
+  upd();}},
+{part:1,src:'Chapter 10 · Simple Log Analysis',pts:1,
+ solve:async L=>{L.$('#p10o').children[1].click();await L.sleep(30);L.$('#p10fix').click();},
+ run(L){
+  let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Tobias drops the first <span class="ux-m">sort</span> to save time. What will the output show?</h1>'+CSS+
+   '<div class="ux-ctl" id="p10o"></div><div id="p10x"></div><div id="p10p"></div>');
+  const P=Pipe(L,L.$('#p10p'),{id:'p10',list:['awk7','uniq','sortrn','head'],mask:2});
+  ['The true counts, led by 11 /favicon.ico','Small counts, some pages listed twice','An error: uniq -c needs sorted input'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(pick!==null)return;pick=j;b.classList.add('sel');[...L.$('#p10o').children].forEach(x=>{if(x!==b)x.setAttribute('aria-disabled','true');});
+      P.mask=99;P.cls='bad';P.draw();const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');L.$('#p10o').children[1].classList.add('ok');
+      L.sheet(ok?'ok':'no',ok?'Right: the counts fall apart':'Look at the output',
+       '<b>uniq -c</b> only compares each line with the one right before it. Unsorted, the 11 /favicon.ico requests are scattered, so it counts short runs: 3 here, 1 there, and a page appears on several lines. No error: it just answers a different question.');
+      L.$('#p10x').innerHTML='<button class="btn pri" id="p10fix">Put the first sort back</button>';
+      L.$('#p10fix').onclick=function(){this.remove();P.list.splice(1,0,'sort');P.fresh=1;P.cls='hit';P.draw();
+        L.$('#p10x').innerHTML='<div class="ux-read good">Sorted first, all 11 copies of /favicon.ico sit together, so uniq counts them as one run: 11.</div>';L.done();};};
+    L.$('#p10o').appendChild(b);});}},
+{part:1,src:'Chapter 10 · Sorting versus in-memory aggregation',run(L){
+  L.h(L.kick('learn','Two ways to count')+'<h1 class="q">A table in memory, or sort first?</h1>'+CSS+FIG_HS()+
+   '<p class="ux-cap">Tobias’s version of the report keeps a hash table: one counter per distinct page, all in memory. The pipeline keeps no table: once sorted, repeats are neighbours, and sort itself spills to disk when memory runs out.</p>');
+  L.done();}},
+{part:1,src:'Chapter 10 · Sorting versus in-memory aggregation',
+ solve:async L=>{L.$('#g12p2').click();await L.sleep(20);L.$('#g12p1').click();},
+ run(L){
+  const DST=[1,40,1e3,1e5,1e6,1e7,3e7,1e8,5e8],LST=[1e6,1e7,1e8,8.8e8,1e9,1e10];
+  const MEM=1e9,ROW=100,LINE=50;
+  const fmtN=n=>n>=1e9?(n/1e9)+' billion':n>=1e6?(n/1e6)+' million':n>=1e3?(n/1e3)+' thousand':String(n);
+  const fmtB=b=>b>=1e9?Math.round(b/1e9)+' GB':b>=1e6?Math.round(b/1e6)+' MB':b>=1e3?Math.round(b/1e3)+' KB':b+' bytes';
+  L.h(L.kick('pr','Hands on')+'<h1 class="q">Linh’s machine has 1 GB of memory. Push the counting job until the hash table breaks.</h1>'+CSS+
+   goals('g12g',['Make the hash table run out of memory','Feed it almost a billion lines without breaking it'])+
+   '<div class="ux-fig" id="g12f"></div><div class="ux-read" id="g12r"></div>'+
+   '<div class="ux-rng"><label for="g12d">Distinct keys</label><b id="g12d-v"></b><input type="range" id="g12d" min="0" max="'+(DST.length-1)+'" step="1" value="2"></div>'+
+   '<div class="ux-rng"><label for="g12n">Log lines</label><b id="g12n-v"></b><input type="range" id="g12n" min="0" max="'+(LST.length-1)+'" step="1" value="1"></div>'+
+   '<div class="ux-hint">Presets (one year of Otterpost data):</div><div class="ux-ctl"><button class="chip" id="g12p0">1 page, 1 million views</button><button class="chip" id="g12p1">Job A · scans per hub</button><button class="chip" id="g12p2">Job B · pings per courier-minute</button></div>'+
+   '<p class="small">Illustrative numbers: about 100 bytes per counter, 50 bytes per log line.</p>');
+  let fin=false;
+  function upd(){const n=LST[+L.$('#g12n').value],d=Math.min(DST[+L.$('#g12d').value],n);
+    L.$('#g12d-v').textContent=fmtN(d);L.$('#g12n-v').textContent=fmtN(n);
+    const need=d*ROW,crash=need>MEM,data=n*LINE,chunks=data<=MEM?0:Math.ceil(data/MEM),fill=Math.min(need/MEM,1);
+    const tiles=Math.min(chunks,11);
+    L.$('#g12f').innerHTML='<svg viewBox="0 0 320 172" role="img" aria-label="Memory gauges. Hash table needs '+fmtB(need)+(crash?', out of memory':'')+'. Sort writes '+chunks+' sorted chunks to disk.">'+
+     T(4,14,'Hash table',{s:12.5,w:700,c:'h2'})+T(170,14,'Sort, spill, merge',{s:12.5,w:700,c:'h3'})+
+     T(4,30,'memory 1 GB',{s:11,c:'muted'})+T(170,30,'memory 1 GB',{s:11,c:'muted'})+
+     (crash?'<rect x="4" y="34" width="140" height="96" rx="8" style="fill:var(--no-bg);stroke:var(--no);stroke-width:2.5"/>'+T(74,78,'out of',{s:13,w:700,a:'middle',c:'no'})+T(74,95,'memory',{s:13,w:700,a:'middle',c:'no'}):
+       RX(4,34,140,96,'card',8)+'<rect x="6" y="'+(128-Math.max(fill*92,2))+'" width="136" height="'+Math.max(fill*92,2)+'" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>')+
+     T(4,148,'needs '+fmtB(need),{s:11.5,w:700,c:crash?'no':'ink'})+T(4,164,'for '+fmtN(d)+' counter'+(d===1?'':'s'),{s:11,c:'muted'})+
+     RX(170,34,146,54,'card',8)+'<rect x="172" y="'+(86-Math.min(data/MEM,1)*46)+'" width="142" height="'+(Math.min(data/MEM,1)*46)+'" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/>'+
+     T(170,104,'disk',{s:11,c:'muted'})+RX(170,108,146,30,'soft',6)+
+     Array.from({length:tiles},(x,i)=>'<rect x="'+(175+i*10)+'" y="114" width="7" height="18" rx="2" style="fill:var(--h3)"/>').join('')+
+     (chunks>tiles?T(316,128,'+'+(chunks-tiles),{s:11,w:700,a:'end'}):'')+(chunks===0?T(243,127,'nothing spilled',{s:11,a:'middle',c:'muted'}):'')+
+     T(170,154,chunks?chunks+' sorted chunks,':'fits in memory',{s:11.5,w:700})+T(170,168,chunks?'then one merge pass':'no spilling needed',{s:11,c:'muted'})+'</svg>';
+    L.$('#g12r').className='ux-read'+(crash?' bad':'');
+    L.$('#g12r').innerHTML=crash?'<b>Hash table:</b> '+fmtN(d)+' distinct keys need '+fmtB(need)+'. The job dies. <b>Sort</b> still finishes: memory stays full but never overflows.':
+      '<b>Hash table:</b> fine, '+fmtB(need)+(n>=8.8e8?', even with '+fmtN(n)+' lines. Line count doesn’t matter; distinct keys do.':'.')+' <b>Sort:</b> '+(chunks?'spills '+chunks+' sorted chunks and merges them.':'fits in memory.');
+    if(crash)tick(L,'g12g',0);
+    if(!crash&&n>=8.8e8)tick(L,'g12g',1);
+    if(allTicked(L,'g12g')&&!fin){fin=true;
+      L.sheet('info','Distinct keys set the working set','The hash table’s '+L.g('workingset','working set')+' grows with distinct keys only. When it outgrows memory, sorting wins: chunks are sorted in memory, written to disk and merged, all in long sequential runs, the same trick as SSTables in chapter 3. GNU sort does this by itself and uses several CPU cores; the slow part is usually just reading the input.');L.done();}}
+  L.$('#g12d').oninput=upd;L.$('#g12n').oninput=upd;
+  const pre=(d,n)=>{L.$('#g12d').value=DST.indexOf(d);L.$('#g12n').value=LST.indexOf(n);upd();};
+  L.$('#g12p0').onclick=()=>pre(1,1e6);L.$('#g12p1').onclick=()=>pre(40,8.8e8);L.$('#g12p2').onclick=()=>pre(5e8,1e10);
+  upd();}},
+{part:1,src:'Chapter 10 · Simple Log Analysis',pts:1,
+ solve:async L=>{L.$('#c13clr').click();['awk7','grep','sort','uniq','sortrn','head'].forEach(k=>L.$('#c13-a-'+k).click());L.$('#c13chk').click();},
+ run(L){
+  const TARGET=runPipe(['awk7','grep','sort','uniq','sortrn','head']);let first=true,won=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Signe wants the five most-viewed <b>parcel tracking pages</b>: no favicon, no CSS. Build it with at most 6 blocks.</h1>'+CSS+
+   '<div class="ux-read"><div class="small" style="font-weight:700;margin-bottom:2px">Target output</div>'+lines(TARGET,5)+'</div>'+
+   '<div class="ux-ctl"><button class="btn pri" id="c13chk">Check my pipeline</button><button class="btn" id="c13clr">Clear</button><span class="small" id="c13n" style="align-self:center"></span></div><div id="c13p"></div>');
+  const P=Pipe(L,L.$('#c13p'),{id:'c13',edit:true,palette:['sort','head','awk1','uniq','grep','sortrn','awk7'],
+    judge:out=>sameOut(out,TARGET)?'hit':'',onChange:P=>{const n=L.$('#c13n');if(n)n.textContent='Blocks: '+P.list.length+' of 6';}});
+  L.$('#c13clr').onclick=()=>{P.list=[];P.draw();};
+  L.$('#c13chk').onclick=()=>{if(won)return;const out=runPipe(P.list),ok=sameOut(out,TARGET)&&P.list.length<=6;
+    if(first){L.award(ok);first=false;}
+    if(ok){won=true;L.sheet('ok','Signe has their list','awk keeps the page, grep keeps only /track/ lines, sort lines up repeats, uniq -c counts them, sort -r -n ranks, head keeps five. Filtering with grep before or after counting both work. The book does the same filtering by changing only the awk part.');L.done();}
+    else L.sheet('no',sameOut(out,TARGET)?'Right output, too many blocks':'Not the target yet',sameOut(out,TARGET)?'Six blocks are enough: one tool for each job. Take off the extra one and check again.':'Compare your output with the target. Keep only the page, filter to /track/, and remember uniq -c needs sorted input. Then rank and cut to five.');};}},
 
 /* ---------- PART 3: UNIX PHILOSOPHY ---------- */
 {part:2,src:'Chapter 10 · The Unix Philosophy',run(L){
-  L.h(L.kick('learn','The Unix philosophy')+'<h1 class="q">Why six tiny tools could do a real analysis</h1>'+
-   L.quote('We should have some ways of connecting programs like [a] garden hose','Doug McIlroy, inventor of Unix pipes, 1964 (quoted in chapter 10)')+
-   L.prose('The plumbing idea stuck. In 1978 the Unix designers wrote down a set of principles, here in short:')+
-   L.list([['Do one thing well','For a new job, build a new tool rather than adding features to an old one.'],
-     ['Expect your output to feed another program','One you don’t know yet. Keep output clean, and don’t demand interactive input.'],
-     ['Try it early','Build software to be tried within weeks. Throw away the clumsy parts and rebuild them.'],
-     ['Prefer tools to manual help','Build tools to lighten the work, even if it means a detour and some get thrown away afterwards.']],1)+
-   '<p class="small" style="margin-top:10px">The book points out this sounds a lot like today’s Agile and DevOps ideas. <b>sort</b> is the model: it sorts better than most standard libraries, yet it is barely useful alone. It becomes powerful next to tools like <b>uniq</b>.</p>');
+  L.h(L.kick('learn','The Unix philosophy')+'<h1 class="q">Connect programs like a garden hose</h1>'+CSS+
+   L.quote('We should have some ways of connecting programs like [a] garden hose','Doug McIlroy, inventor of Unix pipes, 1964 (quoted in chapter 10)')+FIG_HOSE()+
+   '<p class="ux-cap">Written down in 1978, these sound a lot like Agile and DevOps today, the book notes. <b>sort</b> is the model: a better sort than most standard libraries, yet barely useful alone. Next to <b>uniq</b> it becomes powerful.</p>');
   L.done();}},
-{part:2,src:'Chapter 10 · The Unix Philosophy',run(L){
-  L.h(L.kick('learn','What makes them fit together')+'<h1 class="q">Three design choices behind Unix tools. Tap each one.</h1>');
-  L.flips(L.card,[
-   ['A uniform interface','Every program reads and writes a <b>file</b>: just an ordered sequence of bytes. Real files, pipes, devices and network sockets all look the same. Most tools treat the bytes as text with one record per line, so awk, sort and uniq agree on what a record is. Splitting a line into fields is looser: '+CODE('{print $7}')+' is not very readable.'],
-   ['Logic separate from wiring','Programs read <b>stdin</b> and write <b>stdout</b> and don’t care where data comes from or goes. Whoever runs them wires them up, so your own tool can join any pipeline. Limits: tools with several inputs or outputs are awkward, and you can’t pipe output into a network connection.'],
-   ['Transparency and experimentation','Inputs are treated as immutable, so you can rerun a command as often as you like. You can stop the pipeline at any stage and look at the output. You can save one stage’s output to a file and rerun only the later stages.'],
-   ['The big limit','Unix tools run on <b>one machine</b>. To go further, you need something like Hadoop.']],
-   'The book argues these ideas carry straight over to large distributed data systems, which is why it starts with Unix.');}},
-{part:2,src:'Chapter 10 · Separation of logic and wiring',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias writes a tool that turns courier IDs into names. It opens <b>/data/scans.log</b> itself and writes to <b>/reports/names.txt</b>. What has Tobias given up?</h1>');
-  L.mc(L.card,['Treating the scan log as immutable input','Easy wiring into other pipelines from the shell','Processing more than one line at a time'],1,
-   'Because the tool picks its own input and output files, nobody can just pipe other data into it or send its output onward. Reading stdin and writing stdout would keep the wiring flexible.',
-   'The tool can still leave its input untouched, and how many lines it handles is unrelated. What it lost is flexible wiring: by hard-coding file paths, it decides its own input and output instead of the person running it.');}},
+{part:2,src:'Chapter 10 · Separation of logic and wiring',
+ solve:async L=>{L.$('#r15i1').click();L.$('#r15o2').click();L.$('#r15t').click();},
+ run(L){
+  const IN=[['scans.log','a file on disk','zone &lt; scans.log'],['grep’s output','a pipe from another tool','grep "at hub" scans.log | zone'],['the keyboard','typed by hand','zone']];
+  const OUT=[['the screen','the terminal',''],['zones.txt','a file on disk',' &gt; zones.txt'],['sort','a pipe into the next tool',' | sort']];
+  const S={i:0,o:0,tob:false};
+  L.h(L.kick('pr','Hands on')+'<h1 class="q">Rewire Linh’s <span class="ux-m">zone</span> tool (postcode → delivery zone) without touching its code</h1>'+CSS+
+   goals('r15g',['Plug in a different input','Send the output somewhere else','Compare with Tobias’s version'])+
+   '<div class="ux-fig" id="r15f"></div><div class="ux-read" id="r15cmd"></div>'+
+   '<div class="ux-hint">Input: '+L.g('stdio','stdin')+' comes from…</div><div class="ux-ctl" id="r15in"></div>'+
+   '<div class="ux-hint">Output: stdout goes to…</div><div class="ux-ctl" id="r15out"></div>'+
+   '<div class="ux-ctl"><button class="btn" id="r15t">Show Tobias’s version</button></div>');
+  IN.forEach((x,j)=>{L.$('#r15in').insertAdjacentHTML('beforeend','<button class="chip'+(j===0?' sel':'')+'" id="r15i'+j+'">'+x[0]+'</button>');});
+  OUT.forEach((x,j)=>{L.$('#r15out').insertAdjacentHTML('beforeend','<button class="chip'+(j===0?' sel':'')+'" id="r15o'+j+'">'+x[0]+'</button>');});
+  function draw(){const t=S.tob,fade=t?';opacity:.4':'';
+    L.$('#r15f').innerHTML='<svg viewBox="0 0 320 196" role="img" aria-label="'+(t?'Tobias’s tool opens its own files, so the input and output chosen in the shell are not connected.':'Input '+IN[S.i][0]+' flows through stdin into zone, and stdout flows to '+OUT[S.o][0]+'.')+'">'+DEFS('mR')+
+     '<g style="'+fade+'">'+RX(50,4,220,42,'soft')+T(160,22,IN[S.i][0],{s:12.5,w:700,a:'middle'})+T(160,38,IN[S.i][1],{s:11,a:'middle',c:'muted'})+'</g>'+
+     '<path d="M160 47 L160 70" style="fill:none;stroke:var('+(t?'--line2':'--muted')+');stroke-width:2'+(t?';stroke-dasharray:4 4':'')+'"'+(t?'':' marker-end="url(#mR)"')+'/>'+T(170,63,t?'not connected':'stdin',{s:11,c:t?'no':'muted'})+(t?'':T(150,63,'bytes, one record per line',{s:11,a:'end',c:'muted'}))+
+     RX(30,72,260,54,t?'h4':'h2')+
+     (t?T(160,90,'tobias-zone',{s:13,w:700,a:'middle',m:1})+T(160,105,'opens /data/scans.log itself',{s:11,a:'middle'})+T(160,119,'writes /reports/zones.txt itself',{s:11,a:'middle'}):
+        T(160,95,'zone',{s:14,w:700,a:'middle',m:1})+T(160,113,'logic only: postcode → zone',{s:11,a:'middle',c:'muted'}))+
+     '<path d="M160 127 L160 150" style="fill:none;stroke:var('+(t?'--line2':'--muted')+');stroke-width:2'+(t?';stroke-dasharray:4 4':'')+'"'+(t?'':' marker-end="url(#mR)"')+'/>'+T(170,143,t?'not connected':'stdout',{s:11,c:t?'no':'muted'})+
+     '<g style="'+fade+'">'+RX(50,152,220,40,'soft')+T(160,169,OUT[S.o][0],{s:12.5,w:700,a:'middle'})+T(160,184,OUT[S.o][1],{s:11,a:'middle',c:'muted'})+'</g></svg>';
+    L.$('#r15cmd').innerHTML=t?'<div class="ux-m" style="font-size:13px">$ tobias-zone</div><div class="small" style="margin-top:4px">Always reads /data/scans.log and writes /reports/zones.txt. To read grep’s output instead, Tobias has to change the program.</div>':
+      '<div class="ux-m" style="font-size:13px;overflow-wrap:anywhere">$ '+IN[S.i][2]+OUT[S.o][2]+'</div><div class="small" style="margin-top:4px">The shell did the wiring. Lines of zone’s code changed: <b>0</b>.</div>';
+    L.$$('#r15in .chip,#r15out .chip').forEach(c=>c.setAttribute('aria-disabled',t?'true':'false'));
+    L.$('#r15t').textContent=t?'Back to Linh’s version':'Show Tobias’s version';}
+  function check(){if(allTicked(L,'r15g')&&!S.fin){S.fin=true;
+    L.sheet('info','Logic here, wiring there','Linh’s tool just reads stdin and writes stdout, so whoever runs it does the wiring, and it fits any pipeline. Files, pipes, the keyboard and network sockets all share one interface: an ordered stream of bytes, by convention one record per line. Limits: several inputs or outputs get awkward, and piping into a network connection needs a tool like netcat or curl.');L.done();}}
+  IN.forEach((x,j)=>{L.$('#r15i'+j).onclick=()=>{if(S.tob)return;S.i=j;L.$$('#r15in .chip').forEach((c,k)=>c.classList.toggle('sel',k===j));if(j)tick(L,'r15g',0);draw();check();};});
+  OUT.forEach((x,j)=>{L.$('#r15o'+j).onclick=()=>{if(S.tob)return;S.o=j;L.$$('#r15out .chip').forEach((c,k)=>c.classList.toggle('sel',k===j));if(j)tick(L,'r15g',1);draw();check();};});
+  L.$('#r15t').onclick=()=>{S.tob=!S.tob;if(S.tob)tick(L,'r15g',2);draw();check();};
+  draw();}},
+{part:2,src:'Chapter 10 · Transparency and experimentation',
+ solve:async L=>{L.$('#t16p button.ux-jt[data-j="2"]').click();L.$('#t16w').click();},
+ run(L){
+  L.h(L.kick('pr','Hands on')+'<h1 class="q">Peek inside the pipe, then break the rule that makes peeking safe</h1>'+CSS+
+   goals('t16g',['Tap a joint to look inside, like piping into <span class="ux-m">less</span>','Let Tobias’s cleanup overwrite the input, then rerun'])+
+   '<div class="ux-ctl"><button class="btn" id="t16w">Tobias: overwrite access.log with just the pages</button></div><div id="t16m"></div><div id="t16p"></div>');
+  let fin=false;
+  const check=()=>{if(allTicked(L,'t16g')&&!fin){fin=true;
+    L.sheet('info','Immutable inputs make experiments cheap','Unix commands normally treat their input as read-only, so you can rerun a pipeline as often as you like with different options. You can stop at any stage and look, or save one stage’s output to a file and rerun only the later stages. MapReduce keeps the same habit: a job normally doesn’t change its input.');L.done();}};
+  const P=Pipe(L,L.$('#t16p'),{id:'t16',list:['awk7','sort','uniq','sortrn','head'],inspect:true,onInspect:()=>{tick(L,'t16g',0);check();}});
+  L.$('#t16w').onclick=function(){
+    if(!P.src){P.src=LOG.map(l=>l.split(/\s+/)[6]);P.cls='bad';P.draw();this.textContent='Restore the original log (sandbox only)';
+      L.$('#t16m').innerHTML='<div class="ux-read bad">The cleanup wrote over access.log. Each line now has one field, so field 7 is empty and uniq counts 57 blank lines. Rerunning can’t fix it: the original is gone.</div>';tick(L,'t16g',1);check();}
+    else{P.src=null;P.cls='';P.draw();this.textContent='Tobias: overwrite access.log with just the pages';
+      L.$('#t16m').innerHTML='<div class="ux-read good">Back to normal. In real life there’d be no undo. The safe habit: write results to a new file, such as pages.log, and leave the input untouched.</div>';}};}},
 {part:2,src:'Chapter 10 · The Unix Philosophy',pts:5,run(L){
   L.h(L.kick('pr','Name the idea')+'<h1 class="q">Which Unix idea is Linh relying on in each case?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Uniform interface','Logic vs wiring','Experimentation'],[
@@ -159,85 +546,127 @@ Course.lesson({
    ['Linh’s postcode-to-zone tool reads stdin and writes stdout, so anyone can drop it into a pipeline.',1,'The tool holds the logic; whoever runs it decides the wiring.'],
    ['Linh saves stage 3’s output to a file, fixes stage 4, and reruns only stages 4 and 5.',2,'Saved intermediate output lets you restart later stages without rerunning everything.'],
    ['Every tool in the pipeline splits records on the newline character.',0,'A shared record separator is part of the uniform interface that lets the tools work together.']],
-   'Uniform interface lets tools connect, separating logic from wiring lets you connect them any way you like, and immutable inputs make trying things safe.');}},
+   'A uniform interface lets tools connect, separating logic from wiring lets you connect them any way you like, and immutable inputs make trying things safe. The biggest limit: Unix tools run on one machine.');}},
 
 /* ---------- PART 4: MAPREDUCE ---------- */
 {part:3,src:'Chapter 10 · MapReduce and Distributed Filesystems',run(L){
-  L.h(L.kick('learn','From one machine to thousands')+'<h1 class="q">MapReduce is like Unix tools spread across many machines</h1>'+
-   L.prose('A MapReduce job is like one Unix process: it takes one or more inputs and produces one or more outputs. It normally doesn’t change its input and has no side effects besides writing its output. Output files are written once, from start to end, never edited later.')+
-   L.prose('Where Unix tools use stdin and stdout, MapReduce reads and writes files on a <b>distributed filesystem</b>. In Hadoop that is '+L.g('hdfs','HDFS')+', an open-source copy of Google’s GFS. Object stores such as Amazon S3 are similar in many ways.')+
-   L.flow([['box','A daemon on each machine','Serves the files on that machine’s disks to other '+L.g('node','nodes')],['map','The NameNode','One central server that tracks which block is on which machine'],['layers','Replicated blocks','Each block is copied to several machines, or protected by erasure coding']])+
-   L.prose('HDFS is <b>shared-nothing</b>: ordinary computers on a normal datacenter network, rather than a special shared-disk storage appliance. It scales to tens of thousands of machines and hundreds of petabytes, and costs much less than the equivalent dedicated storage.'));
+  L.h(L.kick('learn','From one machine to thousands')+'<h1 class="q">One filesystem made of many machines’ disks</h1>'+CSS+FIG_HDFS()+
+   '<p class="ux-cap">'+L.g('hdfs','HDFS')+' joins ordinary machines’ disks into one '+L.g('shared-nothing','shared-nothing')+' filesystem. A daemon on each machine serves its files; the NameNode tracks which block is where. Every block sits on several machines, so a dead disk loses nothing.</p>');
   L.done();}},
-{part:3,src:'Chapter 10 · MapReduce and Distributed Filesystems',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A disk dies on one machine in Linh’s cluster. It held a block of yesterday’s scan file. What now?</h1>');
-  L.mc(L.card,['The scan file is lost until someone restores a backup','The block is still on other machines, so the file is readable','The NameNode keeps a full copy of every block itself'],1,
-   'HDFS keeps each block on several machines precisely so a dead disk or machine doesn’t lose data.',
-   'Blocks are '+L.g('replication','replicated')+' across several machines, so the file is still readable. The NameNode only keeps track of where blocks are; it doesn’t store them.');}},
 {part:3,src:'Chapter 10 · MapReduce Job Execution',run(L){
-  L.h(L.kick('learn','How a MapReduce job works')+'<h1 class="q">The log pipeline, rebuilt as four steps</h1>'+
-   L.flow([['list','1 · Split into records','The input parser, one record per line'],['pointer','2 · Map','Pull out a key and a value: like awk'],['layers','3 · Sort by key','Built in: you never write it'],['check','4 · Reduce','Combine each key’s values: like uniq -c']])+
-   L.prose('You write just two functions. The '+L.g('mapper','mapper')+' is called once for every input record. It may emit any number of key-value pairs, including none, and remembers nothing from one record to the next.')+
-   L.prose('The framework gathers all values with the same key and calls the '+L.g('reducer','reducer')+' once per key, with an iterator over those values. The mapper puts data into a shape that can be sorted; the reducer processes it once sorted.')+
-   L.note('Need a second sort, like ranking pages by count? That takes a <b>second</b> MapReduce job that reads the first one’s output.','info'));
+  L.h(L.kick('learn','How a MapReduce job works')+'<h1 class="q">The same pipeline, as one MapReduce job</h1>'+CSS+FIG_MAP()+
+   '<p class="ux-cap">Like a Unix tool, a job reads input files and writes new output files, normally leaving its input unchanged. You write only the '+L.g('mapper','mapper')+' (like awk) and the '+L.g('reducer','reducer')+' (like uniq -c). Ranking needs a second sort: a second job.</p>');
   L.done();}},
-{part:3,src:'Chapter 10 · MapReduce Job Execution',pts:1,
- solve:async L=>{for(let k=0;k<3;k++)L.$('#nx').click();},
+{part:3,src:'Chapter 10 · Distributed execution of MapReduce',
+ solve:async L=>{for(let k=0;k<5;k++){L.$('#b20n').click();await L.sleep(15);}},
  run(L){
-  const B=[['OP-48201 · at hub · Westport North','OP-48202 · at hub · Eastvale Depot','OP-48203 · at hub · Westport North','OP-48204 · out for delivery'],['OP-48205 · at hub · Westport South','OP-48206 · at hub · Westport North','OP-48207 · delivered','OP-48208 · at hub · Eastvale Depot']];
-  const chip=(t,ok)=>'<span class="chip static'+(ok?' ok':'')+'" style="margin:3px">'+t+'</span>';
-  const block=(t,html)=>'<div style="background:var(--soft);border-radius:14px;padding:10px 12px;margin:6px 0"><div class="small"><b>'+t+'</b></div>'+html+'</div>';
-  const S=[
-   ()=>block('Input block 1',B[0].map(x=>chip(x)).join(''))+block('Input block 2',B[1].map(x=>chip(x)).join('')),
-   ()=>block('Mapper 1 output',['Westport North, 1','Eastvale Depot, 1','Westport North, 1'].map(x=>chip(x)).join('')+'<div class="small">OP-48204 isn’t an “at hub” scan, so the mapper emits nothing for it.</div>')+block('Mapper 2 output',['Westport South, 1','Westport North, 1','Eastvale Depot, 1'].map(x=>chip(x)).join('')),
-   ()=>block('Sorted by key',[chip('Eastvale Depot: 1, 1'),chip('Westport North: 1, 1, 1'),chip('Westport South: 1')].join('')+'<div class="small">Same keys now sit together, ready for the reducer.</div>'),
-   ()=>block('Reducer output',[chip('Eastvale Depot: 2',1),chip('Westport North: 3',1),chip('Westport South: 1',1)].join(''))];
-  const LB=['Run the mappers','Sort by key','Run the reducer'];let k=0;
-  L.h(L.kick('pr','Be the framework')+'<h1 class="q">Linh’s job counts “at hub” scans per hub. Step through it.</h1><div id="st"></div><button class="btn pri" id="nx" style="margin-top:10px">'+L.ic('play')+LB[0]+'</button><div id="fq"></div>');
-  L.$('#st').innerHTML=S[0]();
-  L.$('#nx').onclick=function(){if(k>=3)return;k++;L.$('#st').insertAdjacentHTML('beforeend','<div style="text-align:center;opacity:.6">'+L.ic('down')+'</div>'+S[k]());
-    if(k<3){this.innerHTML=L.ic('play')+LB[k];}
-    else{this.remove();const q=L.$('#fq');q.innerHTML='<h2 class="sub">Which parts did Linh actually write code for?</h2>';
-      L.mc(q,['The sort and the reducer','The mapper and the reducer','The mapper and the sort'],1,
-       'Linh wrote “if it’s an at-hub scan, emit (hub, 1)” and “add up the ones.” Parsing records and sorting are done by the framework.',
-       'The sort is built into MapReduce: mapper output is always sorted before it reaches the reducer. Linh only writes the mapper and the reducer.');}};}},
-{part:3,src:'Chapter 10 · Distributed execution of MapReduce',run(L){
-  L.h(L.kick('ex','Step by step')+'<h1 class="q">How one job runs across many machines</h1>');
-  L.beats(L.card,[
-   ['Split','The input is a directory in HDFS. Each file or block is a '+L.g('partition','partition')+' handled by its own <b>map task</b>. Input files are typically hundreds of megabytes each.'],
-   ['Near the data','The scheduler tries to run each map task on a machine that already holds a copy of its block, if that machine has spare CPU and memory. This <b>puts the computation near the data</b> and saves copying input over the network. The framework copies Linh’s code there first.'],
-   ['Pick a reducer','The job author sets how many reduce tasks there are. A <b>hash of the key</b> decides which reduce task gets each key-value pair, so all pairs with the same key end up in the same place.'],
-   ['Sort locally','Each map task splits its output by reducer and writes each part as a sorted file on its own local disk.'],
-   ['Shuffle','When a mapper finishes, the reducers download their part from it. Partitioning, sorting and copying together are called the '+L.g('shuffle','shuffle')+'. Unlike shuffling cards, nothing here is random.'],
-   ['Merge and reduce','Each reduce task merges the sorted files it received, keeping the order, and calls the reducer once per key. Its output is written back to HDFS, with copies on other machines.']],
-   'Your mapper and reducer see one record or one key at a time. The framework does all the work of moving data between machines.');}},
-{part:3,src:'Chapter 10 · Distributed execution of MapReduce',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Bramble & Bolt’s parcels appear in all three input blocks of a job that counts parcels per merchant. Tap the pieces until the sentence explains why one reducer call still sees them all.</h1>');
-  L.sentence(L.card,[['All pairs with the same key','All pairs from the same block','All pairs from the same mapper'],['go to one reduce task,','go to every reduce task,'],['because a hash of the key picks it','because the scheduler picks at random','because mappers run near the data']],[0,0,0],
-   [['Bramble & Bolt sits in all three blocks, so grouping by block would split its parcels up.','Each mapper sees only its own block, so it can’t gather every Bramble & Bolt pair.'],
-    ['Sending every pair everywhere would repeat the work. Each key belongs to exactly one reduce task.'],
-    ['Nothing in the shuffle is random. The same key always goes to the same reduce task.','Running near the data decides where map tasks run, not where their output goes.']],
-   'Hashing the key is deterministic, so every Bramble & Bolt pair from every mapper lands at the same reduce task, sorted next to each other.');}},
+  L.h(L.kick('ex','Step through it')+'<h1 class="q">Be the cluster: Linh’s job counts “at hub” scans per hub</h1>'+CSS+
+   '<div id="b20"></div><div class="ux-read" id="b20c"></div><div class="ux-ctl" id="b20k"><button class="btn pri" id="b20n"></button><button class="btn" id="b20r">Start over</button></div>');
+  const B=Board(L,L.$('#b20'));let fin=false;
+  const keep=()=>{const k=L.$('#b20k');if(!k)return;const d=document.querySelector('.dock'),lim=(d?d.getBoundingClientRect().top:innerHeight)-12,c=L.$('#b20c').getBoundingClientRect(),r=k.getBoundingClientRect();
+    if(r.bottom>lim)window.scrollBy({top:Math.min(r.bottom-lim,Math.max(c.top-80,0)),behavior:'smooth'});};
+  const upd=()=>{const s=B.S.stage;L.$('#b20c').innerHTML='<span class="small" style="font-weight:700;display:block">Step '+s+' of 5</span>'+BCAP.hub[s];
+    const n=L.$('#b20n');n.textContent=s<5?'Next: '+STEPL[s]:'Done';n.disabled=s>=5;};
+  L.$('#b20n').onclick=()=>{if(B.S.stage>=5)return;B.S.stage++;B.draw();upd();keep();
+    if(B.S.stage===5&&!fin){fin=true;L.sheet('info','Two small functions, a lot of plumbing','Linh wrote only “at hub scan → (hub, 1)” and “add up the ones”. Placing tasks near the data, '+L.g('partition','partitioning')+' by key, sorting, the '+L.g('shuffle','shuffle')+' and merging were all the framework’s work.');L.done();}};
+  L.$('#b20r').onclick=()=>{B.S.stage=0;B.draw();upd();keep();};
+  upd();}},
+{part:3,src:'Chapter 10 · Distributed execution of MapReduce',pts:1,
+ solve:async L=>{L.$('#p21o').children[1].click();for(let i=0;i<100&&!L.$('#p21d');i++)await L.sleep(30);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">m1 put its Westport Central pairs in its file for R2. Where will m3’s Westport Central pair go?</h1>'+CSS+
+   '<div class="ux-ctl" id="p21o"></div><div id="p21x"></div><div id="p21b"></div>');
+  const B=Board(L,L.$('#p21b'));B.S.stage=3;B.S.mask=[1,2];B.S.hl='WC';B.draw();
+  ['R1, to spread the load evenly','R2, the same reducer as m1’s','Whichever reducer is free first'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');[...L.$('#p21o').children].forEach(x=>{if(x!==b)x.setAttribute('aria-disabled','true');});
+      const ok=j===1;L.award(ok);b.classList.add(ok?'ok':'no');L.$('#p21o').children[1].classList.add('ok');
+      L.sheet(ok?'ok':'no',ok?'Same key, same reducer':'It goes to R2',
+       'The reducer is picked by a hash of the key, and Westport Central hashes to the same value whichever mapper computes it. So every WC pair from m1, m2 and m3 meets at R2, sorted next to each other, and R2 alone counts all 4.');
+      B.S.mask=[];B.draw();await L.sleep(450);if(!B.alive())return;
+      if(!await B.play(4,5,550))return;
+      L.$('#p21x').innerHTML='<div class="ux-read good" id="p21d">All four WC pairs (outlined) end up at R2: WC → 4.</div>';L.done();};
+    L.$('#p21o').appendChild(b);});}},
+{part:3,src:'Chapter 10 · Distributed execution of MapReduce',
+ solve:async L=>{L.$('#e22p0').click();for(let i=0;i<100&&L.e22busy;i++)await L.sleep(30);L.$('#e22p1').click();for(let i=0;i<100&&L.e22busy;i++)await L.sleep(30);},
+ run(L){
+  const PRE=[['Disk dies on M2',S=>{S.down=1;S.place=[0,2,2];},'M2’s disk died. B1 and B2 still have copies on M1 and M3, so the scheduler runs m2 on M3 instead. The framework just reruns a failed task elsewhere. Same answer: WC 4, ED 2, WN 2, WS 1.'],
+   ['Bramble & Bolt in every block',S=>{S.key='mer';},'Now the job counts scans per merchant on a flash-sale day (illustrative). Bramble &amp; Bolt’s pairs come from every block, and the hash sends all of them to R1: 9 of 12 pairs on one reducer. A very popular key piles up in one place (the next lesson deals with this).'],
+   ['Three reducers',S=>{S.R=3;},'Linh sets 3 reduce tasks. The number of map tasks follows the input blocks; the number of reduce tasks is the job author’s choice. Keys spread differently, but each key still goes to exactly one reducer.']];
+  const tried=new Set();L.e22busy=false;
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Push the board to its limits. Try at least two.</h1>'+CSS+
+   '<div class="ux-ctl" id="e22o"></div><div class="ux-read" id="e22c">Pick a case. The job then runs from start to finish.</div><div id="e22b"></div>');
+  const B=Board(L,L.$('#e22b'));
+  PRE.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e22p'+j;b.textContent=p[0];
+    b.onclick=async()=>{if(L.e22busy)return;L.e22busy=true;[...L.$('#e22o').children].forEach((x,k)=>x.classList.toggle('sel',k===j));
+      B.reset();p[1](B.S);L.$('#e22c').innerHTML=p[2];
+      const ok=await B.play(0,5,170);L.e22busy=false;if(!ok)return;tried.add(j);
+      if(tried.size===2){L.sheet('info','Where the model bends','Replicated blocks let a task rerun near another copy, so one dead disk costs a little time, not the answer. Hashing guarantees one key meets at one reducer, which is exactly why a huge key can overload that reducer. And the reducer count is yours to choose.');L.done();}};
+    L.$('#e22o').appendChild(b);});}},
+{part:3,src:'Chapter 10 · Distributed execution of MapReduce',pts:1,
+ solve:async L=>{L.$('#c23-0-0').click();L.$('#c23-1-2').click();L.$('#c23-2-0').click();L.$('#c23chk').click();},
+ run(L){
+  const CAP=[2,2,1],MB=256;let first=true,won=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">M2’s disk has died. Place the three map tasks so no input block crosses the network, and no machine runs more than it has room for.</h1>'+CSS+
+   '<div id="c23b"></div><div id="c23a" style="margin-top:8px"></div><div class="ux-read" id="c23r"></div><div class="ux-ctl"><button class="btn pri" id="c23chk">Run the map phase</button></div>');
+  const B=Board(L,L.$('#c23b'),{only:'mach',cap:CAP});B.S.down=1;B.S.stage=1;B.S.place=[-1,-1,-1];B.draw();
+  L.$('#c23a').innerHTML=[0,1,2].map(t=>'<div class="ux-asg"><span class="lb">m'+(t+1)+' reads B'+(t+1)+'</span>'+[0,1,2].map(m=>'<button class="chip" id="c23-'+t+'-'+m+'">M'+(m+1)+'</button>').join('')+'</div>').join('');
+  const status=()=>{const P=B.S.place,probs=[];let net=0;
+    [0,1,2].forEach(t=>{const m=P[t];if(m<0){probs.push('m'+(t+1)+' has no machine yet');return;}
+      if(m===1)probs.push('m'+(t+1)+' is on M2, which is down');else if(!HOLD[m].includes(t)){net+=MB;probs.push('m'+(t+1)+' pulls B'+(t+1)+' over the network');}});
+    [0,1,2].forEach(m=>{if(P.filter(x=>x===m).length>CAP[m])probs.push('M'+(m+1)+' is over capacity');});
+    return {probs,net};};
+  const upd=()=>{const s=status();L.$('#c23r').innerHTML='<b>Input copied over the network:</b> '+s.net+' MB <span class="small">(illustrative: '+MB+' MB per block)</span>'+(s.probs.length?'<div class="small" style="margin-top:4px;color:var(--no)">'+s.probs.join(' · ')+'</div>':'<div class="small" style="margin-top:4px;color:var(--ok)">Every task reads its block locally.</div>');};
+  [0,1,2].forEach(t=>[0,1,2].forEach(m=>{L.$('#c23-'+t+'-'+m).onclick=()=>{if(won)return;B.S.place[t]=m;[0,1,2].forEach(k=>L.$('#c23-'+t+'-'+k).classList.toggle('sel',k===m));B.draw();upd();};}));
+  upd();
+  L.$('#c23chk').onclick=()=>{if(won)return;const s=status(),ok=s.probs.length===0;
+    if(first){L.award(ok);first=false;}
+    if(ok){won=true;L.sheet('ok','Computation near the data','m2 can only go to M3 (the one live copy of B2), which fills M3. So m3 goes to M1, the other home of B3, next to m1. The scheduler does this itself: it tries to run each map task on a machine holding a copy of its block, if that machine has spare memory and CPU.');L.done();}
+    else L.sheet('no','Not yet','Fix the red items. Start with the task that has only one possible machine: which live machine still holds B2?');};}},
 {part:3,src:'Chapter 10 · MapReduce workflows',run(L){
-  L.h(L.kick('learn','Chaining jobs')+'<h1 class="q">Real batch work is a workflow of many jobs</h1>'+
-   L.prose('One MapReduce job can count views per page but can’t also rank them, because ranking needs a second sort. So jobs are chained into <b>workflows</b>: one job’s output becomes the next job’s input.')+
-   L.flow([['play','Job 1','Clean the day’s scans'],['box','A directory','/clean/scans in HDFS'],['play','Job 2','On-time rate per merchant']])+
-   L.prose('Hadoop itself has no special support for this. The chaining is done by directory name: job 1 writes to a directory, and job 2 is set up to read that same directory. That is less like a Unix pipe and more like writing each step to a temporary file.')+
-   L.list([['Only complete output counts','A job’s output is valid only once the whole job succeeds. MapReduce throws away the partial output of a failed job, so the next job must wait.'],
-     ['Schedulers manage it','Tools such as Oozie, Azkaban, Luigi, Airflow and Pinball run jobs in the right order. Workflows of 50 to 100 jobs are common for recommendation systems.'],
-     ['Higher-level tools wire it up','Pig, Hive, Cascading, Crunch and FlumeJava set up multi-stage workflows for you.']],2));
+  L.h(L.kick('learn','Chaining jobs')+'<h1 class="q">Real batch work is a workflow of many jobs</h1>'+CSS+FIG_WF()+
+   '<p class="ux-cap">Ranking needs a second sort, so a second job. Hadoop chains jobs into a '+L.g('workflow','workflow')+' only by directory name: each job writes all its output to files, while a Unix pipe streams lines through a small memory buffer.</p>');
   L.done();}},
-{part:3,src:'Chapter 10 · MapReduce workflows',pts:1,run(L){
-  L.h(L.kick('pr','What should happen?')+'<h1 class="q">Linh’s job 1 crashes after writing 60% of its files to <b>/clean/scans</b>. Job 2 reads that directory. What should happen next?</h1>');
-  L.mc(L.card,['Job 2 starts on the 60% so the report is partly ready','Job 2 starts and fills the missing 40% from the Parcel DB','Job 2 waits; job 1’s partial output is discarded and it reruns'],2,
-   'A job’s output only counts once the whole job has succeeded. The scheduler holds job 2 until job 1 completes properly.',
-   'Partial output from a failed job is not valid: it is thrown away. Job 2 must wait until job 1 has run again and completed, so its input is the full day.');}},
+{part:3,src:'Chapter 10 · MapReduce workflows',pts:1,
+ solve:async L=>{L.$('#w25o').children[2].click();for(let i=0;i<120&&!L.$('#w25d');i++)await L.sleep(30);},
+ run(L){
+  let pick=null;
+  const job=(x,a,b,c,id)=>RX(x,26,92,62,c)+T(x+46,44,a,{s:12.5,w:700,a:'middle'})+T(x+46,58,b,{s:11,a:'middle',c:'muted'});
+  L.h(L.kick('pr','What should happen?')+'<h1 class="q">Linh’s job 1 crashes after writing 60% of its files to <span class="ux-m">/clean/scans</span>. Job 2 reads that directory. What should happen?</h1>'+CSS+
+   '<div class="ux-fig"><svg viewBox="0 0 320 120" role="img" aria-label="Job 1 writes files into /clean/scans; job 2 reads them.">'+DEFS('mX')+
+   job(4,'Job 1','clean scans','h2')+'<rect x="14" y="68" width="72" height="9" rx="4" style="fill:var(--card);stroke:var(--line2)"/><rect id="w25bar" x="14" y="68" width="0" height="9" rx="4" style="fill:var(--h2)"/>'+
+   AR(98,57,114,57,'mX')+'<path d="M116 30 h28 l6 6 h56 v54 h-90 z" style="fill:var(--soft);stroke:var(--line2);stroke-width:2"/>'+T(161,20,'/clean/scans',{s:11,a:'middle',m:1})+
+   Array.from({length:10},(x,i)=>'<rect id="w25f'+i+'" x="'+(123+(i%5)*16)+'" y="'+(44+Math.floor(i/5)*20)+'" width="12" height="15" rx="2" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5;opacity:0"/>').join('')+
+   AR(208,57,222,57,'mX')+job(224,'Job 2','on-time report','h3')+T(270,78,'not started',{s:11,a:'middle',w:700,id:'w25s'})+
+   T(160,112,'',{s:11.5,a:'middle',w:700,id:'w25m'})+'</svg></div><div class="ux-ctl" id="w25o"></div><div id="w25x"></div>');
+  const $=s=>L.$(s);
+  const files=(n,st)=>{for(let i=0;i<10;i++){const f=$('#w25f'+i);if(!f)return;f.style.opacity=i<n?1:0;f.style.fill=st==='x'?'var(--no-bg)':'var(--h2-bg)';f.style.stroke=st==='x'?'var(--no)':'var(--h2)';}};
+  const bar=(p,bad)=>{const b=$('#w25bar');if(b){b.setAttribute('width',72*p);b.style.fill=bad?'var(--no)':'var(--h2)';}};
+  const msg=(t,c)=>{const m=$('#w25m');if(m){m.textContent=t;m.style.fill='var(--'+(c||'ink')+')';}};
+  const st2=(t,c)=>{const m=$('#w25s');if(m){m.textContent=t;m.style.fill='var(--'+(c||'ink')+')';}};
+  async function play(){
+    st2('waiting','muted');
+    for(let k=1;k<=6;k++){bar(k/10);files(k);msg('job 1 writing…');await L.sleep(90);if(!$('#w25bar'))return false;}
+    bar(.6,1);msg('job 1 crashed at 60%','no');await L.sleep(450);if(!$('#w25bar'))return false;
+    files(6,'x');msg('partial output: discarded','no');await L.sleep(450);if(!$('#w25bar'))return false;
+    files(0);msg('job 1 reruns');
+    for(let k=1;k<=10;k++){bar(k/10);files(k);await L.sleep(70);if(!$('#w25bar'))return false;}
+    msg('job 1 succeeded: input complete','ok');st2('running','ok');return true;}
+  ['Job 2 starts on the 60%, so the report is partly ready','Job 2 starts and fills the missing 40% from the Parcel DB','Job 2 waits; job 1’s partial files are discarded and it reruns'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.textContent=t;b.style.textAlign='left';
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');[...L.$('#w25o').children].forEach(x=>{if(x!==b)x.setAttribute('aria-disabled','true');});
+      const ok=j===2;L.award(ok);b.classList.add(ok?'ok':'no');L.$('#w25o').children[2].classList.add('ok');
+      L.sheet(ok?'ok':'no',ok?'Only complete output counts':'Not quite',
+       'A job’s output is valid only once the whole job has succeeded: MapReduce throws away a failed job’s partial output. So the scheduler holds job 2 until job 1 has run again and completed. Starting on 60% would build the report from only part of the day’s scans.');
+      if(await play())L.$('#w25x').innerHTML='<span id="w25d"></span>';L.done();};
+    L.$('#w25o').appendChild(b);});}},
 {part:3,src:'Chapter 10 · MapReduce Job Execution',pts:6,run(L){
   L.h(L.kick('pr','Who does what?')+'<h1 class="q">In Linh’s count-per-hub job, who handles each part?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Linh writes it','The framework'],[
    ['Pull the hub name out of each scan record',0,'That is the mapper, Linh’s code.'],
    ['Sort all key-value pairs by key',1,'The sort is built in. Mapper output is always sorted before reducers see it.'],
-   ['Decide how many reduce tasks the job uses',0,'The number of reduce tasks is set by the job’s author.'],
+   ['Decide how many reduce tasks the job uses',0,'The number of reduce tasks is set by the job’s author. The number of map tasks follows the input blocks.'],
    ['Run each map task on a machine that holds its block',1,'The scheduler places tasks near the data.'],
    ['Add up the scans for each hub',0,'That is the reducer, Linh’s code.'],
    ['Copy each mapper’s sorted files to the right reducer',1,'Partitioning, sorting and copying make up the shuffle, which the framework runs.']],

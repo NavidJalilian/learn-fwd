@@ -13,9 +13,288 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0029 only. Two signature models, reused through the lesson:
+   1. Cross: the dual-write crossing diagram. Two clients (a support
+      agent sets parcel OP-48288's address to A, Mrs. Okoro sets B).
+      Each client's write lands on the Parcel DB row, then on the
+      support search row; a line joins one client's two writes. When
+      the lines cross, the stores saw the writes in opposite orders and
+      end with different values. Switch to CDC: search follows the
+      Parcel DB's change log, so its dots move with the DB's order.
+   2. The event scrubber: parcel OP-48288's lifecycle log with a read
+      head; three state cards (tracking page, billing, support) are a
+      fold of the events up to the head. Presets compact it, replay
+      from a snapshot, and reject a command.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.card [hidden]{display:none!important}'+
+ '.cx29 svg{width:100%;display:block;touch-action:none;-webkit-user-select:none;user-select:none}'+
+ '.cx29 .dot{cursor:grab;outline:none}.cx29 .dot:focus circle{stroke-width:4.5}'+
+ '.s29t{font:600 13px var(--sans);fill:var(--ink)}.s29m{font:500 12.5px var(--sans);fill:var(--muted)}.s29b{font:700 14px var(--sans)}'+
+ '.pic29{width:100%;display:block;margin:4px 0 2px}.pic29 text{font-family:var(--sans)}'+
+ '.capt{font-size:15.5px;line-height:1.5;margin:10px 0 0}.capt.sm{font-size:13.5px;color:var(--muted);margin-top:6px}'+
+ '.rd29{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.5;margin:8px 0 4px;min-height:44px}'+
+ '.row29{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.row29 .chip{margin:0;min-height:40px}'+
+ '.vd29{display:inline-block;font-weight:700;border-radius:99px;padding:1px 9px;font-size:13px;margin:0 6px 2px 0}.vd29.ok{background:var(--ok-bg);color:var(--ok)}.vd29.no{background:var(--no-bg);color:var(--no)}'+
+ '.log29{list-style:none;margin:6px 0;padding:0;display:flex;flex-direction:column;gap:4px}'+
+ '.log29 li{display:flex;align-items:center;gap:8px;border-radius:10px;padding:6px 9px;font-size:14px;line-height:1.3;background:var(--card);border:1.5px solid var(--line);transition:opacity .2s}'+
+ '.log29 li .o{font:700 12px var(--sans);color:var(--muted);min-width:20px;font-variant-numeric:tabular-nums}'+
+ '.log29 li.off{opacity:.38}.log29 li.gone{opacity:.4;text-decoration:line-through}'+
+ '.log29 li.head{border-color:var(--pri);box-shadow:0 0 0 2px var(--pri-bg)}'+
+ '.log29 li.cmd{border-style:dashed;border-color:var(--no-line);background:var(--no-bg);color:var(--no)}'+
+ '.log29 li.snap{background:var(--h3-bg);border-color:var(--h3)}.log29 li.bug{border-color:var(--no-line)}.log29 li.fix{border-color:var(--ok-line);background:var(--ok-bg)}'+
+ '.log29.sm li{padding:3px 8px;font-size:13.5px}.log29 li .amt{margin-left:auto;font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}'+
+ '.st29{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}'+
+ '.st29>div{border-radius:12px;padding:7px 8px;background:var(--soft);font-size:13px;line-height:1.35;min-height:78px;border:1.5px solid transparent}'+
+ '.st29>div.badc{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.st29 b{display:block;font-size:11.5px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.03em;margin-bottom:3px}'+
+ '.st29 .bad{color:var(--no);font-weight:700}'+
+ '.rng29{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14.5px;margin:8px 0}.rng29 input{grid-column:1/3;width:100%;accent-color:var(--pri);height:34px}.rng29 b{font-variant-numeric:tabular-nums}'+
+ '.stepcap29{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:72px}.stepcap29 .n{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.ill29{display:inline-block;vertical-align:middle;font:600 11.5px var(--sans);letter-spacing:.02em;color:var(--muted);background:var(--soft2);border-radius:99px;padding:1px 8px;margin-left:4px}'+
+ '.mtr29{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0}.mtr29 span{flex:1 1 130px;border-radius:12px;padding:7px 10px;font-size:14px;font-weight:600;background:var(--soft)}.mtr29 span.ok{background:var(--ok-bg);color:var(--ok)}.mtr29 span.no{background:var(--no-bg);color:var(--no)}'+
+ '</style>');
+
+const vd29=(ok,t)=>'<span class="vd29 '+(ok?'ok':'no')+'">'+t+'</span>';
+const arrowR=(x1,y,x2,col)=>'<path d="M'+x1+' '+y+' H'+(x2-7)+'" style="stroke:var(--'+(col||'muted')+');stroke-width:2"/><path d="M'+(x2-8)+' '+(y-5)+' l8 5 l-8 5z" style="fill:var(--'+(col||'muted')+')"/>';
+const arrowD=(x,y1,y2,col)=>'<path d="M'+x+' '+y1+' V'+(y2-7)+'" style="stroke:var(--'+(col||'muted')+');stroke-width:2"/><path d="M'+(x-5)+' '+(y2-8)+' l5 8 l5 -8z" style="fill:var(--'+(col||'muted')+')"/>';
+const tx=(x,y,t,cls,extra)=>'<text x="'+x+'" y="'+y+'" class="'+(cls||'s29t')+'"'+(extra||'')+'>'+t+'</text>';
+const txc=(x,y,t,cls,st)=>'<text x="'+x+'" y="'+y+'" text-anchor="middle" class="'+(cls||'s29t')+'"'+(st?' style="'+st+'"':'')+'>'+t+'</text>';
+const box=(x,y,w,h,col,dash)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="12" style="fill:var(--'+(col?col+'-bg':'soft')+');stroke:var(--'+(col||'line2')+');stroke-width:'+(col?2:1.5)+(dash?';stroke-dasharray:5 4':'')+'"/>';
+
+const chips29=(x,y,arr,col)=>{let s='';arr.forEach(t=>{const w=Math.round(t.length*6.3+(t.match(/[A-Z]/g)||[]).length*2.5+18);s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="24" rx="12" style="fill:var(--'+(col?col+'-bg':'card')+');stroke:var(--'+(col||'line2')+')"/>'+txc(x+w/2,y+16.5,t,'s29m','fill:var(--'+(col||'ink')+');font-weight:600');x+=w+6;});return s;};
+
+/* ---------------- Signature 1: the dual-write crossing diagram ---------------- */
+const XT=t=>22+t*2.4;                       /* time 0..100 -> x 22..262 */
+const CK={A:'h1',B:'h2'};
+function Cross(host,cfg){
+  const c={mode:cfg.mode||'dual',w:{A:Object.assign({},cfg.w.A),B:Object.assign({},cfg.w.B)},fail:cfg.fail||null,down:false,lag:14,
+    ghost:new Set(cfg.ghost||[]),drag:cfg.drag!==false,on:cfg.on||(()=>{}),read:cfg.read};
+  host.innerHTML='<div class="cx29"><svg viewBox="0 0 340 236" role="img" aria-label="Crossing diagram: each client’s write lands on the Parcel DB row, then on the support search row. Each store keeps the last write it saw."></svg></div><div class="rd29" aria-live="polite"></div>';
+  const svg=host.querySelector('svg'),rd=host.querySelector('.rd29');
+  const Y={db:66,s:176};
+  c.sT=k=>{
+    if(c.mode==='dual')return c.w[k].s;
+    const ord=['A','B'].sort((a,b)=>c.w[a].db-c.w[b].db||(a<b?-1:1));
+    let prev=-99;const out={};
+    ord.forEach(q=>{let t=c.w[q].db+c.lag;if(c.down&&t>=34&&t<=70)t=73;t=Math.max(t,prev+7);out[q]=t;prev=t;});
+    return out[k];};
+  c.res=()=>{
+    const vis=(k,r)=>!c.ghost.has(k+r);
+    const last=arr=>arr.length?arr.sort((a,b)=>a[0]-b[0]||(a[1]<b[1]?-1:1))[arr.length-1][1]:'old';
+    const db=last(['A','B'].filter(k=>vis(k,'db')).map(k=>[c.w[k].db,k]));
+    const s=last(['A','B'].filter(k=>vis(k,'s')&&!(c.mode==='dual'&&c.fail===k)).map(k=>[c.sT(k),k]));
+    const crossed=c.mode==='dual'&&!c.fail&&(c.w.A.db-c.w.B.db)*(c.w.A.s-c.w.B.s)<0;
+    return {db,s,crossed,same:db===s};};
+  const defRead=R=>{
+    if(c.mode==='cdc')return vd29(true,'In step')+'Search applies the Parcel DB’s changes in the same order, a moment later. Both end as <b>'+R.db+'</b>.'+(c.down?' Search was offline, so it picked up from its last offset and caught up.':'');
+    if(c.fail)return vd29(false,'Out of step')+'Mrs. Okoro’s write to search <b>failed</b> after the Parcel DB took it. Parcel DB: <b>'+R.db+'</b>, search: <b>'+R.s+'</b>.';
+    return R.same?vd29(true,'In step')+'Both end as <b>'+R.db+'</b>.':vd29(false,'Out of step')+'Parcel DB ends as <b>'+R.db+'</b>, search as <b>'+R.s+'</b>. No error was raised, so nobody is alerted.';};
+  c.draw=()=>{
+    const R=c.res();let s='';
+    const mini=(x,y,k)=>'<circle cx="'+x+'" cy="'+y+'" r="9" style="fill:var(--'+CK[k]+'-bg);stroke:var(--'+CK[k]+');stroke-width:2"/>'+txc(x,y+4.5,k,'','font:700 12.5px var(--sans);fill:var(--'+CK[k]+')');
+    s+=mini(17,16,'A')+tx(32,21,'Agent sets A')+mini(170,16,'B')+tx(185,21,'Mrs. Okoro sets B');
+    [['db','Parcel DB'],['s',c.mode==='cdc'?'Support search · follows the log':'Support search']].forEach(([r,lab])=>{
+      const y=Y[r],v=r==='db'?R.db:R.s,col=v==='old'?null:CK[v];
+      s+=tx(10,y-22,lab)+'<rect x="8" y="'+(y-15)+'" width="258" height="30" rx="10" style="fill:var(--soft)"/>';
+      s+='<rect x="274" y="'+(y-17)+'" width="60" height="34" rx="10" style="fill:var(--'+(col?col+'-bg':'card')+');stroke:var(--'+(col||'line2')+');stroke-width:2"/>'+txc(304,y+5,v==='old'?'old':v,'s29b','fill:var(--'+(col||'muted')+')');});
+    s+=txc(304,Y.db-23,'ends as','s29m');
+    if(c.mode==='cdc'&&c.down)s+='<rect x="'+XT(34)+'" y="'+(Y.s-15)+'" width="'+(XT(70)-XT(34))+'" height="30" style="fill:var(--no-bg);stroke:var(--no-line);stroke-dasharray:4 3"/>'+txc((XT(34)+XT(70))/2,Y.s+5,'offline','s29m','fill:var(--no)');
+    if(c.mode==='cdc')s+='<rect x="8" y="110" width="258" height="22" rx="7" style="fill:var(--soft2)"/>';
+    const ends={};
+    ['A','B'].forEach(k=>{
+      const x1=XT(c.w[k].db),x2=XT(c.sT(k)),f=c.mode==='dual'&&c.fail===k,gh=c.ghost.has(k+'db')||c.ghost.has(k+'s');
+      ends[k]=[x1,x2];
+      s+='<line x1="'+x1+'" y1="'+(Y.db+13)+'" x2="'+x2+'" y2="'+(Y.s-13)+'" style="stroke:var(--'+(f?'no':CK[k])+');stroke-width:2.5;'+(c.mode==='cdc'||f?'stroke-dasharray:5 4;':'')+(gh?'opacity:.25':'')+'"/>';});
+    if(c.mode==='cdc')s+=txc(137,125.5,'change log, in the Parcel DB’s order','s29m','fill:var(--ink);paint-order:stroke;stroke:var(--soft2);stroke-width:4px;stroke-linejoin:round');
+    if(R.crossed&&!c.ghost.size){const [a1,a2]=ends.A,[b1,b2]=ends.B,u=(b1-a1)/((a2-a1)-(b2-b1));
+      if(u>0&&u<1)s+='<circle cx="'+(a1+u*(a2-a1))+'" cy="'+(Y.db+13+u*(Y.s-Y.db-26))+'" r="10" style="fill:none;stroke:var(--no);stroke-width:3"/>';}
+    ['A','B'].forEach(k=>['db','s'].forEach(r=>{
+      const t=r==='db'?c.w[k].db:c.sT(k),x=XT(t),y=Y[r],failed=c.mode==='dual'&&c.fail===k&&r==='s',gh=c.ghost.has(k+r);
+      const dr=c.drag&&!gh&&(c.mode==='dual'||r==='db'),col=failed?'no':CK[k];
+      s+='<g'+(dr?' class="dot" tabindex="0" role="slider" aria-label="When '+(k==='A'?'the agent':'Mrs. Okoro')+'’s write reaches '+(r==='db'?'the Parcel DB':'support search')+'" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+Math.round(t)+'"':'')+' data-d="'+k+r+'" style="'+(gh?'opacity:.3':'')+'">'+
+        '<rect x="'+(x-20)+'" y="'+(y-22)+'" width="40" height="44" style="fill:transparent"/>'+
+        '<circle cx="'+x+'" cy="'+y+'" r="13" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:2.5'+(failed||gh?';stroke-dasharray:4 3':'')+'"/>'+
+        txc(x,y+5,failed?'✗':k,'s29b','fill:var(--'+col+');pointer-events:none')+'</g>';}));
+    s+='<text x="264" y="226" text-anchor="end" class="s29m">time →</text>';
+    if(c.mode==='dual'&&c.drag)s+=tx(10,226,'drag the dots','s29m');
+    svg.innerHTML=s;
+    rd.innerHTML=c.read?c.read(R,c):defRead(R);
+    return R;};
+  c.set=(id,t)=>{const k=id[0],r=id.slice(1),w=c.w[k];
+    if(r==='db'){w.db=Math.max(0,Math.min(c.mode==='cdc'?80:92,t));if(w.s<w.db+8)w.s=w.db+8;}
+    else w.s=Math.max(w.db+8,Math.min(100,t));
+    const R=c.draw();c.on(R,c);};
+  c.get=id=>id.slice(1)==='db'?c.w[id[0]].db:c.w[id[0]].s;
+  c.load=p=>{c.w={A:Object.assign({},p.A),B:Object.assign({},p.B)};c.fail=p.fail||null;return c.draw();};
+  let dg=null;
+  svg.addEventListener('pointerdown',e=>{const g=e.target.closest('.dot');if(!g)return;dg=g.dataset.d;try{svg.setPointerCapture(e.pointerId);}catch(_){}e.preventDefault();});
+  svg.addEventListener('pointermove',e=>{if(!dg)return;const b=svg.getBoundingClientRect();c.set(dg,((e.clientX-b.left)/b.width*340-22)/2.4);});
+  const up=()=>{dg=null;};svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);
+  svg.addEventListener('keydown',e=>{const g=e.target.closest('.dot');if(!g)return;const d={ArrowLeft:-5,ArrowDown:-5,ArrowRight:5,ArrowUp:5}[e.key];if(!d)return;
+    e.preventDefault();const id=g.dataset.d;c.set(id,c.get(id)+d);const n=svg.querySelector('[data-d="'+id+'"]');if(n)n.focus();});
+  c.defRead=defRead;
+  c.draw();
+  return c;
+}
+/* the solver moves a dot through its real keyboard control */
+const nudge29=(L,id,dir,n)=>{for(let j=0;j<n;j++){const g=L.$('[data-d="'+id+'"]');g.dispatchEvent(new KeyboardEvent('keydown',{key:dir>0?'ArrowRight':'ArrowLeft',bubbles:true}));}};
+
+/* ---------------- Signature 2: the event scrubber ---------------- */
+const EV=[['book','Booked by Bramble & Bolt, slot 10–11'],['label','Label printed'],['pick','Picked up by Ravi'],['att','Delivery attempted, nobody home'],['redir','Mrs. Okoro: leave it on the porch'],['deliv','Delivered']];
+function fold29(kinds){const s={status:'Not booked',safe:null,charged:0,att:0,n:0};
+  kinds.forEach(k=>{s.n++;
+    if(k==='book'){s.status='Booked';s.charged+=6;}
+    else if(k==='label')s.status='Label printed';
+    else if(k==='pick')s.status='Picked up';
+    else if(k==='att'){s.status='Attempted';s.att++;}
+    else if(k==='redir')s.safe='porch';
+    else if(k==='deliv')s.status='Delivered';});
+  return s;}
+const TRUTH=fold29(EV.map(e=>e[0]));
+function cards29(s,cmp){
+  const bad=k=>cmp&&s[k]!==TRUTH[k];
+  const v=(k,html)=>bad(k)?'<span class="bad">'+html+'</span>':html;
+  const where=s.status==='Delivered'?(s.safe?' to the porch':'<span class="bad"> to… where?</span>'):'';
+  const tCls=bad('safe')||bad('status')?' class="badc"':'',bCls=bad('charged')?' class="badc"':'',sCls=bad('att')?' class="badc"':'';
+  return '<div class="st29"><div'+tCls+'><b>Tracking page</b>'+v('status',s.status)+where+'<br>Safe place: '+v('safe',s.safe||'none')+'</div>'+
+   '<div'+bCls+'><b>Billing</b>'+v('charged','$'+s.charged.toFixed(2))+' charged</div>'+
+   '<div'+sCls+'><b>Support</b>'+s.n+' event'+(s.n===1?'':'s')+'<br>'+v('att',s.att+' attempt'+(s.att===1?'':'s'))+'</div></div>';}
+const logRows29=(rows,sm)=>'<ol class="log29'+(sm?' sm':'')+'">'+rows.map(r=>'<li class="'+(r.c||'')+'"><span class="o">'+r.o+'</span><span>'+r.t+'</span>'+(r.a?'<span class="amt">'+r.a+'</span>':'')+'</li>').join('')+'</ol>';
+
+/* ---------------- static pictures for Learn screens ---------------- */
+const PIC_REPL='<svg class="pic29" viewBox="0 0 340 200" role="img" aria-label="Writes go into the Parcel DB leader, which produces a replication log; two followers apply the same events in the same order and hold the same data">'+
+ ['w1','w2','w3'].map((w,j)=>'<rect x="'+(12+j*30)+'" y="6" width="26" height="22" rx="6" style="fill:var(--card);stroke:var(--line2)"/>'+txc(25+j*30,21.5,w,'s29m')+arrowD(25+j*30,30,54)).join('')+
+ box(8,56,96,66,'h1')+txc(56,84,'Parcel DB')+txc(56,104,'leader','s29m')+
+ arrowR(106,89,126)+txc(175,68,'replication log')+
+ ['w1','w2','w3'].map((w,j)=>'<rect x="'+(128+j*32)+'" y="76" width="30" height="26" rx="5" style="fill:var(--pri-bg);stroke:var(--pri)"/>'+txc(143+j*32,94,w,'s29m','fill:var(--pri-deep)')).join('')+
+ txc(175,122,'a stream of','s29m')+txc(175,138,'write events','s29m')+
+ '<path d="M224 89 L246 54" style="stroke:var(--muted);stroke-width:2"/><path d="M224 89 L246 126" style="stroke:var(--muted);stroke-width:2"/>'+
+ box(248,22,86,60,'h2')+txc(291,46,'Follower 1')+txc(291,68,'w1 w2 w3','s29m')+
+ box(248,98,86,60,'h2')+txc(291,122,'Follower 2')+txc(291,144,'w1 w2 w3','s29m')+
+ '<rect x="8" y="168" width="326" height="28" rx="14" style="fill:var(--ok-bg)"/>'+txc(171,187,'same events + same order → same state','s29t','fill:var(--ok)')+'</svg>';
+
+const PIC_COPIES=(()=>{const b=(x,y,col,t,l1,l2)=>box(x,y,160,66,col)+tx(x+12,y+24,t)+tx(x+12,y+43,l1,'s29m')+(l2?tx(x+12,y+59,l2,'s29m'):'');
+ return '<svg class="pic29" viewBox="0 0 340 232" role="img" aria-label="Four copies of parcel 88 in four shapes: Parcel DB row, cache, search index, warehouse. Two ways to sync them: nightly ETL, or dual writes">'+
+ b(6,4,'h1','Parcel DB','row 88: 4 Mill Lane,','out for delivery')+b(174,4,'h3','Cache','the tracking page','for parcel 88')+
+ b(6,76,'h2','Support search','“okoro” → 88','“mill lane” → 88')+b(174,76,'h4','Warehouse','fact row: 88,','Westport, on time')+
+ txc(170,166,'When parcel 88 changes, all four must change:','s29m','fill:var(--ink)')+
+ '<rect x="6" y="176" width="160" height="52" rx="12" style="fill:var(--soft2)"/>'+txc(86,198,'Nightly ETL')+txc(86,217,'dump, transform, load','s29m')+
+ '<rect x="174" y="176" width="160" height="52" rx="12" style="fill:var(--no-bg);stroke:var(--no-line)"/>'+txc(254,198,'Dual writes','s29t','fill:var(--no)')+txc(254,217,'app writes each copy','s29m')+'</svg>';})();
+
+const PIC_LEADERS='<svg class="pic29" viewBox="0 0 340 214" role="img" aria-label="Left: with dual writes the app writes to the Parcel DB and to search, two leaders. Right: one leader, the Parcel DB, and search follows its change log">'+
+ '<rect x="2" y="2" width="164" height="210" rx="14" style="fill:var(--no-bg)"/><rect x="174" y="2" width="164" height="210" rx="14" style="fill:var(--ok-bg)"/>'+
+ txc(84,26,'Dual writes','s29t','fill:var(--no)')+txc(256,26,'One leader','s29t','fill:var(--ok)')+
+ box(44,38,80,30,'')+txc(84,58,'App')+
+ '<path d="M70 70 L46 112" style="stroke:var(--muted);stroke-width:2"/><path d="M98 70 L122 112" style="stroke:var(--muted);stroke-width:2"/>'+
+ box(10,114,70,46,'h1')+txc(45,134,'Parcel DB','s29m','fill:var(--ink)')+txc(45,151,'leader','s29m')+
+ box(88,114,70,46,'h2')+txc(123,134,'Search','s29m','fill:var(--ink)')+txc(123,151,'leader','s29m')+
+ txc(84,184,'nobody decides','s29m','fill:var(--no)')+txc(84,201,'one order','s29m','fill:var(--no)')+
+ box(216,38,80,30,'')+txc(256,58,'App')+arrowD(256,70,84)+
+ box(196,84,120,34,'h1')+txc(256,106,'Parcel DB · leader','s29m','fill:var(--ink)')+arrowD(256,120,132)+
+ '<rect x="206" y="132" width="100" height="20" rx="6" style="fill:var(--soft2)"/>'+txc(256,147,'change log','s29m','fill:var(--ink)')+arrowD(256,154,166)+
+ box(196,166,120,34,'h2')+txc(256,188,'Search · follower','s29m','fill:var(--ink)')+'</svg>';
+
+const PIC_CDCWAYS=(()=>{const row=(y,t,tag,tc,l1,l2)=>'<rect x="2" y="'+y+'" width="336" height="76" rx="14" style="fill:var(--soft)"/>'+tx(14,y+23,t)+
+  '<rect x="'+(326-tag.length*7.2)+'" y="'+(y+9)+'" width="'+(tag.length*7.2+4)+'" height="21" rx="10" style="fill:var(--'+tc+'-bg)"/><text x="'+(328-tag.length*3.6-2)+'" y="'+(y+24)+'" text-anchor="middle" style="font:700 12px var(--sans);fill:var(--'+tc+')">'+tag+'</text>'+
+  tx(14,y+46,l1,'s29m')+tx(14,y+64,l2,'s29m');
+ return '<svg class="pic29" viewBox="0 0 340 246" role="img" aria-label="Three ways to capture changes: triggers, parsing the replication log, and built-in change streams">'+
+  row(2,'Triggers','fragile, slow','no','copy each change into a','changelog table')+
+  row(86,'Parse the replication log','sturdier','ok','Databus, Wormhole, Sherpa, Bottled Water,','Maxwell, Debezium, Mongoriver, GoldenGate')+
+  row(170,'Built-in change streams','first-class','h1','RethinkDB, Firebase, CouchDB, Meteor, VoltDB;','Kafka Connect brings CDC tools to Kafka')+'</svg>';})();
+
+const PIC_LEVELS='<svg class="pic29" viewBox="0 0 340 330" role="img" aria-label="The same action recorded two ways: CDC pulls a row change out of the database; event sourcing appends the user’s action as an event. Event sourcing can run on Event Store, a regular database or a log broker; its relatives are the chronicle data model and a star-schema fact table">'+
+ '<rect x="40" y="2" width="260" height="32" rx="16" style="fill:var(--soft2)"/>'+txc(170,23,'Mrs. Okoro picks the porch','s29t')+
+ '<path d="M120 36 L84 52" style="stroke:var(--muted);stroke-width:2"/><path d="M220 36 L256 52" style="stroke:var(--muted);stroke-width:2"/>'+
+ box(2,54,164,170,'h1')+txc(84,76,'Change data capture','s29t','fill:var(--h1)')+
+ tx(12,100,'App runs:','s29m')+tx(12,118,'UPDATE parcel 88','s29t')+tx(12,136,'safe_place = porch','s29t')+
+ '<path d="M12 148 H156" style="stroke:var(--line2)"/>'+tx(12,168,'Log read from the DB:','s29m')+tx(12,186,'“row 88 changed”','s29t')+tx(12,212,'The app doesn’t know.','s29m')+
+ box(174,54,164,170,'h2')+txc(256,76,'Event sourcing','s29t','fill:var(--h2)')+
+ tx(184,100,'App appends:','s29m')+tx(184,118,'“Recipient chose','s29t')+tx(184,136,'safe place: porch”','s29t')+
+ '<path d="M184 148 H328" style="stroke:var(--line2)"/>'+tx(184,168,'Append-only: no','s29m')+tx(184,186,'updates or deletes','s29m')+tx(184,212,'Records the intent.','s29m')+
+ tx(4,248,'Event sourcing can run on','s29m')+chips29(4,254,['Event Store','a regular database','a log broker'],'h2')+
+ tx(4,296,'Close relatives','s29m')+chips29(4,302,['chronicle data model','star-schema fact table'])+'</svg>';
+
+function picES(k){
+  const book=k<2,ev=book?['Student cancelled','their enrollment']:['Recipient redirected','88 to no. 14'];
+  const old=book?['Update the','class list']:['Update the','courier’s route'];
+  const nu=book?['Offer the place to','the waiting list']:['Tell the neighbour','in advance'];
+  let s='<svg class="pic29" viewBox="0 0 340 196" role="img" aria-label="An event in the log, with the features that react to it">';
+  s+=txc(170,16,book?'The book’s example':'At Otterpost','s29m','font-weight:700');
+  s+=box(6,58,140,70,'h2')+txc(76,80,'event','s29m')+txc(76,99,ev[0])+txc(76,117,ev[1]);
+  if(k===0){
+    s+=txc(250,48,'stored as side effects:','s29m');
+    s+='<rect x="168" y="58" width="166" height="70" rx="12" style="fill:var(--soft)"/>'+tx(178,84,'enrollments: row deleted','s29m','fill:var(--ink)')+tx(178,106,'feedback: reason added','s29m','fill:var(--ink)');
+    s+=txc(250,152,'guesses about later use','s29t','fill:var(--no)')+txc(76,152,'one neutral fact','s29t','fill:var(--ok)');
+  }else{
+    s+='<path d="M148 86 L180 62" style="stroke:var(--muted);stroke-width:2"/>'+box(182,34,152,52,'')+txc(258,56,old[0],'s29m','fill:var(--ink)')+txc(258,74,old[1],'s29m','fill:var(--ink)');
+    if(k===1||k===3){s+='<path d="M148 100 L180 128" style="stroke:var(--ok);stroke-width:2.5"/>'+box(182,104,152,52,'ok')+txc(258,126,nu[0],'s29m','fill:var(--ok)')+txc(258,144,nu[1],'s29m','fill:var(--ok)')+txc(258,176,'new feature, old events','s29t','fill:var(--ok)');}
+    else s+='<rect x="182" y="104" width="152" height="52" rx="12" style="fill:none;stroke:var(--line2);stroke-dasharray:5 4"/>'+txc(258,135,'later: ?','s29m');
+  }
+  return s+'</svg>';}
+
+const PIC_CMD='<svg class="pic29" viewBox="0 0 340 236" role="img" aria-label="A command is checked; if it passes it becomes an event in the log, which consumers cannot reject; if it fails nothing is logged">'+
+ '<rect x="6" y="4" width="192" height="46" rx="12" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:2;stroke-dasharray:5 4"/>'+txc(102,23,'Command','s29t','fill:var(--h4)')+txc(102,41,'book slot 10–11 for parcel 88','s29m','fill:var(--ink)')+
+ tx(210,23,'a request:','s29m')+tx(210,41,'it may still fail','s29m')+arrowD(102,52,70)+
+ box(6,70,192,40,'')+txc(102,95,'Check: is a place free?')+
+ arrowR(200,90,218,'no')+tx(222,86,'no: rejected,','s29m','fill:var(--no)')+tx(222,102,'nothing is logged','s29m','fill:var(--no)')+
+ arrowD(102,112,130,'ok')+txc(118,125,'yes','s29m','fill:var(--ok)')+
+ box(6,130,192,46,'ok')+txc(102,149,'Event','s29t','fill:var(--ok)')+txc(102,167,'slot 10–11 reserved for 88','s29m','fill:var(--ink)')+
+ tx(210,149,'a fact: durable','s29m')+tx(210,167,'and immutable','s29m')+arrowD(102,178,196)+
+ '<rect x="6" y="196" width="192" height="36" rx="12" style="fill:var(--soft2)"/>'+txc(102,219,'billing · dispatch · tracking','s29m','fill:var(--ink)')+
+ tx(210,212,'consumers can’t','s29m','fill:var(--no)')+tx(210,228,'reject it','s29m','fill:var(--no)')+'</svg>';
+
+const PIC_INTEGRAL=(()=>{const ch=[500,-120,-90,300,-150,-60],days=['Mon','Tue','Wed','Thu','Fri','Sat'];let bal=0,pts=[],s='';
+ s+='<svg class="pic29" viewBox="0 0 340 252" role="img" aria-label="Illustrative figures. Top: a shop’s credit balance as a stepped line. Bottom: the top-ups and charges that add up to it">';
+ s+=tx(8,16,'State: a shop’s credit balance')+'<rect x="252" y="3" width="84" height="19" rx="9.5" style="fill:var(--soft2)"/>'+txc(294,16.5,'illustrative','s29m','font-weight:600');
+ s+='<path d="M30 116 H330" style="stroke:var(--line2)"/>';
+ ch.forEach((v,j)=>{bal+=v;pts.push([30+j*50,116-bal*.12,bal]);});
+ let d='M30 116';pts.forEach((p,j)=>{d+=' V'+p[1]+' H'+(j<5?p[0]+50:330);});
+ s+='<path d="'+d+'" style="fill:none;stroke:var(--h1);stroke-width:3;stroke-linejoin:round"/>';
+ pts.forEach((p,j)=>{s+=txc(p[0]+25,p[1]-7,'$'+p[2],'s29m','fill:var(--ink)');});
+ s+='<rect x="8" y="124" width="326" height="22" rx="11" style="fill:var(--soft2)"/>'+txc(171,139.5,'↑ add up = integrate · ↓ changes = differentiate','s29m','fill:var(--ink)');
+ s+=tx(8,166,'Stream: top-ups and charges');s+='<path d="M30 210 H330" style="stroke:var(--line2)"/>';
+ ch.forEach((v,j)=>{const h=Math.abs(v)*.04,x=40+j*50;s+='<rect x="'+x+'" y="'+(v>0?210-h:210)+'" width="30" height="'+h+'" rx="3" style="fill:var(--'+(v>0?'ok':'no')+')"/>'+txc(x+15,v>0?210-h-5:210+h+13,(v>0?'+':'−')+Math.abs(v),'s29m','fill:var(--ink)');
+   s+=txc(x+15,248,days[j],'s29m');});
+ return s+'</svg>';})();
+
+const PIC_VIEWS='<svg class="pic29" viewBox="0 0 340 280" role="img" aria-label="One event log feeds several read views: tracking page, support search, merchant stats, and a new view built beside them. Twitter’s home timelines are such a view; the log also keeps a cart item added then removed">'+
+ txc(50,14,'event log','s29t')+
+ ['booked','picked up','at hub','attempted','redirected','delivered'].map((t,j)=>'<rect x="8" y="'+(24+j*31)+'" width="84" height="27" rx="6" style="fill:var(--pri-bg);stroke:var(--pri)"/>'+txc(50,42+j*31,t,'s29m','fill:var(--pri-deep)')).join('')+
+ txc(50,218,'written once','s29m')+
+ [[12,'Tracking page','status per parcel',''],[64,'Support search','by name, postcode',''],[116,'Merchant stats','on-time per day',''],[168,'New view','built beside the rest','dash']].map((v,j)=>
+   '<path d="M96 110 L148 '+(v[0]+22)+'" style="stroke:var(--'+(v[3]?'h3':'muted')+');stroke-width:2'+(v[3]?';stroke-dasharray:5 4':'')+'"/>'+
+   box(150,v[0],184,46,v[3]?'h3':['h1','h2','h4'][j],!!v[3])+tx(162,v[0]+20,v[1])+tx(162,v[0]+38,v[2],'s29m')).join('')+
+ '<rect x="2" y="228" width="336" height="50" rx="12" style="fill:var(--soft2)"/>'+txc(170,248,'e.g. Twitter’s home timelines (chapter 1)','s29m','fill:var(--ink)')+txc(170,268,'Log keeps “added to cart, then removed”','s29m','fill:var(--ink)')+'</svg>';
+
+const PIC_CONC='<svg class="pic29" viewBox="0 0 340 256" role="img" aria-label="Top: the view lags the log, so a merchant may not see their own booking. Bottom: one self-contained event is one append; partitioned the same way, one thread per partition needs no locks; an event spanning several partitions needs more work, covered in chapter 12">'+
+ '<rect x="2" y="2" width="336" height="112" rx="14" style="fill:var(--no-bg)"/>'+tx(14,24,'The catch: views lag behind','s29t','style="fill:var(--no)"')+
+ box(12,38,90,44,'')+txc(57,57,'Merchant','s29m','fill:var(--ink)')+txc(57,74,'books 301','s29m','fill:var(--ink)')+arrowR(104,60,124)+
+ box(124,38,80,44,'ok')+txc(164,57,'log','s29m','fill:var(--ink)')+txc(164,74,'✓ appended','s29m','fill:var(--ok)')+
+ '<path d="M206 60 H226" style="stroke:var(--muted);stroke-width:2;stroke-dasharray:4 3"/>'+txc(216,52,'lag','s29m')+
+ box(228,38,100,44,'no')+txc(278,57,'dashboard','s29m','fill:var(--ink)')+txc(278,74,'“no parcel 301”','s29m','fill:var(--no)')+
+ txc(170,102,'the merchant can’t read their own write yet','s29m','fill:var(--ink)')+
+ '<rect x="2" y="122" width="336" height="132" rx="14" style="fill:var(--ok-bg)"/>'+tx(14,144,'The bonus: one action, one append','s29t','style="fill:var(--ok)"')+
+ box(12,156,108,48,'')+txc(66,176,'“301 booked:','s29m','fill:var(--ink)')+txc(66,194,'charge $6”','s29m','fill:var(--ink)')+arrowR(122,180,142)+
+ box(142,156,82,48,'h1')+txc(183,176,'log','s29m','fill:var(--ink)')+txc(183,194,'partition 3','s29m','fill:var(--ink)')+arrowR(226,180,244)+
+ box(244,156,86,48,'h2')+txc(287,176,'state','s29m','fill:var(--ink)')+txc(287,194,'partition 3','s29m','fill:var(--ink)')+
+ txc(170,224,'one thread per partition: no locks needed','s29m','fill:var(--ink)')+txc(170,243,'Spans several partitions? More work (chapter 12)','s29m')+'</svg>';
+
+const PIC_LIMITS='<svg class="pic29" viewBox="0 0 340 300" role="img" aria-label="Top: systems that already rely on immutable data: database snapshots, Git, Mercurial, Fossil. Middle: history size for data that is mostly added versus small data with many updates. Bottom: Mrs. Okoro’s address has copies in the log, views, backups and old disk blocks">'+
+ tx(8,16,'Already immutable inside, no event sourcing:','s29t')+chips29(8,26,['MVCC snapshots','Git','Mercurial','Fossil'],'ok')+
+ '<g transform="translate(0,62)">'+tx(8,16,'How big does the full history get?','s29t')+
+ tx(8,40,'Mostly added','s29m')+'<rect x="112" y="28" width="40" height="16" rx="3" style="fill:var(--h2)"/><rect x="154" y="28" width="56" height="16" rx="3" style="fill:var(--h2-bg);stroke:var(--h2)"/>'+
+ tx(8,68,'Small, many updates','s29m')+'<rect x="150" y="56" width="10" height="16" rx="3" style="fill:var(--h2)"/><rect x="162" y="56" width="172" height="16" rx="3" style="fill:var(--h2-bg);stroke:var(--h2)"/>'+
+ '<rect x="112" y="80" width="12" height="10" style="fill:var(--h2)"/>'+tx(128,90,'data now','s29m')+'<rect x="196" y="80" width="12" height="10" style="fill:var(--h2-bg);stroke:var(--h2)"/>'+tx(212,90,'history','s29m')+
+ '<path d="M8 104 H332" style="stroke:var(--line2)"/>'+
+ tx(8,126,'Must really delete? Copies hide everywhere:','s29t')+
+ '<rect x="96" y="140" width="148" height="34" rx="17" style="fill:var(--no-bg);stroke:var(--no)"/>'+txc(170,162,'Mrs. Okoro’s address','s29t','fill:var(--no)')+
+ [[8,'event log'],[92,'read views'],[176,'backups'],[260,'SSD copies']].map(p=>'<rect x="'+p[0]+'" y="194" width="76" height="36" rx="10" style="fill:var(--soft)"/>'+txc(p[0]+38,216,p[1],'s29m','fill:var(--ink)')+'<path d="M170 176 L'+(p[0]+38)+' 192" style="stroke:var(--no-line);stroke-width:1.5"/>').join('')+'</g></svg>';
+
 Course.lesson({
-  id:'0029', title:'Databases and streams', minutes:20, icon:'list',
-  goals:['Explain why dual writes go wrong and how change data capture fixes them','Tell change data capture from event sourcing, and a command from an event','Use immutable events to fix mistakes and build new views, and know when you must truly delete'],
+  id:'0029', title:'Databases and streams', minutes:22, icon:'list',
+  goals:['Show why dual writes leave copies out of step, and how change data capture keeps them in step','Tell change data capture from event sourcing, a command from an event, and when compaction is safe','Derive state and new views from an immutable log, fix mistakes by appending, and know when you must truly delete'],
   parts:['Keeping in sync','Change data capture','Event sourcing','Immutability'],
   read:'Read “Databases and Streams” in chapter 11 for the book’s figures on dual writes, change data capture and state as the integral of a stream.',
   glossary:{
@@ -23,146 +302,218 @@ Course.lesson({
     dualwrite:'Dual writes: the application itself writes each change to several systems, for example the database and then the search index. Easy to build, but the copies can drift apart.',
     cdc:'Change data capture: reading a database’s log of row changes so another system (a warehouse, a search index, a cache) can copy them.',
     compaction:'Compaction: rewriting log segments to throw away values that were overwritten or deleted, keeping only the latest value for each key.',
+    snapshot:'Consistent snapshot: a copy of the whole database as it was at one moment, tied to an exact position in the replication log.',
+    eventsourcing:'Event sourcing: building an application on an append-only log of immutable events that record what users did, and deriving the current state from that log.',
+    'version-vector':'Version vector: a version number for each replica, kept with each key. It lets the database tell an overwrite from a concurrent write.',
+    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the outcome matches running them one at a time.',
     cqrs:'CQRS (command query responsibility segregation): writing data in one form, such as an event log, and reading it from one or more different forms built for queries.'
   },
   cheatsheet:[
     'A <b>write to a database is an event</b>. A replication log is a stream of them; replicas that apply the same events in the same order end up the same.',
-    '<b>Dual writes</b> break two ways: <b>races</b> (writes arrive in different orders, no error) and <b>partial failures</b> (one write fails). Root cause: two leaders.',
-    '<b>Change data capture</b> makes the database the leader and derived systems its followers. Start a new follower from a <b>snapshot tied to an offset</b>, or from offset 0 of a <b>compacted</b> log.',
-    '<b>Event sourcing</b> stores what users did, as immutable app-level events. State is derived deterministically; the full history is needed, so no key-based compaction.',
-    'A <b>command</b> may fail; once validated it becomes an <b>event</b>, a fact consumers can’t reject. Validate before writing the event.',
-    'State is the result of its events. <b>Fix mistakes by appending</b> corrections, like an accountant, and derive <b>several read views</b> from one log (CQRS).',
-    'Catch: log-derived views lag behind. Bonus: one self-contained event per action is a single, atomic append.',
-    'High churn makes full history costly, and privacy or legal reasons can require <b>really deleting</b> (excision), which is hard.'
+    '<b>Dual writes</b> break two ways: <b>races</b> (writes reach the systems in different orders, no error) and <b>partial failures</b> (one write fails). Root cause: two leaders.',
+    '<b>Change data capture</b> makes the database the leader and derived systems its followers, fed in its order (with lag). Start a new follower from a <b>snapshot tied to a log offset</b>, or from offset 0 of a <b>compacted</b> topic.',
+    '<b>Event sourcing</b> stores what users did as immutable, app-level events. State is a deterministic fold of the log. Later events don’t replace earlier ones, so no compaction by key.',
+    'A <b>command</b> may fail; once validated it becomes an <b>event</b>, a fact consumers can’t reject. Validate before you write the event.',
+    'State is the <b>integral</b> of the event stream; the log is the truth and the database a cache of its latest values. <b>Fix mistakes by appending</b> corrections, and derive <b>several read views</b> from one log (CQRS).',
+    'Catch: log-derived views lag, so users may not read their own writes. Bonus: one self-contained event per action is a single, atomic append.',
+    'High churn makes full history costly, and privacy or legal reasons can require <b>really deleting</b> (excision), which is hard because copies hide everywhere.'
   ],
   steps:[
-/* ---------- PART 1: KEEPING IN SYNC ---------- */
+/* ================= PART 1: KEEPING IN SYNC ================= */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mrs. Okoro changed their address yesterday, and the Parcel DB shows the new one. But when Signe’s team searches support search for their new postcode, nothing comes up. What’s most likely?</h1>');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mrs. Okoro changed their address yesterday, and the Parcel DB shows the new one. But Signe’s team searches support search for the new postcode and finds nothing. What’s most likely?</h1>');
   L.mc(L.card,['Support search keeps its own copy, which wasn’t updated','The Parcel DB quietly lost their change'],0,
    'Support search keeps its own copy of the data. This lesson is about keeping copies like that in step.',
    'The Parcel DB shows the new address, so it kept the change. Support search keeps its own copy, and that copy fell behind.');}},
-{part:0,src:'Chapter 11 · Databases and Streams',run(L){
-  L.h(L.kick('learn','Writes are events')+'<h1 class="q">A write to a database is an event too</h1>'+
-   L.prose('An '+L.g('event','event')+' records something that happened. That can be a scan or a click, but it can also be <b>a write to a database</b>, which can be captured, stored and processed like any other event.')+
-   L.flow([['pencil','Writes','arrive at the Parcel DB leader'],['list','Change stream','the replication log'],['layers','Same data','on every follower']])+
-   L.prose('You’ve met this already. A replication log is a stream of write events: the leader produces it, and followers apply it to get the same data. This is <b>state machine replication</b>: if every replica processes the same events in the same order, and processing is deterministic, they all end in the same state.'));
-  L.done();}},
-{part:0,src:'Chapter 11 · Keeping Systems in Sync',run(L){
-  L.h(L.kick('learn','Keeping systems in sync')+'<h1 class="q">One app, many copies of the same data</h1>'+
-   L.prose('No single system meets every need, so Otterpost, like most real apps, combines several. Each keeps its own copy of the data, shaped for its own job:')+
-   L.list([['box','Parcel DB','the database that serves bookings and status changes'],['layers','Cache','in front of the tracking page'],['eye','Support search','a full-text index for Signe’s team'],['trend','Analytics warehouse','Linh’s reports']],1)+
-   L.prose('When a parcel changes, every copy must change too. The warehouse is usually refreshed by ETL, a batch process: dump the database, transform it, bulk-load it. When that’s too slow, some teams use '+L.g('dualwrite','dual writes')+': the application writes to the database, then updates the search index, then clears the cache.'));
-  L.done();}},
-{part:0,src:'Chapter 11 · Keeping Systems in Sync',pts:1,
- solve:async L=>{L.$('#pc').children[2].click();L.$('#run').click();},
- run(L){
-  let p=null;const PR=['Both show B','Both show A','They end up different'];
-  const S=[['Parcel DB gets the agent’s write: A','db','A'],['Parcel DB gets the recipient’s write: B','db','B'],['Support search gets the recipient’s write: B','ix','B'],['Support search gets the agent’s write: A','ix','A']];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias’s code does dual writes: Parcel DB first, then support search. A support agent sets parcel 88’s address to A just as the recipient’s app sets it to B. Where does each system end up?</h1><div id="pc"></div>'+
-   '<div id="sim" hidden><div class="two" style="margin-top:6px"><div class="lane"><div class="lh" style="color:var(--h1)">'+L.ic('box')+'Parcel DB</div><div class="week" id="db">–</div></div><div class="lane"><div class="lh" style="color:var(--h3)">'+L.ic('eye')+'Support search</div><div class="week" id="ix">–</div></div></div>'+
-   '<button class="btn pri" id="run" style="margin-top:12px">'+L.ic('play')+'Run with unlucky timing</button><div id="tl" style="margin-top:10px"></div></div>');
-  PR.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pc').appendChild(b);});
-  L.$('#run').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const tl=L.$('#tl');if(!tl){clearInterval(t);return;}const s=S[k];
-      tl.insertAdjacentHTML('beforeend','<div class="small" style="padding:3px 0">'+(k+1)+'. '+s[0]+'</div>');L.$('#'+s[1]).textContent=s[2];k++;
-      if(k===S.length){clearInterval(t);L.award(p===2);
-        L.sheet(p===2?'ok':'no',p===2?'You called it':'They end up different',
-         'The Parcel DB says B; support search says A, and they’ll stay that way. No request failed, so nobody is alerted. Without extra tools such as version vectors, nobody even notices the two writes were concurrent.');L.done();}},450);};}},
-{part:0,src:'Chapter 11 · Keeping Systems in Sync',run(L){
-  L.h(L.kick('learn','What goes wrong')+'<h1 class="q">Dual writes: two problems, one root cause</h1>'+
-   L.list([['cycle','Race condition','Two writers interleave, and each system applies their writes in a different order. No error is raised; the copies just disagree for good.'],
-     ['x','Partial failure','One write succeeds and the other fails, maybe because the app crashed between them. Making sure both succeed or both fail is the atomic commit problem, which is expensive to solve.']],4)+
-   L.note('The root cause: there are <b>two leaders</b>. The Parcel DB may have a leader and support search may have one, but neither follows the other. It would be much better with one leader, the Parcel DB, and support search as its follower.','bulb'));
-  L.done();}},
-{part:0,src:'Chapter 11 · Keeping Systems in Sync',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias adds retries, so the search write repeats until it succeeds. Which dual-write problem can still happen even if no request ever fails?</h1>');
-  L.mc(L.card,['The search index running out of disk space','Retries making the Parcel DB slower','Writes reaching the two systems in different orders'],2,
-   'The race needs no failure at all: two clients’ writes just interleave differently at each system. There’s no error to retry.',
-   'That isn’t one of the dual-write problems. The one retries can’t touch is the race: writes reach the two systems in different orders, with no error to retry.');}},
 
-/* ---------- PART 2: CHANGE DATA CAPTURE ---------- */
-{part:1,src:'Chapter 11 · Change Data Capture',run(L){
-  L.h(L.kick('learn','Change data capture')+'<h1 class="q">Make the database the leader, and everything else its followers</h1>'+
-   L.prose('For decades, replication logs were treated as a private detail of the database, with no documented way to read them. '+L.g('cdc','Change data capture')+' (CDC) changes that: it observes every change written to a database and passes it on, ideally as a stream the moment it’s written.')+
-   L.flow([['box','Parcel DB','system of record',1],['list','Change stream','in write order',2],['eye','Support search','follower',3],['trend','Warehouse','follower',4]])+
-   L.prose('If the changes are applied in the same order, support search ends up matching the Parcel DB. Derived systems are just consumers of the change stream. A log-based broker suits the job because it keeps messages in order, so redelivery can’t shuffle them.'));
+{part:0,src:'Chapter 11 · Databases and Streams',run(L){
+  L.h(L.kick('learn','Writes are events')+'<h1 class="q">A write to a database is an event too</h1>'+PIC_REPL+
+   '<p class="capt">An '+L.g('event','event')+' records something that happened; a write is one. A '+L.g('replication','replication')+' log is a stream of them. Same events, same order, deterministic steps: every copy ends the same. That’s state machine replication.</p>');
   L.done();}},
-{part:1,src:'Chapter 11 · Implementing change data capture',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh feeds support search from the Parcel DB with CDC</h1>');
-  L.beats(L.card,[
-   ['How to capture','Linh could add database triggers that copy each change into a changelog table, but triggers tend to be fragile and costly. Parsing the replication log is more robust, though schema changes need care.'],
-   ['Not just from now on','A new search index needs <b>every</b> parcel, not only the ones changed lately, and the full change history wasn’t kept.'],
-   ['Snapshot','So Linh takes a consistent snapshot of the Parcel DB that matches a known position in the change log: offset 9,400,000.'],
-   ['Catch up','The index is built from the snapshot, then applies every change from offset 9,400,000 on, in order.'],
-   ['Steady state','Mrs. Okoro’s new address now flows Parcel DB → change stream → support search, a moment after it commits.']],
-   'CDC is usually asynchronous: the Parcel DB doesn’t wait for consumers. A slow consumer barely affects it, but every replication-lag problem applies to the derived systems.');}},
-{part:1,src:'Chapter 11 · Initial snapshot',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why must Linh’s snapshot match a known offset in the change log?</h1>');
-  L.mc(L.card,['So the snapshot takes up less disk space','So the index knows which change to apply first','So the Parcel DB can skip its nightly backups'],1,
-   'The offset marks where the snapshot ends and the stream begins. Without it, the index can’t tell which changes the snapshot already contains.',
-   'The offset has nothing to do with size or backups. It tells the index where the snapshot stops, so it knows which change to apply first.');}},
-{part:1,src:'Chapter 11 · Log compaction',run(L){
-  L.h(L.kick('learn','Log compaction')+'<h1 class="q">Keep only the latest value for each key</h1>'+
-   L.prose('A fresh snapshot for every new derived system is a chore. '+L.g('compaction','Log compaction')+' is the alternative. In the background, the system finds records with the same key, throws away the older ones and keeps the most recent. A special empty value, a <b>tombstone</b>, marks a deleted key, which then disappears during compaction.')+
-   L.prose('So the log’s size depends on the current data, not on how many writes ever happened. If every CDC change carries a primary key and replaces the previous value, the latest write per key is enough. A new consumer can start at <b>offset 0</b> of the compacted topic and read a full copy of the database, with no new snapshot. (The book notes Apache Kafka supports this, so a broker can serve as durable storage.)')+
-   L.note('Databases are also starting to offer change streams as a proper interface instead of something reverse-engineered. The book’s examples include RethinkDB, Firebase, CouchDB, Meteor and VoltDB. Kafka Connect links CDC tools for many databases to Kafka.','info'));
+
+{part:0,src:'Chapter 11 · Keeping Systems in Sync',run(L){
+  L.h(L.kick('learn','Keeping systems in sync')+'<h1 class="q">One parcel, four copies, each in its own shape</h1>'+PIC_COPIES+
+   '<p class="capt">No single system does everything, so Otterpost keeps several copies, each built for one job. Warehouses usually get a batch dump. When that’s too slow, some teams use '+L.g('dualwrite','dual writes')+': the app updates each copy itself.</p>');
   L.done();}},
-{part:1,src:'Chapter 11 · Log compaction',pts:1,
- solve:async L=>{L.$('#pc').children[1].click();L.$('#cp').click();},
+
+{part:0,src:'Chapter 11 · Keeping Systems in Sync',
+ solve:async L=>{nudge29(L,'As',1,12);},
  run(L){
-  const LOG=[['P88','at hub'],['P91','picked up'],['P88','out for delivery'],['P93','picked up'],['P91','at hub'],['P93','tombstone (booking cancelled)'],['P88','delivered'],['P95','picked up']];
+  let shown=false;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Tobias’s code writes each new address to the Parcel DB, then to support search. Drag the dots. Can you make the two disagree?</h1><div id="x4"></div>'+
+   '<p class="capt sm">A dot is the moment a write lands. A line joins one client’s two writes. Each store keeps the last write it saw.</p>');
+  Cross(L.$('#x4'),{w:{A:{db:10,s:30},B:{db:50,s:72}},on:R=>{
+    if(R.crossed&&!shown){shown=true;
+      L.sheet('info','The lines crossed','The Parcel DB saw A, then B. Search saw B, then A. Each kept its last write, so they disagree for good, and no request failed.');L.done();}}});}},
+
+{part:0,src:'Chapter 11 · Keeping Systems in Sync',pts:1,
+ solve:async L=>{L.$('#p5').children[2].click();L.$('#go5').click();await L.sleep(2200);},
+ run(L){
+  const PR=['Both end as B','Both end as A','Parcel DB: B, search: A','Parcel DB: A, search: B'];let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Today the agent’s write to search is slow. The faint dots show when each write will land. How will each system end up?</h1><div id="x5"></div>'+
+   '<div class="row29" id="p5"></div><button class="btn pri" id="go5" hidden>'+L.ic('play')+'Play the writes</button>');
+  const c=Cross(L.$('#x5'),{w:{A:{db:12,s:78},B:{db:34,s:52}},drag:false,ghost:['Adb','Bdb','Bs','As'],
+    read:(R,c)=>c.ghost.size===4?'Nothing has landed yet. Both systems still hold the old address.':R.same?vd29(true,'In step')+'Both hold <b>'+R.db+'</b> so far.':vd29(false,'Out of step')+'Parcel DB holds <b>'+R.db+'</b>, search holds <b>'+R.s+'</b>.'});
+  PR.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#go5').hidden=false;};L.$('#p5').appendChild(b);});
+  L.$('#go5').onclick=function(){this.remove();const seq=['Adb','Bdb','Bs','As'];let k=0;
+    const t=setInterval(()=>{if(!L.$('#x5')){clearInterval(t);return;}
+      c.ghost.delete(seq[k]);c.draw();k++;
+      if(k===seq.length){clearInterval(t);const ok=p===2;L.award(ok);
+        L.sheet(ok?'ok':'no',ok?'You called it':'They end up different','Parcel DB: A then B, so B. Search: B then A, so A. They stay that way. Without extra tools such as '+L.g('version-vector','version vectors')+', nobody even notices the writes were concurrent.');L.done();}},480);};}},
+
+{part:0,src:'Chapter 11 · Keeping Systems in Sync',
+ solve:async L=>{for(let j=0;j<3;j++)L.$('#e6p'+j).click();},
+ run(L){
+  const P=[{nm:'No overlap',A:{db:10,s:28},B:{db:52,s:72},cap:'The agent finishes before Mrs. Okoro starts. Both systems see A, then B. Dual writes look fine when writes never overlap.'},
+    {nm:'Writes overlap',A:{db:12,s:78},B:{db:34,s:52},cap:'A <b>race</b>: the two systems see the writes in opposite orders. Nothing failed, and no retry would help.'},
+    {nm:'Second write fails',A:{db:10,s:28},B:{db:52,s:72},fail:'B',cap:'A <b>partial failure</b>: the Parcel DB took B, then the app crashed or search timed out. Making both succeed or both fail is atomic commit, which is costly.'}];
+  const seen=new Set();let shown=false,cur=null;
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where do dual writes hold up, and where do they break? Run each case.</h1>'+
+   '<div class="row29">'+P.map((p,j)=>'<button class="chip" id="e6p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="x6"></div>');
+  const c=Cross(L.$('#x6'),{w:{A:{db:10,s:28},B:{db:52,s:72}},read:(R,c)=>cur?c.defRead(R)+'<br>'+cur.cap:'Pick a case, then drag the dots if you like.',on:(R,c)=>{if(cur){cur=null;c.draw();}}});
+  P.forEach((p,j)=>{L.$('#e6p'+j).onclick=()=>{P.forEach((_,q)=>L.$('#e6p'+q).classList.toggle('sel',q===j));cur=p;c.load(p);seen.add(j);
+    if(seen.size===P.length&&!shown){shown=true;L.sheet('info','Two ways to drift apart','A race needs no failure, only overlapping writes. A partial failure needs no race. Either way the copies disagree, and nothing fixes them later.');L.done();}};});}},
+
+{part:0,src:'Chapter 11 · Keeping Systems in Sync',run(L){
+  L.h(L.kick('learn','The root cause')+'<h1 class="q">Dual writes have two leaders</h1>'+PIC_LEADERS+
+   '<p class="capt">The Parcel DB and search each accept writes, and neither follows the other, so nothing fixes one order: the multi-leader conflict problem again. With one'+L.g('leader','leader')+', the database, search could simply follow it.</p>');
+  L.done();}},
+
+/* ================= PART 2: CHANGE DATA CAPTURE ================= */
+{part:1,src:'Chapter 11 · Change Data Capture',
+ solve:async L=>{L.$('#m8c').click();nudge29(L,'Adb',1,8);},
+ run(L){
+  let swapped=false,shown=false;
+  L.h(L.kick('ex','Flip the switch')+'<h1 class="q">Same race. Switch to '+L.g('cdc','change data capture')+': the app writes only to the Parcel DB, and search follows its log. Now try to make them disagree.</h1>'+
+   '<div class="row29"><button class="chip sel" id="m8d">Dual writes</button><button class="chip" id="m8c">Change data capture</button><button class="chip" id="m8o" hidden>Search offline a while</button></div><div id="x8"></div>');
+  const c=Cross(L.$('#x8'),{w:{A:{db:12,s:78},B:{db:34,s:52}},on:R=>{
+    if(c.mode==='cdc'&&c.w.B.db<c.w.A.db)swapped=true;
+    if(c.mode==='cdc'&&swapped&&!shown){shown=true;
+      L.sheet('info','Search follows the leader','Whatever order the Parcel DB sees, search sees the same, a moment later. A log-based broker keeps the order, so redelivery can’t shuffle it. Derived systems are just consumers of the change stream.');L.done();}}});
+  const mode=m=>{c.mode=m;L.$('#m8d').classList.toggle('sel',m==='dual');L.$('#m8c').classList.toggle('sel',m==='cdc');L.$('#m8o').hidden=m!=='cdc';
+    if(m==='cdc'){['A','B'].forEach(k=>{c.w[k].db=Math.min(c.w[k].db,80);});}c.draw();};
+  L.$('#m8d').onclick=()=>mode('dual');L.$('#m8c').onclick=()=>mode('cdc');
+  L.$('#m8o').onclick=function(){c.down=!c.down;this.classList.toggle('sel',c.down);c.draw();};}},
+
+{part:1,src:'Chapter 11 · Implementing change data capture',run(L){
+  L.h(L.kick('learn','How CDC is built')+'<h1 class="q">Three ways to get the changes out</h1>'+PIC_CDCWAYS+
+   '<p class="capt">The replication log was long a private, undocumented detail. CDC reads it anyway, usually asynchronously: a slow consumer barely slows the database, but every '+L.g('lag','replication lag')+' problem applies. Log parsing beats triggers, though schema changes need care.</p>');
+  L.done();}},
+
+{part:1,src:'Chapter 11 · Initial snapshot',pts:1,
+ solve:async L=>{const r=L.$('#r10');r.value=27;r.dispatchEvent(new Event('input',{bubbles:true}));L.$('#k10').click();},
+ run(L){
+  const CH={21:'parcel 88 address → A',22:'parcel 90 booked',23:'parcel 91 at hub',24:'parcel 88 address → B',25:'parcel 92 booked',26:'parcel 90 picked up',27:'parcel 93 booked',28:'parcel 88 out for delivery',29:'parcel 91 delivered',30:'parcel 94 booked',31:'parcel 92 cancelled',32:'parcel 95 booked'};
+  const SNAP=26;let first=true;
+  L.h(L.kick('pr','Start a new index')+'<h1 class="q">Linh builds a fresh support search index. The log before offset 21 is gone, so they load a '+L.g('snapshot','snapshot')+' first. Where should the index start reading the log? <span class="ill29">illustrative offsets</span></h1>'+
+   '<div id="s10"></div><div class="rng29"><label for="r10">Start reading at offset</label><b id="v10">32</b><input type="range" id="r10" min="21" max="32" step="1" value="32"></div>'+
+   '<div class="rd29" id="o10"></div><button class="btn pri" id="k10">'+L.ic('check')+'Build the index</button>');
+  const draw=()=>{const st=+L.$('#r10').value;L.$('#v10').textContent=st;
+    let s='<svg class="pic29" viewBox="0 0 340 150" role="img" aria-label="Change log offsets 21 to 32, a snapshot covering everything up to 26, and where the index starts reading">';
+    s+='<rect x="6" y="18" width="'+(34+(SNAP-21+1)*25-6)+'" height="16" rx="5" style="fill:var(--h3-bg);stroke:var(--h3)"/>'+tx(10,14,'snapshot: whole database as of offset 26','s29m','style="fill:var(--h3)"');
+    s+='<rect x="6" y="40" width="24" height="34" rx="5" style="fill:var(--soft2)"/>'+txc(18,62,'…','s29m');
+    for(let o=21;o<=32;o++){const x=34+(o-21)*25,inS=o<=SNAP,on=o>=st;
+      const col=inS&&on?'h4':!inS&&!on?'no':!inS&&on?'ok':null;
+      s+='<rect x="'+x+'" y="40" width="23" height="34" rx="5" style="fill:var(--'+(col?col+'-bg':'soft')+');stroke:var(--'+(col||'line')+');stroke-width:'+(col?2:1)+(col==='no'?';stroke-dasharray:4 3':'')+'"/>'+txc(x+11.5,62,String(o),'s29m','fill:var(--ink);font-size:12px');}
+    const sx=34+(st-21)*25+11.5;
+    s+='<path d="M'+sx+' 78 l-7 10 h14z" style="fill:var(--pri)"/>'+txc(Math.max(40,Math.min(300,sx)),104,'start here','s29t','fill:var(--pri)');
+    s+=tx(8,138,'older log deleted','s29m');
+    s+='<rect x="140" y="128" width="12" height="12" rx="3" style="fill:var(--h4-bg);stroke:var(--h4)"/>'+tx(156,138,'twice','s29m')+'<rect x="200" y="128" width="12" height="12" rx="3" style="fill:var(--no-bg);stroke:var(--no);stroke-dasharray:3 2"/>'+tx(216,138,'missed','s29m')+'<rect x="268" y="128" width="12" height="12" rx="3" style="fill:var(--ok-bg);stroke:var(--ok)"/>'+tx(284,138,'once','s29m');
+    L.$('#s10').innerHTML=s+'</svg>';
+    const miss=[],twice=[];for(let o=21;o<=32;o++){if(o>SNAP&&o<st)miss.push(o);if(o<=SNAP&&o>=st)twice.push(o);}
+    L.$('#o10').innerHTML=miss.length?vd29(false,'Gap')+'Missed '+miss[0]+(miss.length>1?'–'+miss[miss.length-1]:'')+', such as “'+CH[miss[0]]+'”. The index never learns about '+(miss.length>1?'them':'it')+'.':
+      twice.length?vd29(false,'Overlap')+'Changes '+twice[0]+(twice.length>1?'–'+twice[twice.length-1]:'')+' are already in the snapshot and get applied again. Harmless only if each change replaces the whole record; a count would double.':
+      vd29(true,'Seamless')+'The snapshot ends at 26, and the log takes over at 27. Nothing missed, nothing repeated.';};
+  L.$('#r10').addEventListener('input',draw);draw();
+  L.$('#k10').onclick=()=>{const ok=+L.$('#r10').value===SNAP+1;
+    if(first){first=false;L.award(ok);L.done();}
+    L.sheet(ok?'ok':'no',ok?'Right after the snapshot':'Start at 27','A snapshot must match a known offset in the change log, so you know where to start applying changes. Some CDC tools do this for you; others leave it as a manual step.');};}},
+
+{part:1,src:'Chapter 11 · Log compaction',pts:1,
+ solve:async L=>{L.$('#p11').children[1].click();L.$('#k11').click();await L.sleep(700);},
+ run(L){
+  const LOG=[['88','at hub'],['91','picked up'],['88','on the van'],['93','picked up'],['91','at hub'],['93','tombstone (cancelled)'],['88','delivered'],['95','picked up']];
   const KEEP=[4,6,7];let p=null;const PR=['4 records','3 records','5 records'];
-  const draw=c=>LOG.map((r,j)=>{const gone=c&&!KEEP.includes(j);return '<div class="small" style="padding:4px 8px;margin:3px 0;border-radius:8px;background:var(--card);'+(gone?'opacity:.3;text-decoration:line-through':c?'border:2px solid var(--ok-line)':'')+'"><b>'+j+'</b> · '+r[0]+': '+r[1]+'</div>';}).join('');
-  L.h(L.kick('pr','Predict, then compact')+'<h1 class="q">Here is part of the Parcel DB change topic, keyed by parcel. After compaction, how many records are left?</h1>'+
-   '<div id="lg" style="background:var(--soft);border-radius:16px;padding:10px 12px;margin:8px 0">'+draw(false)+'</div><div id="pc"></div><button class="btn pri" id="cp" hidden>'+L.ic('play')+'Compact the log</button>');
-  PR.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#cp').hidden=false;};L.$('#pc').appendChild(b);});
-  L.$('#cp').onclick=function(){this.remove();setTimeout(()=>{const lg=L.$('#lg');if(!lg)return;lg.innerHTML=draw(true);L.award(p===1);
-    L.sheet(p===1?'ok':'no',p===1?'Three it is':'Three records are left',
-     'P88 and P91 keep only their latest status, and P93’s tombstone removes it entirely. What’s left is the current value of every key: enough to build a new index from offset 0.');L.done();},500);};}},
+  const draw=done=>{let s='<svg class="pic29" viewBox="0 0 340 176" role="img" aria-label="Eight records of the Parcel DB change topic, keyed by parcel'+(done?'; after compaction only three remain':'')+'">';
+    LOG.forEach((r,j)=>{const x=j%2?174:4,y=4+Math.floor(j/2)*43,gone=done&&!KEEP.includes(j),kept=done&&KEEP.includes(j),tomb=r[1].startsWith('tomb');
+      s+='<g style="opacity:'+(gone?.35:1)+'"><rect x="'+x+'" y="'+y+'" width="162" height="37" rx="9" style="fill:var(--'+(kept?'ok-bg':tomb?'soft2':'card')+');stroke:var(--'+(kept?'ok':'line2')+');stroke-width:'+(kept?2:1.2)+'"/>'+
+        tx(x+9,y+24,j+'','s29m','style="font-weight:700"')+tx(x+28,y+24,'parcel '+r[0]+' · '+r[1].replace(' (cancelled)','').replace('out for delivery','on the van'),'s29m','style="fill:var(--ink)"')+
+        (gone?'<path d="M'+(x+8)+' '+(y+19)+' H'+(x+154)+'" style="stroke:var(--no);stroke-width:2"/>':'')+'</g>';});
+    L.$('#g11').innerHTML=s+'</svg>';};
+  L.h(L.kick('pr','Predict, then compact')+'<h1 class="q">Here is part of the Parcel DB change topic, keyed by parcel. Each record replaces the parcel’s whole row. After '+L.g('compaction','log compaction')+', how many records are left?</h1>'+
+   '<div id="g11"></div><div class="row29" id="p11"></div><button class="btn pri" id="k11" hidden>'+L.ic('play')+'Compact the log</button>');
+  draw(false);
+  PR.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#k11').hidden=false;};L.$('#p11').appendChild(b);});
+  L.$('#k11').onclick=function(){this.remove();setTimeout(()=>{if(!L.$('#g11'))return;draw(true);L.award(p===1);
+    L.sheet(p===1?'ok':'no',p===1?'Three it is':'Three records are left','Parcels 88 and 91 keep only their latest row. The tombstone for 93 removes it entirely. What’s left is the current value of every key, so a new consumer can read from offset 0 and get a full copy, with no new snapshot. Kafka supports this.');L.done();},500);};}},
+
 {part:1,src:'Chapter 11 · Initial snapshot',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'How should this consumer start?',['Take a new snapshot','Read the compacted topic from offset 0','Resume from its own offset'],[
    ['Linh adds an address-analytics store. The Parcel DB change topic is log-compacted.',1,'A compacted topic holds the latest value of every key, so reading it from the start gives a full copy.'],
-   ['The change topic keeps only the last 7 days, not compacted. Linh wants a new cache of every parcel.',0,'Seven days of changes miss parcels that didn’t change lately. Start from a consistent snapshot tied to an offset.'],
-   ['Support search was down for 10 minutes. Its last offset is still in the log.',2,'Nothing was lost. It carries on from its recorded offset, like a follower catching up.'],
-   ['A new fraud model needs every merchant’s current settings. Only the last 2 days of changes are kept.',0,'Two days of changes leave out merchants who haven’t changed anything lately. A snapshot is needed.']]);}},
+   ['The change topic keeps only the last 7 days, not compacted. Linh wants a new cache of every parcel. <span class="ill29">illustrative</span>',0,'Seven days of changes miss parcels that didn’t change lately. Start from a consistent snapshot tied to an offset.'],
+   ['Support search was down for 10 minutes. Its last offset is still in the log. <span class="ill29">illustrative</span>',2,'Nothing was lost. It carries on from its recorded offset, like a follower catching up.'],
+   ['A new fraud model needs every merchant’s current settings. Only the last 2 days of changes are kept. <span class="ill29">illustrative</span>',0,'Two days of changes leave out merchants who haven’t changed anything lately. A snapshot is needed.']]);}},
 
-/* ---------- PART 3: EVENT SOURCING ---------- */
+/* ================= PART 3: EVENT SOURCING ================= */
 {part:2,src:'Chapter 11 · Event Sourcing',run(L){
-  L.h(L.kick('learn','Event sourcing')+'<h1 class="q">The same log idea, one level up</h1>'+
-   L.prose('<b>Event sourcing</b> comes from the domain-driven design community. Like CDC, it stores every change as a log of events. The difference is the level:')+
-   L.lanes([['box','Change data capture','The app updates and deletes records freely. The change log is pulled out of the database at a low level, so its order matches the real writes. The app doesn’t know CDC is happening.',1],
-            ['list','Event sourcing','The app is built on <b>immutable events</b> in an append-only log. Updates and deletes are discouraged or banned. Events describe what happened in the app, not low-level state changes.',2]])+
-   L.prose('Recording what users <i>did</i>, rather than the effect on a mutable database, makes an app easier to evolve, easier to debug after the fact, and safer against bugs.'));
+  L.h(L.kick('learn','Event sourcing')+'<h1 class="q">The same log idea, one level up</h1>'+PIC_LEVELS+
+   '<p class="capt">'+L.g('eventsourcing','Event sourcing')+', from domain-driven design, also logs every change, but the app is built on it. It records what users did as immutable events, not how rows changed, so the app is easier to evolve and debug.</p>');
   L.done();}},
-{part:2,src:'Chapter 11 · Event Sourcing',run(L){
-  L.h(L.kick('ex','The book’s example, then Otterpost')+'<h1 class="q">Why “what happened” beats “what changed”</h1>');
-  L.beats(L.card,[
-   ['As an event','A student cancels a course enrollment. As an event, that’s one neutral fact: the student cancelled.'],
-   ['As side effects','Stored as state changes, it becomes “a row deleted from enrollments, a reason added to feedback.” That bakes in guesses about how the data will be used later.'],
-   ['A new feature','Later the school wants to offer the freed place to the next person on the waiting list. With the event, that new effect simply hangs off the existing event.'],
-   ['At Otterpost','A recipient redirects parcel 88 to a neighbour. Linh records “recipient redirected parcel 88 to number 14,” not “address column overwritten.”'],
-   ['Months later','Femi wants the neighbour told in advance. The new notification just listens for redirect events, and old events still mean exactly what they meant.']],
-   'An event records the intent of one action. New features can chain new effects off old events, with no guessing what a pile of row changes meant.');}},
-{part:2,src:'Chapter 11 · Deriving current state from the event log',run(L){
-  L.h(L.kick('learn','Deriving current state')+'<h1 class="q">Users want the current state, not the history</h1>'+
-   L.prose('An event log alone isn’t much use to a user. A shopper wants to see what’s in their cart now, not every change they ever made to it. So an event-sourced app turns the log into current state. Any logic can do this, but it must be <b>deterministic</b>, so replaying the log always gives the same state.')+
-   L.lanes([['box','CDC event','Holds the whole new version of a record. The latest event per key says it all, so compaction can drop older ones.',1],
-            ['list','Event-sourced event','Holds a user’s intent, like “redirected to number 14.” Later events don’t replace earlier ones, so you need the full history.',2]])+
-   L.note('Event-sourced apps usually save snapshots of the current state so they don’t replay everything each time. That’s only a speed-up. The intent is to keep every raw event forever and be able to reprocess the whole log.','info'));
-  L.done();}},
-{part:2,src:'Chapter 11 · Deriving current state from the event log',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh wants to compact the parcel lifecycle log, which holds events like “redirected,” “delivery attempted” and “delivered,” keeping only each parcel’s latest event. What’s the problem?</h1>');
-  L.mc(L.card,['None: the latest event says everything','Earlier events still shape the state','Compaction only works on small logs'],1,
-   'Events record intents, and later ones don’t replace earlier ones. After “delivery attempted” is logged, the redirect still decides the address. You need the full history.',
-   'In event sourcing, a later event doesn’t carry the whole state. “Delivery attempted” says nothing about the redirect before it, so dropping earlier events loses state.');}},
+
+{part:2,src:'Chapter 11 · Event Sourcing',
+ solve:async L=>{while(L.$('#n14'))L.$('#n14').click();},
+ run(L){
+  const T=['The book’s example: a student cancels a course enrollment. As an event it’s one neutral fact. As side effects, it bakes in guesses about how the data will be used.',
+   'Later the school wants to offer the freed place to whoever is next in line. That new effect simply hangs off the existing event.',
+   'At Otterpost, Mrs. Okoro redirects parcel 88 to their neighbour at no. 14. Linh records that action, not “address column overwritten”.',
+   'Months later Femi wants the neighbour told in advance. The new feature listens for redirect events, and old events still mean what they meant.'];
+  let k=0;
+  L.h(L.kick('ex','What happened beats what changed')+'<h1 class="q">New features can hang off old events</h1><div id="i14"></div><div class="stepcap29" id="c14"></div><button class="btn pri" id="n14">Next '+L.ic('arrow')+'</button>');
+  const draw=()=>{L.$('#i14').innerHTML=picES(k);L.$('#c14').innerHTML='<span class="n">Step '+(k+1)+' of 4</span>'+T[k];};draw();
+  L.$('#n14').onclick=()=>{k++;draw();if(k===3){L.$('#n14').remove();L.done();}};}},
+
+{part:2,src:'Chapter 11 · Deriving current state from the event log',
+ solve:async L=>{const r=L.$('#r15');r.value=6;r.dispatchEvent(new Event('input',{bubbles:true}));r.value=3;r.dispatchEvent(new Event('input',{bubbles:true}));},
+ run(L){
+  let top=false,shown=false;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Parcel 88’s lifecycle log. Drag the read head and watch three screens rebuild from the events.</h1>'+
+   '<div id="l15"></div><div class="rng29"><label for="r15">Events applied</label><b id="v15">0 of 6</b><input type="range" id="r15" min="0" max="6" step="1" value="0"></div><div id="s15"></div>'+
+   '<p class="capt sm">Go to the end, then back to before the porch event. What do the screens lose?</p>');
+  const draw=()=>{const k=+L.$('#r15').value;L.$('#v15').textContent=k+' of 6';
+    L.$('#l15').innerHTML=logRows29(EV.map((e,j)=>({o:j,t:e[1],c:j>=k?'off':j===k-1?'head':''})));
+    L.$('#s15').innerHTML=cards29(fold29(EV.slice(0,k).map(e=>e[0])));
+    if(k===6)top=true;
+    if(top&&k<=4&&!shown){shown=true;L.sheet('info','State is a fold of the log','Users want current state, not history, so the app replays the events through deterministic code. Same log, same result, every time. Apps keep snapshots of state only to speed this up.');L.done();}};
+  L.$('#r15').addEventListener('input',draw);draw();}},
+
 {part:2,src:'Chapter 11 · Commands and events',run(L){
-  L.h(L.kick('learn','Commands and events')+'<h1 class="q">A command can fail. An event is a fact.</h1>'+
-   L.flow([['pointer','Command','“Book the 10–11 slot for parcel 88”','may still fail',4],['check','Validate','Does the slot still have a free place?','',3],['book','Event','“10–11 slot reserved for parcel 88”','durable, immutable',2]])+
-   L.prose('A request starts as a <b>command</b>. The app first checks that it can be done; only then does it become an <b>event</b>, a fact. If the recipient later changes slot, the reservation still happened. The change is a <i>new</i> event.')+
-   L.prose('Consumers can’t reject an event: it’s already in the log, and others may have seen it. So validation must happen <b>before</b> the event is written, for example in a serializable transaction that checks and publishes together. Or split it in two: a tentative reservation event, then a confirmation event once it’s validated.'));
+  L.h(L.kick('learn','Commands and events')+'<h1 class="q">A command can fail. An event is a fact.</h1>'+PIC_CMD+
+   '<p class="capt">Check before writing the event, say in a '+L.g('serializable','serializable')+' transaction that validates and publishes together. Or log a tentative reservation, then a confirming event. Changing the slot later is a new event; the reservation still happened.</p>');
   L.done();}},
+
+{part:2,src:'Chapter 11 · Deriving current state from the event log',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#e17p'+j).click();},
+ run(L){
+  const full=EV.map((e,j)=>({o:j,t:e[1]}));
+  const P=[
+   {nm:'Compact it',rows:EV.map((e,j)=>({o:j,t:e[1],c:j<5?'gone':''})),st:fold29(['deliv']),cmp:true,
+    cap:vd29(false,'History lost')+'Only “Delivered” survives. The charge, the attempt and the porch came from earlier events. Events hold intents, so later ones don’t replace earlier ones: no compaction by key.'},
+   {nm:'CDC rows',rows:[['v1','row 88: Booked · $6'],['v2','row 88: Label printed · $6'],['v3','row 88: Picked up · $6'],['v4','row 88: Attempted · 1 try · $6'],['v5','row 88: … · porch · $6'],['v6','row 88: Delivered · porch · 1 try · $6']].map((r,j)=>({o:r[0],t:r[1],c:j<5?'gone':''})),st:TRUTH,cmp:true,
+    cap:vd29(true,'Nothing lost')+'A CDC record holds the whole new row, so the latest one per key says everything. Compaction is safe here.'},
+   {nm:'Late command',rows:full.concat([{o:'✗',t:'Command: redirect 88 to no. 14. Rejected: already delivered',c:'cmd'}]),st:TRUTH,
+    cap:vd29(true,'Log unchanged')+'The request was a command. It failed the check, so no event was written and no screen changed.'},
+   {nm:'From a snapshot',rows:[{o:'S',t:'Snapshot after 3: Attempted · $6 · 1 try',c:'snap'}].concat(full.map((r,j)=>Object.assign({},r,{c:j<4?'off':''}))),st:TRUTH,cmp:true,
+    cap:vd29(true,'Same state')+'Starting from a saved snapshot just skips work. Events 0–3 are still kept, so the full log can be replayed any time.'}];
+  const seen=new Set();let shown=false;
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Push the log to its limits. Run each case and watch the screens.</h1>'+
+   '<div class="row29">'+P.map((p,j)=>'<button class="chip" id="e17p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="l17"></div><div id="s17"></div><div class="rd29" id="c17">Compact it: the lifecycle log, compacted by parcel. CDC rows: a CDC topic, compacted. Late command: a redirect after delivery. Red marks a wrong screen.</div>');
+  const show=p=>{L.$('#l17').innerHTML=logRows29(p.rows);L.$('#s17').innerHTML=cards29(p.st,p.cmp);};
+  show({rows:full,st:TRUTH});
+  P.forEach((p,j)=>{L.$('#e17p'+j).onclick=()=>{P.forEach((_,q)=>L.$('#e17p'+q).classList.toggle('sel',q===j));show(p);L.$('#c17').innerHTML=p.cap;seen.add(j);
+    if(seen.size===P.length&&!shown){shown=true;L.sheet('info','Where the log idea bends','Compaction fits CDC rows, not intent events. Commands are checked before they become events. Snapshots are only a shortcut: the raw events stay.');L.done();}};});}},
+
 {part:2,src:'Chapter 11 · Commands and events',pts:5,run(L){
   L.h(L.kick('pr','Command or event?')+'<h1 class="q">Sort each item.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Command','Event'],[
@@ -173,46 +524,86 @@ Course.lesson({
    ['What billing receives: “parcel 102 booked,” at a price billing thinks is wrong.',1,'It’s already in the log, so billing can’t reject it. Checks belong before the event is written.']],
    'A command is a request that may fail. Once validated, it becomes an event: a fact that consumers can’t refuse.');}},
 
-/* ---------- PART 4: IMMUTABILITY ---------- */
+/* ================= PART 4: IMMUTABILITY ================= */
 {part:3,src:'Chapter 11 · State, Streams, and Immutability',run(L){
-  L.h(L.kick('learn','State and streams')+'<h1 class="q">Changing state and an unchanging log are two sides of one coin</h1>'+
-   L.prose('Databases usually store current state, which changes. How does that fit with immutable events? Any changing state is the result of the events that changed it. Free delivery slots are the result of the reservations processed; a merchant’s credit balance is the result of its top-ups and charges.')+
-   L.flow([['list','Event stream','top-ups and charges','add up over time',2],['box','State','credit balance today','look at the changes',1]])+
-   L.prose('In maths terms, state is what you get by integrating the stream over time, and the stream is what you get by differentiating the state. Keep the changelog, and the state becomes reproducible.')+
-   L.quote('The truth is the log.','Pat Helland, quoted in chapter 11')+
-   L.prose('In that view the database just caches the latest value of each record. Log compaction bridges the two: it keeps only the latest version of each record.'));
+  L.h(L.kick('learn','State and streams')+'<h1 class="q">Changing state and an unchanging log are two sides of one coin</h1>'+PIC_INTEGRAL+
+   '<p class="capt">Sum the stream to get the state; take the state’s changes to get the stream. Keep the changelog and the database is a cache of latest values. The analogy has limits: a second derivative of state seems meaningless.</p>'+
+   L.quote('The truth is the log.','Pat Helland, quoted in chapter 11'));
   L.done();}},
-{part:3,src:'Chapter 11 · Advantages of immutable events',run(L){
-  L.h(L.kick('learn','Advantages of immutable events')+'<h1 class="q">Why accountants never use an eraser</h1>'+
-   L.list([['book','Auditing','Accountants record every transaction in an append-only ledger and derive the accounts by adding it up. A mistake isn’t erased: a correcting transaction is added, and the wrong one stays for the audit trail.'],
-     ['shield','Recovering from bugs','If buggy code overwrites data, recovery is hard. With an append-only log of events, it’s much easier to see what happened and repair it.'],
-     ['eye','More information','A shopper adds an item to the cart, then removes it. For delivery nothing happened; for analytics, they were considering it. The log keeps that. A database that deletes the row loses it.']],2));
-  L.done();}},
-{part:3,src:'Chapter 11 · Advantages of immutable events',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">On Tuesday, billing charged Bramble & Bolt twice for 300 parcels. The charges are events in the billing log. What should Linh do?</h1>');
-  L.mc(L.card,['Delete the 300 duplicate charge events','Edit the duplicates to a price of zero','Append 300 refund events that correct them'],2,
-   'Like an accountant: add compensating events. The mistake stays visible for audit, and the balance derived from the log is right again.',
-   'Deleting or editing events destroys the record of what happened. Like an accountant, append refunds that cancel the mistake; the balance then comes out right.');}},
+
+{part:3,src:'Chapter 11 · Advantages of immutable events',pts:1,
+ solve:async L=>{L.$('#a20r').click();},
+ run(L){
+  const base=[{o:'Mon',t:'Top-up',a:'+$5,000'},{o:'Tue',t:'300 parcels booked',a:'−$1,800'},{o:'Tue',t:'300 parcels booked (bug: charged twice)',a:'−$1,800',c:'bug'},{o:'Wed',t:'40 parcels booked',a:'−$240'}];
+  const A={d:{rows:base.filter((_,j)=>j!==2).concat([]),bal:2960,hist:false,why:'The balance is right, but the double charge left no trace. Bramble & Bolt’s dashboard already showed $3,600 for Tuesday, and nothing explains the change.'},
+    e:{rows:base.map((r,j)=>j===2?{o:'Tue',t:'300 parcels booked (edited)',a:'$0',c:'bug'}:r),bal:2960,hist:false,why:'The ledger now claims the second charge was $0. The record of what really happened is gone.'},
+    r:{rows:base.concat([{o:'Thu',t:'Refund: Tuesday double charge',a:'+$1,800',c:'fix'}]),bal:2960,hist:true,why:'The mistake and the fix both stay in the ledger. The balance is right and an auditor can see why.'}};
+  let first=true;
+  L.h(L.kick('pr','Fix the bill')+'<h1 class="q">On Tuesday a bug charged Bramble & Bolt twice for 300 parcels. The charges are events in the billing log. How should Linh fix it? <span class="ill29">illustrative figures</span></h1>'+
+   '<div id="l20"></div><div class="mtr29" id="m20"><span>Balance: $1,160</span><span>History: shows the bug</span></div>'+
+   '<div class="row29"><button class="chip" id="a20d">Delete the duplicate</button><button class="chip" id="a20e">Edit it to $0</button><button class="chip" id="a20r">Append a refund</button></div>');
+  L.$('#l20').innerHTML=logRows29(base);
+  ['d','e','r'].forEach(k=>{L.$('#a20'+k).onclick=()=>{['d','e','r'].forEach(q=>L.$('#a20'+q).classList.toggle('sel',q===k));const a=A[k];
+    L.$('#l20').innerHTML=logRows29(a.rows);
+    L.$('#m20').innerHTML='<span class="ok">Balance: $'+a.bal.toLocaleString('en-US')+' ✓</span><span class="'+(a.hist?'ok':'no')+'">History '+(a.hist?'kept ✓':'erased ✗')+'</span>';
+    const ok=k==='r';if(first){first=false;L.award(ok);L.done();}
+    L.sheet(ok?'ok':'no',ok?'Like an accountant':'Right balance, lost history',a.why+' Accountants never erase: they add a compensating entry. Immutable events also make it much easier to see what buggy code did, and recover.');};});}},
+
 {part:3,src:'Chapter 11 · Deriving several views from the same event log',run(L){
-  L.h(L.kick('learn','Many views, one log')+'<h1 class="q">Write once, read in many shapes</h1>'+
-   L.flow([['list','Parcel event log','written once',2],['map','Tracking page','read view',1],['eye','Support search','read view',3],['trend','Merchant stats','read view',4]],false)+
-   L.prose('Once the log is separate from the state, you can derive <b>several</b> read-optimized views from it, like several consumers of one stream. Want to show existing data in a new way? Build a new view from the log, run it beside the old ones, and shut the old one down when it’s no longer needed. That’s often easier than a complicated schema migration.')+
-   L.prose('Separating how data is written from how it is read is sometimes called '+L.g('cqrs','CQRS')+'. It also takes the heat out of the normalization debate: a denormalized read view is fine, because the step that translates the log into the view keeps it consistent. Twitter’s home timelines, from chapter 1, are such a view.'));
+  L.h(L.kick('learn','Many views, one log')+'<h1 class="q">Write once, read in many shapes</h1>'+PIC_VIEWS+
+   '<p class="capt">Write data one way, read it many ways ('+L.g('cqrs','CQRS')+'). A new feature gets its own view, built from the log beside the old ones: often easier than migrating a schema. Denormalized views are fine: the log keeps them consistent.</p>');
   L.done();}},
+
+{part:3,src:'Chapter 11 · Deriving several views from the same event log',pts:1,
+ solve:async L=>{const r=L.$('#r22');r.value=0;r.dispatchEvent(new Event('input',{bubbles:true}));L.$('#f22').click();L.$('#k22').click();await L.sleep(1500);L.$('#ship22').click();},
+ run(L){
+  const E=[['b','OP-41001',1,'W1','9–10',10],['b','OP-41002',2,'W2','9–10',10],['b','OP-41003',3,'W1','10–11',11],['d','OP-41001',1,'09:40',9.67],['b','OP-41004',4,'W2','11–12',12],
+    ['d','OP-41002',2,'10:25',10.42],['d','OP-41003',3,'11:30',11.5],['b','OP-41005',5,'W1','11–12',12],['d','OP-41004',4,'11:50',11.83],['d','OP-41005',5,'12:40',12.67]];
+  const TG={W1:2,W2:1};let src='full',first=true,res=null,busy=false;
+  const txt=e=>e[0]==='b'?e[1]+' booked · '+e[3]+' · slot '+e[4]:e[1]+' delivered '+e[3];
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Femi wants a new view: late parcels per zone. Rebuild it from the log so it matches the hand count: W1 has 2, W2 has 1.</h1>'+
+   '<div class="row29"><button class="chip sel" id="f22">Full log</button><button class="chip" id="c22">Compacted by parcel</button></div>'+
+   '<div id="l22"></div><div class="rng29"><label for="r22">Start the new view at offset</label><b id="v22">10 (now)</b><input type="range" id="r22" min="0" max="10" step="1" value="10"></div>'+
+   '<div id="g22"></div><div class="rd29" id="o22">Pick a source and a start, then replay.</div><button class="btn pri" id="k22">'+L.ic('play')+'Replay into the view</button> <button class="btn" id="ship22" hidden>'+L.ic('check')+'Ship this view</button>');
+  const kept=j=>src==='full'||!E.slice(j+1).some(x=>x[2]===E[j][2]);
+  const rows=(head)=>{const st=+L.$('#r22').value;L.$('#l22').innerHTML=logRows29(E.map((e,j)=>({o:j,t:txt(e),c:!kept(j)?'gone':j<st?'off':j===head?'head':''})),true);};
+  const chart=cnt=>{let s='<svg class="pic29" viewBox="0 0 340 78" role="img" aria-label="Late parcels per zone compared with the target">';
+    ['W1','W2'].forEach((z,i)=>{const y=6+i*36,n=cnt?cnt[z]:0;
+      s+=tx(8,y+19,z)+'<rect x="40" y="'+(y+4)+'" width="'+(n*80)+'" height="20" rx="5" style="fill:var(--'+(n===TG[z]?'ok':'h1')+')"/>'+
+       '<path d="M'+(40+TG[z]*80)+' '+y+' V'+(y+28)+'" style="stroke:var(--ink);stroke-width:2;stroke-dasharray:3 3"/>'+tx(46+TG[z]*80,y+19,'target '+TG[z],'s29m')+
+       (n?tx(44+n*80-24,y+19,String(n),'s29t','style="fill:var(--pri-ink)"'):'');});
+    L.$('#g22').innerHTML=s+'</svg>';};
+  const setSrc=v=>{if(busy)return;src=v;L.$('#f22').classList.toggle('sel',v==='full');L.$('#c22').classList.toggle('sel',v!=='full');rows(-1);};
+  L.$('#f22').onclick=()=>setSrc('full');L.$('#c22').onclick=()=>setSrc('cmp');
+  L.$('#r22').addEventListener('input',()=>{if(busy)return;const v=+L.$('#r22').value;L.$('#v22').textContent=v===10?'10 (now)':v;rows(-1);});
+  rows(-1);chart(null);
+  L.$('#k22').onclick=()=>{if(busy)return;busy=true;L.$('#ship22').hidden=true;const st=+L.$('#r22').value,seq=[];for(let j=st;j<10;j++)if(kept(j))seq.push(j);
+    const slot={},cnt={W1:0,W2:0};let unk=0,k=0;
+    const step=()=>{if(!L.$('#l22'))return;
+      if(k<seq.length){const e=E[seq[k]];if(e[0]==='b')slot[e[2]]={z:e[3],end:e[5]};else{const s=slot[e[2]];if(!s)unk++;else if(e[4]>s.end)cnt[s.z]++;}
+        rows(seq[k]);chart(cnt);k++;setTimeout(step,110);return;}
+      busy=false;rows(-1);res={cnt,unk};const ok=cnt.W1===TG.W1&&cnt.W2===TG.W2;
+      L.$('#o22').innerHTML=(ok?vd29(true,'Matches'):vd29(false,'Off'))+'W1: <b>'+cnt.W1+'</b>, W2: <b>'+cnt.W2+'</b>'+(unk?' · '+unk+' deliver'+(unk===1?'y':'ies')+' with no booking, so lateness can’t be told':'')+(seq.length?'':' · no events replayed');
+      L.$('#ship22').hidden=false;};
+    step();};
+  L.$('#ship22').onclick=()=>{if(!res)return;const ok=res.cnt.W1===TG.W1&&res.cnt.W2===TG.W2;
+    if(first){first=false;L.award(ok);L.done();}
+    L.sheet(ok?'ok':'no',ok?'View shipped':'Not matching yet',ok?'From offset 0 of the full log, every booking’s slot is known when its delivery arrives. Run the view beside the old ones; drop it when it’s no longer needed.':
+      'Lateness needs each booking’s slot <i>and</i> its delivery. Start later than 0 and early bookings are missing; compact by parcel and every booking is thrown away. Use the full log from offset 0.');};}},
+
 {part:3,src:'Chapter 11 · Concurrency control',run(L){
-  L.h(L.kick('learn','Concurrency control')+'<h1 class="q">One catch, and one bonus</h1>'+
-   L.lanes([['clock','The catch','Log consumers are usually asynchronous. A merchant books a parcel, opens the dashboard, and the view hasn’t caught up: the read-your-writes problem. Fixes: update the view in the same transaction as the append (same storage system, or a distributed transaction), or use the total order broadcast approach from chapter 9.',4],
-            ['check','The bonus','Design each event as a self-contained description of one user action. Then the action is a single append in one place, which is easy to make atomic. If the log and the state are partitioned the same way, a single-threaded consumer per partition needs no concurrency control at all.',2]]));
+  L.h(L.kick('learn','Concurrency control')+'<h1 class="q">One catch, and one bonus</h1>'+PIC_CONC+
+   '<p class="capt">Catch: log consumers are usually asynchronous. Fix it by updating the view in the same transaction as the append, or with total order broadcast. Bonus: make each event describe one whole user action, so it’s one atomic append.</p>');
   L.done();}},
+
 {part:3,src:'Chapter 11 · Limitations of immutability',pts:1,run(L){
-  L.h(L.kick('learn','Limitations of immutability')+'<h1 class="q">When you really must delete</h1>'+
-   L.prose('Keeping every change forever depends on <b>churn</b>. Data that is mostly added is easy to keep. A small dataset with many updates and deletes can build a huge history, and compaction and garbage collection become critical.')+
-   L.prose('Sometimes data must go for other reasons: privacy rules after an account is closed, a law requiring wrong information to be removed, or a leak of sensitive data. Appending a “please ignore” event isn’t enough; you have to rewrite history as if the data was never written. Datomic calls this <b>excision</b>; the Fossil version control system calls it <b>shunning</b>.')+
-   L.note('Truly deleting is hard. Storage engines, filesystems and SSDs often write new copies rather than overwrite, and backups are deliberately unchangeable. Deleting means “harder to retrieve” more than “impossible to retrieve,” but you still have to try.','lock')+
+  L.h(L.kick('learn','Limitations of immutability')+'<h1 class="q">When you really must delete</h1>'+PIC_LIMITS+
+   '<p class="capt">Mostly-added data is cheap to keep forever; heavy churn on little data makes history huge. Privacy rules, laws or a leak can force true deletion: rewriting history as if it was never written (Datomic’s <i>excision</i>, Fossil’s <i>shunning</i>).</p>'+
    '<div id="dq"><h2 class="sub">Mrs. Okoro closes their account and asks Otterpost to delete their personal data. Their address sits in many parcel events. What does that take?</h2></div>');
   L.mc(L.$('#dq'),['Append an “address deleted” event to the log','Rewrite the log as if their data was never written','Nothing: events can never be removed'],1,
-   'An extra event would leave their address in the older events. This needs excision: rewrite history, then chase down the other copies as best you can.',
-   'Appending leaves their address sitting in the older events, and “never removable” isn’t an option when privacy rules require deletion. History has to be rewritten, then other copies chased down.');}},
+   'An extra event would leave their address in the older events. This needs excision: rewrite history, then chase the other copies as best you can.',
+   'Appending leaves their address in the older events, and “never removable” isn’t an option when privacy rules require deletion. History has to be rewritten, then the other copies chased down.');}},
+
 {part:3,src:'Chapter 11 · Summary',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Mixed review',['Dual writes','Change data capture','Event sourcing'],[

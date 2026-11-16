@@ -13,14 +13,320 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0023 only. Signature model: promise cards with lock timers.
+   A coordinator card (with its decision log) sits above two participant
+   cards (Parcel DB, billing ledger). Each participant card has a state
+   strip (work → promised → final), a padlock on the row it changed,
+   and the board has an in-doubt timer with a "bookings blocked" counter.
+   The learner plays the coordinator: prepare, log the decision (the
+   commit point), send it; crash and restart nodes; lose the log.
+   A second, smaller model (lock pile-up) shows what an in-doubt lock
+   costs over time.
+   ===================================================================== */
+const CSS='<style>'+
+ '.tp-fig svg,.tp-board svg{width:100%;display:block;touch-action:manipulation}.tp-fig svg text,.tp-board svg text{font-family:var(--sans)}'+
+ '.tp-cap{font-size:15.5px;line-height:1.5;margin:10px 0 4px}'+
+ '.tp-foot{font-size:13px;color:var(--muted);line-height:1.45;margin:6px 0 0}'+
+ '.tp-ctl{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.tp-ctl .btn{min-height:40px;padding:7px 11px;margin:0;font-size:13.5px}'+
+ '.tp-ctl .btn[disabled]{opacity:.38;cursor:default}.tp-ctl .btn.dng{border-color:var(--no-line);color:var(--no)}'+
+ '.tp-pre{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}.tp-pre .chip{margin:0;min-height:40px;font-size:13.5px;padding:7px 11px}'+
+ '.tp-pre .chip.seen{border-color:var(--ok-line)}.tp-pre .chip[disabled]{cursor:default}'+
+ '.tp-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:46px}'+
+ '.tp-read .tp-ctl{margin:8px 0 2px}.tp-ctl [hidden]{display:none!important}'+
+ '.tp-score{display:flex;gap:6px;flex-wrap:wrap;margin:4px 0 6px}.tp-score .chip{margin:0;font-size:12.5px;padding:4px 8px}'+
+ '.tp-rng{margin:10px 0 2px}.tp-rng label{display:flex;justify-content:space-between;font-size:14px;font-weight:600}.tp-rng input{width:100%;margin:8px 0 0;accent-color:var(--pri)}'+
+ '</style>';
+
+/* ---------- small SVG helpers (this lesson only) ---------- */
+const ST=(sz,c,b,a)=>'font-size:'+Math.max(sz,11.5)+'px;fill:var(--'+c+')'+(b?';font-weight:700':'')+(a?';text-anchor:'+a:'');
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+const rr=(x,y,w,h,r,f,s,sw,da)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+r+'" style="fill:var(--'+f+');stroke:var(--'+(s||f)+');stroke-width:'+(sw===undefined?1.6:sw)+(da?';stroke-dasharray:'+da:'')+'"/>';
+const COL={pri:['pri-bg','pri'],ok:['ok-bg','ok'],no:['no-bg','no'],h1:['h1-bg','h1'],h2:['h2-bg','h2'],h3:['h3-bg','h3'],h4:['h4-bg','h4'],mute:['soft','muted']};
+function cyl(cx,y,w,h,c,da){const b=COL[c][0],f=COL[c][1],x0=cx-w/2,e=Math.max(4,w*.17),st='fill:var(--'+b+');stroke:var(--'+f+');stroke-width:1.8'+(da?';stroke-dasharray:'+da:'');
+  return '<path d="M'+x0+' '+(y+e)+'V'+(y+h-e)+'A'+(w/2)+' '+e+' 0 0 0 '+(x0+w)+' '+(y+h-e)+'V'+(y+e)+'" style="'+st+'"/><ellipse cx="'+cx+'" cy="'+(y+e)+'" rx="'+(w/2)+'" ry="'+e+'" style="'+st+'"/>';}
+const chk=(x,y,c,s)=>{s=s||1;return '<path d="M'+(x-6*s)+' '+y+'l'+(4*s)+' '+(4.5*s)+'l'+(8*s)+' '+(-9*s)+'" style="fill:none;stroke:var(--'+c+');stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round"/>';};
+const xx=(x,y,c,s)=>{s=s||5;return '<path d="M'+(x-s)+' '+(y-s)+'L'+(x+s)+' '+(y+s)+'M'+(x+s)+' '+(y-s)+'L'+(x-s)+' '+(y+s)+'" style="fill:none;stroke:var(--'+c+');stroke-width:2.6;stroke-linecap:round"/>';};
+function lock(x,y,shut,c,k){k=k||1;const sx=x+3*k,sw=10*k;
+  const sh=shut?'M'+sx+' '+(y+9*k)+'V'+(y+5*k)+'a'+(5*k)+' '+(5*k)+' 0 0 1 '+sw+' 0V'+(y+9*k):'M'+sx+' '+(y+9*k)+'V'+(y+1*k)+'a'+(5*k)+' '+(5*k)+' 0 0 1 '+sw+' 0V'+(y+3*k);
+  return '<path d="'+sh+'" style="fill:none;stroke:var(--'+c+');stroke-width:'+(2.2*k)+'"/><rect x="'+x+'" y="'+(y+9*k)+'" width="'+(16*k)+'" height="'+(11*k)+'" rx="'+(2.5*k)+'" style="fill:var(--'+c+')"/>';}
+const mk=(id,c)=>'<defs><marker id="'+id+'" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--'+c+')"/></marker></defs>';
+const ar=(x1,y1,x2,y2,c,id,da)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:var(--'+c+');stroke-width:1.8'+(da?';stroke-dasharray:'+da:'')+'" marker-end="url(#'+id+')"/>';
+const circ=(x,y,r,c,da)=>'<circle cx="'+x+'" cy="'+y+'" r="'+r+'" style="fill:var(--'+COL[c][0]+');stroke:var(--'+COL[c][1]+');stroke-width:1.8'+(da?';stroke-dasharray:'+da:'')+'"/>';
+const fig=(h,label,inner)=>'<div class="tp-fig"><svg viewBox="0 0 320 '+h+'" role="img" aria-label="'+label+'">'+inner+'</svg></div>';
+const cap=t=>'<p class="tp-cap">'+t+'</p>';
+const crown=(x,y)=>'<path d="M'+(x-9)+' '+(y+8)+'L'+(x-9)+' '+y+'L'+(x-4.5)+' '+(y+4)+'L'+x+' '+(y-2)+'L'+(x+4.5)+' '+(y+4)+'L'+(x+9)+' '+y+'L'+(x+9)+' '+(y+8)+'Z" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.6;stroke-linejoin:round"/>';
+
+/* ---------- static figures for Learn and Example screens ---------- */
+function FIG_AGREE(){let s='';
+  s+=tx(78,16,'Leader election',ST(12.5,'ink',1,'middle'))+tx(242,16,'Atomic commit',ST(12.5,'ink',1,'middle'));
+  s+='<line x1="160" y1="6" x2="160" y2="128" style="stroke:var(--line);stroke-width:1.5"/>';
+  [[40,'N1'],[116,'N2']].forEach(n=>{s+=circ(n[0],60,18,'h1')+tx(n[0],64,n[1],ST(12,'ink',1,'middle'))+crown(n[0],31);});
+  s+='<path d="M72 46 L84 56 L72 64 L84 74" style="fill:none;stroke:var(--no);stroke-width:2.2;stroke-linejoin:round"/>';
+  s+=tx(78,104,'Both think they lead',ST(11.5,'ink',1,'middle'))+tx(78,120,'split brain: data drifts',ST(11,'muted',0,'middle'));
+  s+=cyl(204,34,40,46,'ok')+chk(204,62,'ok')+cyl(280,34,40,46,'no')+xx(280,61,'no',5);
+  s+=tx(204,93,'Parcel DB',ST(11,'ink',0,'middle'))+tx(280,93,'Ledger',ST(11,'ink',0,'middle'));
+  s+=tx(242,110,'One commits, one aborts',ST(11.5,'ink',1,'middle'))+tx(242,124,'the booking is half done',ST(11,'muted',0,'middle'));
+  s+=rr(4,138,312,26,13,'h1-bg','h1-bg',0)+tx(160,155,'Both need nodes to agree: consensus',ST(11.5,'h1',1,'middle'));
+  return fig(168,'Left: two nodes both wear a leader crown after a network fault, split brain. Right: the Parcel DB commits and the ledger aborts, so a booking is half done. Both problems need consensus.',s);}
+
+function FIG_FLP(){let s=mk('tpF1','muted')+mk('tpF2','ok');
+  s+=tx(78,16,'In the FLP proof',ST(12.5,'ink',1,'middle'))+tx(242,16,'In real systems',ST(12.5,'ink',1,'middle'));
+  s+='<line x1="160" y1="6" x2="160" y2="164" style="stroke:var(--line);stroke-width:1.5"/>';
+  s+=circ(30,50,14,'h1')+tx(30,54,'A',ST(12,'ink',1,'middle'))+circ(126,50,14,'mute','4 3')+tx(126,55,'?',ST(14,'muted',1,'middle'));
+  s+=ar(46,50,108,50,'muted','tpF1','4 3');
+  s+='<circle cx="78" cy="92" r="13" style="fill:var(--card);stroke:var(--muted);stroke-width:1.8"/><path d="M78 84V92L84 96" style="fill:none;stroke:var(--muted);stroke-width:1.8;stroke-linecap:round"/>'+'<line x1="64" y1="106" x2="92" y2="78" style="stroke:var(--no);stroke-width:2.4"/>';
+  s+=tx(78,128,'Crashed, or just slow?',ST(11.5,'ink',1,'middle'))+tx(78,144,'With no timeouts, it',ST(11,'muted',0,'middle'))+tx(78,158,'may wait forever',ST(11,'muted',0,'middle'));
+  s+=circ(194,50,14,'h1')+tx(194,54,'A',ST(12,'ink',1,'middle'))+circ(290,50,14,'mute','4 3')+tx(290,55,'?',ST(14,'muted',1,'middle'));
+  s+=ar(210,50,272,50,'muted','tpF1','4 3');
+  s+='<circle cx="242" cy="93" r="13" style="fill:var(--ok-bg);stroke:var(--ok);stroke-width:1.8"/><rect x="238" y="75" width="8" height="5" rx="1.5" style="fill:var(--ok)"/><path d="M242 85V93L248 96" style="fill:none;stroke:var(--ok);stroke-width:1.8;stroke-linecap:round"/>';
+  s+=tx(242,128,'No reply in time?',ST(11.5,'ink',1,'middle'))+tx(242,144,'Suspect a crash,',ST(11,'muted',0,'middle'))+tx(242,158,'and move on',ST(11,'ok',1,'middle'));
+  return fig(168,'Left, the FLP model: node A waits on node B with no clock, so it can never tell crashed from slow. Right, real systems: a stopwatch timeout lets A suspect a crash and move on.',s);}
+
+function FIG_LOG(){let s='';
+  s+=tx(8,18,'One node’s write-ahead log, on disk',ST(11,'muted'));
+  s+=rr(8,28,88,36,8,'soft','line2')+tx(52,51,'parcel row',ST(12,'ink',0,'middle'));
+  s+=rr(100,28,88,36,8,'soft','line2')+tx(144,51,'credit charge',ST(12,'ink',0,'middle'));
+  s+=rr(192,28,74,36,8,'ok-bg','ok',2)+tx(229,51,'COMMIT',ST(12,'ok',1,'middle'));
+  s+=rr(270,28,42,36,8,'card','line2',1.4,'4 3');
+  s+='<line x1="268" y1="20" x2="268" y2="86" style="stroke:var(--pri);stroke-width:2.6"/>'+tx(312,100,'the deciding moment',ST(12,'pri',1,'end'));
+  s+=tx(8,126,'◀ Crash before: rolled back',ST(11.5,'no',1))+tx(312,126,'After: committed ▶',ST(11.5,'ok',1,'end'));
+  return fig(136,'A write-ahead log: parcel row, credit charge, then a commit record. A line at the end of the commit record marks the deciding moment. A crash before it rolls back; after it, the transaction is committed.',s);}
+
+function FIG_BOOK(){let s=mk('tpB1','muted');
+  s+=rr(100,6,120,40,12,'pri-bg','pri',1.8)+tx(160,23,'Merchant API',ST(12.5,'ink',1,'middle'))+tx(160,38,'book OP-48213',ST(11,'muted',0,'middle'));
+  s+=ar(132,46,92,80,'muted','tpB1')+ar(188,46,228,80,'muted','tpB1');
+  s+=cyl(80,84,56,48,'h2')+tx(80,114,'parcel',ST(11,'h2',1,'middle'))+cyl(240,84,56,48,'h4')+tx(240,114,'new',ST(11,'h4',1,'middle'));
+  s+=tx(80,148,'Parcel DB',ST(12,'ink',1,'middle'))+tx(80,163,'insert the parcel row',ST(11,'muted',0,'middle'));
+  s+=tx(240,148,'Billing ledger',ST(12,'ink',1,'middle'))+tx(240,163,'charge B&amp;B $6.40',ST(11,'muted',0,'middle'));
+  s+=rr(4,174,312,26,13,'h3-bg','h3-bg',0)+tx(160,191,'One booking = one transaction on two nodes',ST(11.5,'h3',1,'middle'));
+  return fig(204,'The merchant API books parcel OP-48213. One arrow inserts the parcel row in the Parcel DB, another charges Bramble and Bolt 6 dollars 40 in the new billing ledger. One transaction on two nodes.',s);}
+
+function FIG_2PC(){let s=mk('tpP1','pri')+mk('tpP2','ok');
+  const panel=(c,ph)=>{let t='';
+    t+=rr(c-44,24,88,28,10,'card','pri',1.8)+tx(c,42,'Coordinator',ST(11.5,'ink',1,'middle'));
+    [-1,1].forEach(sg=>{const px=c+sg*38;
+      t+=ar(c+sg*12,52,px-sg*2,96,ph===1?'pri':'ok',ph===1?'tpP1':'tpP2');
+      const lab=ph===1?'prepare?':'commit',w=ph===1?58:50,lx=c+sg*30;
+      t+=rr(lx-w/2,64,w,18,9,ph===1?'pri-bg':'ok-bg',ph===1?'pri-bg':'ok-bg',0)+tx(lx,77,lab,ST(11,ph===1?'pri':'ok',1,'middle'));
+      t+=cyl(px,100,36,44,ph===1?'h1':'ok');
+      t+=ph===1?tx(px,130,'yes',ST(12,'ok',1,'middle')):chk(px,126,'ok');});
+    t+=tx(c-38,160,'Parcel DB',ST(11,'ink',0,'middle'))+tx(c+38,160,'Ledger',ST(11,'ink',0,'middle'));return t;};
+  s+=tx(78,14,'1 · Prepare',ST(12.5,'h1',1,'middle'))+tx(242,14,'2 · Commit',ST(12.5,'ok',1,'middle'));
+  s+='<line x1="160" y1="6" x2="160" y2="166" style="stroke:var(--line);stroke-width:1.5"/>'+panel(78,1)+panel(242,2);
+  s+=tx(160,186,'Like a wedding: two “I do”s, then “married”',ST(11.5,'muted',0,'middle'));
+  s+=rr(4,198,312,26,13,'h4-bg','h4-bg',0)+tx(160,215,'Not 2PL: two-phase locking is about isolation',ST(11.5,'h4',1,'middle'));
+  return fig(228,'Phase 1: the coordinator asks the Parcel DB and the ledger to prepare, and both answer yes. Phase 2: the coordinator sends commit and both commit. Like a wedding: two I do’s, then married. Not to be confused with two-phase locking, which is about isolation.',s);}
+
+function FIG_PROMISE(){let s='';
+  s+=tx(8,16,'One node',ST(12,'ink',1));
+  s+='<line x1="16" y1="40" x2="304" y2="40" style="stroke:var(--line2);stroke-width:3;stroke-linecap:round"/>';
+  s+='<line x1="220" y1="32" x2="220" y2="40" style="stroke:var(--ok);stroke-width:2"/>'+rr(214,14,96,18,9,'ok-bg','ok-bg',0)+tx(262,27,'commit record',ST(11,'ok',1,'middle'));
+  s+=tx(304,58,'both moments in one write',ST(11,'muted',0,'end'));
+  s+=tx(8,80,'Two-phase commit',ST(12,'ink',1));
+  const X=[28,82,136,190,244,298],LB=['ID','work','prepare','yes','log','send'];
+  s+='<line x1="16" y1="140" x2="304" y2="140" style="stroke:var(--line2);stroke-width:3;stroke-linecap:round"/>';
+  s+=rr(220,88,98,18,9,'pri-bg','pri-bg',0)+tx(269,101,'the commit point',ST(11,'pri',1,'middle'))+'<line x1="244" y1="106" x2="244" y2="132" style="stroke:var(--pri);stroke-width:2"/>';
+  s+=rr(62,110,132,18,9,'h3-bg','h3-bg',0)+tx(128,123,'a participant’s “yes”',ST(11,'h3',1,'middle'))+'<line x1="190" y1="128" x2="190" y2="132" style="stroke:var(--h3);stroke-width:2"/>';
+  X.forEach((x,j)=>{const c=j===3?'h3':j===4?'pri':'mute';s+=circ(x,140,9,c)+tx(x,144,String(j+1),ST(11,j===3||j===4?COL[c][1]:'ink',1,'middle'))+tx(x,164,LB[j],ST(11,'muted',0,'middle'));});
+  s+=rr(16,176,168,22,11,'ok-bg','ok-bg',0)+tx(100,191,'participant may abort',ST(11,'ok',1,'middle'));
+  s+=rr(196,176,108,22,11,'h3-bg','h3-bg',0)+tx(250,191,'it must wait',ST(11,'h3',1,'middle'));
+  s+=tx(160,222,'Each flag is a point of no return, like “I do”',ST(11.5,'ink',1,'middle'));
+  return fig(230,'Top: on one node, a single commit record is the only point of no return. Bottom: two-phase commit in six steps, ID, work, prepare, yes, log, send, with two flags: a participant’s yes, and the coordinator’s logged decision, the commit point. Before its yes a participant may abort; after it, it must wait. Each flag is a point of no return, like saying I do.',s);}
+
+function FIG_NODOUBT(){let s='';
+  s+=rr(90,6,140,40,12,'soft','no-line',2,'6 4')+tx(160,23,'Coordinator',ST(12,'ink',1,'middle'))+tx(160,39,'crashed · log: COMMIT',ST(11,'no',1,'middle'));
+  s+='<line x1="124" y1="46" x2="84" y2="72" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:4 4"/>'+xx(104,59,'no',4);
+  s+='<line x1="196" y1="46" x2="236" y2="72" style="stroke:var(--ok);stroke-width:2"/>'+tx(232,58,'commit',ST(11,'ok',1));
+  s+=rr(8,72,142,44,12,'h3-bg','h3',2.4)+tx(18,90,'Parcel DB',ST(12,'ink',1))+tx(18,107,'voted yes · in doubt',ST(11,'h3',1));
+  s+=rr(170,72,142,44,12,'ok-bg','ok-line',1.8)+tx(180,90,'Billing ledger',ST(12,'ink',1))+tx(180,107,'committed ✓',ST(11,'ok',1));
+  s+=tx(8,136,'What can the Parcel DB do?',ST(11,'muted'));
+  const row=(y,c,l,r)=>rr(4,y,312,26,13,COL[c][0],COL[c][0],0)+tx(16,y+17,l,ST(11.5,'ink',1))+tx(306,y+17,r,ST(11,COL[c][1],1,'end'));
+  s+=row(142,'no','Abort after a timeout','✗ ledger committed')+row(172,'no','Commit on its own','✗ others may abort')+row(202,'ok','Wait for the coordinator','✓ only safe move');
+  return fig(232,'The coordinator crashed after logging commit. The ledger got commit and committed. The Parcel DB voted yes and is in doubt. Aborting after a timeout or committing alone could disagree; waiting for the coordinator is the only safe move.',s);}
+
+function FIG_3PC(){let s='';
+  s+=tx(240,14,'timeout',ST(11.5,'pri',1,'middle'));
+  s+='<line x1="240" y1="20" x2="240" y2="126" style="stroke:var(--pri);stroke-width:2;stroke-dasharray:5 4"/>';
+  const strip=(y,h,b)=>{let t=tx(12,y-8,h,ST(12,'ink',1));
+    t+=rr(12,y,296,30,8,'soft','line',1.2)+rr(12,y,226,30,8,'soft2','soft2',0)+tx(125,y+19,'A hears nothing',ST(11.5,'muted',1,'middle'));
+    t+='<circle cx="18" cy="'+(y+15)+'" r="4" style="fill:var(--pri)"/>';
+    t+=b;return t;};
+  s+=strip(32,'B has crashed',tx(274,49,'never',ST(11,'muted',0,'middle')));
+  s+=strip(92,'B is fine; the network is slow','<circle cx="276" cy="107" r="6" style="fill:var(--ok)"/>'+tx(276,134,'reply, too late',ST(11,'ok',1,'middle')));
+  s+=rr(4,146,312,26,13,'h3-bg','h3-bg',0)+tx(160,163,'3PC needs bounded delays. We don’t have them.',ST(11.5,'h3',1,'middle'));
+  return fig(176,'Two timelines seen by node A. When B has crashed and when the network is merely slow, A hears nothing until the timeout in both cases. They look the same from outside, so 3PC, which needs bounded delays, can’t be trusted.',s);}
+
+function FIG_KINDS(){let s='';
+  s+=tx(78,16,'Database-internal',ST(12.5,'ink',1,'middle'))+tx(242,16,'Heterogeneous',ST(12.5,'ink',1,'middle'));
+  s+='<line x1="160" y1="6" x2="160" y2="128" style="stroke:var(--line);stroke-width:1.5"/>';
+  s+='<line x1="38" y1="50" x2="118" y2="50" style="stroke:var(--h2);stroke-width:2"/>';
+  [38,78,118].forEach(x=>{s+=cyl(x,30,28,38,'h2');});
+  s+=tx(78,88,'same software',ST(11,'muted',0,'middle'))+tx(78,102,'its own protocol',ST(11,'muted',0,'middle'))+tx(78,120,'often works well',ST(11.5,'ok',1,'middle'));
+  s+='<line x1="196" y1="50" x2="288" y2="50" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:4 4"/>';
+  s+=cyl(196,30,28,38,'h1')+cyl(242,30,28,38,'h4');
+  [0,1,2].forEach(j=>{s+=rr(276,32+j*12,24,9,3,'h3-bg','h3',1.4);});
+  s+=tx(196,82,'DB',ST(11,'muted',0,'middle'))+tx(242,82,'other DB',ST(11,'muted',0,'middle'))+tx(290,82,'broker',ST(11,'muted',0,'middle'));
+  s+=tx(242,102,'different products',ST(11,'muted',0,'middle'))+tx(242,120,'much harder',ST(11.5,'no',1,'middle'));
+  s+=tx(8,148,'Reported cost in MySQL',ST(11,'muted'));
+  s+=tx(8,170,'single-node',ST(11,'ink',1))+rr(86,160,22,13,4,'h2','h2',0)+tx(114,171,'1×',ST(11,'ink',1));
+  s+=tx(8,192,'distributed',ST(11,'ink',1))+rr(86,182,226,13,4,'no','no',0)+tx(306,193,'over 10× slower',ST(11,'card',1,'end'));
+  s+=rr(4,206,312,26,13,'soft','soft',0)+tx(160,223,'Most NoSQL stores and many cloud services skip them',ST(11,'muted',1,'middle'));
+  return fig(236,'Left: three identical database nodes running the same software, often works well. Right: different products, two databases and a message broker, much harder. Below: distributed transactions in MySQL are reported over ten times slower than single-node ones. Most NoSQL stores and many cloud services skip distributed transactions.',s);}
+
+function FIG_XA(){let s=mk('tpX1','muted');
+  s+=rr(6,6,196,156,14,'soft','line2',1.6)+tx(16,24,'Merchant API server',ST(12,'ink',1));
+  s+=rr(16,34,176,26,8,'card','line',1.4)+tx(104,51,'booking code',ST(11.5,'ink',0,'middle'));
+  s+=rr(16,68,124,44,10,'pri-bg','pri',1.8)+tx(78,86,'XA coordinator',ST(11.5,'pri',1,'middle'))+tx(78,102,'(just a library)',ST(11,'muted',0,'middle'));
+  s+=cyl(170,68,34,36,'h3')+tx(170,120,'its log',ST(11,'h3',1,'middle'));
+  s+=rr(16,128,176,26,8,'card','line',1.4)+tx(104,145,'JDBC / JMS drivers',ST(11.5,'ink',0,'middle'));
+  [['Parcel DB',18],['Ledger',66],['Broker',114]].forEach(p=>{s+=rr(226,p[1],88,30,10,'card','line2',1.6)+tx(270,p[1]+19,p[0],ST(11.5,'ink',1,'middle'))+ar(192,141,224,p[1]+15,'muted','tpX1');});
+  s+=tx(8,184,'✗ A database can’t call the coordinator.',ST(11.5,'no',1));
+  s+=tx(8,202,'Server dies → coordinator and log die too.',ST(11.5,'muted',1));
+  return fig(210,'The merchant API server contains the booking code, the XA coordinator as a library, its log on the server’s disk, and the JDBC and JMS drivers that talk to the Parcel DB, the ledger and a broker. A database can’t call the coordinator; if the server dies, the coordinator and its log go too.',s);}
+
+function FIG_RECOVER(){let s=mk('tpR1','muted');
+  s+=rr(8,8,124,44,12,'soft','no-line',2,'6 4')+tx(70,26,'Coordinator',ST(12,'ink',1,'middle'))+tx(70,42,'log lost',ST(11,'no',1,'middle'));
+  s+=rr(170,8,142,44,12,'ok-bg','ok-line',1.8)+tx(180,26,'Billing ledger',ST(12,'ink',1))+tx(180,42,'committed',ST(11,'ok',1));
+  s+=rr(170,66,142,56,12,'h3-bg','h3',2.4)+tx(180,84,'Parcel DB',ST(12,'ink',1))+lock(290,72,true,'h3',.8)+tx(180,100,'in doubt, lock held',ST(11,'h3',1))+tx(180,114,'even after a reboot',ST(11,'muted'));
+  s+='<circle cx="44" cy="78" r="9" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.8"/><path d="M28 112 Q28 92 44 92 Q60 92 60 112 Z" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.8"/>'+tx(44,126,'admin',ST(11,'pri',1,'middle'));
+  s+=ar(62,80,166,36,'muted','tpR1','4 3')+ar(64,98,166,94,'muted','tpR1');
+  s+=tx(150,72,'1 check',ST(11,'muted',1,'middle'))+tx(112,112,'2 apply',ST(11,'muted',1,'middle'));
+  s+=rr(4,138,312,26,13,'ok-bg','ok-bg',0)+tx(16,155,'Admin copies the others’ outcome',ST(11.5,'ink',1))+tx(306,155,'✓ by hand',ST(11,'ok',1,'end'));
+  s+=rr(4,170,312,26,13,'no-bg','no-bg',0)+tx(16,187,'Heuristic: it decides alone',ST(11.5,'ink',1))+tx(306,187,'✗ not atomic',ST(11,'no',1,'end'));
+  return fig(200,'The coordinator’s log is lost. The ledger has committed; the Parcel DB is in doubt and keeps its lock even after a reboot. An admin checks the ledger and applies the same outcome by hand. A heuristic decision, where the Parcel DB decides alone, probably breaks atomicity.',s);}
+
+function FIG_LIMITS(){let s='';
+  s+=cyl(160,26,66,74,'pri')+tx(160,74,'outcomes',ST(11,'pri',1,'middle'));
+  const tag=(x,y,c,L1,L2,S1,S2)=>rr(x,y,116,64,12,COL[c][0],COL[c][1],1.6)+tx(x+9,y+17,L1,ST(11.5,'ink',1))+tx(x+9,y+31,L2,ST(11.5,'ink',1))+tx(x+9,y+46,S1,ST(11,COL[c][1]))+tx(x+9,y+59,S2,ST(11,COL[c][1]));
+  s+='<path d="M120 40H127M120 122H127M193 40H200M193 122H200" style="stroke:var(--line2);stroke-width:2"/>';
+  s+=tag(4,8,'no','Single point','of failure','often runs on','one machine');
+  s+=tag(200,8,'h3','App servers','turn stateful','the log on their','disk is vital');
+  s+=tag(4,90,'h4','Lowest common','denominator','no SSI or deadlock','checks across DBs');
+  s+=tag(200,90,'h1','Amplifies','failures','every participant','must answer');
+  return fig(158,'The coordinator drawn as a database of outcomes, with four limits around it: a single point of failure, app servers that turn stateful, a lowest common denominator with no cross-system SSI or deadlock detection, and amplified failures because every participant must answer.',s);}
+
+/* lock pile-up: minutes the coordinator is down, or its log is lost */
+function FIG_PILE(min,lost){let s='';const per=200,blocked=lost?null:min*per,dots=lost?60:Math.min(60,Math.round(blocked/100));
+  s+=rr(6,26,100,96,14,'h3-bg','h3',2.4)+lock(40,38,true,'h3',2)+tx(56,98,'B&amp;B credit',ST(11.5,'ink',1,'middle'))+tx(56,112,'balance',ST(11.5,'ink',1,'middle'));
+  s+=tx(122,16,'each dot = 100 bookings waiting',ST(11,'muted'));
+  for(let r=0;r<6;r++)for(let c=0;c<10;c++){const j=r*10+c,x=128+c*19,y=32+r*18;
+    s+=j<dots?'<circle cx="'+x+'" cy="'+y+'" r="6" style="fill:var(--no)"/>':'<circle cx="'+x+'" cy="'+y+'" r="5.5" style="fill:none;stroke:var(--line2);stroke-width:1.4"/>';}
+  s+=rr(6,140,308,14,7,'soft2','soft2',0);
+  s+=lost?rr(6,140,308,14,7,'h3','h3',0)+tx(160,151,'∞',ST(12,'card',1,'middle')):rr(6,140,Math.max(14,308*min/30),14,7,'h3','h3',0);
+  s+=tx(6,174,lost?'Lock held: until an admin acts':'Lock held in doubt: '+min+' min',ST(12,'ink',1));
+  s+=tx(314,174,lost?'blocked: no end':'blocked ≈ '+blocked.toLocaleString('en-US'),ST(12,'no',1,'end'));
+  return '<svg viewBox="0 0 320 182" role="img" aria-label="'+(lost?'The lock on Bramble and Bolt’s credit balance is held with no end; every dot is filled.':'The lock is held for '+min+' minutes; about '+blocked+' bookings wait.')+'">'+s+'</svg>';}
+
+/* ---------- the signature board: promise cards with lock timers ---------- */
+const DEF={names:['Parcel DB','Billing ledger'],locks:['B&amp;B merchant row','B&amp;B credit balance'],ct:'Coordinator',cs:'inside the merchant API server',tx:'T-904',will:['yes','yes'],whyNo:'',counter:true,extra:false,extraText:'',mode:'2pc'};
+function Board(L,host,cfg){
+  const id=cfg.id;const S={busy:false,inst:false};
+  host.insertAdjacentHTML('beforeend','<div class="tp-board"><svg id="'+id+'" viewBox="0 0 320 300" role="img" aria-label="Coordinator card with its decision log above two participant cards. Each participant shows its state, its vote and a padlock on the row it changed."></svg><p class="tp-foot" id="'+id+'-n">The in-doubt clock runs fast; blocked bookings (about 200 a minute in a flash sale) are illustrative.</p></div>');
+  const sv=host.querySelector('#'+id);const alive=()=>sv.isConnected;
+  const D=ms=>(L.fast||S.inst)?Math.min(ms,15):ms;const nap=ms=>L.sleep(D(ms));
+  function anim(ms,fn){return new Promise(res=>{const d=D(ms),t0=performance.now();(function st(){if(!alive()){res(false);return;}const p=Math.min(1,(performance.now()-t0)/d);fn(p);paint();if(p<1)setTimeout(st,16);else res(true);})();});}
+  function reset(c){if(c){Object.keys(DEF).forEach(k=>{cfg[k]=DEF[k];});Object.assign(cfg,c);}
+    S.cu=true;S.gone=false;S.lost=false;S.log=null;S.implied=false;S.phase='work';S.min=0;S.wait=0;S.msg=[null,null];S.dots=[];S.extra=cfg.extraText||'';
+    S.p=[0,1].map(()=>({st:'working',vote:null,down:false,got:null,why:'',pend:null}));paint();}
+  const disp=k=>{const p=S.p[k];if(p.down)return 'down';if(p.st==='prepared'&&!p.got&&(!S.cu||S.lost))return 'doubt';return p.st;};
+  function endState(){const a=[0,1].map(disp);if(a.every(x=>x==='committed'||x==='aborted'))return a[0]===a[1]?(a[0]==='committed'?'okc':'oka'):'bad';return null;}
+  function paint(){
+    if(!alive())return;const one=cfg.mode==='one',cu=S.cu;let s='';
+    s+=rr(56,4,208,80,14,cu?'card':'soft',cu?'pri':'no-line',2,cu?0:'6 4');
+    s+=tx(68,25,cfg.ct,ST(13.5,'ink',1));
+    const stt=S.gone?['gone','no']:cu?['up','ok']:['crashed','no'];
+    s+=rr(194,12,60,20,10,COL[stt[1]][0],COL[stt[1]][0],0)+tx(224,26,stt[0],ST(11.5,stt[1],1,'middle'));
+    s+=tx(68,41,cfg.cs,ST(11,'muted'));
+    const lc=S.lost?'no':S.log==='commit'?'ok':S.log==='abort'?'no':'mute';
+    s+=rr(66,50,188,26,8,'soft',(S.log||S.lost)?COL[lc][1]:'line',1.6)+cyl(80,55,12,16,'mute');
+    const lt=one?'no prepare, no decision log':S.lost?'log: LOST':S.log?(cfg.tx+': '+(S.implied?'no record → ':'')+S.log.toUpperCase()):(cfg.tx+': no decision yet');
+    s+=tx(94,67,lt,ST(11.5,COL[lc][1],!!(S.log||S.lost)));
+    const CH=[[120,84,80,152],[200,84,240,152]];
+    CH.forEach(c=>{s+='<line x1="'+c[0]+'" y1="'+c[1]+'" x2="'+c[2]+'" y2="'+c[3]+'" style="stroke:var(--line2);stroke-width:2'+(cu?'':';stroke-dasharray:4 4')+'"/>';});
+    const en=endState();
+    if(en&&!S.dots.length){const bad=en==='bad';
+      s+=rr(14,103,292,30,15,bad?'no-bg':'ok-bg',bad?'no':'ok-line',2)+tx(160,123,bad?'✗ Half done: one committed, one aborted':en==='okc'?'✓ Atomic: both committed':'✓ Atomic: both aborted',ST(12.5,bad?'no':'ok',1,'middle'));}
+    else [0,1].forEach(k=>{const m=S.msg[k];if(!m)return;const w=Math.max(40,m.t.length*6.3+16),cx=k?220:100;
+      s+=rr(cx-w/2,108,w,20,10,COL[m.c][0],COL[m.c][0],0)+tx(cx,122,m.t,ST(11,COL[m.c][1],1,'middle'));});
+    S.dots.forEach(d=>{const c=CH[d.k],t=d.up?1-d.p:d.p;const x=c[0]+(c[2]-c[0])*t,y=c[1]+(c[3]-c[1])*t;
+      s+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="6.5" style="fill:var(--'+COL[d.c][1]+');stroke:var(--card);stroke-width:2"/>';});
+    const STY={working:['card','line2','Working','muted'],prepared:['pri-bg','pri','Prepared','pri'],doubt:['h3-bg','h3','In doubt','h3'],committed:['ok-bg','ok-line','Committed','ok'],aborted:['soft','line2','Aborted','no'],down:['soft','no-line','Crashed','no']};
+    const SUB={working:'not final yet',prepared:'promised to commit',doubt:'can’t commit or abort',committed:'writes are final',aborted:'writes undone'};
+    S.p.forEach((p,k)=>{const x0=k?164:4,y0=152,ds=disp(k),sty=STY[ds],bad=en==='bad';
+      s+=rr(x0,y0,152,140,14,sty[0],bad?'no':sty[1],(ds==='doubt'||bad)?2.6:1.8,ds==='down'?'6 4':0);
+      s+=tx(x0+10,y0+20,cfg.names[k],ST(13,'ink',1));
+      const base=ds==='down'?p.st:ds;const idx=base==='working'?0:(base==='prepared'||base==='doubt')?1:2;
+      const XS=[x0+22,x0+76,x0+130],cy=y0+38,skip=p.vote!=='yes';
+      s+='<line x1="'+XS[0]+'" y1="'+cy+'" x2="'+XS[2]+'" y2="'+cy+'" style="stroke:var(--line2);stroke-width:2"/>';
+      const mid=one?'no promise':p.vote==='no'?'voted no':p.vote==='none'?'no reply':'promised';
+      ['work',mid,'final'].forEach((lab,j)=>{const cur=j===idx,reach=j<idx&&!(j===1&&skip);
+        s+=cur?'<circle cx="'+XS[j]+'" cy="'+cy+'" r="7" style="fill:var(--'+sty[3]+')"/>':reach?'<circle cx="'+XS[j]+'" cy="'+cy+'" r="6" style="fill:var(--muted)"/>':'<circle cx="'+XS[j]+'" cy="'+cy+'" r="6" style="fill:var(--card);stroke:var(--line2);stroke-width:1.8"/>';
+        s+=tx(XS[j],y0+57,lab,ST(11,cur?'ink':'muted',cur,'middle'));});
+      s+=tx(x0+10,y0+80,sty[2],ST(14,sty[3],1));
+      const sub=ds==='down'?(p.st==='prepared'?'promise safe on disk':'will roll back'):((ds==='aborted'||ds==='committed')&&p.why?p.why:SUB[ds]);
+      s+=tx(x0+10,y0+96,sub,ST(11,'muted'));
+      const held=!(ds==='committed'||ds==='aborted');
+      s+=lock(x0+10,y0+107,held,ds==='doubt'?'h3':held?'muted':'ok');
+      s+=tx(x0+33,y0+118,cfg.locks[k],ST(11.5,'ink',1))+tx(x0+33,y0+132,held?(ds==='doubt'?'held, waiting':'locked'):'released',ST(11,ds==='doubt'?'h3':held?'muted':'ok',ds==='doubt'));});
+    let y=300;
+    if(cfg.counter){s+=rr(4,y,312,40,12,'soft','soft',0)+tx(14,y+17,'In doubt: '+S.min+' min',ST(12,S.min?'h3':'muted',1))+tx(306,y+17,'B&amp;B bookings blocked: '+S.wait.toLocaleString('en-US'),ST(12,S.wait?'no':'muted',1,'end'));
+      s+=rr(14,y+26,292,6,3,'soft2','soft2',0);if(S.wait)s+=rr(14,y+26,Math.min(292,Math.max(6,S.wait/6000*292)),6,3,'no','no',0);y+=46;}
+    if(cfg.extra){s+=rr(4,y,312,28,12,'h4-bg','h4-bg',0)+tx(160,y+18,S.extra,ST(11.5,'h4',1,'middle'));y+=34;}
+    sv.setAttribute('viewBox','0 0 320 '+(y-4));sv.innerHTML=s;const nt=host.querySelector('#'+id+'-n');if(nt)nt.hidden=!cfg.counter;if(cfg.onPaint)cfg.onPaint(S);}
+  const tick=setInterval(()=>{if(!alive()){clearInterval(tick);return;}if(cfg.counter&&[0,1].some(k=>disp(k)==='doubt')){S.min++;S.wait+=200;paint();}},450);
+  function fly(k,up,t,c,lost){S.msg[k]={t:t,c:c};const d={k:k,up:up,c:c,p:0};S.dots.push(d);
+    return anim(480,p=>{d.p=lost?p*.5:p;}).then(()=>{S.dots=S.dots.filter(x=>x!==d);if(lost)S.msg[k]={t:t+' lost',c:'no'};paint();});}
+  async function prepare(){if(!S.cu||S.phase!=='work')return;S.phase='asking';
+    await Promise.all([0,1].map(k=>fly(k,false,'prepare?','pri')));
+    await Promise.all([0,1].map(async k=>{const p=S.p[k],w=cfg.will[k];
+      if(p.down||w==='timeout'){S.msg[k]={t:'…',c:'mute'};paint();await nap(800);p.vote='none';S.msg[k]={t:'timed out',c:'no'};paint();return;}
+      if(w==='no'){p.vote='no';p.st='aborted';p.why=cfg.whyNo||'it voted no';await fly(k,true,'no','no');return;}
+      p.vote='yes';p.st='prepared';paint();await fly(k,true,'yes','ok');}));
+    S.phase='voted';paint();}
+  function decide(d){if(!S.cu||S.phase!=='voted')return;S.log=d;S.phase='decided';paint();}
+  function apply(k,d){const p=S.p[k];p.got=d;p.pend=null;
+    if(d==='commit'){if(p.st==='prepared')p.st='committed';else if(p.st!=='committed'){p.st='aborted';p.why=p.vote==='no'?'voted no: can’t commit':'never promised';}}
+    else if(p.st!=='committed'){p.st='aborted';if(!p.why)p.why='writes undone';}
+    paint();}
+  async function deliver(k,d){const p=S.p[k];if(p.got===d)return;const c=d==='commit'?'ok':'no';
+    if(p.down){await fly(k,false,d,c,true);S.msg[k]={t:'retrying…',c:'h3'};p.pend=d;paint();return;}
+    await fly(k,false,d,c);apply(k,d);}
+  async function send(d){d=d||S.log;if(!S.cu||!d)return;S.phase='sending';await Promise.all([0,1].map(k=>deliver(k,d)));S.phase='sent';paint();}
+  async function crashC(o){if(!S.cu)return;S.cu=false;if(o&&o.gone){S.gone=true;S.lost=true;}S.msg=[null,null];paint();await nap(700);
+    S.p.forEach(p=>{if(p.st==='working'&&!p.down){p.st='aborted';p.why='aborted alone: safe';}});paint();}
+  async function recoverC(manual){if(S.cu)return null;S.cu=true;S.gone=false;paint();await nap(500);if(S.lost){paint();return 'lost';}
+    if(!S.log){S.log='abort';S.implied=true;S.phase='decided';paint();await nap(300);}
+    if(!manual)await send();return S.log;}
+  function crashP(k){S.p[k].down=true;S.msg[k]=null;paint();}
+  async function recoverP(k){const p=S.p[k];p.down=false;if(p.st==='working'){p.st='aborted';p.why='rolled back on restart';}paint();
+    if(p.pend&&S.cu){await nap(300);await deliver(k,p.pend);}}
+  async function admin(){const f=S.p.some(p=>p.st==='committed')?'commit':'abort';
+    for(const k of [0,1]){const p=S.p[k];if(p.st==='prepared'){S.msg[k]={t:'admin: '+f,c:f==='commit'?'ok':'no'};paint();await nap(600);apply(k,f);p.why='by hand: '+f;paint();}}}
+  async function heuristic(k,d){const p=S.p[k];S.msg[k]={t:'decides alone',c:'no'};paint();await nap(600);p.got=d;p.st=d==='commit'?'committed':'aborted';p.why='heuristic decision';paint();}
+  async function onePhase(f){if(S.phase!=='work')return;S.phase='sending';
+    await Promise.all([0,1].map(async k=>{const p=S.p[k];
+      if(k===1&&f==='lost'){await fly(1,false,'commit','ok',true);await nap(700);p.st='aborted';p.why='timed out: aborts';S.msg[1]={t:'timed out',c:'no'};paint();return;}
+      await fly(k,false,'commit','ok');
+      if(k===1&&f==='limit'){p.st='aborted';p.why='credit below zero';paint();await fly(1,true,'abort','no');return;}
+      if(k===1&&f==='crash'){p.down=true;S.msg[1]={t:'crashed',c:'no'};paint();await nap(900);p.down=false;p.st='aborted';p.why='rolled back on restart';paint();return;}
+      p.st='committed';paint();await fly(k,true,'done','ok');}));
+    S.phase='sent';paint();}
+  function run(fn){if(S.busy)return Promise.resolve(false);S.busy=true;paint();return (async()=>{try{await fn();}finally{S.busy=false;paint();}return true;})();}
+  async function idle(){for(let i=0;i<800&&S.busy;i++)await L.sleep(10);}
+  reset();
+  return {S,cfg,paint,reset,prepare,decide,send,deliver,crashC,recoverC,crashP,recoverP,admin,heuristic,onePhase,run,idle,nap,disp};}
+
+const say=(L,id,t)=>{const e=L.$('#'+id);if(e)e.innerHTML=t;};
+
 Course.lesson({
   id:'0023', title:'Atomic commit and two-phase commit', minutes:20, icon:'lock',
   goals:['Explain why a transaction across two databases needs every node to agree','Walk through two-phase commit and its two points of no return','Spot what goes wrong when the coordinator fails, and why XA hurts in practice'],
   parts:['Why agree','Two phases','In doubt','In practice'],
   read:'Read chapter 9 from “Distributed Transactions and Consensus” to the end of “Distributed Transactions in Practice” for the full story, including the marriage analogy and the XA details.',
   glossary:{
-    'atomic-commit':'Atomic commit: making a transaction that touches several nodes end the same way on all of them. Every node commits, or every node aborts.',
-    'twopc':'Two-phase commit (2PC): an algorithm for atomic commit across nodes. A coordinator first asks every participant “can you commit?” (prepare), and only if all say yes tells them all to commit.',
+    'atomic-commit':'Atomic commit: making a transaction that touches several nodes end the same way on all of them. Every node commits, or every node aborts. Atomic commit and consensus can each be reduced to the other.',
+    'twopc':'Two-phase commit (2PC): an algorithm for atomic commit across nodes. A coordinator first asks every participant “can you commit?” (prepare), and only if all say yes tells them all to commit. Apps reach it through XA (JTA in Java) or, for SOAP web services, WS-AtomicTransaction.',
     'coordinator':'Coordinator (transaction manager): the part of two-phase commit that sends the prepare requests, writes the decision to its own log and tells every participant the outcome.',
     'in-doubt':'In doubt (uncertain): the state of a participant that has voted yes but has not yet heard whether the transaction committed or aborted. It can only wait.',
     'flp':'FLP result: a proof by Fischer, Lynch and Paterson that no algorithm can always reach consensus if a node may crash, in a model with no clocks or timeouts.',
@@ -41,23 +347,18 @@ Course.lesson({
   steps:[
 /* ---------- PART 1: WHY AGREE ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt books a parcel. Otterpost saves the parcel in one database and charges the merchant’s credit in another. The parcel saves, but the charge fails. Is that fine?</h1>');
+  L.fast=false;
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt books a parcel. Otterpost saves the parcel in one database and charges the merchant’s credit in another. The parcel saves; the charge fails. Is that fine?</h1>');
   L.mc(L.card,['Fine: the totals even out on the invoice','No: the two databases now disagree'],1,
-   'A parcel nobody paid for is exactly the half-done state this lesson is about. The two writes must succeed together or fail together.',
+   'A parcel nobody paid for is exactly the half-done state this lesson is about. The two writes must succeed together or fail together, the way atomicity already keeps a secondary index in step with its table.',
    'Invoices are built from the charges, so this parcel would never be billed. The two writes must succeed together or fail together.');}},
 {part:0,src:'Chapter 9 · Distributed Transactions and Consensus',run(L){
-  L.h(L.kick('learn','Why nodes must agree')+'<h1 class="q">Getting nodes to agree sounds easy. It isn’t.</h1>'+
-   L.prose(L.g('consensus','Consensus')+' means getting several nodes to agree on something. It sounds simple. The book warns that many broken systems were built by people who believed it was.')+
-   L.list([['people','Leader election','In single-leader replication, every node must agree who the leader is. If a network fault splits them, two nodes may both think they lead (split brain). Both accept writes, and the data drifts apart.'],
-     ['check','Atomic commit','A transaction that spans several nodes may succeed on some and fail on others. To keep it atomic, all nodes must agree on one outcome: everyone commits, or everyone aborts.']],1)+
-   L.prose('This lesson is about the second one, '+L.g('atomic-commit','atomic commit')+'. Its classic answer, two-phase commit, turns out to be a kind of consensus algorithm, though not a very good one. The next lesson covers better ones.'));
+  L.h(L.kick('learn','Why nodes must agree')+'<h1 class="q">Getting nodes to agree sounds easy. It isn’t.</h1>'+CSS+FIG_AGREE()+
+   cap(L.g('consensus','Consensus')+' means getting several nodes to agree. Two places need it: who the leader is, and whether a multi-node transaction commits ('+L.g('atomic-commit','atomic commit')+'). This lesson: atomic commit. Its classic answer, two-phase commit, is a weak consensus algorithm.'));
   L.done();}},
 {part:0,src:'Chapter 9 · The Impossibility of Consensus',run(L){
-  L.h(L.kick('learn','A famous proof')+'<h1 class="q">A proof says consensus is impossible. So why does anyone use it?</h1>'+
-   L.prose('The '+L.g('flp','FLP result')+', named after its authors Fischer, Lynch and Paterson, proves that no algorithm can <i>always</i> reach consensus if there’s a risk that a node may crash.')+
-   L.lanes([['lock','In the proof','The algorithm is deterministic and lives in the <b>asynchronous model</b>: no clocks, no timeouts, no way to suspect that a node has crashed.',3],
-            ['clock','In real systems','Algorithms use <b>timeouts</b> to suspect crashed nodes, even if the suspicion is sometimes wrong. Then consensus becomes solvable. Even <b>random numbers</b> are enough to escape the proof.',2]])+
-   L.prose('So FLP matters a lot in theory, but distributed systems can usually reach consensus in practice.'));
+  L.h(L.kick('learn','A famous proof')+'<h1 class="q">A proof says consensus is impossible. So why use it?</h1>'+CSS+FIG_FLP()+
+   cap('The '+L.g('flp','FLP result')+' proves no algorithm can <i>always</i> reach consensus if a node may crash. But it assumes no clocks or timeouts. Allow timeouts, even ones that sometimes suspect wrongly, or random numbers, and consensus becomes solvable.'));
   L.done();}},
 {part:0,src:'Chapter 9 · The Impossibility of Consensus',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias reads about FLP and posts in the team chat: “Consensus is proven impossible, so anything built on it is broken.” What’s the right reply?</h1>');
@@ -67,68 +368,69 @@ Course.lesson({
 
 /* ---------- PART 2: TWO PHASES ---------- */
 {part:1,src:'Chapter 9 · From single-node to distributed atomic commit',run(L){
-  L.h(L.kick('learn','Commit on one node')+'<h1 class="q">On one node, a single disk write decides</h1>'+
-   L.prose('Atomicity means a transaction either <b>commits</b>, keeping all its writes, or <b>aborts</b>, undoing all of them. Nothing half-finished is left behind.')+
-   L.flow([['pencil','1 · Data','The transaction’s writes go to the write-ahead log on disk'],['check','2 · Commit record','Appended to the log after the data'],['shield','After a crash','Commit record on disk? Committed. Missing? Rolled back.']])+
-   L.prose('The deciding moment is when the disk finishes writing the commit record. Before it, a crash means abort. After it, the transaction is committed. One device on one node makes the decision.'));
+  L.h(L.kick('learn','Commit on one node')+'<h1 class="q">On one node, a single disk write decides</h1>'+CSS+FIG_LOG()+
+   cap('A transaction either commits (keeps all its writes) or aborts (undoes them all). On one node the database writes the data, then a commit record. The moment the disk finishes that record decides. One device on one node.'));
   L.done();}},
 {part:1,src:'Chapter 9 · From single-node to distributed atomic commit',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Billing gets its own database, and booking gets harder</h1>');
-  L.beats(L.card,[
-   ['The change','The finance team wants its own <b>billing ledger</b>, separate from the Parcel DB. They pick a different database product. Merchants’ credit balances move there.'],
-   ['The new problem','Booking a parcel now writes to two databases: the parcel row in the Parcel DB, and the charge against the merchant’s credit in the ledger. One '+L.g('transaction','transaction')+', two nodes.'],
-   ['Tobias’s plan','“Easy. When the booking is done, send <b>commit</b> to both databases.”'],
-   ['What can go wrong','The ledger sees Bramble & Bolt’s credit would drop below zero and aborts, while the Parcel DB commits. Or the commit to the ledger is lost in the network and times out. Or the ledger crashes before its commit record reaches the disk.'],
-   ['Why it can’t be undone','Once the Parcel DB commits, the parcel is visible. Dispatch may already have put it on a route. A commit must be <b>irrevocable</b>, or everything that read the parcel would have to be reverted too.'],
-   ['The rule','A node may only commit once it is sure every other node in the transaction will commit too.']],
-   'You can undo a committed write later only with a '+L.g('compensating','compensating transaction')+'. To the database that’s a separate transaction, so keeping the two in step is the application’s problem.');}},
-{part:1,src:'Chapter 9 · From single-node to distributed atomic commit',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The ledger aborted, but the Parcel DB already committed the parcel. Why can’t the Parcel DB just quietly roll it back?</h1>');
-  L.mc(L.card,['Other transactions may already have read the parcel and used it','A database can only roll back before the data reaches the disk','The Parcel DB has no way to find the parcel row again'],0,
-   'Committed data is visible to everyone. Taking it back would leave other work built on a parcel that “never existed.”',
-   'The problem isn’t technical. Once committed, the parcel is visible and others may rely on it, so a commit must never be taken back.');}},
-{part:1,src:'Chapter 9 · Introduction to two-phase commit',run(L){
-  L.h(L.kick('learn','Two-phase commit')+'<h1 class="q">Ask first, then decide</h1>'+
-   L.prose(L.g('twopc','Two-phase commit (2PC)')+' splits the commit into two phases. It adds a new piece: a '+L.g('coordinator','coordinator')+', also called the transaction manager. It’s often a library inside the application process, but can be a separate service. The databases in the transaction are the <b>participants</b>.')+
-   L.flow([['chat','Phase 1 · Prepare','The coordinator asks each participant: can you commit?'],['check','All say yes','Phase 2: commit, sent to all'],['x','Anyone says no','Phase 2: abort, sent to all']],false)+
-   L.prose('The book compares it to a wedding. The officiant asks each partner separately, and declares them married only after both say “I do.” If either says no, it’s off.')+
-   L.note('<b>Don’t confuse 2PC with 2PL.</b> Two-phase <i>commit</i> gives atomic commit across nodes. Two-phase <i>locking</i>, from the serializability lesson, gives serializable isolation. Despite the names, they’re unrelated.','alert'));
+  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Billing gets its own database</h1>'+CSS+FIG_BOOK()+
+   cap('The finance team moves merchants’ credit balances into a new <b>billing ledger</b>, on a different database product. Booking a parcel is now one '+L.g('transaction','transaction')+' that writes to two nodes.')+
+   '<p class="tp-foot">Tobias’s plan: “Easy. When the booking is done, send commit to both.” Try it next.</p>');
   L.done();}},
-{part:1,src:'Chapter 9 · Introduction to two-phase commit',pts:1,
- solve:async L=>{L.$('#prep').click();await L.sleep(900);L.$$('.chip[data-r="1"]').forEach(b=>b.click());},
+{part:1,src:'Chapter 9 · From single-node to distributed atomic commit',
+ solve:async L=>{L.fast=true;const B=L.b7;for(const f of ['limit','lost']){await B.idle();L.$('#f7-'+f).click();await L.sleep(20);L.$('#go7').click();await L.sleep(30);await B.idle();}},
  run(L){
-  const S=[['Booking A','yes','yes'],['Booking B','yes','no: credit would go below zero'],['Booking C','yes','no reply: timed out']];
-  const O=['Commit to both','Abort to both','Commit Parcel DB only'],R=[0,1,1];
-  const W=[['Every participant promised it can commit, so the coordinator commits everywhere.','Nobody said no. When all participants vote yes, 2PC sends commit.','Never commit only some participants. The ledger would never get its commit, and the charge would be lost.'],
-           ['One “no” is enough to block the commit. The ledger never promised anything.','A single no means abort for everyone.','That’s the half-done booking 2PC exists to prevent: a parcel with no charge.'],
-           ['No answer is not a yes. If a prepare request fails or times out, the coordinator aborts.','If a prepare request fails or times out, the coordinator aborts everywhere.','Committing one side leaves a parcel with no charge. A timeout on prepare means abort for all.']];
-  let n=0,all=true;
-  L.h(L.kick('pr','Play the coordinator')+'<h1 class="q">Three bookings, two participants each. Send the prepare requests, read the votes, then choose what phase 2 sends.</h1>'+
-   '<button class="btn pri" id="prep">'+L.ic('play')+'Send prepare requests</button><div id="scs"></div><div id="cf"></div>');
-  L.$('#prep').onclick=function(){this.remove();const box=L.$('#scs');
-    S.forEach((s,k)=>{box.insertAdjacentHTML('beforeend','<div class="lane" style="margin-top:12px" id="sc'+k+'"><div class="lh">'+L.ic('box')+s[0]+'</div><div class="small" id="v'+k+'">Waiting for votes…</div><div id="o'+k+'" style="margin-top:8px"></div></div>');});
-    setTimeout(()=>{if(!L.$('#scs'))return;S.forEach((s,k)=>{const v=L.$('#v'+k);if(!v)return;
-      v.innerHTML='Parcel DB: <b>'+s[1]+'</b> · Ledger: <b>'+s[2]+'</b>';
-      const ob=L.$('#o'+k);O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;if(j===R[k])b.dataset.r='1';
-        b.onclick=()=>{if(ob.dataset.done)return;ob.dataset.done='1';const ok=j===R[k];if(!ok)all=false;
-          b.classList.add(ok?'ok':'no');if(!ok)ob.children[R[k]].classList.add('ok');L.fb(L.$('#sc'+k),W[k][j],ok?'ok':'no');
-          if(++n===S.length){L.award(all);L.sheet(all?'ok':'info',all?'Spot on':'Now you’ve seen all three','Commit needs a <b>yes from every participant</b>. A no, or no answer at all, means abort for everyone.');L.done();}};
-        ob.appendChild(b);});});},600);};}},
-{part:1,src:'Chapter 9 · A system of promises',run(L){
-  L.h(L.kick('learn','A system of promises')+'<h1 class="q">Why two phases work when one doesn’t</h1>'+
-   L.prose('Prepare and commit messages can get lost too. What makes 2PC safe is what each side <i>promises</i>, and writes to disk, before it answers.')+
-   L.list([['A global ID','The app gets a globally unique transaction ID from the coordinator.'],
-     ['Normal work','Reads and writes run on each participant in an ordinary single-node transaction tagged with that ID. If anything fails here, anyone may abort.'],
-     ['Prepare','The coordinator sends prepare to all. If any request fails or times out, it aborts.'],
-     ['Yes is a promise','Before voting yes, a participant writes everything to disk and checks constraints. A crash or a full disk is no excuse later. It gives up the right to abort.'],
-     ['Commit point','With all answers in, the coordinator decides and writes the decision to its own log on disk.'],
-     ['No going back','It sends the decision and retries forever until every participant has it, even one that crashed and came back.']],2)+
-   '<p class="small" style="margin-top:10px">Two points of no return: a participant’s yes, and the coordinator’s logged decision. On a single node, both happen in one moment: writing the commit record.</p>');
+  L.fast=false;const tried=new Set();let pick=null,finished=false;
+  const F={none:'All goes well',limit:'Credit too low',lost:'Commit message lost',crash:'Ledger crashes'};
+  const R={none:'Both committed. When nothing fails, one phase works fine. The trouble is the other cases.',
+    limit:'The Parcel DB committed. The ledger saw Bramble & Bolt’s credit would drop below zero and aborted. A parcel with no charge.',
+    lost:'The commit to the ledger was lost in the network. The ledger timed out and aborted, but the Parcel DB had already committed.',
+    crash:'The ledger crashed before its commit record reached disk, and rolled back on restart. The Parcel DB had already committed.'};
+  L.h(L.kick('ex','Tobias’s plan')+'<h1 class="q">Just send commit to both. Pick what goes wrong, then send.</h1>'+CSS+
+   '<div class="tp-pre" id="f7">'+Object.keys(F).map(k=>'<button class="chip" id="f7-'+k+'">'+F[k]+'</button>').join('')+'</div>'+
+   '<div id="b7"></div><div class="tp-ctl"><button class="btn pri" id="go7" disabled>'+L.ic('play')+'Send commit to both</button></div>'+
+   '<div class="tp-read" id="r7" aria-live="polite">Pick a case above. Try at least two that go wrong.</div>');
+  const sync=S=>{const g=L.$('#go7');if(g)g.disabled=S.busy||S.phase!=='work'||!pick;};
+  const B=Board(L,L.$('#b7'),Object.assign({},DEF,{id:'pb7',mode:'one',ct:'Merchant API',cs:'Tobias’s plan: commit both',counter:false,onPaint:sync}));L.b7=B;
+  Object.keys(F).forEach(k=>{L.$('#f7-'+k).onclick=function(){if(B.S.busy)return;pick=k;L.$$('#f7 .chip').forEach(c=>c.classList.toggle('sel',c===this));
+    B.reset(Object.assign({},DEF,{mode:'one',ct:'Merchant API',cs:'Tobias’s plan: commit both',counter:false}));say(L,'r7','Ready: “'+F[k]+'”. Press send.');};});
+  L.$('#go7').onclick=()=>{if(!pick)return;const f=pick;B.run(async()=>{await B.onePhase(f);}).then(ok=>{if(!ok||!L.$('#r7'))return;
+    say(L,'r7',R[f]);L.$('#f7-'+f).classList.add('seen');if(f!=='none')tried.add(f);
+    if(tried.size>=2&&!finished){finished=true;
+      L.sheet('info','A commit can’t be taken back','Once the parcel is committed it is visible: Dispatch may already have routed it. So a node may commit only when it’s sure every other node will too. Undoing it later takes a separate '+L.g('compensating','compensating transaction')+', which is the application’s problem.');L.done();}});};}},
+{part:1,src:'Chapter 9 · From single-node to distributed atomic commit',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why can’t the Parcel DB just quietly roll back its committed parcel? Tap each piece to build the reason.</h1>');
+  L.sentence(L.card,[['Once the Parcel DB commits,'],['other transactions can read the parcel,','the parcel row is still private,','the ledger can still undo it,'],['so the commit can never be taken back.','so it can quietly roll back.','so the coordinator must ask again.']],[0,0,0],
+   [[],['Committed data is visible to everyone. That’s the idea behind read committed isolation.','The ledger can’t reach into the Parcel DB. Only a new, compensating transaction could undo the parcel.'],
+    ['Rolling back now would leave others relying on a parcel that “never existed”.','There’s no coordinator in Tobias’s plan, and asking again can’t undo a commit.']],
+   'Committed data is visible, and others may rely on it. So a commit must be irrevocable, and a node may commit only once it knows all the others will.');}},
+{part:1,src:'Chapter 9 · Introduction to two-phase commit',run(L){
+  L.h(L.kick('learn','Two-phase commit')+'<h1 class="q">Ask first, then decide</h1>'+CSS+FIG_2PC()+
+   cap(L.g('twopc','Two-phase commit (2PC)')+' adds a '+L.g('coordinator','coordinator')+', often a library inside the app. Phase 1: it asks every participant to prepare. Phase 2: only if all say yes does it send commit. Any no: abort for all.'));
   L.done();}},
+{part:1,src:'Chapter 9 · Introduction to two-phase commit',
+ solve:async L=>{L.fast=true;const B=L.b10;await B.idle();L.$('#x10p').click();await L.sleep(20);await B.idle();L.$('#x10c').click();await L.sleep(20);L.$('#x10s').click();await L.sleep(20);await B.idle();},
+ run(L){
+  L.fast=false;let finished=false;
+  L.h(L.kick('ex','Play the coordinator')+'<h1 class="q">Booking T-904. Run one clean two-phase commit, one step at a time.</h1>'+CSS+'<div id="b10"></div>'+
+   '<div class="tp-ctl"><button class="btn pri" id="x10p">1 · Send prepare</button><button class="btn" id="x10c">2 · Log commit</button><button class="btn" id="x10a">2 · Log abort</button><button class="btn" id="x10s">3 · Send decision</button><button class="btn" id="x10r">'+L.ic('cycle')+'Reset</button></div>'+
+   '<div class="tp-read" id="r10" aria-live="polite">The parcel row and the charge are written, tagged T-904, but not committed. Both padlocks are shut. Start phase 1.</div>');
+  const sync=S=>{const d=(i,v)=>{const e=L.$('#'+i);if(e)e.disabled=v;};d('x10p',S.busy||S.phase!=='work');d('x10c',S.busy||S.phase!=='voted');d('x10a',S.busy||S.phase!=='voted');d('x10s',S.busy||S.phase!=='decided');d('x10r',S.busy);};
+  const B=Board(L,L.$('#b10'),Object.assign({},DEF,{id:'pb10',onPaint:sync}));L.b10=B;
+  L.$('#x10p').onclick=()=>B.run(async()=>{say(L,'r10','Prepare requests on their way…');await B.prepare();}).then(ok=>{if(ok)say(L,'r10','Both wrote everything to disk and voted <b>yes</b>. Each has given up the right to abort, yet nothing is committed. Your move: write the decision to your log.');});
+  L.$('#x10c').onclick=()=>{B.decide('commit');say(L,'r10','Commit is on your disk: the <b>commit point</b>. From now on the decision can’t change, whatever crashes. Now tell them.');};
+  L.$('#x10a').onclick=()=>{B.decide('abort');say(L,'r10','Abort is logged. Allowed: a coordinator may abort even after yes votes. But this booking was fine. Send it, then reset and try commit.');};
+  L.$('#x10s').onclick=()=>B.run(async()=>{await B.send();}).then(ok=>{if(!ok)return;const c=B.S.p[0].st==='committed';
+    say(L,'r10',c?'Both committed and released their locks. That’s atomic commit.':'Both aborted: atomic too, but no parcel. Reset and commit it.');
+    if(c&&!finished){finished=true;L.sheet('info','Promises, then one decision','Notice the order: the votes came first, then your log entry, then the messages. The padlocks stayed shut until the decision arrived.');L.done();}});
+  L.$('#x10r').onclick=()=>{if(B.S.busy)return;B.reset(Object.assign({},DEF));say(L,'r10','Reset. Both writes are done but not committed. Start phase 1.');};}},
 {part:1,src:'Chapter 9 · A system of promises',pts:1,run(L){
-  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Bramble & Bolt books parcel OP-7Q2. Put the steps of its two-phase commit in order.</h1><div id="od"></div>');
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Bramble & Bolt books parcel OP-50721. Put the steps of its two-phase commit in order.</h1><div id="od"></div>');
   L.order(L.$('#od'),['Merchant API gets transaction ID T-881','Parcel row and ledger charge are written, tagged T-881','Coordinator asks both databases to prepare T-881','Both save T-881 to disk and answer yes','Coordinator writes “commit T-881” to its log','Coordinator sends commit, retrying until both confirm'],
    'Work first, then prepare, then the promises, then the commit point, then enforcement. The decision is on disk <i>before</i> anyone is told.');}},
+{part:1,src:'Chapter 9 · A system of promises',run(L){
+  L.h(L.kick('learn','A system of promises')+'<h1 class="q">Why two phases work when one doesn’t</h1>'+CSS+FIG_PROMISE()+
+   cap('Before voting yes, a participant writes everything to disk and checks constraints, so a crash or full disk is no excuse later. Two points of no return: that yes, and the coordinator’s logged decision. One node merges them.'));
+  L.done();}},
 {part:1,src:'Chapter 9 · A system of promises',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Can it still back out?',['Free to abort','Bound by a promise'],[
@@ -136,44 +438,61 @@ Course.lesson({
    ['The Parcel DB has voted yes. Then its disk fills up.',1,'Voting yes meant it had already written everything to disk. A full disk is no excuse to refuse later.'],
    ['The coordinator has both yes votes but hasn’t written its decision yet.',0,'Before the commit point, the coordinator may still choose to abort.'],
    ['The coordinator has written “commit” to its log, but the ledger is unreachable.',1,'The decision is final. The coordinator must keep retrying until the ledger gets it.'],
-   ['The ledger voted yes, then crashed, and is now restarting.',1,'It promised. When it recovers, it must commit if the coordinator decided commit.']]);}},
+   ['The ledger voted yes, then crashed, and is now restarting.',1,'Like fainting after “I do”: you’re still married. On recovery it asks the coordinator, or waits for its retry, and commits if the decision was commit.']]);}},
 
 /* ---------- PART 3: IN DOUBT ---------- */
+{part:2,src:'Chapter 9 · Coordinator failure',pts:1,
+ solve:async L=>{L.fast=true;const B=L.b14;await B.idle();L.$('#p14-2').click();for(let i=0;i<300&&L.$('#rc14').hidden;i++)await L.sleep(15);await B.idle();L.$('#rc14').click();for(let i=0;i<300&&!L.$('#d14');i++)await L.sleep(15);},
+ run(L){
+  L.fast=false;let picked=false;
+  const O=['Abort after a timeout','Commit: it voted yes','Wait, holding its locks'];
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Booking T-911: both voted yes. Then the coordinator crashes before logging a decision. What may the Parcel DB do?</h1>'+CSS+
+   '<div class="tp-pre" id="p14">'+O.map((o,j)=>'<button class="chip" id="p14-'+j+'">'+o+'</button>').join('')+'</div><div id="b14"></div>'+
+   '<div class="tp-ctl"><button class="btn pri" id="rc14" hidden>'+L.ic('cycle')+'Restart the coordinator</button></div><div class="tp-read" id="r14" aria-live="polite">Both are prepared. Pick your prediction to crash the coordinator.</div>');
+  const B=Board(L,L.$('#b14'),Object.assign({},DEF,{id:'pb14',tx:'T-911'}));L.b14=B;
+  B.S.inst=true;B.run(async()=>{await B.prepare();}).then(()=>{B.S.inst=false;});
+  O.forEach((o,j)=>{L.$('#p14-'+j).onclick=function(){if(picked||B.S.busy)return;picked=true;const ok=j===2;L.award(ok);
+    L.$$('#p14 .chip').forEach((c,x)=>{c.disabled=true;if(x===2)c.classList.add('ok');else if(x===j)c.classList.add('no');});
+    B.run(async()=>{await B.crashC();}).then(()=>{say(L,'r14',(ok?'<b>Right.</b> ':'<b>Watch.</b> ')+'Both are <b>'+L.g('in-doubt','in doubt')+'</b>. They promised, so they can’t abort; the coordinator may have chosen abort, so they can’t commit. They wait, locks held, while blocked bookings climb.');
+      L.$('#rc14').hidden=false;});};});
+  L.$('#rc14').onclick=()=>{L.$('#rc14').hidden=true;B.run(async()=>{await B.recoverC();}).then(()=>{
+    say(L,'r14','The restarted coordinator reads its log: no commit record for T-911, so the answer is <b>abort</b>. The locks are released at last.');
+    L.$('#r14').insertAdjacentHTML('afterend','<span id="d14"></span>');
+    L.sheet('info','Only the coordinator can end the wait','A yes gives up the right to abort, and a timeout can’t tell what the coordinator chose. 2PC’s outcome comes down to one ordinary commit record on the coordinator’s disk.');L.done();});};}},
 {part:2,src:'Chapter 9 · Coordinator failure',run(L){
-  L.h(L.kick('learn','Coordinator failure')+'<h1 class="q">The hard case: the coordinator crashes</h1>'+
-   L.prose('Participant and network failures are handled: a failed prepare means abort, and a failed commit is retried forever. But what if the <b>coordinator</b> dies?')+
-   L.lanes([['check','Before voting yes','A participant that hasn’t promised anything can safely abort on its own.',2],
-            ['clock','After voting yes','It can’t abort or commit on its own. It must wait to hear from the coordinator. Its transaction is '+L.g('in-doubt','in doubt')+'.',4]])+
-   L.prose('A timeout doesn’t help. Abort alone, and you may disagree with a participant that already committed. Commit alone, and you may disagree with one that aborted. Participants could compare notes with each other, but that isn’t part of 2PC.'));
+  L.h(L.kick('learn','Why a timeout doesn’t help')+'<h1 class="q">The coordinator decided commit, then died mid-send</h1>'+CSS+FIG_NODOUBT()+
+   cap('The ledger got commit; the Parcel DB didn’t. Guessing either way could split them. Participants could compare notes, but that isn’t part of 2PC. So the coordinator logs its decision <i>before</i> sending, and reads it back on restart.'));
   L.done();}},
-{part:2,src:'Chapter 9 · Coordinator failure',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">A crash between two commits</h1>');
-  L.beats(L.card,[
-   ['10:02:00','The merchant API server running the coordinator gets yes votes from the Parcel DB and the ledger for transaction T-904.'],
-   ['10:02:01','It writes “commit T-904” to its log (the commit point) and sends commit to the ledger. The ledger commits: Bramble & Bolt is charged.'],
-   ['10:02:01','The server crashes before sending commit to the Parcel DB. The parcel row is now <b>in doubt</b>.'],
-   ['Why wait?','If the Parcel DB gave up and aborted after a timeout, Bramble & Bolt would be charged for a parcel that doesn’t exist. It has to wait.'],
-   ['10:06','Kwame restarts the server. The coordinator reads its log, finds “commit T-904” and sends commit to the Parcel DB. The two agree again.']],
-   'On recovery the coordinator reads its log. A commit record means commit; no commit record means abort. So 2PC’s whole decision rests on one ordinary single-node commit, on the coordinator’s disk.');}},
-{part:2,src:'Chapter 9 · Coordinator failure',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">After a restart, the coordinator finds transaction T-911 in doubt at both databases. Its log has no decision for T-911. What happens?</h1>');
-  L.mc(L.card,['It sends commit, since both voted yes','It asks the merchant to send the booking again','It sends abort to both participants'],2,
-   'No commit record means the coordinator never reached the commit point, so the transaction aborts everywhere.',
-   'Votes alone commit nothing. Without a commit record in the coordinator’s log, the rule is abort.');}},
-{part:2,src:'Chapter 9 · Coordinator failure',pts:5,run(L){
-  L.h(L.kick('pr','Wait or walk away?')+'<h1 class="q">The coordinator crashes at different moments. What may the Parcel DB do?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Abort on its own','Must wait'],[
-   ['Crash before any prepare request was sent',0,'It hasn’t promised anything, so it can safely abort.'],
-   ['Crash after the Parcel DB voted yes, before any decision',1,'It voted yes, so it gave up the right to abort. It’s in doubt.'],
-   ['The prepare reached the Parcel DB, but it hasn’t voted yet',0,'No vote, no promise. It can still abort.'],
-   ['Crash after “commit” was logged, before anything was sent',1,'The decision is commit, but the Parcel DB can’t know that. It waits for recovery.'],
-   ['Crash after the ledger got commit, but the Parcel DB didn’t',1,'Aborting now would split the outcome. It must wait.']],
-   'The line is the participant’s own <b>yes</b>. Before it, abort freely. After it, wait for the coordinator.');}},
+{part:2,src:'Chapter 9 · Coordinator failure',
+ solve:async L=>{L.fast=true;const B=L.b16;for(const k of ['no','pcrash','cdec']){await B.idle();L.$('#e16-'+k).click();await L.sleep(30);await B.idle();}},
+ run(L){
+  L.fast=false;const tried=new Set();let finished=false;
+  const P={no:'Ledger votes no',pcrash:'Ledger crashes after yes',cdec:'Crash mid-send',lost:'Log lost'};
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does 2PC cope, and where does it get stuck? Run at least three.</h1>'+CSS+
+   '<div class="tp-pre" id="e16">'+Object.keys(P).map(k=>'<button class="chip" id="e16-'+k+'">'+P[k]+'</button>').join('')+'</div><div id="b16"></div>'+
+   '<div class="tp-read" id="r16" aria-live="polite">Pick a case.</div>');
+  const B=Board(L,L.$('#b16'),Object.assign({},DEF,{id:'pb16'}));L.b16=B;
+  const r=t=>say(L,'r16',t);
+  const midSend=async tx=>{B.reset(Object.assign({},DEF,{tx:tx}));await B.prepare();B.decide('commit');await B.nap(300);await B.deliver(1,'commit');await B.crashC();};
+  const SEQ={
+   no:async()=>{B.reset(Object.assign({},DEF,{tx:'T-940',will:['yes','no'],whyNo:'credit below zero'}));await B.prepare();await B.nap(300);B.decide('abort');await B.send();
+     r('The ledger saw Bramble & Bolt’s credit would drop below zero and voted <b>no</b>. One no is enough: the coordinator logs abort and tells everyone. The Parcel DB had promised, but a promise never stops the coordinator from aborting.');},
+   pcrash:async()=>{B.reset(Object.assign({},DEF,{tx:'T-941'}));await B.prepare();await B.nap(200);B.crashP(1);await B.nap(400);B.decide('commit');await B.send();await B.nap(900);await B.recoverP(1);
+     r('The ledger voted yes, then crashed. The coordinator logged commit and kept retrying. On restart the ledger still has its promise on disk, so it <b>must</b> commit. No excuses after a yes.');},
+   cdec:async()=>{await midSend('T-942');r('Commit was logged and reached the ledger, then the coordinator crashed. The Parcel DB is in doubt: watch its lock and the blocked bookings…');await B.nap(2200);await B.recoverC();
+     r('On restart the coordinator reads <b>commit</b> in its log and finishes the job. Everything waited on one machine coming back.');},
+   lost:async()=>{await midSend('T-943');r('Commit reached the ledger, then the coordinator crashed…');await B.nap(1400);B.S.lost=true;await B.recoverC();
+     r('The restarted coordinator finds its log corrupted. The Parcel DB is <b>orphaned</b>: in doubt, lock held, and a reboot won’t release it. Choose a way out:'+
+       '<div class="tp-ctl"><button class="btn" id="ad16">Admin: match the ledger</button><button class="btn dng" id="hu16">Heuristic: Parcel DB aborts alone</button></div>');
+     const fin=t=>{L.$$('#ad16,#hu16').forEach(b=>b.disabled=true);r(t);};
+     L.$('#ad16').onclick=()=>B.run(async()=>{await B.admin();}).then(()=>fin('An administrator checks the participants, sees the ledger committed, and commits the Parcel DB by hand. Atomic again, but only through manual work, usually mid-outage.'));
+     L.$('#hu16').onclick=()=>B.run(async()=>{await B.heuristic(0,'abort');}).then(()=>fin('A '+L.g('heuristic','heuristic decision')+' lets the Parcel DB abort on its own. The ledger had committed: a charge with no parcel. That’s why heuristic decisions are for catastrophes only.'));}};
+  Object.keys(P).forEach(k=>{L.$('#e16-'+k).onclick=function(){if(B.S.busy)return;L.$$('#e16 .chip').forEach(c=>c.classList.toggle('sel',c===this));r('Running…');
+    B.run(SEQ[k]).then(ok=>{if(!ok||!L.$('#r16'))return;this.classList.add('seen');tried.add(k);
+      if(tried.size>=3&&!finished){finished=true;L.sheet('info','The line is the yes, and the log','Before voting yes, anyone may abort. After a yes, a participant must wait for the coordinator, even through its own crash. If the coordinator’s log is gone, only a human can safely decide.');L.done();}});};});}},
 {part:2,src:'Chapter 9 · Three-phase commit',run(L){
-  L.h(L.kick('learn','Three-phase commit')+'<h1 class="q">Why not a protocol that never gets stuck?</h1>'+
-   L.prose('2PC is a <b>blocking</b> atomic commit protocol: it can get stuck waiting for the coordinator to recover. A <b>nonblocking</b> one would be nicer, but it’s hard to make work in practice.')+
-   L.prose('<b>Three-phase commit (3PC)</b> has been proposed. But it assumes a network with bounded delays and nodes that respond within bounded time. Real networks have unbounded delays and process pauses, as lessons 0018 and 0019 showed, so 3PC can’t guarantee atomicity there.')+
-   L.note('Nonblocking atomic commit needs a <b>perfect failure detector</b>: a reliable way to tell whether a node has crashed. A timeout isn’t one, because a request can time out on a slow network while the node is fine. That’s why 2PC is still used.','info'));
+  L.h(L.kick('learn','Three-phase commit')+'<h1 class="q">Why not a protocol that never gets stuck?</h1>'+CSS+FIG_3PC()+
+   cap('2PC is <b>blocking</b>: it can wait on a crashed coordinator. Three-phase commit avoids that only if delays and response times are bounded. Nonblocking commit needs a perfect failure detector; a timeout isn’t one. So 2PC is still used.'));
   L.done();}},
 {part:2,src:'Chapter 9 · Three-phase commit',pts:1,run(L){
   L.h(L.kick('pr','Advise the team')+'<h1 class="q">Merchant API servers sometimes crash mid-booking and leave rows in doubt. Tobias suggests: “Let’s switch to three-phase commit so nothing ever blocks.” What should Zainab say?</h1>');
@@ -183,61 +502,63 @@ Course.lesson({
 
 /* ---------- PART 4: IN PRACTICE ---------- */
 {part:3,src:'Chapter 9 · Distributed Transactions in Practice',run(L){
-  L.h(L.kick('learn','Two kinds of distributed transaction')+'<h1 class="q">One name, two very different things</h1>'+
-   L.prose('Distributed transactions have a mixed reputation. They give a safety guarantee that’s hard to get otherwise, but they’re blamed for operational pain and slowness. In MySQL they’re reported to be over 10 times slower than single-node transactions. Much of 2PC’s cost is extra forced disk writes (fsync) for crash recovery, plus extra network round-trips.')+
-   L.lanes([['layers','Database-internal','All participants run the same database software (VoltDB and MySQL Cluster’s NDB engine are examples). It can use its own protocol and optimizations, so it often works quite well.',2],
-            ['box','Heterogeneous','Participants are different technologies: two vendors’ databases, or a database plus a message broker. Atomic commit must work across all of them. Much harder.',4]])+
-   '<p class="small" style="margin-top:10px">Otterpost’s booking spans the Parcel DB and a ledger built on a different product: the heterogeneous kind.</p>');
-  L.done();}},
-{part:3,src:'Chapter 9 · Exactly-once message processing',run(L){
-  L.h(L.kick('ex','What it buys you')+'<h1 class="q">Exactly-once processing of a queue message</h1>'+
-   L.prose('Otterpost’s notification worker takes “parcel delivered” messages from the message queue.')+
-   L.flow([['list','Take message','“OP-7Q2 delivered”'],['pencil','Write','Record it in the Parcel DB'],['check','Acknowledge','Tell the broker it’s done']])+
-   L.prose('If the database write and the acknowledgment commit <b>atomically</b> in one distributed transaction, any failure aborts both. The broker redelivers the message, and the worker retries as if nothing happened. The message is effectively processed <b>exactly once</b>, even after a few retries.')+
-   L.note('The catch: every system the processing touches must speak the same atomic commit protocol. If the worker also sends a text through a provider that doesn’t support 2PC, a retry can send that text twice.','alert'));
+  L.h(L.kick('learn','Two kinds of distributed transaction')+'<h1 class="q">One name, two very different things</h1>'+CSS+FIG_KINDS()+
+   cap('Inside one distributed database (VoltDB, MySQL Cluster’s NDB), nodes run the same software and can optimize. Across products, all must speak one protocol. Much of the cost: extra disk syncs (fsync) and round-trips. Otterpost’s booking is the hard kind.'));
   L.done();}},
 {part:3,src:'Chapter 9 · XA transactions',run(L){
-  L.h(L.kick('learn','XA transactions')+'<h1 class="q">The standard for 2PC across products. Tap each card.</h1>');
-  L.flips(L.card,[
-   ['What it is',L.g('xa','X/Open XA')+', from 1991, is the standard for two-phase commit across different technologies.'],
-   ['Who supports it','Many relational databases (PostgreSQL, MySQL, DB2, SQL Server, Oracle) and message brokers (ActiveMQ, HornetQ, MSMQ, IBM MQ).'],
-   ['Not a network protocol','It’s a C API for talking to a coordinator. In Java it appears as JTA, used by JDBC database drivers and JMS broker drivers.'],
-   ['Where the coordinator lives','Often just a library inside the application process. It logs each commit or abort decision on the app server’s local disk.'],
-   ['If the app server dies','The coordinator dies with it. Prepared participants stay in doubt until the server restarts and the library reads its log.'],
-   ['Who can call whom','The database can’t contact the coordinator. All communication goes through the client library.']],
-   'XA puts a critical piece of your system, the coordinator and its log, inside your application servers.');}},
-{part:3,src:'Chapter 9 · Holding locks while in doubt',pts:1,
- solve:async L=>{L.$('#k2').click();},
+  L.h(L.kick('learn','XA transactions')+'<h1 class="q">The standard for 2PC across products</h1>'+CSS+FIG_XA()+
+   cap(L.g('xa','XA')+' (1991) is a C API to a coordinator, not a network protocol; in Java it’s JTA. Many databases and brokers support it. The coordinator is usually a library in your app server, logging to that server’s disk.'));
+  L.done();}},
+{part:3,src:'Chapter 9 · Exactly-once message processing',
+ solve:async L=>{L.fast=true;const B=L.b21;for(const k of ['eo','hook','auto']){await B.idle();L.$('#e21-'+k).click();await L.sleep(30);await B.idle();}},
  run(L){
-  const C=[['1 minute',200,'About 200 bookings wait a minute, then go through.'],['20 minutes',4000,'About 4,000 bookings stall. Merchants see timeouts.'],['Its log is lost',null,'The count never stops. The lock is held until a human steps in.']];
-  let t=null;
-  L.h(L.kick('pr','See it happen')+L.prose('Transactions lock the rows they change, so nobody overwrites uncommitted data. Under two-phase locking they also lock rows they read. Locks are released only at commit or abort.')+
-   '<h1 class="q">Flash sale. An in-doubt booking holds the lock on Bramble & Bolt’s credit balance. Pick how long its coordinator stays down.</h1><div id="ks"></div>'+
-   '<div class="lane" style="margin-top:6px"><div class="small">Bramble & Bolt bookings stuck behind the lock (about 200 a minute)</div><div class="week" id="cnt">0</div><div class="meter"><div id="mb" style="background:var(--no-strong)"></div></div><div class="small" id="ct" style="margin-top:8px">Choose a downtime above.</div></div><div id="kq"></div>');
-  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.id='k'+j;b.innerHTML=L.ic('clock')+c[0];
-    b.onclick=()=>{[...L.$('#ks').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');clearInterval(t);let s=0;const end=c[1]||9999;
-      t=setInterval(()=>{s++;const el=L.$('#cnt');if(!el){clearInterval(t);return;}const v=Math.round(end*s/12);el.textContent=(c[1]?v.toLocaleString('en-US'):v.toLocaleString('en-US')+'+');
-        L.$('#mb').style.width=Math.min(100,Math.round(v/100))+'%';if(s>=12){clearInterval(t);L.$('#ct').textContent=c[2];}},80);
-      if(j===2&&!L.$('#kq').innerHTML){const q=L.$('#kq');q.innerHTML='<h2 class="sub">The coordinator’s log is gone. What will release the lock?</h2>';
-        L.mc(q,['Rebooting the Parcel DB and the ledger','An admin who resolves it by hand','The lock timing out after a while'],1,
-         'Nothing automatic can. An administrator must check the participants and choose the outcome. A reboot keeps in-doubt locks, because releasing them could break atomicity.',
-         'A correct 2PC database keeps an in-doubt transaction’s locks, even across restarts, since letting go could break atomicity. A person has to decide.');}};
-    L.$('#ks').appendChild(b);});}},
+  L.fast=false;const tried=new Set();let finished=false;
+  const P={eo:'Queue ack + DB write',hook:'Plus a webhook',auto:'Autoscaler removes server',down:'Ledger down'};
+  L.h(L.kick('pr','Edge cases in practice')+'<h1 class="q">What does heterogeneous 2PC buy you, and what does it cost? Run at least three.</h1>'+CSS+
+   '<div class="tp-pre" id="e21">'+Object.keys(P).map(k=>'<button class="chip" id="e21-'+k+'">'+P[k]+'</button>').join('')+'</div><div id="b21"></div>'+
+   '<div class="tp-read" id="r21" aria-live="polite">Pick a case.</div>');
+  const B=Board(L,L.$('#b21'),Object.assign({},DEF,{id:'pb21'}));L.b21=B;
+  const r=t=>say(L,'r21',t);
+  const Q={names:['Message queue','Parcel DB'],locks:['msg OP-48213','row OP-48213'],cs:'inside the notification worker',counter:false,extra:true};
+  const twice=async hook=>{B.reset(Object.assign({},DEF,Q,{tx:'T-960',will:['yes','timeout'],extraText:hook?'Webhooks sent to merchant: 1':'Attempt 1 · Parcel DB writes kept: 0'}));
+    r('Attempt 1: the worker takes “OP-48213 delivered”, writes it to the Parcel DB'+(hook?', calls the merchant’s webhook,':'')+' and asks both to prepare…');
+    await B.prepare();B.decide('abort');await B.send();await B.nap(700);
+    B.reset(Object.assign({},DEF,Q,{tx:'T-961',extraText:hook?'Webhooks sent to merchant: 2':'Attempt 2 · Parcel DB writes kept: 0'}));
+    r('Both aborted, so the queue redelivers the message. Attempt 2…');await B.prepare();B.decide('commit');await B.send();
+    if(!hook){B.S.extra='2 attempts · Parcel DB writes kept: 1';B.paint();}};
+  const SEQ={
+   eo:async()=>{await twice(false);r('The ack and the Parcel DB write commit <b>atomically</b>. Attempt 1 aborted both, so nothing half-done stayed behind and the queue redelivered. The message took effect <b>exactly once</b>, after a retry.');},
+   hook:async()=>{await twice(true);r('The webhook goes to the merchant’s server, which doesn’t speak 2PC. The abort can’t pull it back, so the retry sends it again: <b>two webhooks</b> for one delivery. Exactly-once needs <i>every</i> side effect inside the atomic commit.');},
+   auto:async()=>{B.reset(Object.assign({},DEF,{tx:'T-962'}));await B.prepare();B.decide('commit');await B.nap(300);await B.crashC({gone:true});
+     r('For example: the coordinator lives in the API server and logs to its disk. Say that during Peak Week the autoscaler removes the server, log and all. Both rows are orphaned. With 2PC inside it, the server is no longer disposable.');await B.nap(1500);},
+   down:async()=>{B.reset(Object.assign({},DEF,{tx:'T-963',will:['yes','timeout']}));B.crashP(1);await B.prepare();B.decide('abort');await B.send();
+     r('The ledger is down for maintenance, so its prepare times out and the booking aborts, though the Parcel DB was fine. Every booking fails like this until the ledger is back: 2PC <b>amplifies failures</b>.');}};
+  Object.keys(P).forEach(k=>{L.$('#e21-'+k).onclick=function(){if(B.S.busy)return;L.$$('#e21 .chip').forEach(c=>c.classList.toggle('sel',c===this));r('Running…');
+    B.run(SEQ[k]).then(ok=>{if(!ok||!L.$('#r21'))return;this.classList.add('seen');tried.add(k);
+      if(tried.size>=3&&!finished){finished=true;L.sheet('info','Powerful, and fragile','Atomically committing a message ack with its database writes gives effectively exactly-once processing, but only for systems inside the protocol. And the coordinator turns app servers stateful, and any broken participant fails the whole transaction.');L.done();}});};});}},
+{part:3,src:'Chapter 9 · Holding locks while in doubt',pts:1,
+ solve:async L=>{const s=L.$('#s22');s.value='20';s.dispatchEvent(new Event('input'));await L.sleep(20);L.$('#lost22').click();},
+ run(L){
+  L.fast=false;let min=1,lost=false,asked=false;
+  L.h(L.kick('pr','See it pile up')+'<h1 class="q">Flash sale. An in-doubt booking holds the lock on Bramble & Bolt’s credit balance. How long until the coordinator is back?</h1>'+CSS+
+   '<div class="tp-fig" id="v22"></div><div class="tp-rng"><label for="s22"><span>Coordinator back after</span><span id="o22">1 min</span></label><input type="range" id="s22" min="1" max="30" step="1" value="1"></div>'+
+   '<div class="tp-pre"><button class="chip" id="lost22">'+L.ic('alert')+'Its log is lost</button></div>'+
+   '<p class="tp-foot">A transaction locks the rows it writes (and, under 2PL, rows it reads) until it commits or aborts. About 200 bookings a minute is illustrative.</p><div id="q22"></div>');
+  const draw=()=>{L.$('#v22').innerHTML=FIG_PILE(min,lost);L.$('#o22').textContent=lost?'never':min+' min';};draw();
+  const ask=()=>{if(asked)return;asked=true;const q=L.$('#q22');q.innerHTML='<h2 class="sub">The coordinator’s log is gone. What will release the lock?</h2>';
+    L.mc(q,['Rebooting the Parcel DB and the ledger','An admin who resolves it by hand','The lock timing out after a while'],1,
+     'Nothing automatic can. An administrator must check the participants and choose the outcome. A reboot keeps in-doubt locks, because releasing them could break atomicity.',
+     'A correct 2PC database keeps an in-doubt transaction’s locks, even across restarts, since letting go could break atomicity. A person has to decide.');};
+  L.$('#s22').oninput=e=>{min=+e.target.value;lost=false;L.$('#lost22').classList.remove('sel');draw();};
+  L.$('#lost22').onclick=function(){lost=!lost;this.classList.toggle('sel',lost);draw();if(lost)ask();};}},
 {part:3,src:'Chapter 9 · Recovering from coordinator failure',run(L){
-  L.h(L.kick('learn','Recovering from coordinator failure')+'<h1 class="q">When the log is gone, a human decides</h1>'+
-   L.prose('In theory a restarted coordinator resolves everything from its log. In practice, <b>orphaned</b> in-doubt transactions happen: the log is lost or corrupted, for example by a software bug. They sit in the database forever, holding locks. Rebooting doesn’t help.')+
-   L.prose('The way out is manual. An administrator checks each participant, finds out whether any has already committed or aborted, and applies the same outcome to the others. Usually under stress, in the middle of an outage.')+
-   L.quote('heuristic here is a euphemism for probably breaking atomicity','Chapter 9, on XA’s emergency escape hatch')+
-   L.prose('Many XA implementations offer '+L.g('heuristic','heuristic decisions')+': a participant decides alone, without the coordinator. That breaks 2PC’s promises, so it’s for catastrophes only.'));
+  L.h(L.kick('learn','Recovering from coordinator failure')+'<h1 class="q">When the log is gone, a human decides</h1>'+CSS+FIG_RECOVER()+
+   cap('If the log is lost or corrupted, in-doubt transactions are orphaned and hold their locks forever. An admin must check each participant and apply the outcome any of them already has, usually mid-outage.')+
+   L.quote('heuristic here is a euphemism for probably breaking atomicity','Chapter 9, on XA’s emergency escape hatch'));
   L.done();}},
 {part:3,src:'Chapter 9 · Limitations of distributed transactions',run(L){
-  L.h(L.kick('learn','Limitations')+'<h1 class="q">The coordinator is a database too</h1>'+
-   L.prose('The coordinator stores transaction outcomes, so it is itself a kind of database, and needs the same care. That brings four limits:')+
-   L.list([['Single point of failure','On one machine, its crash blocks other app servers on in-doubt locks. Many coordinators aren’t highly available by default.'],
-     ['App servers stop being stateless','With the coordinator inside the app server, its log is as vital as the databases. You can’t add and remove servers at will anymore.'],
-     ['Lowest common denominator','XA must suit every system, so it can’t detect deadlocks across systems and doesn’t work with SSI.'],
-     ['Failures get amplified','2PC needs every participant to answer. If any part is broken, the transaction fails. Database-internal transactions avoid some XA limits (a distributed SSI is possible), but not this one.']],3)+
-   '<p class="small" style="margin-top:10px">Part III of the course shows other ways to keep systems in step without heterogeneous distributed transactions.</p>');
+  L.h(L.kick('learn','Limitations')+'<h1 class="q">The coordinator is a database too</h1>'+CSS+FIG_LIMITS()+
+   cap('It stores outcomes, so it needs the care of any key database. Database-internal transactions escape some XA limits (distributed SSI is possible), but every participant must still answer. Part III shows other ways to stay consistent.'));
   L.done();}},
 {part:3,src:'Chapter 9 · Limitations of distributed transactions',pts:5,run(L){
   L.h('<div id="qk"></div>');
@@ -247,11 +568,34 @@ Course.lesson({
    ['Two bookings wait for each other’s locks, one in the Parcel DB and one in the ledger. Neither database sees the cycle.',2,'XA has no standard way to share lock information, so it can’t detect deadlocks across systems.'],
    ['All bookings use one central coordinator machine. It dies, and app servers across Otterpost stall on locked rows.',0,'One unreplicated coordinator blocks everyone holding in-doubt locks.'],
    ['Zainab wants serializable snapshot isolation across both databases. XA can’t offer it.',2,'SSI would need a protocol for spotting conflicts across systems, which XA doesn’t have.']]);}},
-{part:3,src:'Chapter 9 · Exactly-once message processing',pts:1,run(L){
-  L.h(L.kick('pr','Exactly once?')+'<h1 class="q">The notification worker commits its Parcel DB write and the queue acknowledgment in one XA transaction. It also sends a status webhook to the merchant’s server, which knows nothing about 2PC. It crashes once and retries. What can happen twice?</h1>');
-  L.mc(L.card,['The Parcel DB write','The queue acknowledgment','The status webhook to the merchant'],2,
-   'The webhook is outside the atomic commit, so an abort can’t take it back, and the retry sends it again. The other two were rolled back and done once on the retry.',
-   'The database write and the acknowledgment are inside the transaction, so an abort discards them and the retry does them once. The webhook isn’t covered, so it can arrive twice.');}}
+{part:3,src:'Chapter 9 · A system of promises',pts:3,
+ solve:async L=>{L.fast=true;const B=L.b26;for(let n=0;n<3;n++){await B.idle();await L.sleep(20);const R=L.$('#rc26');if(R&&!R.hidden){R.click();await L.sleep(30);await B.idle();}
+   L.$('#c26-'+L.c26()).click();await L.sleep(30);await B.idle();await L.sleep(20);const nx=L.$('#nx26');if(n<2&&nx&&!nx.hidden){nx.click();await L.sleep(30);}}},
+ run(L){
+  L.fast=false;let n=0;const done=[false,false,false];const R=['abort','abort','commit'];
+  const SC=[{tx:'T-930',will:['yes','no'],whyNo:'credit below zero'},{tx:'T-931',will:['timeout','yes']},{tx:'T-932'}];
+  const FB=[['Right: one no means abort everywhere. The Parcel DB had promised, but the coordinator may still abort.','The ledger voted no, so it can’t commit. Now there’s a parcel with no charge. One no must mean abort for all.'],
+    ['Right: no answer is not a yes. A failed or timed-out prepare means abort.','The Parcel DB never promised, so it can’t be told to commit. A timed-out prepare means abort.'],
+    ['Right: your log says commit, and that decision is final. Recovery enforces it.','Your log says commit: the commit point was passed, so the decision can’t change. Overturning it breaks the promise 2PC rests on.']];
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Coordinate three bookings. Each time, send the right phase-2 message. First choice counts.</h1>'+CSS+
+   '<div class="tp-score" id="sc26"></div><div id="b26"></div>'+
+   '<div class="tp-ctl"><button class="btn" id="rc26" hidden>'+L.ic('cycle')+'Restart coordinator</button><button class="btn pri" id="c26-commit">Send commit</button><button class="btn" id="c26-abort">Send abort</button><button class="btn" id="nx26" hidden>Next booking '+L.ic('arrow')+'</button></div>'+
+   '<div class="tp-read" id="r26" aria-live="polite"></div>');
+  const sync=S=>{const can=!S.busy&&!done[n]&&S.cu&&(S.phase==='voted'||S.phase==='decided');['commit','abort'].forEach(d=>{const e=L.$('#c26-'+d);if(e)e.disabled=!can;});};
+  const B=Board(L,L.$('#b26'),Object.assign({},DEF,{id:'pb26',onPaint:sync}));L.b26=B;L.c26=()=>R[n];
+  const score=()=>{L.$('#sc26').innerHTML=[0,1,2].map(j=>'<span class="chip static'+(done[j]===true?' ok':done[j]==='x'?' no':'')+'">Booking '+(j+1)+(done[j]===true?' ✓':done[j]==='x'?' ✗':'')+'</span>').join('');};
+  const start=i=>{score();B.reset(Object.assign({},DEF,SC[i]));
+    B.run(async()=>{say(L,'r26','Booking '+(i+1)+' of 3 ('+SC[i].tx+'): sending prepare…');await B.prepare();
+      if(i===2){B.decide('commit');await B.nap(500);await B.crashC();}}).then(()=>{if(!L.$('#r26'))return;
+      if(i===2){say(L,'r26','Both voted yes. You logged a decision, then your server crashed before sending anything. Both are in doubt. Restart, read your log, then finish the job.');L.$('#rc26').hidden=false;}
+      else say(L,'r26',i===0?'The ledger voted <b>no</b>: Bramble & Bolt’s credit would drop below zero. Your call.':'The Parcel DB never answered: its prepare <b>timed out</b>. Your call.');});};
+  L.$('#rc26').onclick=()=>{L.$('#rc26').hidden=true;B.run(async()=>{await B.recoverC(true);}).then(()=>say(L,'r26','Restarted. Your log says: <b>'+B.S.log+'</b> for T-932. Now send.'));};
+  ['commit','abort'].forEach(d=>{L.$('#c26-'+d).onclick=()=>{if(B.S.busy||done[n])return;const ok=d===R[n];done[n]=ok?true:'x';L.award(ok);
+    B.run(async()=>{if(!B.S.log)B.decide(d);await B.send(d);}).then(()=>{if(!L.$('#r26'))return;score();say(L,'r26',FB[n][ok?0:1]);
+      if(n<2)L.$('#nx26').hidden=false;
+      else{const all=done.every(x=>x===true);L.sheet(all?'ok':'info',all?'Three for three':'All three run','No vote or no answer means abort. A logged decision is final, and recovery enforces it.');L.done();}});};});
+  L.$('#nx26').onclick=()=>{if(B.S.busy)return;L.$('#nx26').hidden=true;n++;start(n);};
+  start(0);}}
   ]
 });
 </script>

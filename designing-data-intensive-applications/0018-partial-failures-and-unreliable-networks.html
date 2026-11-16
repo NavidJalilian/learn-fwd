@@ -13,233 +13,741 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0018 only. Two hands-on models used across the lesson:
+   1. Reply-time strip chart: Kwame’s monitor pings the Westport Parcel DB
+      leader once a second. Dots are reply times (log scale), a draggable
+      timeout line decides “dead or alive”. Scenarios: a normal day, Peak
+      Week, a noisy neighbour, a GC pause, a one-way network card, and a
+      cascade where every false alarm moves load onto the survivors.
+      An adaptive mode lets the line follow the measured jitter.
+   2. Shared link bar: the Westport–Eastvale link drawn over time, either
+      split into reserved circuits or shared packet by packet, with a
+      booking-delay trace underneath.
+   All reply times, loads and delays are illustrative.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.pf{margin:4px 0 0}.pf svg{width:100%;display:block;touch-action:manipulation}.pf svg text{font-family:var(--sans)}.pf svg.drag{touch-action:none;cursor:ns-resize}'+
+ '.pcap{font-family:var(--serif);font-size:18px;line-height:1.5;margin:12px 0 0}'+
+ '.prow{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 0}.prow .chip,.prow .btn{margin:0;min-height:42px}.prow .btn[disabled],.prow .chip[disabled]{opacity:.45;cursor:default}'+
+ '.plbl{font-size:13px;color:var(--muted);margin:10px 0 0}'+
+ '.pstat{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:10px 0 0}.pstat>div{background:var(--soft);border-radius:12px;padding:7px 9px;font-size:12.5px;color:var(--muted);line-height:1.3;min-width:0}'+
+ '.pstat b{display:block;font-size:16.5px;color:var(--ink);font-variant-numeric:tabular-nums;margin-top:2px}.pstat .bad b{color:var(--no)}.pstat .good b{color:var(--ok)}'+
+ '.prng{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14.5px;margin:8px 0 0}.prng input{grid-column:1/-1;width:100%;accent-color:var(--pri);height:30px;margin:0}.prng b{font-variant-numeric:tabular-nums}'+
+ '.pread{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:10px 0 0;min-height:46px}'+
+ '.ptask{margin:10px 0 0;padding:0;list-style:none}.ptask li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.ptask li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.ptask li.done{color:var(--ok)}.ptask li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.ptask li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.pgrid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 0}'+
+ '.pcard{display:block;text-align:left;background:var(--card);border:2px solid var(--line);border-bottom-width:3px;border-radius:14px;padding:9px 11px;font-size:13.5px;line-height:1.35;color:var(--ink);min-height:64px}'+
+ '.pcard b{display:block;font-size:14.5px;margin-bottom:2px}.pcard.sel{border-color:var(--pri);background:var(--pri-bg)}.pcard.ok{border-color:var(--ok-line);background:var(--ok-bg)}.pcard.no{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '.sentence{line-height:1.4}.sentence .chip{line-height:1.35;text-align:left;padding:9px 12px;margin:0 6px 10px 0}.sentence .chip svg{flex:none}'+
+ '.pnote{font-size:12.5px;color:var(--muted);margin:8px 0 0}'+
+ '</style>');
+
+/* ---------- small SVG helpers ---------- */
+const r1=v=>Math.round(v*10)/10;
+const tx=(x,y,s,st)=>'<text x="'+r1(x)+'" y="'+r1(y)+'" style="'+(st||'')+'">'+s+'</text>';
+const HALO='paint-order:stroke;stroke:var(--card);stroke-width:3.5px;stroke-linejoin:round;',F=n=>'font-size:'+n+'px;',B='font-weight:700;',MID='text-anchor:middle;',END='text-anchor:end;',INK='fill:var(--ink);',MUT='fill:var(--muted);';
+const col=c=>'fill:var(--'+c+');';
+function rect(x,y,w,h,fill,stroke,o){o=o||{};return '<rect x="'+r1(x)+'" y="'+r1(y)+'" width="'+r1(Math.max(0,w))+'" height="'+r1(Math.max(0,h))+'" rx="'+(o.rx==null?8:o.rx)+'" style="fill:'+fill+';stroke:'+(stroke||'none')+';stroke-width:'+(o.sw||1.5)+(o.dash?';stroke-dasharray:'+o.dash:'')+(o.op!=null?';opacity:'+o.op:'')+'"/>';}
+const ln=(x1,y1,x2,y2,c,w,dash)=>'<line x1="'+r1(x1)+'" y1="'+r1(y1)+'" x2="'+r1(x2)+'" y2="'+r1(y2)+'" style="stroke:'+c+';stroke-width:'+(w||1.5)+(dash?';stroke-dasharray:'+dash:'')+'"/>';
+const dot=(x,y,r,fill,stroke,sw)=>'<circle cx="'+r1(x)+'" cy="'+r1(y)+'" r="'+r+'" style="fill:'+fill+(stroke?';stroke:'+stroke+';stroke-width:'+(sw||1.5):'')+'"/>';
+const cross=(x,y,s,c,w)=>'<path d="M'+r1(x-s)+' '+r1(y-s)+'l'+2*s+' '+2*s+'m0 -'+2*s+'l-'+2*s+' '+2*s+'" style="stroke:'+c+';stroke-width:'+(w||2.4)+';stroke-linecap:round;fill:none"/>';
+const tickm=(x,y,c)=>'<path d="M'+r1(x-5)+' '+r1(y)+'l3.5 3.5l6.5 -7" style="stroke:'+c+';stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;fill:none"/>';
+function head(x2,y2,a,c){const h=7,p=s=>r1(x2-h*Math.cos(a+s))+' '+r1(y2-h*Math.sin(a+s));return '<path d="M'+r1(x2)+' '+r1(y2)+'L'+p(.42)+'L'+p(-.42)+'Z" style="fill:'+c+'"/>';}
+function arw(x1,y1,x2,y2,c,o){o=o||{};const a=Math.atan2(y2-y1,x2-x1);
+  return '<line x1="'+r1(x1)+'" y1="'+r1(y1)+'" x2="'+r1(x2-4*Math.cos(a))+'" y2="'+r1(y2-4*Math.sin(a))+'" style="stroke:'+c+';stroke-width:'+(o.w||1.6)+(o.dash?';stroke-dasharray:'+o.dash:'')+'"/>'+head(x2,y2,a,c);}
+const fig=(id,h,inner,label,cls)=>'<div class="pf"><svg id="'+id+'"'+(cls?' class="'+cls+'"':'')+' viewBox="0 0 320 '+h+'" role="img" aria-label="'+label+'">'+inner+'</svg></div>';
+const cap=t=>'<p class="pcap">'+t+'</p>';
+const hatch=id=>'<defs><pattern id="'+id+'" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><line x1="0" y1="0" x2="0" y2="6" style="stroke:var(--line2);stroke-width:2"/></pattern></defs>';
+function tween(el,ms,fn){return new Promise(res=>{const t0=performance.now();(function st(){if(!el.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;fn(e,p);if(p<1)setTimeout(st,16);else res();})();});}
+const tasks=(id,list)=>'<ul class="ptask" id="'+id+'">'+list.map((g,j)=>'<li id="'+id+j+'"><span class="bx"></span><span>'+g+'</span></li>').join('')+'</ul>';
+function tick(L,id,j){const li=L.$('#'+id+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const allT=(L,id)=>[...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));
+function setR(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+async function waitFor(L,fn,n){for(let i=0;i<(n||160)&&!fn();i++)await L.sleep(30);}
+function rnd(seed){let a=seed;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* =====================================================================
+   1. Reply-time strip chart
+   ===================================================================== */
+const TV=[50,75,100,150,200,300,400,500,700,1000,1500,1800,2000,2500,3000,4000,5000,7000,10000];
+const tvIdx=ms=>{let b=0;TV.forEach((v,k)=>{if(Math.abs(Math.log(v/ms))<Math.abs(Math.log(TV[b]/ms)))b=k;});return b;};
+const fmt=ms=>ms>=1000?(String(Math.round(ms/100)/10)+' s'):Math.round(ms)+' ms';
+const NP=40,CRASH=30;
+const SCN={};
+function scen(k){
+  if(SCN[k])return SCN[k];
+  const peak=k==='peak'||k==='cascade';
+  const r=rnd(peak?7:3),lo=peak?45:18,span=peak?110:30;
+  const pre=[],v=[];
+  for(let i=0;i<20;i++)pre.push(Math.round(lo+span*r()*r()+(r()<.3?span*r():0)));
+  for(let i=0;i<NP;i++)v.push(Math.round(lo+span*r()*r()+(r()<.25?span*r():0)));
+  let sp,crash=CRASH,oneway=null,cause={};
+  if(peak){sp={3:700,8:1600,12:450,17:2300,21:900,26:1200,29:600};pre[6]=1800;pre[13]=800;}
+  else{sp={6:380,13:210,19:95,24:160,28:400};pre[9]=600;cause={6:0,13:1,19:2,24:3,28:4};}
+  if(k==='gc'){sp={6:380,24:160};}
+  if(k==='oneway'){sp={6:380,13:210};}
+  Object.keys(sp).forEach(i=>v[i]=sp[i]);
+  if(k==='noisy'){const q=rnd(5);for(let i=9;i<=25;i++)v[i]=Math.round(v[i]*(3+q()*13));}
+  if(k==='gc'){for(let i=12;i<=19;i++)v[i]=(20-i)*1000+25;crash=null;}
+  if(k==='oneway'){crash=null;oneway=22;}
+  if(k==='cascade')crash=null;
+  const stop=crash!=null?crash:oneway;
+  if(stop!=null)for(let i=stop;i<NP;i++)v[i]=null;
+  return SCN[k]={k,pre,v,crash,oneway,cause,cascade:k==='cascade'};
+}
+function adaptT(h){const w=h.slice(-30),mu=w.reduce((a,b)=>a+b,0)/w.length,sd=Math.sqrt(w.reduce((a,b)=>a+(b-mu)*(b-mu),0)/w.length);return Math.min(10000,Math.max(150,mu+4*sd));}
+function runStrip(sc,T,adaptive,vals){
+  const s=scen(sc),src=vals||s.v,hist=s.pre.slice(),v=[],Ts=[],fa=[];let dead=0,stopAt=null;
+  for(let i=0;i<NP;i++){
+    const Ti=adaptive?adaptT(hist):T;Ts.push(Ti);
+    let vi=src[i];
+    if(vi!=null&&s.cascade)vi=Math.min(12000,Math.round(vi*Math.pow(5/(5-dead),2)));
+    v.push(vi);
+    if(vi==null){if(stopAt==null)stopAt=i;continue;}
+    if(vi>Ti){fa.push(i);if(s.cascade&&dead<4)dead++;}
+    hist.push(vi);
+  }
+  return {v,Ts,fa,dead,stopAt,delay:stopAt!=null?Ts[stopAt]:null,s};
+}
+const SX=i=>44+i*6.2,SY=ms=>166-(Math.log10(Math.min(10000,Math.max(10,ms)))-1)*50;
+const CAUSE=[
+ ['Switch queue','Several machines sent to the leader’s port at once. Westport Central’s switch fed their packets onto the link one by one, so this reply waited its turn.'],
+ ['Operating system queue','Every CPU core on the leader’s machine was busy. The operating system held the request until the database was free to take it.'],
+ ['Virtual machine pause','The leader runs in a virtual machine. It was paused for a few tens of milliseconds while another VM used the CPU, so incoming data waited in a buffer.'],
+ ['TCP flow control','The sender’s TCP slowed its own sending rate to avoid overloading the link. The data queued before it even entered the network.'],
+ ['TCP resend','A packet was lost. TCP waited for its own resend timer, then sent it again. The app never sees the loss, only the extra delay.']];
+function Strip(L,host,o){
+  o=Object.assign({id:'st',sc:'normal',T:500,adaptive:false,drag:true,slider:true,spikes:false,stats:true,on:()=>{}},o||{});
+  const S={sc:o.sc,T:o.T,adaptive:o.adaptive,vals:null,tapped:new Set(),R:null};
+  const ID=o.id;
+  host.insertAdjacentHTML('beforeend',fig(ID,198,'<g></g>','Strip chart of the leader’s reply times, one dot per heartbeat, with a horizontal timeout line.',o.drag?'drag':'')+
+    (o.slider?'<label class="prng" for="'+ID+'-r"><span>Timeout</span><b id="'+ID+'-rv"></b><input type="range" id="'+ID+'-r" min="0" max="'+(TV.length-1)+'" step="1"></label>':'')+
+    (o.stats?'<div class="pstat" id="'+ID+'-s" aria-live="polite"></div>':''));
+  const svg=host.querySelector('#'+ID),g=svg.firstChild,rg=o.slider?host.querySelector('#'+ID+'-r'):null;
+  function draw(){
+    if(!svg.isConnected)return;
+    const R=S.R=runStrip(S.sc,S.T,S.adaptive,S.vals);
+    let s='',lab='';
+    [[10,'10ms'],[100,'100ms'],[1000,'1s'],[10000,'10s']].forEach(([m,l])=>{s+=ln(44,SY(m),300,SY(m),'var(--line)',1,m===10?'':'2 3')+tx(40,SY(m)+4,l,F(11)+END+MUT);});
+    if(R.stopAt!=null){const x0=SX(R.stopAt),x1=Math.min(316,x0+R.delay/1000*6.2);
+      s+=rect(x0,16,x1-x0,150,'var(--no-bg)','none',{rx:0});
+      s+=ln(x0,16,x0,166,'var(--no)',1.6)+tx(x0-3,28,R.s.crash!=null?'crash':'link fails',F(11)+B+END+col('no'));
+      s+=ln(x1,16,x1,166,'var(--no)',1.6,'3 2');
+      s+=x1<272?tx(x1+3,159,'dead?',F(11)+B+col('no')):tx(x1-3,159,'dead?',F(11)+B+END+col('no'));
+      for(let i=R.stopAt;i<NP;i++)s+=cross(SX(i),177,2.6,'var(--faint)',1.6);
+      s+=tx(SX(R.stopAt)-4,181,'no reply',F(11)+END+MUT);}
+    if(S.adaptive){let d='';R.Ts.forEach((t,i)=>{const x=SX(i)-3.1,y=SY(t);d+=(i?'L':'M')+r1(x)+' '+r1(y)+'L'+r1(x+6.2)+' '+r1(y);});
+      s+='<path d="'+d+'" style="fill:none;stroke:var(--pri);stroke-width:2.2;stroke-dasharray:5 3"/>';
+      const ya=SY(R.Ts[NP-1]);lab=tx(300,ya>40?ya-6:ya+28,'adaptive',F(11.5)+B+END+col('pri')+HALO);}
+    else{const y=SY(S.T);s+=ln(44,y,306,y,'var(--pri)',2.2,'6 3')+dot(308,y,6.5,'var(--pri)','var(--card)',2);lab=tx(300,y>40?y-6:y+28,'timeout '+fmt(S.T),F(11.5)+B+END+col('pri')+HALO);}
+    R.v.forEach((v,i)=>{if(v==null)return;const x=SX(i),y=SY(v),bad=v>R.Ts[i];
+      if(o.spikes&&R.s.cause[i]!=null){const c=R.s.cause[i],t=S.tapped.has(c);
+        s+='<g data-c="'+c+'" style="cursor:pointer">'+dot(x,y,15,'transparent')+dot(x,y,8,'none',t?'var(--h3)':'var(--pri)',2)+'</g>';
+        if(t)s+=tx(x,y-11,String(c+1),F(11)+B+MID+col('h3'));}
+      s+=bad?dot(x,y,4.6,'var(--no-strong)','var(--card)',1.2):dot(x,y,3.3,'var(--ok-strong)');});
+    s+=lab+tx(172,195,'heartbeats, one a second →',F(11)+MID+MUT);
+    g.innerHTML=s;
+    if(rg){rg.value=tvIdx(S.T);rg.disabled=S.adaptive;host.querySelector('#'+ID+'-rv').textContent=S.adaptive?'adaptive':fmt(S.T);}
+    if(o.stats){const st=host.querySelector('#'+ID+'-s');
+      const det=R.stopAt==null?'no crash':fmt(R.delay);
+      const third=R.s.cascade?['Nodes declared dead',R.dead+' of 5',R.dead>1]:['Failovers',String(R.fa.length+(R.stopAt!=null?1:0)),R.fa.length>0];
+      st.innerHTML='<div class="'+(R.fa.length?'bad':'good')+'">False alarms<b>'+R.fa.length+'</b></div>'+
+        '<div class="'+(R.stopAt!=null&&R.delay>=4000?'bad':'')+'">'+(R.s.oneway!=null?'Dead after':'Noticed after')+'<b>'+det+'</b></div>'+
+        '<div class="'+(third[2]?'bad':'')+'">'+third[0]+'<b>'+third[1]+'</b></div>';}
+  }
+  function setT(ms){if(S.adaptive)return;S.T=ms;draw();o.on({type:'T'});}
+  if(rg)rg.addEventListener('input',()=>setT(TV[+rg.value]));
+  if(o.drag){let dn=false;
+    const yAt=e=>{const b=svg.getBoundingClientRect();return (e.clientY-b.top)*198/b.height;};
+    const fromY=y=>TV[tvIdx(Math.pow(10,(166-y)/50+1))];
+    svg.addEventListener('pointerdown',e=>{if(S.adaptive||e.target.closest('g[data-c]'))return;dn=true;svg.setPointerCapture(e.pointerId);setT(fromY(yAt(e)));});
+    svg.addEventListener('pointermove',e=>{if(dn)setT(fromY(yAt(e)));});
+    const up=()=>{dn=false;};svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);}
+  if(o.spikes)svg.addEventListener('click',e=>{const t=e.target.closest('g[data-c]');if(!t)return;const c=+t.dataset.c;S.tapped.add(c);draw();o.on({type:'spike',c});});
+  draw();
+  return {S,draw,
+    set(p){Object.assign(S,p);draw();},
+    get R(){return S.R;},
+    async morph(to,ms){const a=scen(S.sc).v,b=scen(to).v;
+      await tween(svg,ms||1400,e=>{S.vals=a.map((x,i)=>x==null||b[i]==null?(e<.5?x:b[i]):Math.exp(Math.log(x)+(Math.log(b[i])-Math.log(x))*e));draw();});
+      S.vals=null;S.sc=to;draw();}};
+}
+
+/* =====================================================================
+   2. Shared link bar
+   ===================================================================== */
+const TK=24,CAP=10,BURST=30,BT=4;
+const FL={book:['Bookings','h1'],track:['Tracking','h2'],backup:['Backup','h3']};
+function linkSim(mode,Bw){
+  const r=rnd(11),book=[],track=[];
+  for(let t=0;t<TK;t++){book.push(1+(r()<.45?1:0));track.push(2+(r()<.5?1:0));}
+  const cells=[],delay=[];let sent=0,done=null,refused=false;
+  if(mode==='circuit'){
+    refused=Bw>CAP-3-4;let left=BURST;
+    for(let t=0;t<TK;t++){let bu=0;if(!refused&&t>=BT&&left>0){bu=Math.min(Bw,left);left-=bu;if(left===0)done=t-BT+1;}
+      cells.push({book:book[t],track:track[t],backup:bu});sent+=book[t]+track[t]+bu;delay.push(2);}
+  }else{
+    const q=[];
+    for(let t=0;t<TK;t++){
+      if(t===BT)q.push({f:'backup',u:BURST,t0:t});
+      q.push({f:'track',u:track[t],t0:t});q.push({f:'book',u:book[t],t0:t});
+      let room=CAP;const pcs=[];
+      while(room>0&&q.length){const c=q[0],u=Math.min(room,c.u);pcs.push([c.f,u]);c.u-=u;room-=u;
+        if(c.u===0){q.shift();if(c.f==='book')delay[c.t0]=(t-c.t0)*10+2;if(c.f==='backup')done=t-BT+1;}}
+      cells.push(pcs);sent+=CAP-room;}
+    for(let t=0;t<TK;t++)if(delay[t]==null)delay[t]=null;
+  }
+  const dl=delay.filter(d=>d!=null);let bs=0;const end=BT+(done||TK-BT);
+  for(let t=BT;t<end;t++){const c=cells[t];bs+=Array.isArray(c)?c.reduce((a,p)=>a+p[1],0):c.book+c.track+c.backup;}
+  return {cells,delay,util:Math.round(bs/((end-BT)*CAP)*100),done,refused,dmin:Math.min(...dl),dmax:Math.max(...dl)};
+}
+function Link(L,host,o){
+  o=Object.assign({id:'lk',mode:'circuit',B:3,on:()=>{}},o||{});
+  const ID=o.id,S={mode:o.mode,B:o.B,shown:TK,busy:false,R:null};
+  host.insertAdjacentHTML('beforeend',fig(ID,222,hatch(ID+'-h')+'<g></g>','The Westport to Eastvale link drawn over time: its capacity as a band, filled by bookings, tracking reads and the backup, with booking delay underneath.')+
+    '<div class="pstat" id="'+ID+'-s" aria-live="polite"></div>');
+  const svg=host.querySelector('#'+ID),g=svg.lastChild;
+  const X=t=>46+t*11,Y0=24,U=10;
+  function draw(){
+    if(!svg.isConnected)return;
+    const R=S.R=linkSim(S.mode,S.B);let s='';
+    s+=tx(46,14,S.mode==='circuit'?'Reserved circuits':'One shared lane',F(12)+B+INK)+tx(318,14,'10 units a tick',F(11)+END+MUT);
+    const ef=X(TK);
+    if(S.mode==='circuit'){
+      const lanes=[['book',3],['track',4],['backup',R.refused?0:S.B]];let y=Y0;
+      lanes.forEach(([f,h])=>{if(!h)return;s+=tx(42,y+h*U/2+4,['Book','Track','Backup'][['book','track','backup'].indexOf(f)],F(11)+B+END+col(FL[f][1]));
+        for(let t=0;t<S.shown;t++){const u=R.cells[t][f];s+=rect(X(t)+.5,y+.5,10,h*U-1,'url(#'+ID+'-h)','none',{rx:0});
+          if(u)s+=rect(X(t)+.5,y+h*U-u*U+.5,10,u*U-1,'var(--'+FL[f][1]+')','none',{rx:0,op:.85});}
+        s+=rect(X(0),y,ef-X(0),h*U,'none','var(--line2)',{rx:2,sw:1.2});y+=h*U;});
+      if(y<Y0+CAP*U){s+=rect(X(0),y,ef-X(0),Y0+CAP*U-y,'var(--soft)','var(--line2)',{rx:2,sw:1.2,dash:'3 3'})+tx((X(0)+ef)/2,(y+Y0+CAP*U)/2+4,R.refused?'backup circuit refused: only 3 units free':'not reserved',F(11)+MID+(R.refused?col('no')+B:MUT));}
+    }else{
+      s+=tx(42,Y0+CAP*U/2+4,'shared',F(11)+B+END+MUT);
+      for(let t=0;t<S.shown;t++){let y=Y0+CAP*U;const pcs=R.cells[t];let used=0;
+        pcs.forEach(([f,u])=>{y-=u*U;used+=u;s+=rect(X(t)+.5,y+.5,10,u*U-1,'var(--'+FL[f][1]+')','none',{rx:0,op:.85});});
+        if(used<CAP)s+=rect(X(t)+.5,Y0+.5,10,(CAP-used)*U-1,'url(#'+ID+'-h)','none',{rx:0});}
+      s+=rect(X(0),Y0,ef-X(0),CAP*U,'none','var(--line2)',{rx:2,sw:1.2});
+    }
+    s+=ln(X(BT),Y0-4,X(BT),Y0+CAP*U+4,'var(--h3)',1.4,'3 2')+tx(X(BT)+3,Y0+CAP*U+13,'backup starts (30 units)',F(11)+col('h3'));
+    /* booking-delay trace */
+    const DY0=208,DH=44,dY=d=>DY0-Math.min(50,d)/50*DH;
+    s+=ln(X(0),DY0,ef,DY0,'var(--line2)',1)+ln(X(0),DY0-DH,ef,DY0-DH,'var(--line)',1,'2 3');
+    s+=tx(42,DY0-DH+4,'50ms',F(11)+END+MUT)+tx(42,DY0+3,'0',F(11)+END+MUT)+tx(X(0),DY0-DH-5,'Booking delay',F(11)+B+col('h1'));
+    let d='';for(let t=0;t<S.shown;t++){const v=R.delay[t];if(v==null)continue;d+=(d?'L':'M')+r1(X(t)+1)+' '+r1(dY(v))+'L'+r1(X(t)+10)+' '+r1(dY(v));}
+    if(d)s+='<path d="'+d+'" style="fill:none;stroke:var(--h1);stroke-width:2.4;stroke-linejoin:round"/>';
+    s+=tx(ef,220,'time →',F(11)+END+MUT);
+    g.innerHTML=s;
+    const st=host.querySelector('#'+ID+'-s');
+    const full=S.shown===TK;
+    st.innerHTML='<div>Use while backup runs<b>'+(full?R.util+'%':'…')+'</b></div>'+
+      '<div class="'+(full&&R.dmax-R.dmin>5?'bad':'')+'">Booking delay<b>'+(full?(R.dmax===R.dmin?R.dmin+' ms':R.dmin+'–'+R.dmax+' ms'):'…')+'</b></div>'+
+      '<div class="'+(full&&!R.done?'bad':'')+'">Backup done<b>'+(full?(R.refused?'refused':R.done?R.done+' ticks':'not yet'):'…')+'</b></div>';
+  }
+  async function play(){if(S.busy)return;S.busy=true;o.on({type:'busy'});
+    for(let t=1;t<=TK;t++){if(!svg.isConnected)break;S.shown=t;draw();await new Promise(r=>setTimeout(r,55));}
+    S.busy=false;S.shown=TK;draw();o.on({type:'played',mode:S.mode,R:S.R,B:S.B});}
+  draw();
+  return {S,draw,play,set(p){Object.assign(S,p);draw();},get R(){return S.R;}};
+}
+
+/* ---------- lesson ---------- */
 Course.lesson({
-  id:'0018', title:'Partial failures and unreliable networks', minutes:20, icon:'alert',
+  id:'0018', title:'Partial failures and unreliable networks', minutes:22, icon:'alert',
   goals:['Explain why “partly down” is the normal state of a distributed system','Say what a missing reply can and can’t tell you','Pick a timeout knowing what it costs either way'],
-  parts:['Partial failure','Lost in the network','Timeouts','Circuits vs packets'],
+  parts:['Partly down','Silence','Timeouts','Circuits vs packets'],
   read:'Read the first half of chapter 8 of the book for the network-fault studies and the telephone-network comparison.',
   glossary:{
     'partial-failure':'Partial failure: some parts of a distributed system are broken while the rest work fine. It is unpredictable: the same action may work one time and fail the next.',
     'shared-nothing':'Shared-nothing architecture: spreading the load over several machines, each with its own processor, memory and disks, that coordinate only over the network.',
-    'netfault':'Network fault (also called a network partition or netsplit): part of the network is cut off from the rest. The book says “network fault” so it isn’t confused with partitions of data.',
+    'netfault':'Network fault (also called a network partition or netsplit): some machines can’t reach the others over the network. The book says “network fault” so it isn’t confused with partitions of data.',
     'timeout':'Timeout: giving up on a reply after a set time and assuming it won’t come. It can’t tell you why the reply didn’t come.',
-    'unbounded':'Unbounded delay: there is no upper limit on how long a packet may take to arrive. The network tries to be quick but promises nothing.'
+    'unbounded':'Unbounded delay: there is no upper limit on how long a packet may take to arrive. The network tries to be quick but promises nothing.',
+    'cascading':'Cascading failure: a small fault in one part causes a fault in another, which causes more, like falling dominoes.'
   },
   cheatsheet:[
     'One computer is <b>working or broken</b>. A distributed system is often <b>partly broken</b>, and unpredictably so.',
     'Supercomputers stop everything and restart from a checkpoint. Online services must <b>keep running</b> and build reliability from unreliable parts.',
     'No reply can mean: request lost, request queued, node down, node paused, reply lost or reply late. <b>You can’t tell which.</b>',
-    'Network faults are common, even in one company’s datacenter. Redundant gear doesn’t stop human misconfiguration.',
+    'Network faults are common, even in one company’s datacenter. Handle them on purpose, and test how the software reacts.',
     'A TCP acknowledgement isn’t proof. Only a <b>reply from the application</b> says the work was done.',
-    '<b>Short timeout</b>: false alarms, duplicate work, cascading failure. <b>Long timeout</b>: slow recovery. Measure, or let the system adapt.',
-    'Delays come from <b>queues</b>: switches, the OS, virtual machines, TCP flow control.',
+    '<b>Short timeout</b>: false alarms, duplicate work, cascading failure. <b>Long timeout</b>: slow recovery. Measure, or let the detector adapt to the jitter.',
+    'Delays come from <b>queues</b>: switches, the OS, virtual machines, TCP flow control and resends. They grow fastest near full capacity.',
     'Packet networks trade bounded delay for <b>cheaper, fuller use of the wire</b>. That’s a cost choice, not a law of nature.'
   ],
   steps:[
-/* ---------- PART 1: PARTIAL FAILURE ---------- */
+/* ---------- PART 1: PARTLY DOWN ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt books a parcel through Otterpost’s merchant API. After 30 seconds there’s still no reply. Was the parcel booked?</h1>');
   L.mc(L.card,['No, a missing reply means it failed','There’s no way to tell from here'],1,
    'Silence tells you almost nothing. The booking may have failed, or it may have worked and only the reply went missing. This whole lesson is about living with that doubt.',
    'Not necessarily. The booking may have worked and only the reply got lost or stuck. Silence alone can’t tell you which.');}},
+
 {part:0,src:'Chapter 8 · Faults and Partial Failures',run(L){
-  L.h(L.kick('learn','One machine vs many')+'<h1 class="q">A single computer is either working or broken. A distributed system can be both at once.</h1>'+
-   L.prose('On one computer, the same operation gives the same result every time. If the hardware goes wrong, computers are designed to crash completely rather than return a wrong answer, because wrong answers are confusing and hard to handle.')+
-   L.prose('Spread the software over many machines joined by a network, and that tidy picture is gone. Some parts can break while others carry on. The book calls this a '+L.g('partial-failure','partial failure')+'.')+
-   L.lanes([['box','One computer','Fully working or fully broken. Same input, same result.',1],
-            ['layers','Many computers','Some parts broken, others fine. The same request may work now and fail a second later.',4]])+
-   '<p class="small" style="margin-top:12px">Worse, you may not even know <i>whether</i> something worked, because the time a message takes to cross the network is unpredictable too.</p>');
+  let s='';
+  /* left: one computer, two possible states */
+  s+=tx(78,14,'One computer',F(12.5)+B+MID+INK);
+  s+=rect(28,24,100,52,'var(--ok-bg)','var(--ok-line)',{rx:10})+tickm(52,50,'var(--ok)')+tx(88,46,'works',F(12)+B+MID+col('ok'))+tx(88,62,'every time',F(11)+MID+col('ok'));
+  s+=tx(78,92,'or',F(11.5)+MID+MUT);
+  s+=rect(28,100,100,52,'var(--soft)','var(--line2)',{rx:10,dash:'5 4'})+cross(50,126,6,'var(--muted)')+tx(88,122,'crashed',F(12)+B+MID+MUT)+tx(88,138,'completely',F(11)+MID+MUT);
+  s+=ln(160,14,160,206,'var(--line)',1.2,'3 3');
+  /* right: many computers, mixed */
+  s+=tx(242,14,'Many computers',F(12.5)+B+MID+INK);
+  const N=[[196,40,'ok'],[242,40,'ok'],[288,40,'no'],[196,92,'amb'],[242,92,'ok'],[288,92,'ok']];
+  s+=ln(196,40,242,40,'var(--line2)')+ln(242,40,288,40,'var(--no)',1.6,'4 3')+ln(196,40,196,92,'var(--line2)')+ln(242,40,242,92,'var(--line2)')+ln(196,92,242,92,'var(--line2)')+ln(242,92,288,92,'var(--line2)')+ln(288,40,288,92,'var(--no)',1.6,'4 3');
+  N.forEach(([x,y,k])=>{s+=dot(x,y,15,k==='ok'?'var(--ok-bg)':k==='no'?'var(--no-bg)':'var(--h4-bg)',k==='ok'?'var(--ok-line)':k==='no'?'var(--no)':'var(--h4)',1.8);
+    s+=k==='ok'?tickm(x+1,y,'var(--ok)'):k==='no'?cross(x,y,5,'var(--no)'):tx(x,y+4,'slow',F(11)+B+MID+col('h4'));});
+  s+=tx(242,134,'same request, three tries:',F(11)+MID+MUT);
+  [['ok',204],['no',242],['q',280]].forEach(([k,x])=>{s+=rect(x-16,142,32,26,k==='ok'?'var(--ok-bg)':k==='no'?'var(--no-bg)':'var(--soft)','none',{rx:8});
+    s+=k==='ok'?tickm(x+1,155,'var(--ok)'):k==='no'?cross(x,155,5,'var(--no)'):tx(x,160,'?',F(14)+B+MID+MUT);});
+  s+=tx(242,190,'works, fails, unknown',F(11)+MID+MUT);
+  L.h(L.kick('learn','One machine vs many')+'<h1 class="q">A single computer is working or broken. A distributed system can be both at once.</h1>'+
+   fig('f1',210,s,'Left: one computer is either fully working or fully crashed. Right: six connected computers, some fine, one broken, one slow; the same request works, fails, then gives no answer.')+
+   cap('A computer is built to crash completely rather than give a wrong answer. Spread work over many machines and some parts break while others carry on: a '+L.g('partial-failure','partial failure')+'. It’s unpredictable, and you may not even know whether a request worked.'));
   L.done();}},
-{part:0,src:'Chapter 8 · Faults and Partial Failures',run(L){
-  L.h(L.kick('ex','A morning at Otterpost')+'<h1 class="q">“Not down, just partly down”</h1>');
-  L.beats(L.card,[
-   ['8:02','Peak Week Monday. Kwame’s dashboard shows the tracking page loading fine for recipients in Westport.'],
-   ['8:05','Merchants report that booking a parcel <b>sometimes</b> hangs. Retrying a few times usually works.'],
-   ['8:09','Scanners at one Eastvale hub can’t reach the Parcel DB at all. Every other hub is fine.'],
-   ['8:12','Tobias asks: “Is Otterpost down?” Kwame: “Not down. Just partly down.” Some parts work, some don’t, and it changes from minute to minute.'],
-   ['8:20','The hardest part: for some hanging bookings, nobody can say yet whether the parcel was booked or not.']],
-   'In a distributed system, failures are partial and unpredictable. Your software must expect them, not just a clean crash.');}},
+
+{part:0,src:'Chapter 8 · Faults and Partial Failures',
+ solve:async L=>{for(let k=0;k<6&&L.$('#m3n');k++){L.$('#m3n').click();await L.sleep(20);}},
+ run(L){
+  const ST=[
+   ['8:02','Peak Week Monday. Kwame’s dashboard is all green. Recipients load the tracking page fine.',{}],
+   ['8:05','Merchants say booking a parcel <b>sometimes</b> hangs. Retrying usually works. The same request gives different results.',{api:'amb'}],
+   ['8:09','Scanners at Eastvale Depot can’t reach the Parcel DB at all. Every Westport hub is fine.',{api:'amb',east:'no'}],
+   ['8:12','Tobias: “Is Otterpost down?” Kwame: “Not down. Just partly down.” Some parts work, some don’t, and it changes minute by minute.',{api:'amb',east:'no',board:1}],
+   ['8:20','The hardest part: for some hung bookings, nobody can yet say whether the parcel was booked.',{api:'amb',east:'no',board:1,q:1}]];
+  let k=0;
+  const draw=()=>{const m=ST[k][2];let s='';
+    const DB=[160,98];
+    const P=[['track',56,36,'Tracking','page','ok'],['api',56,160,'Merchant','API',m.api||'ok'],['west',264,36,'Westport','hubs','ok'],['east',264,160,'Eastvale','Depot',m.east||'ok']];
+    P.forEach(([id,x,y,a,b,st])=>{const c=st==='no'?'var(--no)':st==='amb'?'var(--h4)':'var(--ok-line)';
+      s+=ln(x,y,DB[0],DB[1],c,st==='ok'?1.8:2.2,st==='ok'?'':'5 4');
+      if(st==='no')s+=cross((x+DB[0])/2,(y+DB[1])/2,6,'var(--no)',2.6);
+      if(st==='amb')s+=rect((x+DB[0])/2-9,(y+DB[1])/2-9,18,18,'var(--h4-bg)','var(--h4)',{rx:9})+tx((x+DB[0])/2,(y+DB[1])/2+4,'~',F(13)+B+MID+col('h4'));});
+    P.forEach(([id,x,y,a,b,st])=>{const f=st==='no'?'var(--no-bg)':st==='amb'?'var(--h4-bg)':'var(--ok-bg)',c=st==='no'?'var(--no)':st==='amb'?'var(--h4)':'var(--ok)';
+      s+=rect(x-46,y-20,92,40,f,c,{rx:10})+tx(x,y-3,a,F(12)+B+MID+'fill:'+c)+tx(x,y+12,b,F(11)+MID+'fill:'+c);});
+    s+=rect(DB[0]-42,DB[1]-20,84,40,'var(--card)','var(--pri)',{rx:10,sw:2})+tx(DB[0],DB[1]-3,'Parcel DB',F(12)+B+MID+INK)+tx(DB[0],DB[1]+12,'Westport',F(11)+MID+MUT);
+    if(m.q)s+=dot(108,129,11,'var(--card)','var(--pri)',2)+tx(108,134,'?',F(14)+B+MID+col('pri'));
+    if(m.board){const W=[['ok','2 working'],['amb','1 flaky'],['no','1 cut off']];W.forEach(([kk,l],j)=>{const x=24+j*100;
+      s+=rect(x,196,92,24,kk==='ok'?'var(--ok-bg)':kk==='amb'?'var(--h4-bg)':'var(--no-bg)','none',{rx:12})+tx(x+46,212,l,F(11.5)+B+MID+(kk==='ok'?col('ok'):kk==='amb'?col('h4'):col('no')));});}
+    L.$('#m3').innerHTML=s;
+    L.$('#m3c').innerHTML='<span class="small" style="font-weight:700;display:block">'+ST[k][0]+'</span>'+ST[k][1];
+    const nb=L.$('#m3n');if(nb){if(k===ST.length-1){nb.remove();L.sheet('info','Partly down','In a distributed system, failures are partial and nondeterministic. Your software has to expect them, not just a clean crash.');L.done();}else nb.innerHTML=L.ic('play')+'Next: '+ST[k+1][0];}};
+  L.h(L.kick('ex','A morning at Otterpost')+'<h1 class="q">“Not down, just partly down”</h1>'+
+   '<div class="pf"><svg id="m3" viewBox="0 0 320 226" role="img" aria-label="Map: the Parcel DB in the middle, linked to the tracking page, the merchant API, the Westport hubs and Eastvale Depot. Links turn flaky or broken as the morning goes on."></svg></div>'+
+   '<div class="pread" id="m3c" aria-live="polite"></div><div class="prow"><button class="btn pri" id="m3n"></button></div>');
+  L.$('#m3n').onclick=()=>{if(k<ST.length-1){k++;draw();}};
+  draw();}},
+
 {part:0,src:'Chapter 8 · Cloud Computing and Supercomputing',run(L){
+  let s='';
+  s+=tx(4,14,'Supercomputer: weather simulation',F(12)+B+INK);
+  s+=rect(4,24,312,22,'var(--soft)','var(--line)',{rx:6})+rect(4,24,196,22,'var(--h3-bg)','none',{rx:6});
+  [36,136].forEach((x,j)=>{s+=ln(x,20,x,50,'var(--h3)',2)+tx(j?x-4:x,62,'checkpoint',F(11)+(j?END:MID)+col('h3'));});
+  s+=cross(200,35,7,'var(--no)',3)+tx(212,39,'node fails: all stop',F(11)+B+col('no'));
+  s+='<path d="M198 50 C192 84, 148 84, 139 56" style="fill:none;stroke:var(--no);stroke-width:1.8;stroke-dasharray:4 3"/>'+head(138,52,-1.9,'var(--no)');
+  s+=tx(214,72,'fix, then restart',F(11)+B+col('no'))+tx(214,86,'from checkpoint',F(11)+B+col('no'));
+  s+=tx(4,112,'Internet service: tracking page',F(12)+B+INK);
+  ['A','B','C','D'].forEach((n,j)=>{const y=122+j*20;s+=tx(14,y+11,n,F(11)+B+MID+MUT);
+    for(let t=0;t<24;t++){const x=26+t*12.2,down=j===2&&t>=8&&t<14,up=j===3&&t>=17&&t<19;
+      s+=rect(x,y,10,14,down?'var(--no-bg)':up?'var(--h4-bg)':'var(--ok-bg)',down?'var(--no)':up?'var(--h4)':'var(--ok-line)',{rx:3,sw:1});}});
+  s+=tx(26+11*12.2,218,'C broken; A, B and D keep serving',F(11)+MID+col('no'))+tx(26+18*12.2,218+15,'D upgraded',F(11)+MID+col('h4'));
   L.h(L.kick('learn','Two ways to handle faults')+'<h1 class="q">Stop everything, or keep running?</h1>'+
-   L.lanes([['flask','Supercomputer','Saves its progress (a checkpoint) from time to time. If one node fails, it stops the whole job, fixes the node and restarts from the checkpoint. A partial failure is turned into a total one.',3],
-            ['people','Internet service','Must serve users with low latency at any time, so stopping for repairs isn’t allowed. Built from cheap commodity machines, where with thousands of nodes something is always broken.',2]])+
-   L.prose('This book is about the second kind. If the system can keep working with failed nodes, you can also upgrade it one node at a time, or swap a slow virtual machine for a new one, while users notice nothing.')+
-   L.quote('In distributed systems, suspicion, pessimism, and paranoia pay off.','Martin Kleppmann, chapter 8'));
+   fig('f4',240,s,'Top: a supercomputer job with two checkpoints; a node fails, the whole job stops and restarts from the last checkpoint. Bottom: four tracking-page nodes over time; node C breaks and node D is upgraded while the others keep serving.')+
+   cap('A supercomputer turns a partial failure into a total one: stop, fix, restart. An online service can’t stop. On thousands of cheap machines something is always broken, so it keeps serving and upgrades one node at a time.'));
   L.done();}},
+
 {part:0,src:'Chapter 8 · Cloud Computing and Supercomputing',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which Otterpost system could reasonably use the supercomputer approach: stop everything and restart from a checkpoint?</h1>');
   L.mc(L.card,['The public tracking page','The merchant booking API','Linh’s nightly ETA training job'],2,
    'An offline batch job can be stopped and restarted with little harm. Nobody is waiting on it second by second.',
    'Recipients and merchants use that at any moment, so it can’t stop for repairs. Only the offline batch job can afford “stop and restart from a checkpoint”.');}},
+
 {part:0,src:'Chapter 8 · Building a Reliable System from Unreliable Components',pts:5,run(L){
-  L.h(L.kick('pr','Reliable from unreliable')+'<h1 class="q">IP, the internet’s base layer, may drop, delay, duplicate or reorder packets. TCP is built on top to be more reliable. Which problems can TCP hide from Otterpost’s software?</h1>'+
-   '<p class="small">It’s an old idea: build a more reliable system on a less reliable base. But there’s always a limit.</p><div id="bk"></div>');
+  let s='';
+  const lay=[[8,'IP (the internet’s base)','drops · duplicates · reorders · delays','var(--no-bg)','var(--no)'],[52,'TCP on top','resends · removes duplicates · reorders','var(--h2-bg)','var(--h2)'],[96,'Otterpost’s software sees','no gaps, in order … but still delays','var(--ok-bg)','var(--ok)']];
+  lay.slice().reverse().forEach(([y,a,b,f,c])=>{s+=rect(4,y,312,38,f,c,{rx:10})+tx(14,y+16,a,F(12)+B+'fill:'+c)+tx(14,y+31,b,F(11.5)+'fill:'+c);});
+  L.h(L.kick('pr','Reliable from unreliable')+'<h1 class="q">TCP builds a more reliable layer on top of IP. Which problems can it hide from Otterpost’s software?</h1>'+
+   fig('f5',140,s,'Three layers: IP drops, duplicates, reorders and delays packets; TCP resends, removes duplicates and reorders; the software above sees no gaps, in order, but still delays.')+'<div id="bk"></div>');
   L.buckets(L.$('#bk'),['TCP hides it','TCP can’t hide it'],[
    ['A packet with a scan event is lost on the way',0,'TCP notices the gap and sends the packet again.'],
    ['The same packet arrives twice',0,'TCP throws away the duplicate.'],
    ['Packets arrive in a different order than sent',0,'TCP puts them back in the order they were sent.'],
    ['A congested link makes every packet slow',1,'TCP can’t remove network delay. Resending a lost packet even adds delay.'],
    ['The Parcel DB server loses power',1,'No transport protocol can make a dead machine answer.']],
-   'A more reliable layer handles the tricky low-level faults, so the ones left are easier to reason about. But it can’t make delays or dead machines disappear.');}},
+   'A more reliable layer handles the tricky low-level faults, so the ones left are easier to reason about. But there is always a limit: it can’t make delays or dead machines disappear.');}},
 
-/* ---------- PART 2: LOST IN THE NETWORK ---------- */
-{part:1,src:'Chapter 8 · Unreliable Networks',run(L){
-  L.h(L.kick('learn','Six ways a request can go wrong')+'<h1 class="q">You send a request and hear nothing back. What happened?</h1>'+
-   L.prose('Otterpost’s machines are '+L.g('shared-nothing','shared-nothing')+': the network is their only way to talk. That network is an <b>asynchronous packet network</b>: it promises neither <i>when</i> a message arrives nor <i>whether</i> it arrives.')+
-   L.list([['Request lost','Someone unplugged a cable.'],['Request queued','It’s waiting somewhere and will arrive later.'],['Remote node failed','It crashed or lost power.'],['Remote node paused','A long pause; it will answer later.'],['Reply lost','The work was done, but the reply vanished.'],['Reply delayed','The work was done, and the reply is on its way.']],1)+
-   '<p class="small" style="margin-top:10px">From the sender’s side, all six look exactly the same: no reply yet.</p>');
-  L.done();}},
-{part:1,src:'Chapter 8 · Unreliable Networks',pts:1,
- solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#send');if(b)b.click();}},
+/* ---------- PART 2: SILENCE ---------- */
+{part:1,src:'Chapter 8 · Unreliable Networks',
+ solve:async L=>{for(let k=0;k<6;k++){L.$('#c7'+k).click();await waitFor(L,()=>!L.$('#c7'+k).disabled&&L.$('#c7'+k).classList.contains('sel'));await L.sleep(20);}await waitFor(L,()=>L.$('#c7r').dataset.n==='6');},
  run(L){
-  const F=[['Request lost','A cable was pulled. The booking never arrived.','Not booked',0],
-   ['Request queued','The network is overloaded. The booking is waiting in a queue.','Will be booked later',1],
-   ['Server crashed','The Parcel DB server lost power before it saw the booking.','Not booked',0],
-   ['Server paused','A long pause froze the server. It will handle the booking when it wakes.','Will be booked later',1],
-   ['Reply lost','The booking was saved. A misconfigured switch dropped the reply.','Booked',1],
-   ['Reply delayed','The booking was saved. The reply is stuck and will arrive late.','Booked',1]];
-  let k=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Send the same booking six times. The sender always sees the same thing. Each time, see what really happened.</h1>'+
-   '<button class="btn pri" id="send">'+L.ic('play')+'Send booking</button><div id="log" style="margin-top:12px"></div><div id="fq"></div>');
-  L.$('#send').onclick=function(){if(k>=F.length)return;const f=F[k];k++;
-    const d=document.createElement('div');d.style.cssText='background:var(--soft);border-radius:14px;padding:10px 12px;margin:0 0 8px;font-size:14.5px;line-height:1.5';
-    d.innerHTML='<div class="small">#'+k+' · Sender sees: <b>no reply after 30 s</b></div><b>'+f[0]+'.</b> '+f[1]+'<div style="margin-top:6px"><span class="chip static '+(f[3]?'ok':'no')+'" style="margin:0">'+f[2]+'</span></div>';
-    L.$('#log').appendChild(d);
-    if(k===F.length){this.remove();const q=L.$('#fq');q.innerHTML='<h2 class="sub">Tobias’s code retries every booking that gets no reply. In how many of these six cases could the retry create a second parcel?</h2>';
-      L.mc(q,['None of them','Two of them','Four of them'],2,
-       'Two bookings were already saved, and two more will be saved later. A blind retry doubles all four. Later lessons show how to make retries safe.',
-       'Count the ones marked “Booked” <i>and</i> “Will be booked later”. A queued or paused request still gets processed after the sender gives up, so a blind retry doubles four bookings.');}};}},
-{part:1,src:'Chapter 8 · Unreliable Networks',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The usual answer to silence is a '+L.g('timeout','timeout')+'. Kwame’s booking service waits 30 seconds, then gives up. What does it know at that moment?</h1>');
-  L.mc(L.card,['Only that no reply has come yet','That the Parcel DB server is down','That the booking was never saved'],0,
-   'Right. A timeout doesn’t say why. The request might even still be in a queue and arrive after the sender has given up.',
-   'A timeout can’t tell you why. The server could be fine and the reply lost, or the request could still be queued and arrive later.');}},
-{part:1,src:'Chapter 8 · Network Faults in Practice',run(L){
-  L.h(L.kick('learn','Network faults in practice')+'<h1 class="q">Even a well-run datacenter has network trouble</h1>'+
-   L.list([['alert','It happens a lot','One study of a medium-sized datacenter counted about 12 network faults a month. Half cut off one machine, half cut off a whole rack.'],
-     ['person','Spare hardware isn’t enough','Redundant switches don’t help much against human error, such as a misconfigured switch, which is a major cause of outages.'],
-     ['cycle','Strange faults','A switch software upgrade delayed packets for over a minute. Sharks have bitten undersea cables. One network card dropped every incoming packet while sending fine: a link can work in one direction only.']],3)+
-   L.note('When part of the network is cut off from the rest, that’s often called a <b>network partition</b>. The book says '+L.g('netfault','network fault')+' instead, to avoid mixing it up with partitions of data.','info')+
-   '<p class="prose" style="margin-top:14px">If nobody has defined and tested what happens during a network fault, almost anything can follow: a cluster stuck for good, even lost data.</p>');
-  L.done();}},
-{part:1,src:'Chapter 8 · Network Faults in Practice',pts:1,run(L){
-  L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Otterpost’s internal network is usually reliable. Femi asks: “Must the merchant dashboard keep fully working during a network fault?”</h1>');
-  L.mc(L.card,['Yes, it must tolerate every network fault','No, faults are rare enough to ignore','No, but we must know and test how it reacts'],2,
-   'Handling a fault doesn’t have to mean tolerating it. Showing merchants an error can be fine, as long as you know how the software behaves and that it recovers. You can even trigger network faults on purpose to test it.',
-   'The book’s middle path: handling doesn’t have to mean tolerating, so an error message can be fine. But ignoring faults isn’t, because untested software can do arbitrarily bad things. Know and test how it reacts.');}},
+  const CASES=[
+   ['Request lost','A cable was pulled. The booking never arrived.','Not booked','no'],
+   ['Request queued','The network is overloaded. The booking waits in a queue and will arrive later.','Booked later','amb'],
+   ['Server crashed','The Parcel DB server lost power before the booking arrived.','Not booked','no'],
+   ['Server paused','A long pause froze the server. It will handle the booking when it wakes up.','Booked later','amb'],
+   ['Reply lost','The booking was saved. A misconfigured switch dropped the reply.','Booked','ok'],
+   ['Reply delayed','The booking was saved. The reply is stuck in a queue and will arrive late.','Booked','ok']];
+  const seen=new Set();let busy=false;
+  const AX=58,BX=266,RQ=[AX,46,BX,86],RP=[BX,108,AX,148];
+  const base=()=>{let s='';
+    s+=rect(114,22,96,150,'var(--soft)','none',{rx:12})+tx(162,36,'network',F(11)+MID+MUT);
+    s+=tx(AX,14,'Booking service',F(11.5)+B+MID+INK)+tx(BX,14,'Parcel DB',F(11.5)+B+MID+INK);
+    s+=ln(AX,22,AX,176,'var(--line2)',2)+'<g id="c7db">'+ln(BX,22,BX,176,'var(--line2)',2)+'</g>';
+    s+=arw(RQ[0],RQ[1],RQ[2],RQ[3],'var(--line2)',{w:1.4,dash:'4 3'})+arw(RP[0],RP[1],RP[2],RP[3],'var(--line2)',{w:1.4,dash:'4 3'});
+    s+=tx(92,44,'request',F(11)+MID+MUT)+tx(232,140,'reply',F(11)+MID+MUT);
+    s+=rect(AX-46,180,92,24,'var(--h4-bg)','var(--h4)',{rx:12})+tx(AX,196,'30 s: silence',F(11.5)+B+MID+col('h4'));
+    return s+'<g id="c7fx"></g>';};
+  L.h(L.kick('ex','Six ways a request can go wrong')+'<h1 class="q">The booking service sends a booking and hears nothing. Play each case.</h1>'+
+   '<div class="pf"><svg id="c7" viewBox="0 0 320 208" role="img" aria-label="Sequence diagram: the booking service on the left sends a request across the network to the Parcel DB on the right, which sends a reply back.">'+base()+'</svg></div>'+
+   '<div class="prow" id="c7b"></div><div class="pread" id="c7r" data-n="0" aria-live="polite"><span class="small">Otterpost’s machines are '+L.g('shared-nothing','shared-nothing')+': they talk only over an asynchronous packet network, which promises neither when nor whether a message arrives. Tap a case to play it.</span></div>');
+  const fx=()=>L.$('#c7fx');
+  const along=(p,f)=>[p[0]+(p[2]-p[0])*f,p[1]+(p[3]-p[1])*f];
+  async function move(p,f0,f1,ms){const g=fx();if(!g)return;const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('r','6');c.setAttribute('style','fill:var(--pri)');g.appendChild(c);
+    await tween(c,ms,e=>{const [x,y]=along(p,f0+(f1-f0)*e);c.setAttribute('cx',x);c.setAttribute('cy',y);});return c;}
+  const add=h=>{const g=fx();if(g)g.insertAdjacentHTML('beforeend',h);};
+  async function play(k){
+    if(busy)return;busy=true;[...L.$$('#c7b .chip')].forEach(b=>{b.disabled=true;b.classList.remove('sel');});
+    fx().innerHTML='';L.$('#c7db').innerHTML=ln(BX,22,BX,176,'var(--line2)',2);
+    if(k===2){L.$('#c7db').innerHTML=ln(BX,22,BX,176,'var(--faint)',2,'5 4');add(cross(BX,60,8,'var(--no)',3)+tx(BX-4,40,'crashed',F(11)+B+END+col('no')));await L.sleep(200);}
+    if(k===3){add(rect(BX-14,74,28,48,'var(--h4-bg)','var(--h4)',{rx:6})+ln(BX-4,86,BX-4,110,'var(--h4)',3)+ln(BX+4,86,BX+4,110,'var(--h4)',3)+tx(BX-18,70,'paused',F(11)+B+END+col('h4')));}
+    if(k===0){const c=await move(RQ,0,.45,500);if(c)c.remove();const [x,y]=along(RQ,.45);add(cross(x,y,7,'var(--no)',3)+tx(x,y+20,'cable pulled',F(11)+B+MID+col('no')));}
+    else if(k===1||k===5){const P=k===1?RQ:RP;if(k===5){const c=await move(RQ,0,1,500);if(c)c.remove();add(rect(BX-24,92,48,20,'var(--ok-bg)','var(--ok-line)',{rx:10})+tx(BX,106,'saved',F(11)+B+MID+col('ok')));}
+      const [x,y]=along(P,.5);add(rect(x-30,y-13,60,26,'var(--card)','var(--h4)',{rx:8,dash:'3 2'})+dot(x-18,y,4,'var(--faint)')+dot(x-8,y,4,'var(--faint)')+dot(x+2,y,4,'var(--faint)')+tx(x,y+26,'stuck in a queue',F(11)+B+MID+col('h4')));
+      await move(P,0,.5-14/220,500);}
+    else if(k===2){const c=await move(RQ,0,1,500);if(c)c.remove();}
+    else if(k===3){await move(RQ,0,.93,500);}
+    else if(k===4){const c=await move(RQ,0,1,500);if(c)c.remove();add(rect(BX-24,92,48,20,'var(--ok-bg)','var(--ok-line)',{rx:10})+tx(BX,106,'saved',F(11)+B+MID+col('ok')));
+      const d=await move(RP,0,.45,500);if(d)d.remove();const [x,y]=along(RP,.45);add(cross(x,y,7,'var(--no)',3)+tx(x,y+20,'reply dropped',F(11)+B+MID+col('no')));}
+    if(!L.$('#c7'))return;
+    seen.add(k);const c=CASES[k];
+    L.$('#c7r').dataset.n=String(seen.size);
+    L.$('#c7r').innerHTML='<b>'+c[0]+'.</b> '+c[1]+'<div style="margin-top:6px"><span class="chip static '+(c[3]==='no'?'no':c[3]==='ok'?'ok':'')+'" style="margin:0">Was the parcel booked? '+c[2]+'</span></div><div class="small" style="margin-top:6px">Sender’s view: 30 s of silence. ('+seen.size+' of 6 played)</div>';
+    busy=false;[...L.$$('#c7b .chip')].forEach((b,j)=>{b.disabled=false;b.classList.toggle('sel',j===k);});
+    if(seen.size===6){L.sheet('info','Six stories, one silence','From the sender’s side, all six look the same: no reply yet. A '+L.g('timeout','timeout')+' only says “nothing came back in time”. It can’t say why, and a queued request may still arrive after the sender gave up.');L.done();}}
+  CASES.forEach((c,k)=>{const b=document.createElement('button');b.className='chip';b.id='c7'+k;b.textContent=(k+1)+'. '+c[0];b.onclick=()=>play(k);L.$('#c7b').appendChild(b);});
+}},
 
-/* ---------- PART 3: TIMEOUTS ---------- */
-{part:2,src:'Chapter 8 · Detecting Faults',run(L){
-  L.h(L.kick('learn','Detecting faults')+'<h1 class="q">Sometimes you get a clear signal that something is broken. Tap each card.</h1>'+
-   L.prose('A load balancer must stop sending traffic to dead nodes. A replicated database must notice a dead leader and promote a follower. Both need to detect faults, but signals are rare.'));
-  L.flips(L.card,[
-   ['Nothing listening on the port','The machine is up but the process crashed, so the operating system refuses the connection. But if it crashed <i>while</i> handling your request, you don’t know how much it did.'],
-   ['A script reports the crash','If a process dies but the machine’s OS is still running, a script can tell other nodes right away, so they don’t wait for a timeout.'],
-   ['Ask the network switches','If you can reach your switches’ management interface, it can show link failures. Not over the internet, not in a shared datacenter, and not if you can’t reach it.'],
-   ['A router says “unreachable”','A router may reply that an address can’t be reached. But routers can’t see failures any better than anyone else.']],
-   'These signals are useful but you can’t count on them. Even a TCP acknowledgement only means the packet arrived; the application may crash before acting on it. Usually you get <b>no response at all</b>, so you retry, wait for a timeout, and then declare the node dead.');}},
-{part:2,src:'Chapter 8 · Detecting Faults',pts:1,run(L){
+{part:1,src:'Chapter 8 · Unreliable Networks',pts:1,
+ solve:async L=>{[1,3,4,5].forEach(k=>L.$('#r8'+k).click());L.$('#r8go').click();},
+ run(L){
+  const C=[['Request lost','Cable pulled on the way.'],['Request queued','Waiting in an overloaded network.'],['Server crashed','Lost power before it arrived.'],['Server paused','Frozen; handles it on waking.'],['Reply lost','Saved; the reply was dropped.'],['Reply delayed','Saved; the reply is late.']];
+  const RIGHT=[1,3,4,5],pick=new Set();let done=false;
+  L.h(L.kick('pr','Tobias’s retry')+'<h1 class="q">Tobias’s code retries every booking that gets no reply. Tap every case where the retry creates a <b>second</b> parcel.</h1>'+
+   '<div class="pgrid" id="r8"></div><div class="prow"><button class="btn pri" id="r8go">'+L.ic('check')+'Check</button></div>');
+  C.forEach((c,k)=>{const b=document.createElement('button');b.className='pcard';b.id='r8'+k;b.innerHTML='<b>'+(k+1)+'. '+c[0]+'</b>'+c[1];
+    b.onclick=()=>{if(done)return;pick.has(k)?pick.delete(k):pick.add(k);b.classList.toggle('sel',pick.has(k));};L.$('#r8').appendChild(b);});
+  L.$('#r8go').onclick=()=>{if(done)return;done=true;
+    const ok=RIGHT.length===pick.size&&RIGHT.every(k=>pick.has(k));
+    C.forEach((c,k)=>{const b=L.$('#r8'+k);b.classList.remove('sel');b.classList.add(RIGHT.includes(k)?'ok':(pick.has(k)?'no':'x'));});
+    L.$('#r8go').remove();L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Four duplicates':'Not quite','Four of the six end with the booking saved: two already, and two later (the queued request and the paused server still get processed after the sender gives up). A blind retry doubles all four. Only a lost request or a crash before arrival is safe to retry. Later lessons show how to make retries safe.');L.done();};
+}},
+
+{part:1,src:'Chapter 8 · Network Faults in Practice',run(L){
+  let s='';
+  s+=tx(4,14,'One medium-sized datacenter, one month',F(12)+B+INK);
+  for(let j=0;j<12;j++){const x=10+j*25.5,rack=j%2===1;
+    s+=rack?rect(x,24,16,40,'var(--no-bg)','var(--no)',{rx:3})+ln(x+3,34,x+13,34,'var(--no)',1.2)+ln(x+3,44,x+13,44,'var(--no)',1.2)+ln(x+3,54,x+13,54,'var(--no)',1.2)
+           :rect(x+1,44,14,20,'var(--h4-bg)','var(--h4)',{rx:3});}
+  s+=rect(10,76,14,12,'var(--h4-bg)','var(--h4)',{rx:3})+tx(30,86,'6 cut off one machine',F(11)+MUT)+rect(160,72,10,18,'var(--no-bg)','var(--no)',{rx:2})+tx(176,86,'6 cut off a whole rack',F(11)+MUT);
+  const tile=(y,t1,t2,art)=>rect(4,y,312,36,'var(--soft)','none',{rx:10})+art+tx(60,y+16,t1,F(11.5)+B+INK)+tx(60,y+30,t2,F(11)+MUT);
+  let y=102;
+  /* misconfigured switch */
+  s+=tile(y,'Human error','Misconfigured switch; spares don’t help.',rect(14,y+7,32,15,'var(--card)','var(--line2)',{rx:4})+dot(21,y+14.5,2,'var(--ok-strong)')+dot(30,y+14.5,2,'var(--no-strong)')+dot(39,y+14.5,2,'var(--ok-strong)')+ln(14,y+28,46,y+28,'var(--no)',2,'3 2'));y+=42;
+  /* switch upgrade: long delay */
+  s+=tile(y,'Switch upgrade','Packets held up for over a minute.','<circle cx="30" cy="'+(y+18)+'" r="12" style="fill:var(--card);stroke:var(--h4);stroke-width:2"/>'+ln(30,y+18,30,y+10,'var(--h4)',2)+ln(30,y+18,36,y+21,'var(--h4)',2));y+=42;
+  /* shark */
+  s+=tile(y,'Sharks','They have bitten undersea cables.','<path d="M12 '+(y+24)+' q7 -5 14 0 t14 0" style="fill:none;stroke:var(--h2);stroke-width:2"/><path d="M22 '+(y+21)+' l8 -15 l5 15 z" style="fill:var(--muted)"/>'+ln(12,y+30,46,y+30,'var(--ink)',3));y+=42;
+  /* one-way NIC */
+  s+=tile(y,'One-way network card','Sends fine, drops all incoming packets.',rect(12,y+7,14,22,'var(--card)','var(--line2)',{rx:3})+arw(28,y+13,48,y+13,'var(--ok-strong)',{w:2})+arw(48,y+24,28,y+24,'var(--no)',{w:2})+cross(38,y+24,3.5,'var(--no)',2));
+  L.h(L.kick('learn','Network faults in practice')+'<h1 class="q">Even a well-run datacenter has network trouble</h1>'+
+   fig('f9',272,s,'Twelve faults in one month: six cut off one machine, six a whole rack. Four tiles: a misconfigured switch, a switch upgrade holding packets over a minute, a shark biting a sea cable, and a network card that sends but drops everything coming in.')+
+   cap('One study counted about 12 '+L.g('netfault','network faults')+' a month. Spare hardware doesn’t stop human error, and a link can fail in one direction only. Untested, a cluster can get stuck for good or even delete data.')+
+   L.quote('In distributed systems, suspicion, pessimism, and paranoia pay off.','Martin Kleppmann, chapter 8'));
+  L.done();}},
+
+{part:1,src:'Chapter 8 · Network Faults in Practice',pts:1,run(L){
+  L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Otterpost’s internal network is usually reliable. Femi asks: “Must the merchant dashboard keep fully working during a network fault?” Build Kwame’s answer.</h1>');
+  L.sentence(L.card,[['Handling a network fault','Ignoring a network fault'],['doesn’t have to mean tolerating it,','always means tolerating it,'],['so the dashboard may show an error,','so the dashboard must never fail,'],['as long as we test how it reacts and recovers.','because faults this rare can’t hurt us.']],[0,0,0,0],
+   [['Faults happen even on reliable networks. Untested software can do arbitrarily bad things.'],['Tolerating every fault isn’t required. Handling can be as simple as a clear error.'],['That is the expensive “tolerate everything” goal. The book says an error message can be a valid choice.'],['Rare isn’t never. Untested fault handling can leave a cluster stuck or even delete data.']],
+   'Handling a fault can mean showing merchants an error. What you can’t skip is knowing how the software behaves and that it recovers. You can even trigger network faults on purpose to test it.');}},
+
+{part:1,src:'Chapter 8 · Detecting Faults',
+ solve:async L=>{for(let k=0;k<4;k++){L.$('#d11b'+k).click();await L.sleep(10);}},
+ run(L){
+  const BX=[['mon','Monitor',''],['rt','Router',''],['sw','Switch',''],['os','Machine','(its OS)'],['app','Database','process']];
+  const INFO=[
+   ['Router: “unreachable”','If a router is sure the address can’t be reached, it may say so (ICMP Destination Unreachable).','But a router can’t see failures any better than anyone else.'],
+   ['Switch: link is down','With access to the switches’ management interface, you can see a link failure, for example a powered-off machine.','Not over the internet, not in a shared datacenter, and not if the network problem cuts you off from the interface.'],
+   ['Machine: connection refused','If the machine is up but the database process crashed, its OS refuses the connection. A script on it can even announce the crash, so others take over without waiting (HBase does this).','If it crashed halfway through your request, you can’t tell how much was done.'],
+   ['Database: the app’s own reply','Only a reply from the application proves the work was done.','A TCP acknowledgement only says the bytes reached the machine. The app may crash before acting on them.']];
+  const seen=new Set();
+  const draw=()=>{let s='';
+    BX.forEach(([id,a,b],j)=>{const x=2+j*64,on=j>0&&seen.has(j-1),cur=j>0;
+      if(j)s+=arw(x-8,46,x-1,46,'var(--line2)',{w:1.6});
+      s+='<g'+(cur?' data-k="'+(j-1)+'" style="cursor:pointer"':'')+'>'+rect(x,20,54,52,j===0?'var(--h1-bg)':on?'var(--ok-bg)':'var(--card)',j===0?'var(--h1)':on?'var(--ok-line)':'var(--pri)',{rx:10,sw:j&&!on?2:1.5})+
+        tx(x+27,b?42:50,a,F(11)+B+MID+(j===0?col('h1'):INK))+(b?tx(x+27,57,b,F(11)+MID+MUT):'')+'</g>';
+      if(cur)s+=tx(x+27,88,on?'seen':'tap',F(11)+B+MID+(on?col('ok'):col('pri')));});
+    s+=rect(2,100,316,30,'var(--soft)','none',{rx:10})+tx(160,119,seen.size===4?'Usually: no signal at all. Retry, wait, declare dead.':'Where could a “it’s broken” signal come from?',F(11.5)+B+MID+(seen.size===4?col('no'):MUT));
+    L.$('#d11').innerHTML='<g transform="translate(0,-14)">'+s+'</g>';};
+  L.h(L.kick('learn','Detecting faults')+'<h1 class="q">A load balancer must drop dead nodes, and a follower must replace a dead leader. Tap each stop to see what signal it can give.</h1>'+
+   '<div class="pf"><svg id="d11" viewBox="0 0 320 120" role="img" aria-label="A chain from Kwame’s monitor through a router, a switch and the machine to the database process."></svg></div>'+
+   '<div class="prow" id="d11r">'+[0,1,2,3].map(k=>'<button class="chip" id="d11b'+k+'">'+BX[k+1][1]+(k===2?' OS':'')+'</button>').join('')+'</div>'+
+   '<div class="pread" id="d11c" aria-live="polite"><span class="small">Tap a box in the chain, or the buttons.</span></div>');
+  const show=k=>{seen.add(k);draw();L.$('#d11b'+k).classList.add('sel');const I=INFO[k];
+    L.$('#d11c').innerHTML='<b>'+I[0]+'.</b> '+I[1]+'<div style="margin-top:6px;color:var(--no)"><b>Limit:</b> '+I[2]+'</div>';
+    if(seen.size===4){L.sheet('info','Rapid feedback is a bonus','These signals help, but you can’t count on them. In general you get <b>no response at all</b>: you retry a few times, wait for a timeout, and then declare the node dead.');L.done();}};
+  L.$('#d11').addEventListener('click',e=>{const g=e.target.closest('g[data-k]');if(g)show(+g.dataset.k);});
+  [0,1,2,3].forEach(k=>{L.$('#d11b'+k).onclick=()=>show(k);});
+  draw();}},
+
+{part:1,src:'Chapter 8 · Detecting Faults',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Otterpost sends a status webhook to Bramble & Bolt’s server. TCP confirms the data arrived, then the connection drops before any HTTP reply. Did Bramble & Bolt record the new status?</h1>');
   L.mc(L.card,['Yes, TCP confirmed delivery','Unknown, there was no app reply','No, the connection dropped'],1,
    'TCP only says the bytes reached the machine. To be sure the work was done, you need a positive reply from the application itself.',
-   'Neither TCP nor a dropped connection settles it. The bytes arrived, but their application may have crashed before acting. Only an application-level reply proves the status was recorded.');}},
+   'Neither TCP nor a dropped connection settles it. The bytes arrived, but the merchant’s app may have crashed before acting. Only an application-level reply proves the status was recorded.');}},
+
+/* ---------- PART 3: TIMEOUTS ---------- */
 {part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',run(L){
-  L.h(L.kick('learn','How long should a timeout be?')+'<h1 class="q">There’s no simple answer. Both directions cost something.</h1>'+
-   L.lanes([['clock','Long timeout','A dead node stays “alive” for a long time. Meanwhile users wait or see errors.',3],
-            ['alert','Short timeout','Faster detection, but a node that is only slow gets declared dead.',4]])+
-   L.prose('Declaring a live node dead is risky. If it was halfway through an action, like sending an email, another node takes over and the action may happen <b>twice</b>. Its work also moves to other nodes. If they were already overloaded, they slow down and get declared dead too: a <b>cascading failure</b>. In the extreme, every node declares the others dead.')+
-   L.note('If the network promised a maximum delay <i>d</i> and nodes always answered within time <i>r</i>, a timeout of 2<i>d</i> + <i>r</i> would be perfect. Real networks have '+L.g('unbounded','unbounded delays')+', and most servers can’t promise <i>r</i>.','info'));
+  let s='';
+  s+=tx(4,14,'If the network promised a limit',F(12)+B+INK);
+  s+=rect(4,24,96,24,'var(--h1-bg)','var(--h1)',{rx:6})+tx(52,40,'d: request',F(11.5)+B+MID+col('h1'));
+  s+=rect(104,24,60,24,'var(--h3-bg)','var(--h3)',{rx:6})+tx(134,40,'r: handle',F(11.5)+B+MID+col('h3'));
+  s+=rect(168,24,96,24,'var(--h1-bg)','var(--h1)',{rx:6})+tx(216,40,'d: reply',F(11.5)+B+MID+col('h1'));
+  s+=ln(270,18,270,56,'var(--pri)',2.4)+tx(274,70,'2d + r',F(12)+B+END+col('pri'))+tx(274,84,'= timeout',F(11)+END+col('pri'));
+  s+=tx(4,112,'A real network and server',F(12)+B+INK);
+  s+='<defs><linearGradient id="g13" x1="0" x2="1"><stop offset="0" style="stop-color:var(--h1);stop-opacity:.35"/><stop offset="1" style="stop-color:var(--h1);stop-opacity:0"/></linearGradient><linearGradient id="g13b" x1="0" x2="1"><stop offset="0" style="stop-color:var(--h3);stop-opacity:.35"/><stop offset="1" style="stop-color:var(--h3);stop-opacity:0"/></linearGradient></defs>';
+  s+=rect(4,122,96,24,'var(--h1-bg)','var(--h1)',{rx:6})+rect(100,122,120,24,'url(#g13)','none',{rx:0})+tx(52,138,'d: ???',F(11.5)+B+MID+col('h1'));
+  s+=rect(4,154,60,24,'var(--h3-bg)','var(--h3)',{rx:6})+rect(64,154,120,24,'url(#g13b)','none',{rx:0})+tx(34,170,'r: ???',F(11.5)+B+MID+col('h3'));
+  s+=arw(200,134,300,134,'var(--muted)',{w:1.6,dash:'4 3'})+tx(300,152,'no upper limit',F(11)+B+END+MUT);
+  s+=tx(300,186,'(unbounded delays)',F(11)+END+MUT);
+  L.h(L.kick('learn','The perfect timeout that doesn’t exist')+'<h1 class="q">How long should a timeout be?</h1>'+
+   fig('f13',196,s,'Top: request time d, handling time r and reply time d add up to a perfect timeout of 2d plus r. Bottom: in a real system d and r fade into a long tail with no upper limit.')+
+   cap('If every packet arrived within <i>d</i> and a live node always answered within <i>r</i>, then 2<i>d</i> + <i>r</i> would be a perfect timeout. Real networks have '+L.g('unbounded','unbounded delays')+' and most servers promise no <i>r</i>, so one passing spike can trip a short timeout.'));
   L.done();}},
-{part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',pts:1,
- solve:async L=>{L.$$('#tc .chip').forEach(b=>b.click());},
+
+{part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',
+ solve:async L=>{setR(L,'s14-r',TV.indexOf(100));await L.sleep(20);setR(L,'s14-r',TV.indexOf(10000));await L.sleep(20);},
  run(L){
-  const R=[90,110,85,1800,95,120,100,2400,90,105,88,130],T=[[150,'150 ms'],[5000,'5 s'],[60000,'60 s']];const seen=new Set();
-  L.h(L.kick('pr','Tune the timeout')+'<h1 class="q">Here are the Parcel DB leader’s last 12 reply times, then it crashes. Try each timeout and compare.</h1>'+
-   '<div id="tc"></div><div id="rt" style="margin:6px 0 4px"></div><div id="tr" class="res" style="min-height:48px"></div><div id="tq"></div>');
-  const draw=t=>{L.$('#rt').innerHTML=R.map(v=>'<span class="chip static '+(t&&v>t?'no':'')+'" style="padding:5px 9px;font-size:13px">'+(v>=1000?(v/1000)+' s':v+' ms')+'</span>').join('')+'<span class="chip static no" style="padding:5px 9px;font-size:13px">'+L.ic('x')+'crash</span>';};draw(0);
-  T.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('clock')+t[1];
-    b.onclick=()=>{[...L.$('#tc').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);draw(t[0]);
-      const fd=R.filter(v=>v>t[0]).length;
-      L.$('#tr').innerHTML='<b>False alarms:</b> '+fd+(fd?' (a healthy leader declared dead, so a needless failover)':' ')+'<br><b>Real crash noticed after:</b> '+t[1]+(t[0]>=60000?' (a full minute of failed bookings)':'');
-      if(seen.size===T.length&&!L.$('#tq').innerHTML){const q=L.$('#tq');q.innerHTML='<h2 class="sub">Peak Week: load triples and slow spikes get longer. Kwame is tempted by 150 ms to fail over fast. What’s the danger?</h2>';
-        L.mc(q,['A slower failover, since short timeouts detect less','Slow but healthy nodes declared dead, overloading the rest','No danger, since a shorter timeout is always safer'],1,
-         'Exactly. Under heavy load, slow isn’t dead. Moving a “dead” node’s work onto busy neighbours can push them over too: a cascading failure.',
-         'A short timeout detects faster, not slower, and it’s never automatically safer. Under heavy load it mistakes slow nodes for dead ones, and moving their work can topple the rest.');}};
-    L.$('#tc').appendChild(b);});}},
-{part:2,src:'Chapter 8 · Network congestion and queueing',run(L){
-  L.h(L.kick('learn','Where delays come from')+'<h1 class="q">Like traffic jams on roads, network delays mostly come from queues</h1>'+
-   L.list([['layers','At the switch','Many machines send to one destination at once, so the switch queues their packets. If the queue fills up, packets are dropped and must be resent, even though nothing is broken.'],
-     ['box','In the operating system','If every CPU core on the receiving machine is busy, the request waits until the application is ready.'],
-     ['pointer','In virtual machines','A virtual machine is often paused for tens of milliseconds while another uses the CPU. Incoming data waits.'],
-     ['scale','At the sender','TCP’s flow control slows a sender down to avoid overloading the network, so data waits before it even leaves. Resending lost packets adds more delay.']],2)+
-   L.prose('Queues grow fastest when a system is close to full capacity. In shared clouds, a <b>noisy neighbour</b> (another customer using lots of network) can add delay you can’t see or control.')+
-   L.note('Video calls often use UDP instead of TCP: no flow control and no resending. A late piece of audio is worthless anyway, so the app plays silence and moves on. The retry happens between the humans: “Sorry, could you repeat that?”','chat'));
-  L.done();}},
+  let fired=false;
+  L.h(L.kick('ex','Explore the timeout')+'<h1 class="q">Kwame’s monitor pings the Westport Parcel DB leader once a second. At heartbeat 30 it really crashes. Drag the dashed timeout line, or use the slider.</h1><div id="s14"></div>'+
+   tasks('t14',['Make it so short that the live leader is wrongly declared dead 3 or more times','Find one so long the crash goes unnoticed for 5 s or more'])+
+   '<p class="small" style="margin-top:6px">Green dots: replies in time. Red: the reply came after the timeout, so the monitor declared a live leader dead. Reply times are illustrative.</p>');
+  const ch=Strip(L,L.$('#s14'),{id:'s14',T:500,on:()=>{const R=ch.R;if(R.fa.length>=3)tick(L,'t14',0);if(R.delay>=5000)tick(L,'t14',1);
+    if(!fired&&allT(L,'t14')){fired=true;L.sheet('info','Both directions cost something','<b>Too short:</b> a slow but live leader is declared dead. If it was halfway through an action, the new leader may do it twice. <b>Too long:</b> after the real crash, merchants wait or see errors until the timeout fires.');L.done();}}});
+ }},
+
+{part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',
+ solve:async L=>{for(let k=0;k<5&&L.$('#k15n');k++){L.$('#k15n').click();await L.sleep(20);}},
+ run(L){
+  const ST=[
+   [[50,50,88,50,50],[0,0,1,0,0],'Five Parcel DB nodes share the Peak Week load. Node C gets a load spike and answers slowly. It is busy, not dead.'],
+   [[50,50,88,50,50],[0,0,2,0,0],'A short timeout fires and C is declared dead. If C was halfway through sending Mrs. Okoro’s delivery email, the node that takes over may send it again.'],
+   [[72,72,0,72,72],[1,1,2,1,1],'C’s work moves to A, B, D and E. They were already busy. Now they slow down too.'],
+   [[96,96,0,96,96],[2,2,2,2,2],'Their replies miss the timeout as well. In the extreme, every node declares the others dead and nothing works: a '+L.g('cascading','cascading failure')+'.']];
+  let k=0;
+  const draw=()=>{const [ld,stt,t]=ST[k];let s='';
+    s+=ln(10,128,310,128,'var(--line2)',1.2)+ln(10,40,310,40,'var(--no)',1.2,'4 3')+tx(310,34,'overloaded',F(11)+END+col('no'));
+    [...'ABCDE'].forEach((n,j)=>{const x=22+j*60,h=ld[j]*.88,st=stt[j],c=st===2?'var(--no)':st===1?'var(--h4)':'var(--ok-line)',f=st===2?'var(--no-bg)':st===1?'var(--h4-bg)':'var(--ok-bg)';
+      s+=rect(x,128-h,40,h,f,c,{rx:6});
+      s+=tx(x+20,146,'Node '+n,F(11.5)+B+MID+INK)+tx(x+20,162,st===2?'“dead”':st===1?'slow':'ok',F(11)+B+MID+'fill:'+c);
+      if(st===2&&ld[j]===0)s+=cross(x+20,112,7,'var(--no)',3);});
+    if(k===2)[0,1,3,4].forEach(j=>{s+=arw(142+(j<2?-4:4)+(j<2?0:40),70,22+j*60+20,60,'var(--h4)',{w:1.6,dash:'4 3'});});
+    L.$('#k15').innerHTML=s;L.$('#k15c').innerHTML='<span class="small" style="font-weight:700;display:block">Step '+(k+1)+' of 4</span>'+t;
+    const nb=L.$('#k15n');if(nb){if(k===ST.length-1){nb.remove();L.sheet('info','Slow isn’t dead','Declaring a node dead moves its load onto others. When the system is already struggling, a premature verdict makes things worse.');L.done();}else nb.innerHTML=L.ic('play')+'Next step';}};
+  L.h(L.kick('learn','Why false alarms hurt')+'<h1 class="q">One wrong “dead” can topple the rest</h1>'+
+   '<div class="pf"><svg id="k15" viewBox="0 0 320 168" role="img" aria-label="Five node load bars A to E with an overload line; node C is declared dead and its load moves to the others until all are overloaded."></svg></div>'+
+   '<div class="pread" id="k15c" aria-live="polite"></div><div class="prow"><button class="btn pri" id="k15n"></button></div>');
+  L.$('#k15n').onclick=()=>{if(k<ST.length-1){k++;draw();}};
+  draw();}},
+
+{part:2,src:'Chapter 8 · Network congestion and queueing',
+ solve:async L=>{const svg=L.$('#s16');for(let c=0;c<5;c++){const g=svg.querySelector('g[data-c="'+c+'"]');if(g)g.dispatchEvent(new MouseEvent('click',{bubbles:true}));await L.sleep(10);}},
+ run(L){
+  let fired=false;
+  L.h(L.kick('ex','Where delays come from')+'<h1 class="q">Like traffic jams on roads, most delay comes from queues. Tap the five circled spikes to find out which queue each reply sat in.</h1><div id="s16h"></div>'+
+   '<div class="pread" id="s16c" aria-live="polite"><span class="small">Tap a circled dot.</span></div>');
+  const ch=Strip(L,L.$('#s16h'),{id:'s16',T:1500,drag:false,slider:false,stats:false,spikes:true,on:e=>{if(e.type!=='spike')return;const C=CAUSE[e.c];
+    L.$('#s16c').innerHTML='<b>'+(e.c+1)+'. '+C[0]+'.</b> '+C[1]+'<div class="small" style="margin-top:4px">'+ch.S.tapped.size+' of 5 found</div>';
+    if(!fired&&ch.S.tapped.size===5){fired=true;L.sheet('info','Queues everywhere','Queues grow fastest when a system is near full capacity. Video calls often use UDP instead of TCP: no flow control and no resends, since late audio is useless. The app plays silence, and the retry happens between people: “Sorry, could you repeat that?”');L.done();}}});
+ }},
+
 {part:2,src:'Chapter 8 · Network congestion and queueing',pts:4,run(L){
+  let s='';
+  const QB=[['Sender','','TCP flow','control'],['Switch','','switch','queue'],['VM layer','(host)','VM','pause'],['Machine','(its OS)','OS','queue'],['Database','process','','']];
+  QB.forEach(([a,b,q1,q2],j)=>{const x=2+j*64;
+    if(j)s+=arw(x-6,34,x-1,34,'var(--line2)',{w:1.4});
+    s+=rect(x,10,58,48,j===4?'var(--ok-bg)':'var(--card)',j===4?'var(--ok-line)':'var(--line2)',{rx:10})+tx(x+29,b?31:38,a,F(11)+B+MID+INK)+(b?tx(x+29,46,b,F(11)+MID+MUT):'');
+    if(q1){for(let c=0;c<3;c++)s+=rect(x+14+c*11,66,9,9,'var(--h4-bg)','var(--h4)',{rx:2,sw:1.2});
+      s+=tx(x+29,92,q1,F(11)+B+MID+col('h4'))+tx(x+29,104,q2,F(11)+B+MID+col('h4'));}
+    else s+=tx(x+29,92,'does',F(11)+MID+col('ok'))+tx(x+29,104,'the work',F(11)+MID+col('ok'));});
+  const map=fig('q17',112,s,'A request’s path: sender, switch, the virtual-machine layer, the machine’s operating system, then the database. A small queue sits at each of the first four: flow control, switch queue, VM pause and OS queue.')+
+    '<p class="pnote">Four places a request can wait on its way in.</p>';
   L.h('<div id="qk"></div>');
+  /* L.quick redraws its host for every item, so put the map back between the question and the options each time */
+  const qk=L.$('#qk'),put=()=>{const o=qk.querySelector('.opts');if(o&&!qk.querySelector('#q17'))o.insertAdjacentHTML('beforebegin','<div id="q17w">'+map+'</div>');};
+  new MutationObserver(put).observe(qk,{childList:true});
   L.quick(L.$('#qk'),'Which queue is it?',['Switch queue','OS queue','Virtual machine pause','TCP flow control'],[
-   ['Bramble & Bolt’s flash sale starts. Thousands of merchant API calls head for the same booking server at the same moment.',0,'Many senders, one destination: the switch must feed packets onto that one link one by one.'],
+   ['Bramble & Bolt’s flash sale starts. Thousands of merchant API calls head for the same booking server at the same moment.',0,'Many senders, one destination: the switch must feed packets onto that one link one by one. If its queue fills, packets are dropped and resent.'],
    ['The booking server receives the requests, but every CPU core is busy with earlier ones.',1,'The operating system holds the requests until the application can take them.'],
-   ['Another customer’s virtual machine on the same physical host is using the CPU, so Otterpost’s machine is frozen for a moment.',2,'While a VM is paused, its incoming data is buffered by the layer that runs the VMs.'],
+   ['Another customer’s virtual machine on the same physical host is using the CPU, so Otterpost’s machine is frozen for a moment.',2,'While a VM is paused, its incoming data is buffered by the layer that runs the VMs. In a shared cloud, that noisy neighbour is invisible to you.'],
    ['Linh’s backup job slows its own sending rate so it doesn’t overload the link to Eastvale.',3,'That’s flow control: the sender limits itself, so data queues before entering the network.']]);}},
-{part:2,src:'Chapter 8 · Network congestion and queueing',run(L){
-  L.h(L.kick('learn','So how do you choose?')+'<h1 class="q">Measure first. Better still, let the system adjust itself.</h1>'+
-   L.flow([['eye','Measure','Record round-trip times for a long period, on many machines, to see how much they vary.','',1],
-           ['scale','Decide','Weigh slower detection against more false alarms, for this application.','',2],
-           ['cycle','Or adapt','Keep measuring reply times and their jitter, and adjust the timeout automatically.','',3]])+
-   L.prose('The adaptive approach is what a <b>Phi Accrual failure detector</b> does. Akka and Cassandra use one, and TCP’s own resend timer works in a similar way.')+
-   '<p class="small">A fixed number copied from an example config is a guess, not a measurement.</p>');
-  L.done();}},
-{part:2,src:'Chapter 8 · Network congestion and queueing',pts:1,run(L){
-  L.h(L.kick('pr','Tobias’s timeout')+'<h1 class="q">Tobias sets the courier location store’s timeout to 500 ms, “because the example config uses 500.” What should Kwame suggest?</h1>');
-  L.mc(L.card,['Measure reply times over weeks and many machines, or use an adaptive detector','Keep 500 ms, since example configs are tuned by experts','Use 50 ms so that dead nodes are found ten times faster'],0,
-   'There is no universally correct timeout. It has to come from this system’s own delays, ideally adjusted as they change.',
-   'An example config knows nothing about Otterpost’s network, and a tiny timeout means a flood of false alarms. Measure this system’s delays, or let a detector adapt to them.');}},
+
+{part:2,src:'Chapter 8 · Network congestion and queueing',pts:1,
+ solve:async L=>{const b=L.$('#p18o').querySelector('[data-r="1"]');b.click();await waitFor(L,()=>!!L.$('#p18done'),200);},
+ run(L){
+  let ch,locked=false;
+  const OPT=['None','1 or 2','3 to 5','6 or more'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias set this 500 ms timeout “because the example config uses 500”. It looks fine on a normal day. Peak Week triples the load and the jitter. How many false alarms before the crash?</h1>'+
+   '<div id="p18h"></div><div class="prow" id="p18o"></div><div id="p18x"></div>'+
+   '<p class="pnote">Reply times and the tripled Peak Week jitter are illustrative.</p>');
+  ch=Strip(L,L.$('#p18h'),{id:'s18',T:500,drag:false,slider:false});
+  const peakFA=runStrip('peak',500,false).fa.length,right=peakFA===0?0:peakFA<=2?1:peakFA<=5?2:3;
+  OPT.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;if(j===right)b.dataset.r='1';
+    b.onclick=async()=>{if(locked)return;locked=true;b.classList.add('sel');[...L.$$('#p18o .chip')].forEach(x=>x.disabled=true);
+      await ch.morph('peak',1400);if(!L.$('#p18o'))return;
+      const ok=j===right;b.classList.remove('sel');b.classList.add(ok?'ok':'no');if(!ok)L.$('#p18o').children[right].classList.add('ok');
+      L.$('#p18x').innerHTML='<span id="p18done"></span>';L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Six needless failovers':'It’s '+peakFA,'Under Peak Week load the healthy leader’s slow replies cross 500 ms '+peakFA+' times, and each one triggers a needless failover. A copied number knows nothing about Otterpost’s network. Slow isn’t dead, especially under load.');L.done();};
+    L.$('#p18o').appendChild(b);});
+ }},
+
+{part:2,src:'Chapter 8 · Network congestion and queueing',
+ solve:async L=>{L.$('#a19p').click();await L.sleep(20);L.$('#a19a').click();await L.sleep(20);},
+ run(L){
+  const seen=new Set();let fired=false;
+  L.h(L.kick('learn','Measure, then adapt')+'<h1 class="q">Let the timeout follow the jitter</h1><div id="a19h"></div>'+
+   '<div class="prow"><button class="chip sel" id="a19n">Normal day</button><button class="chip" id="a19p">Peak Week</button><button class="chip" id="a19a">'+L.ic('cycle')+'Adaptive: off</button></div>'+
+   cap('Measure reply times over a long period, on many machines. Better, keep measuring the jitter and move the timeout automatically, as a Phi Accrual failure detector does (Akka and Cassandra use one). TCP’s resend timer works similarly.')+
+   '<p class="pnote">Reply times and the Peak Week jitter are illustrative.</p>');
+  const ch=Strip(L,L.$('#a19h'),{id:'s19',T:500,drag:false,slider:false});
+  const upd=()=>{L.$('#a19n').classList.toggle('sel',ch.S.sc==='normal');L.$('#a19p').classList.toggle('sel',ch.S.sc==='peak');L.$('#a19a').classList.toggle('sel',ch.S.adaptive);
+    L.$('#a19a').innerHTML=L.ic('cycle')+'Adaptive: '+(ch.S.adaptive?'on':'off');seen.add(ch.S.sc+(ch.S.adaptive?'A':''));
+    if(!fired&&ch.S.adaptive){fired=true;L.done();}};
+  L.$('#a19n').onclick=()=>{ch.set({sc:'normal'});upd();};
+  L.$('#a19p').onclick=()=>{ch.set({sc:'peak'});upd();};
+  L.$('#a19a').onclick=()=>{ch.set({adaptive:!ch.S.adaptive});upd();};
+ }},
+
+{part:2,src:'Chapter 8 · Timeouts and Unbounded Delays',
+ solve:async L=>{for(let k=0;k<5;k++){L.$('#e20p'+k).click();await L.sleep(20);}},
+ run(L){
+  const P=[
+   ['Too short under load','cascade',300,'The leader is fine, just busy. Each false alarm moves load onto fewer nodes, their replies slow down, and more alarms follow until every node is “dead”.'],
+   ['Very long timeout','normal',10000,'No false alarms at all, but after the real crash the monitor waits 10 s. That’s 10 s of failed bookings before a follower takes over.'],
+   ['Noisy neighbour','noisy',500,'Another customer’s VM on the same host hogs the network. You can’t see it or control it, but your reply times jump, and so do the false alarms.'],
+   ['GC pause on the leader','gc',500,'The leader freezes for 8 s (a long garbage-collection pause), then answers everything at once. A short timeout declares it dead and a follower takes over, yet the old leader wakes up and carries on.'],
+   ['Card drops inbound only','oneway',2000,'From heartbeat 22 the leader’s network card drops every incoming packet but still sends. The monitor sees exactly what a crash looks like, yet the node is still running.']];
+  const seen=new Set();let fired=false;
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Where does a timeout stop protecting you? Load each case and read the chart.</h1>'+
+   '<div class="prow" id="e20b">'+P.map((p,k)=>'<button class="chip" id="e20p'+k+'">'+p[0]+'</button>').join('')+'</div><div id="e20h"></div>'+
+   '<div class="pread" id="e20c" aria-live="polite"><span class="small">Pick a case. You can still drag the line afterwards. (0 of 5 tried)</span></div>'+
+   '<p class="pnote">Reply times, pause lengths and timeouts are illustrative.</p>');
+  const ch=Strip(L,L.$('#e20h'),{id:'s20',T:500});
+  P.forEach((p,k)=>{L.$('#e20p'+k).onclick=()=>{ch.set({sc:p[1],T:p[2],adaptive:false});seen.add(k);
+    [...L.$$('#e20b .chip')].forEach((b,j)=>b.classList.toggle('sel',j===k));
+    L.$('#e20c').innerHTML='<b>'+p[0]+'.</b> '+p[3]+'<div class="small" style="margin-top:4px">'+seen.size+' of 5 tried</div>';
+    if(!fired&&seen.size===5){fired=true;L.sheet('info','The detector’s blind spots','A timeout only measures silence. It can’t tell busy from dead, paused from crashed, or a one-way link from a dead machine. Too short and it causes the failures it was meant to catch; too long and recovery crawls.');L.done();}};});
+ }},
+
+{part:2,src:'Chapter 8 · Network congestion and queueing',pts:1,
+ solve:async L=>{setR(L,'s21-r',TV.indexOf(1800));await L.sleep(20);L.$('#c21go').click();},
+ run(L){
+  let done=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Peak Week. Set the leader’s timeout so there is <b>at most one false alarm</b> and the crash is <b>noticed within 2.5 s</b>. A fixed value or the adaptive detector, your choice.</h1><div id="c21h"></div>'+
+   '<div class="prow"><button class="chip" id="c21a">'+L.ic('cycle')+'Adaptive: off</button><button class="btn pri" id="c21go">'+L.ic('check')+'Check</button></div>'+
+   '<p class="pnote">Reply times and the target (one false alarm, 2.5 s) are illustrative.</p>');
+  const ch=Strip(L,L.$('#c21h'),{id:'s21',sc:'peak',T:500});
+  L.$('#c21a').onclick=()=>{if(done)return;ch.set({adaptive:!ch.S.adaptive});L.$('#c21a').classList.toggle('sel',ch.S.adaptive);L.$('#c21a').innerHTML=L.ic('cycle')+'Adaptive: '+(ch.S.adaptive?'on':'off');};
+  L.$('#c21go').onclick=()=>{if(done)return;done=true;const R=ch.R,ok=R.fa.length<=1&&R.delay<=2500;
+    L.award(ok);L.$('#c21go').remove();
+    const what=ch.S.adaptive?'The adaptive detector':'A '+fmt(ch.S.T)+' timeout';
+    L.sheet(ok?'ok':'no',ok?'Balanced':'Not this time',what+' gives '+R.fa.length+' false alarm'+(R.fa.length===1?'':'s')+' and notices the crash after '+fmt(R.delay)+'. '+
+      (ok?'There’s no “correct” timeout, only a trade-off you choose from measured delays.':'The window is narrow: roughly 1.8 to 2.5 s for a fixed value, or the adaptive detector. Tighter catches Peak Week spikes; looser leaves merchants waiting.'));L.done();};
+ }},
 
 /* ---------- PART 4: CIRCUITS VS PACKETS ---------- */
 {part:3,src:'Chapter 8 · Synchronous Versus Asynchronous Networks',run(L){
-  L.h(L.kick('learn','Why not just fix the network?')+'<h1 class="q">The old telephone network almost never drops or delays a call. How?</h1>'+
-   L.lanes([['lock','Circuit (phone call)','When a call starts, a fixed slice of bandwidth is reserved along the whole route until it ends. Nothing queues, so the maximum delay is fixed: a <b>bounded delay</b>.',2],
-            ['layers','Packets (TCP/IP)','No reservation. Packets grab whatever bandwidth is free right now and send as fast as possible. An idle connection uses nothing.',1]])+
-   L.prose('Ethernet and IP use packets, so they queue, and their delays are unbounded. Why? They are built for <b>bursty</b> traffic. A call needs a steady flow of bits. A web page, an email or a file just needs to finish as fast as possible.')+
-   '<p class="small">Over a circuit you’d have to guess the bandwidth: too low and the transfer crawls while capacity sits idle; too high and the circuit can’t be set up at all.</p>');
+  let s='';
+  s+=tx(4,14,'ISDN: 4,000 frames a second',F(12)+B+INK);
+  ['Switch 1','Switch 2'].forEach((nm,h)=>{const y=28+h*62;s+=tx(4,y+26,nm,F(11)+B+MUT);
+    for(let f=0;f<5;f++){const x=58+f*52;s+=rect(x,y,48,40,'var(--soft)','var(--line2)',{rx:4,sw:1});
+      for(let c=0;c<6;c++){const call=c===2;s+=rect(x+3+c*7.3,y+6,6,28,call?'var(--h2)':'var(--line)','none',{rx:1.5});}}
+    if(h===0)s+=arw(150,y+46,150,y+58,'var(--h2)',{w:1.6});});
+  s+=tx(58,148,'one frame every 250 µs',F(11)+MUT)+arw(58,154,106,154,'var(--muted)',{w:1.2});
+  s+=rect(204,140,12,14,'var(--h2)','none',{rx:2})+tx(222,152,'a call’s 16 bits',F(11)+B+col('h2'));
+  s+=tx(4,178,'Reserved at every hop: nothing queues,',F(11.5)+B+INK)+tx(4,194,'so the delay has a fixed maximum.',F(11.5)+B+INK);
+  L.h(L.kick('learn','Why not just fix the network?')+'<h1 class="q">The old phone network almost never drops or delays a call. How?</h1>'+
+   fig('f22',202,s,'Two telephone switches, each sending frames of slots. The same slot is reserved for one call in every frame at both switches.')+
+   cap('A phone call sets up a <b>circuit</b>: a fixed slice of bandwidth reserved along the whole route until the call ends. In ISDN a call owns 16 bits in each of 4,000 frames a second. No queue, so a <b>bounded delay</b>.'));
   L.done();}},
-{part:3,src:'Chapter 8 · Latency and Resource Utilization',pts:1,
- solve:async L=>{L.$('#mA').click();L.$('#mB').click();},
+
+{part:3,src:'Chapter 8 · Synchronous Versus Asynchronous Networks',
+ solve:async L=>{L.$('#l23c').click();await waitFor(L,()=>!L.$('#l23c').disabled&&L.$('#l23c').dataset.p==='1');L.$('#l23p').click();await waitFor(L,()=>L.$('#l23p').dataset.p==='1');},
  run(L){
-  const M={A:{u:35,d:5,dl:'5 ms, every time',t:'Every user has a fixed slice. Delay never changes, but Linh’s bursty backup crawls in its slice while most of the wire sits empty.'},
-           B:{u:90,d:85,dl:'anywhere from 1 ms to 400 ms',t:'Everyone shares the whole wire. It’s kept busy, so each byte is cheaper, but packets sometimes wait in long queues.'}};const seen=new Set();
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">The link between Westport and Eastvale carries bookings, tracking reads and Linh’s backups. Try both ways of sharing it.</h1>'+
-   '<div><button class="chip" id="mA">'+L.ic('lock')+'Reserved slices</button><button class="chip" id="mB">'+L.ic('layers')+'Shared wire</button></div>'+
-   '<div class="meterrow"><div class="lb">Wire in use</div><div class="meter"><div id="mu" style="background:var(--ok-strong)"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">Delay varies</div><div class="meter"><div id="md" style="background:var(--no-strong)"></div></div></div>'+
-   '<div class="res" id="mt" style="min-height:44px"><span class="small">Pick a mode. (Illustrative numbers.)</span></div><div id="mq"></div>');
-  const pick=k=>{['A','B'].forEach(x=>L.$('#m'+x).classList.toggle('sel',x===k));seen.add(k);const m=M[k];
-    L.$('#mu').style.width=m.u+'%';L.$('#md').style.width=m.d+'%';L.$('#mt').innerHTML='<b>Wire in use: '+m.u+'%. Delay: '+m.dl+'.</b> '+m.t;
-    if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">So why do datacenter networks have unpredictable delays?</h2>';
-      L.mc(q,['Physics makes a delay limit impossible on any network','Engineers haven’t yet worked out how to queue packets','Sharing the wire on the fly is cheaper, at the price of queues'],2,
-       'Variable delay isn’t a law of nature. It’s a cost trade-off: dynamic sharing keeps the wire busy, so each byte costs less.',
-       'Circuits prove a fixed delay limit is possible. Packet networks choose not to reserve, because sharing the wire on the fly uses it better and costs less. Queues are the price.');}};
-  L.$('#mA').onclick=()=>pick('A');L.$('#mB').onclick=()=>pick('B');}},
+  let fired=false;
+  L.h(L.kick('ex','Toggle and compare')+'<h1 class="q">The Westport–Eastvale link carries bookings, tracking reads and Linh’s bursty backup. Play the same minute both ways.</h1><div id="l23h"></div>'+
+   '<div class="prow"><button class="chip" id="l23c">'+L.ic('lock')+'Play: reserved circuits</button><button class="chip" id="l23p">'+L.ic('layers')+'Play: one shared lane</button></div>'+
+   '<p class="small" style="margin-top:6px">Hatched = capacity left idle. Units and delays are illustrative.</p>');
+  const btn=m=>L.$(m==='circuit'?'#l23c':'#l23p');
+  const lk=Link(L,L.$('#l23h'),{id:'k23',mode:'circuit',on:e=>{
+    if(e.type==='busy'){btn('circuit').disabled=btn('packet').disabled=true;return;}
+    btn('circuit').disabled=btn('packet').disabled=false;
+    const b=btn(e.mode);b.dataset.p='1';b.classList.add('sel');
+    if(!fired&&L.$('#l23c').dataset.p==='1'&&L.$('#l23p').dataset.p==='1'){fired=true;
+      const c=linkSim('circuit',3),p=linkSim('packet',3);
+      L.sheet('info','Predictable or efficient','<b>Circuits:</b> booking delay never moves ('+c.dmin+' ms), but while the backup runs the wire is only '+c.util+'% used, and the backup crawls in its slice ('+c.done+' ticks). <b>Shared lane:</b> '+p.util+'% used and the backup is done in '+p.done+' ticks, but bookings queue behind the burst: '+p.dmin+'–'+p.dmax+' ms.');L.done();}}});
+  L.$('#l23c').onclick=()=>{lk.set({mode:'circuit'});lk.play();};
+  L.$('#l23p').onclick=()=>{lk.set({mode:'packet'});lk.play();};
+ }},
+
+{part:3,src:'Chapter 8 · Synchronous Versus Asynchronous Networks',
+ solve:async L=>{setR(L,'g24',1);await L.sleep(20);setR(L,'g24',5);await L.sleep(20);},
+ run(L){
+  let fired=false;const tried=new Set();
+  const pk=linkSim('packet',3);
+  L.h(L.kick('ex','Guess the bandwidth')+'<h1 class="q">To send the backup over a circuit, Linh must reserve a slice up front. Try a small slice, then a big one.</h1><div id="g24h"></div>'+
+   '<label class="prng" for="g24"><span>Backup circuit size</span><b id="g24v">3 units</b><input type="range" id="g24" min="1" max="6" step="1" value="3"></label>'+
+   '<div class="pread" id="g24c" aria-live="polite"></div>');
+  const lk=Link(L,L.$('#g24h'),{id:'k24',mode:'circuit',B:3});
+  const upd=()=>{const B=+L.$('#g24').value,R=lk.R;L.$('#g24v').textContent=B+' unit'+(B>1?'s':'');
+    if(B<=1)tried.add('low');if(B>=4)tried.add('high');
+    L.$('#g24c').innerHTML=(R.refused?'<b class="no-t">Too big.</b> Only 3 units are free, and the network can’t guarantee more, so the circuit can’t be set up at all.':
+      !R.done?'<b class="no-t">Too small.</b> The backup is still crawling at the end while capacity sits idle.':
+      '<b>'+B+' units:</b> the backup finishes after '+R.done+' ticks.')+
+      '<div class="small" style="margin-top:4px">For comparison, the shared lane needs no guess: backup done in '+pk.done+' ticks.</div>';
+    if(!fired&&tried.size===2){fired=true;L.sheet('info','Bursty traffic hates guesses','A web page, an email or a backup has no fixed bandwidth need; it just wants to finish fast. Over a circuit you must guess: too low is slow and wasteful, too high can’t be set up. TCP adapts its rate to whatever capacity is free.');L.done();}};
+  L.$('#g24').addEventListener('input',()=>{lk.set({B:+L.$('#g24').value});upd();});
+  upd();
+ }},
+
 {part:3,src:'Chapter 8 · Latency and Resource Utilization',run(L){
-  L.h(L.kick('learn','Cheap and variable, or costly and predictable')+'<h1 class="q">The same trade-off shows up everywhere</h1>'+
-   L.tiers([['lock','Static sharing','A fixed slice per user: dedicated hardware, reserved bandwidth, fixed CPU time. Delays can be guaranteed, but slices sit idle, so it’s expensive.'],
-            ['layers','Dynamic sharing','Users jostle for whatever is free: shared links, threads queued for a CPU core, virtual machines. Better use of hardware, so cheaper, but delays vary.']])+
-   L.prose('It’s possible to fake circuits on a packet network using packet priorities and rate limits. But that isn’t switched on in shared datacenters, public clouds or the internet.')+
-   L.note('So you must assume congestion, queueing and unbounded delay will happen. There is no “correct” timeout. It has to be found by experiment.','info'));
+  let s='';
+  s+=hatch('h25');
+  s+=tx(4,14,'Static: a phone wire with 10,000 call slots',F(12)+B+INK);
+  s+=rect(4,22,312,30,'url(#h25)','var(--line2)',{rx:4,sw:1.2})+rect(4,22,16,30,'var(--h2)','none',{rx:3});
+  s+=tx(26,68,'your one call keeps its slot; 9,999 sit idle',F(11)+MUT);
+  s+=tx(4,96,'Dynamic: the internet shares on the fly',F(12)+B+INK);
+  const C=['h1','h2','h3','h2','h1','h3','h1','h2','h3','h1','h2','h3','h1','h2'];
+  s+=rect(64,104,252,30,'none','var(--line2)',{rx:4,sw:1.2});
+  C.forEach((c,j)=>{s+=rect(66+j*17.8,107,16,24,'var(--'+c+')','none',{rx:2,op:.85});});
+  [0,1,2,3].forEach(j=>{s+=rect(8+j*13,110,11,18,'var(--'+C[j+2]+')','none',{rx:2,op:.55});});
+  s+=tx(30,150,'queue',F(11)+B+MID+col('no'))+tx(190,150,'wire kept busy, so each byte is cheaper',F(11)+MID+MUT);
+  s+=rect(4,166,312,34,'var(--soft)','none',{rx:10})+tx(160,187,'Same trade-off for CPU cores and virtual machines',F(11.5)+B+MID+INK);
+  L.h(L.kick('learn','Cheap and variable, or costly and predictable')+'<h1 class="q">Variable delay is a choice, not a law of nature</h1>'+
+   fig('f25',204,s,'Top: a phone wire divided into 10,000 fixed slots, one used, the rest idle. Bottom: an internet wire packed with packets from several senders, with a queue at the entrance.')+
+   cap('Static slices guarantee delays but leave capacity idle, so they cost more. Dynamic sharing is cheaper, at the price of queues. Priorities can mimic circuits, but shared clouds and the internet don’t offer them. So timeouts must be found by experiment.'));
   L.done();}},
-{part:3,src:'Chapter 8 · Latency and Resource Utilization',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence explains Otterpost’s network.</h1>');
-  L.sentence(L.card,[['Circuit networks','Packet networks'],['share the wire as needed','reserve a fixed slice'],['so delays have a fixed limit','so delays have no fixed limit'],['and timeouts must be measured','and one correct timeout exists']],[1,0,1,0],
-   [['Circuits aren’t what Otterpost’s datacenters and the internet use.'],['Reserving a fixed slice is what circuits do.'],['A fixed limit needs reserved capacity. Shared wires queue.'],['With unbounded delays there’s no single correct value.']],
-   'Packet networks trade predictable delay for cheaper, fuller use of the wire. That’s why timeouts must come from measurement.');}},
+
 {part:3,src:'Chapter 8 · Unreliable Networks',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Mixed review',['True','False'],[
    ['“TCP acknowledged our write, so the Parcel DB has stored the scan.”',1,'TCP only says the bytes arrived. The application may crash before storing them.'],
    ['“If we got no reply, the request might still be processed later.”',0,'It may be sitting in a queue, or the server may be paused, and it can still arrive after you give up.'],
    ['“Doubling every switch will remove most of our network faults.”',1,'Redundant gear doesn’t prevent human misconfiguration, a major cause of outages.'],
-   ['“The tracking page could stop and restart from a checkpoint whenever a node fails.”',1,'That’s the supercomputer approach. An online service has to keep serving users.'],
+   ['“Datacenter networks have unpredictable delays because physics forbids a limit.”',1,'Phone circuits prove a limit is possible. Packet networks give it up to use the wire better and more cheaply.'],
    ['“A link can carry traffic one way while failing the other way.”',0,'Faults can be one-directional, like a network card that drops incoming packets but sends fine.']]);}}
   ]
 });

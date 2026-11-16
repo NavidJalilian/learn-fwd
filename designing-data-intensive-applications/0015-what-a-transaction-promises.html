@@ -13,10 +13,486 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0015 only. Hands-on models used across the lesson:
+   1. Strip   – Tobias’s booking as four writes, with crash scissors (atomicity)
+   2. Race    – two bookings bump one counter (isolation)
+   3. Ladder  – the durability ladder with a disaster picker (durability)
+   4. DocZoom – one 20 KB document cut mid-write (single-object atomicity)
+   5. Tries   – retry attempts after different errors (aborts and retries)
+   ===================================================================== */
+const CSS='<style>'+
+ '.tp-svg{width:100%;display:block;margin:4px 0}.tp-svg text{font-family:var(--sans)}'+
+ '.tp-drag{touch-action:none;cursor:ns-resize;-webkit-user-select:none;user-select:none}'+
+ '.tp-ctl{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.tp-ctl .chip,.tp-ctl .btn{margin:0;min-height:40px}.tp-ctl .btn:disabled{opacity:.45}'+
+ '.tp-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 2px}'+
+ '.tp-rng{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 8px;font-size:14px;margin:2px 0}'+
+ '.tp-rng label{font-weight:600;color:var(--muted)}.tp-rng b{color:var(--no)}'+
+ '.tp-rng input{flex:1 1 100%;width:100%;accent-color:var(--no);height:32px;margin:0}'+
+ '.tp-db{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:6px 0}'+
+ '.tp-db div{background:var(--soft);border-radius:10px;padding:6px 2px;text-align:center;font-size:12px;color:var(--muted);line-height:1.25;min-width:0}'+
+ '.tp-db b{display:block;font-size:17px;color:var(--ink);font-variant-numeric:tabular-nums}'+
+ '.tp-db div.bad{background:var(--no-bg);color:var(--no)}.tp-db div.bad b{color:var(--no)}'+
+ '.tp-chk{list-style:none;margin:6px 0;padding:0}.tp-chk li{display:flex;gap:7px;align-items:flex-start;font-size:13.5px;line-height:1.35;margin:4px 0}'+
+ '.tp-chk li svg.i{width:17px;height:17px;flex:none;margin-top:1px}.tp-chk li.ok{color:var(--ok)}.tp-chk li.no{color:var(--no)}'+
+ '.tp-v{border-radius:12px;padding:9px 12px;font-size:14.5px;line-height:1.45;margin-top:6px}'+
+ '.tp-v.ok{background:var(--ok-bg);color:var(--ok)}.tp-v.no{background:var(--no-bg);color:var(--no)}.tp-v.info{background:var(--soft);color:var(--ink)}.tp-v.mid{background:var(--h3-bg);color:var(--h3)}'+
+ '.tp-small{font-size:13.5px;color:var(--muted);line-height:1.45;margin:6px 0 0}'+
+ '.tp-acid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 12px}'+
+ '.tp-acid>div{border:2px solid var(--line);border-radius:14px;padding:8px 10px;min-width:0;background:var(--card)}'+
+ '.tp-acid>div.c{border-style:dashed;border-color:var(--h4);background:var(--h4-bg)}'+
+ '.tp-acid .lt{display:flex;align-items:baseline;gap:6px}.tp-acid .lt b{font-size:24px;line-height:1}.tp-acid .lt span{font-size:13.5px;font-weight:700}'+
+ '.tp-acid svg{width:100%;height:40px;display:block;margin:4px 0}.tp-acid .d{font-size:13px;line-height:1.35}'+
+ '.tp-acid .who{display:inline-block;font-size:11.5px;font-weight:700;border-radius:99px;padding:1px 8px;margin-top:6px;background:var(--soft);color:var(--muted)}'+
+ '.tp-acid .c .who{background:var(--card);color:var(--h4)}'+
+ '.tp-done{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}.tp-done span{font-size:12.5px;font-weight:600;border-radius:99px;padding:2px 9px;background:var(--soft);color:var(--muted)}.tp-done span.y{background:var(--ok-bg);color:var(--ok)}'+
+ '</style>';
+
+/* ---------- tiny SVG helpers ---------- */
+const tx=(x,y,s,o)=>{o=o||{};return '<text x="'+x+'" y="'+y+'" style="font-size:'+(o.z||11)+'px;font-weight:'+(o.b?700:400)+';fill:'+(o.f||'var(--ink)')+(o.a?';text-anchor:'+(o.a==='m'?'middle':'end'):'')+(o.i?';font-style:italic':'')+'">'+s+'</text>';};
+const rc=(x,y,w,h,r,st)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+r+'" style="'+st+'"/>';
+const ln=(x1,y1,x2,y2,st)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="'+st+'"/>';
+function ar(x1,y1,x2,y2,col,w){const a=Math.atan2(y2-y1,x2-x1),h=7,p=k=>(x2-h*Math.cos(a+k)).toFixed(1)+' '+(y2-h*Math.sin(a+k)).toFixed(1);
+  return '<path d="M'+x1+' '+y1+'L'+x2+' '+y2+'M'+p(-.45)+'L'+x2+' '+y2+'L'+p(.45)+'" style="fill:none;stroke:'+col+';stroke-width:'+(w||2)+';stroke-linecap:round;stroke-linejoin:round"/>';}
+function cyl(x,y,w,h,fill,stroke){const rx=w/2,ry=8;
+  return '<path d="M'+x+' '+(y+ry)+'v'+(h-2*ry)+'a'+rx+' '+ry+' 0 0 0 '+w+' 0v'+(-(h-2*ry))+'" style="fill:'+fill+';stroke:'+stroke+';stroke-width:1.6"/><ellipse cx="'+(x+rx)+'" cy="'+(y+ry)+'" rx="'+rx+'" ry="'+ry+'" style="fill:'+fill+';stroke:'+stroke+';stroke-width:1.6"/>';}
+const IP={check:'<path d="M5 12.5l4.5 4.5L19 7.5"/>',undo:'<path d="M5 13a7.5 7.5 0 1 0 2.4-6.3"/><path d="M4.5 3.5v4.5H9"/>',x:'<path d="M6 6l12 12M18 6 6 18"/>',dash:'<path d="M7 12h10"/>',alert:'<path d="M12 4 21 20H3z"/><path d="M12 10v4.5M12 17.2v.3"/>',send:'<path d="M4 12h13M12 6l6 6-6 6"/>'};
+const icn=(n,x,y,sz,col)=>'<svg x="'+(x-sz/2)+'" y="'+(y-sz/2)+'" width="'+sz+'" height="'+sz+'" viewBox="0 0 24 24" style="overflow:visible"><g style="fill:none;stroke:'+col+';stroke-width:2.8;stroke-linecap:round;stroke-linejoin:round">'+IP[n]+'</g></svg>';
+const pin=(n,x,y)=>'<circle cx="'+x+'" cy="'+y+'" r="8.5" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.6"/>'+tx(x,y+4,n,{z:11,b:1,f:'var(--no)',a:'m'});
+const fig=(h,label,body)=>'<svg class="tp-svg" viewBox="0 0 330 '+h+'" role="img" aria-label="'+label+'">'+body+'</svg>';
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+const idle=async(L,S)=>{for(let k=0;k<200&&S.busy;k++)await L.sleep(30);};
+/* Result sheets sit at the bottom of a phone screen. After one opens, scroll so the readout
+   it explains sits just above it (waits for the finger to lift, so a drag isn't disturbed). */
+let ptrDown=false;
+document.addEventListener('pointerdown',()=>{ptrDown=true;},true);
+['pointerup','pointercancel'].forEach(n=>document.addEventListener(n,()=>{ptrDown=false;},true));
+function keepAbove(el){
+  const go=()=>requestAnimationFrame(()=>{
+    if(!el||!el.isConnected)return;
+    const d=document.querySelector('.dock'),dh=d?d.getBoundingClientRect().height:0,par=el.parentNode;
+    let sp=par.querySelector(':scope > .tp-sp');
+    if(!sp){sp=document.createElement('div');sp.className='tp-sp';sp.setAttribute('aria-hidden','true');par.appendChild(sp);}
+    sp.style.height=Math.max(0,dh-150)+'px';
+    const r=el.getBoundingClientRect(),room=innerHeight-dh-8,delta=Math.min(r.bottom-room,r.top-8);
+    if(r.bottom>room&&delta>0)window.scrollBy(0,delta);});
+  if(ptrDown)document.addEventListener('pointerup',go,{once:true,capture:true});else go();
+}
+const sheetAt=(L,el,kind,title,html)=>{L.sheet(kind,title,html);keepAbove(el);};
+
+/* =====================================================================
+   1. STRIP: Tobias’s booking as four writes. Drag the scissors (crash point).
+   ===================================================================== */
+const ROWS=[['Insert parcel row','OP-48213 · parcels 42 → 43'],['Deduct the price','credit $664 → $656'],['Bump the counter','parcels today 42 → 43'],['Rewrite dashboard doc','20 KB · “43 parcels, $344”']];
+const CUTS=[0,1,2,3,3.5,4,5];
+const CY={0:34,1:79,2:123,3:167,3.5:189,4:213,5:249};
+const RY=[38,82,126,170];
+function cutName(c,t){return c===0?'before write 1':c===3.5?'halfway through write 4 (10 of 20 KB)':c===5?(t?'after COMMIT':'after every write'):c===4?(t?'after write 4, before COMMIT':'after write 4'):'after write '+c;}
+const RS={
+ idle:{f:'var(--card)',s:'var(--line2)'},
+ run:{f:'var(--pri-bg)',s:'var(--pri)',sub:'writing…',sc:'var(--pri)'},
+ done:{f:'var(--ok-bg)',s:'var(--ok-line)',ic:'check',icc:'var(--ok)'},
+ half:{f:'var(--h3-bg)',s:'var(--h3)',sub:'10 of 20 KB sent…',sc:'var(--h3)'},
+ kept:{f:'var(--ok-bg)',s:'var(--ok-line)',ic:'check',icc:'var(--ok)',pre:'kept · ',sc:'var(--ok)'},
+ undone:{f:'var(--soft)',s:'var(--line2)',d:1,m:1,ic:'undo',icc:'var(--muted)',sub:'rolled back: no trace left'},
+ never:{f:'var(--card)',s:'var(--line2)',d:1,m:1,ic:'dash',icc:'var(--muted)',sub:'never ran'},
+ old:{f:'var(--h3-bg)',s:'var(--h3)',ic:'alert',icc:'var(--h3)',sub:'cut mid-write: the old doc stays whole',sc:'var(--h3)'},
+ skip:{f:'var(--no-bg)',s:'var(--no-line)',d:1,ic:'x',icc:'var(--no)',sub:'missing: the code skips it',sc:'var(--no)'}};
+function outcome(c,t,code){
+  const committed=t&&c>=5;
+  const st=[1,2,3,4].map(i=>{
+    if(code==='skip'&&i===3)return c>=3?'skip':'never';
+    const ran=c>=i,part=i===4&&c===3.5;
+    if(t){if(committed)return 'kept';return (ran||part)?'undone':'never';}
+    return ran?'kept':part?'old':'never';});
+  const k=i=>st[i-1]==='kept',parcels=42+(k(1)?1:0),credit=664-(k(2)?(code==='bug80'?80:8):0),counter=42+(k(3)?1:0),doc=k(4)?43:42;
+  return {st,c,t,code,committed,cm:t?(committed?'done':'never'):'off',parcels,credit,counter,doc,
+    checks:[credit===1000-8*parcels,counter===parcels,doc===parcels],kept:st.filter(s=>s==='kept').length};
+}
+function verdict(o){
+  const bad=o.checks.filter(x=>!x).length;
+  if(o.t&&!o.committed)return ['ok',o.c===0?'Crash before any write. Nothing to undo, nothing changed: safe to retry.':'The crash came before COMMIT, so the database rolled back every write. Nothing changed: safe to retry.'];
+  if(!o.kept)return ['info','Nothing ran before the crash. Nothing to clean up.'];
+  if(!bad)return ['ok',o.t?'Committed in full. Every check passes.':'Every write landed before the crash. Every check passes this time.'];
+  if(o.t)return ['no','Committed, and still wrong. The database stored exactly what the code told it to.'];
+  return ['no','Half done: '+o.kept+' of 4 writes stuck, and the code can’t easily tell which. Retry, and they may happen twice. Don’t, and the data stays wrong.'];
+}
+function stripResult(L,o){
+  const c=o.checks,t=(lab,v,bad)=>'<div'+(bad?' class="bad"':'')+'><b>'+v+'</b>'+lab+'</div>',v=verdict(o);
+  return '<div class="tp-lbl">What the Parcel DB holds afterwards</div><div class="tp-db">'+t('parcels',o.parcels)+t('credit','$'+o.credit,!c[0])+t('counter',o.counter,!c[1])+t('doc says',o.doc,!c[2])+'</div>'+
+   '<ul class="tp-chk">'+[['Every parcel paid for: credit = $1,000 − $8 × parcels',c[0]],['Counter = number of parcels',c[1]],['Dashboard doc = number of parcels',c[2]]].map(x=>'<li class="'+(x[1]?'ok':'no')+'">'+L.ic(x[1]?'check':'x')+'<span>'+x[0]+'</span></li>').join('')+'</ul>'+
+   '<div class="tp-v '+v[0]+'">'+v[1]+'</div>';
+}
+function Strip(L,host,o){
+  o=Object.assign({id:'st',tx:false,cut:5,code:'ok',drag:true,range:true,txBtn:false,scissors:true,live:true,lock:false,on:()=>{}},o||{});
+  const ID=o.id,S={tx:o.tx,cut:o.cut,code:o.code,busy:false,live:o.live,ran:false,lock:o.lock};
+  host.insertAdjacentHTML('beforeend','<div class="tp">'+
+   (o.txBtn?'<div class="tp-ctl"><button class="chip" id="'+ID+'-tx"></button></div>':'')+
+   '<svg class="tp-svg'+(o.drag?' tp-drag':'')+'" id="'+ID+'-svg" viewBox="0 0 330 264" role="img" aria-label="Tobias’s booking as four writes in order, between BEGIN and COMMIT, with a crash line"></svg>'+
+   (o.range?'<div class="tp-rng" id="'+ID+'-rw"><label for="'+ID+'-r">Crash point:</label><b id="'+ID+'-rv"></b><input type="range" id="'+ID+'-r" min="0" max="6" step="1" value="'+CUTS.indexOf(S.cut)+'"></div>':'')+
+   '<div id="'+ID+'-out" aria-live="polite"></div></div>');
+  const q=s=>host.querySelector(s),svg=q('#'+ID+'-svg'),out=q('#'+ID+'-out'),alive=()=>svg.isConnected;
+  function rowSub(i){if(S.code==='bug80'&&i===1)return 'credit $664 → $584 (bug: $80)';return ROWS[i][1];}
+  function draw(st,cm,flash){
+    if(!alive())return;
+    const t=S.tx;let s='';
+    s+=rc(50,6,276,24,8,'fill:'+(t?'var(--h2-bg)':'var(--card)')+';stroke:'+(t?'var(--h2)':'var(--line2)')+';stroke-width:1.5'+(t?'':';stroke-dasharray:4 3'));
+    s+=tx(188,22,t?'BEGIN TRANSACTION':'no transaction: each write saves on its own',{z:11.5,b:1,f:t?'var(--h2)':'var(--muted)',a:'m'});
+    ROWS.forEach((r,i)=>{const y=RY[i],k=st[i],m=RS[k];
+      s+=rc(50,y,276,38,10,'fill:'+m.f+';stroke:'+m.s+';stroke-width:1.6'+(m.d?';stroke-dasharray:4 3':''));
+      s+='<circle cx="64" cy="'+(y+19)+'" r="9" style="fill:var(--card);stroke:'+m.s+';stroke-width:1.5"/>'+tx(64,y+23,i+1,{z:11,b:1,a:'m'});
+      s+=tx(80,y+16,r[0]+(S.code==='bug80'&&i===1?' (bug!)':''),{z:12.5,b:1,f:m.m?'var(--muted)':'var(--ink)'});
+      s+=tx(80,y+31,m.sub||((m.pre||'')+rowSub(i)),{z:11,f:m.sc||'var(--muted)',b:m.sc?1:0});
+      if(m.ic)s+='<circle cx="308" cy="'+(y+19)+'" r="10" style="fill:var(--card);stroke:'+m.icc+';stroke-width:1.5"/>'+icn(m.ic,308,y+19,13,m.icc);});
+    const C={off:['var(--card)','var(--line2)',1,'no COMMIT step','var(--muted)'],idle:['var(--h2-bg)','var(--h2)',0,'COMMIT','var(--h2)'],done:['var(--ok-bg)','var(--ok-line)',0,'COMMIT: done','var(--ok)'],never:['var(--card)','var(--line2)',1,'COMMIT never reached','var(--muted)']}[cm];
+    s+=rc(50,218,276,24,8,'fill:'+C[0]+';stroke:'+C[1]+';stroke-width:1.5'+(C[2]?';stroke-dasharray:4 3':''))+tx(188,234,C[3],{z:11.5,b:1,f:C[4],a:'m'});
+    if(o.scissors){const y=CY[S.cut];
+      s+=ln(34,y,328,y,'stroke:var(--no);stroke-width:'+(flash?3.5:2)+';stroke-dasharray:6 4');
+      if(o.drag&&!S.lock)s+='<path d="M16 '+(y-18)+'l4 -4 4 4M16 '+(y+18)+'l4 4 4 -4" style="fill:none;stroke:var(--no);stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round"/>';
+      s+='<circle cx="20" cy="'+y+'" r="13" style="fill:'+(flash?'var(--no)':'var(--no-bg)')+';stroke:var(--no);stroke-width:2"/>'+
+       '<g transform="translate(20 '+y+')" style="fill:none;stroke:'+(flash?'var(--card)':'var(--no)')+';stroke-width:1.8;stroke-linecap:round"><circle cx="-4.5" cy="-4" r="2.8"/><circle cx="-4.5" cy="4" r="2.8"/><path d="M-2.2 -2.4L7 4M-2.2 2.4L7 -4"/></g>';}
+    svg.innerHTML=s;
+  }
+  function render(){
+    if(!alive())return;
+    const r=outcome(S.cut,S.tx,S.code);
+    if(S.live||S.ran){draw(r.st,r.cm,0);out.innerHTML=stripResult(L,r);}
+    else{draw(['idle','idle','idle','idle'],S.tx?'idle':'off',0);out.innerHTML='';}
+    if(o.range){const e=q('#'+ID+'-r');e.value=CUTS.indexOf(S.cut);e.disabled=S.lock;q('#'+ID+'-rv').textContent=cutName(S.cut,S.tx);}
+    if(o.txBtn){const b=q('#'+ID+'-tx');b.className='chip'+(S.tx?' sel':'');b.setAttribute('aria-pressed',S.tx);b.innerHTML=L.ic('shield')+'Inside a transaction: <b>'+(S.tx?'on':'off')+'</b>';}
+    return r;
+  }
+  function set(c){if(S.busy||S.lock)return;if(c===S.cut&&(S.live||S.ran))return;S.cut=c;const r=render();o.on(r);}
+  if(o.drag){let down=false;
+    const pick=e=>{const b=svg.getBoundingClientRect(),y=(e.clientY-b.top)*264/b.height;let best=CUTS[0],bd=1e9;CUTS.forEach(c=>{const d=Math.abs(CY[c]-y);if(d<bd){bd=d;best=c;}});set(best);};
+    svg.addEventListener('pointerdown',e=>{if(S.busy||S.lock)return;down=true;try{svg.setPointerCapture(e.pointerId);}catch(_){}pick(e);});
+    svg.addEventListener('pointermove',e=>{if(down)pick(e);});
+    ['pointerup','pointercancel'].forEach(n=>svg.addEventListener(n,()=>{down=false;}));}
+  if(o.range)q('#'+ID+'-r').addEventListener('input',e=>set(CUTS[+e.target.value]));
+  if(o.txBtn)q('#'+ID+'-tx').onclick=()=>{if(S.busy||S.lock)return;S.tx=!S.tx;const r=render();o.on(r);};
+  async function play(){
+    if(S.busy||!alive())return null;S.busy=true;
+    const r=outcome(S.cut,S.tx,S.code),st=['idle','idle','idle','idle'];let cm=S.tx?'idle':'off';
+    out.innerHTML='<div class="tp-v info">Running the booking…</div>';draw(st,cm,0);await L.sleep(150);
+    for(let i=1;i<=4;i++){
+      const full=S.cut>=i,part=i===4&&S.cut===3.5;if(!full&&!part)break;
+      if(S.code==='skip'&&i===3){st[2]='skip';draw(st,cm,0);await L.sleep(160);if(!alive())return null;continue;}
+      st[i-1]='run';draw(st,cm,0);await L.sleep(190);if(!alive())return null;
+      st[i-1]=part?'half':'done';draw(st,cm,0);await L.sleep(80);if(!alive())return null;}
+    if(S.tx&&S.cut>=5){cm='done';draw(st,cm,0);await L.sleep(220);if(!alive())return null;}
+    if(o.scissors&&S.cut<5){draw(st,cm,1);await L.sleep(380);if(!alive())return null;}
+    if(S.tx&&!r.committed){cm='never';for(let i=3;i>=0;i--)if(st[i]==='done'||st[i]==='half'){st[i]='undone';draw(st,cm,1);await L.sleep(170);if(!alive())return null;}}
+    S.ran=true;S.busy=false;render();return r;
+  }
+  render();
+  return {S,render,play,set,alive,unlock(){S.lock=false;S.live=true;render();},setCode(c){S.code=c;S.ran=false;render();}};
+}
+
+/* =====================================================================
+   2. RACE: two bookings at the same moment bump one counter.
+   ===================================================================== */
+function Race(L,host,o){
+  const ID=o.id,S={busy:false,ran:new Set()},STEP=['insert parcel','read counter','write counter + 1'];
+  host.insertAdjacentHTML('beforeend','<div class="tp"><svg class="tp-svg" id="'+ID+'-svg" viewBox="0 0 330 206" role="img" aria-label="Booking A and booking B each insert a parcel and add 1 to the shared counter in the Parcel DB, which has no built-in increment"></svg>'+
+   '<div class="tp-ctl"><button class="btn" id="'+ID+'-w">'+L.ic('play')+'Run: isolation off</button><button class="btn" id="'+ID+'-s">'+L.ic('play')+'Run: serializable</button></div><div id="'+ID+'-out" aria-live="polite"></div></div>');
+  const q=s=>host.querySelector(s),svg=q('#'+ID+'-svg'),out=q('#'+ID+'-out');
+  let A,B,db,hot,fin=false;
+  function reset(){A=STEP.map(()=>({sub:'',ord:0,st:'idle'}));B=STEP.map(()=>({sub:'',ord:0,st:'idle'}));db={p:42,c:42};hot=null;fin=false;}
+  function draw(){
+    if(!svg.isConnected)return;
+    let s=tx(61,16,'Booking A',{z:12.5,b:1,f:'var(--h1)',a:'m'})+tx(165,16,'Parcel DB',{z:12.5,b:1,f:'var(--h2)',a:'m'})+tx(269,16,'Booking B',{z:12.5,b:1,f:'var(--h4)',a:'m'});
+    s+=rc(126,30,78,132,12,'fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5')+tx(165,54,'parcels',{a:'m',f:'var(--muted)'})+tx(165,80,db.p,{z:24,b:1,a:'m'})+
+      tx(165,110,'counter',{a:'m',f:'var(--muted)'})+tx(165,136,db.c,{z:24,b:1,a:'m',f:fin&&db.c!==db.p?'var(--no)':fin?'var(--ok)':'var(--ink)'});
+    [['A',A,2,'var(--h1)','var(--h1-bg)'],['B',B,210,'var(--h4)','var(--h4-bg)']].forEach(([w,X,x,col,bg])=>{
+      X.forEach((st,i)=>{const y=30+i*46,h=hot&&hot[0]===w&&hot[1]===i;
+        s+=rc(x,y,118,40,10,'fill:'+(st.st==='done'?bg:'var(--card)')+';stroke:'+(h?'var(--pri)':st.st==='done'?col:'var(--line2)')+';stroke-width:'+(h?3:1.5)+(st.st==='wait'?';stroke-dasharray:4 3':''));
+        s+=tx(x+9,y+17,STEP[i],{z:11.5,b:1});
+        if(st.sub)s+=tx(x+9,y+32,st.sub,{z:11,b:1,f:st.st==='wait'?'var(--muted)':col});
+        if(h)s+=w==='A'?ar(121,y+20,125,y+20,'var(--pri)',2.5):ar(209,y+20,205,y+20,'var(--pri)',2.5);
+        if(st.ord){const cx=w==='A'?x+110:x+8;s+='<circle cx="'+cx+'" cy="'+y+'" r="9" style="fill:var(--card);stroke:'+col+';stroke-width:1.5"/>'+tx(cx,y+4,st.ord,{z:10.5,b:1,f:col,a:'m'});}});});
+    s+=tx(165,182,'Both run inside transactions. No crash.',{z:11.5,f:'var(--muted)',a:'m'})+
+      tx(165,199,'No built-in increment: each reads, adds 1, writes.',{z:11.5,f:'var(--muted)',a:'m'});
+    svg.innerHTML=s;
+  }
+  async function run(mode){
+    if(S.busy||!svg.isConnected)return;S.busy=true;reset();
+    const order=mode==='weak'?[['A',0],['B',0],['A',1],['B',1],['A',2],['B',2]]:[['A',0],['A',1],['A',2],['B',0],['B',1],['B',2]],rd={};
+    if(mode==='ser')B.forEach(x=>{x.sub='waits for A';x.st='wait';});
+    out.innerHTML='<div class="tp-v info">Running both bookings…</div>';draw();await L.sleep(150);
+    for(let n=0;n<order.length;n++){
+      const [w,i]=order[n],X=w==='A'?A:B;
+      if(mode==='ser'&&w==='B'&&i===0)B.forEach(x=>{x.sub='';x.st='idle';});
+      if(i===0){db.p++;X[0].sub='parcels → '+db.p;}
+      if(i===1){rd[w]=db.c;X[1].sub='read '+rd[w];}
+      if(i===2){db.c=rd[w]+1;X[2].sub='wrote '+db.c;}
+      X[i].st='done';X[i].ord=n+1;hot=[w,i];draw();await L.sleep(320);if(!svg.isConnected)return;}
+    hot=null;fin=true;draw();
+    const ok=db.c===db.p;
+    out.innerHTML='<div class="tp-db" style="grid-template-columns:1fr 1fr"><div><b>'+db.p+'</b>parcels</div><div'+(ok?'':' class="bad"')+'><b>'+db.c+'</b>counter</div></div>'+
+     (ok?'<div class="tp-v ok">Counter 44, parcels 44. B read the counter only after A had finished, as if the two ran one after the other.</div>':
+         '<div class="tp-v no">Two parcels booked, counter up by one. Both read 42 before either wrote, so B’s write wiped out A’s: a '+L.g('race','race condition')+'.</div>');
+    S.ran.add(mode);S.busy=false;o.on(mode,ok);
+  }
+  q('#'+ID+'-w').onclick=()=>run('weak');q('#'+ID+'-s').onclick=()=>run('ser');
+  reset();draw();
+  return {S,run};
+}
+
+/* =====================================================================
+   3. LADDER: where a committed booking lives, and which disasters it survives.
+   ===================================================================== */
+const RUNGS=[
+ {k:'backup',t:'Nightly backup, off-site',s:'Linh’s job · holds data up to last night',w:0,c:'Backup'},
+ {k:'region',t:'Follower in Eastvale',s:'another region: a disk far away',w:5,c:'Eastvale follower'},
+ {k:'dc',t:'Followers in Westport',s:'two more disks, same datacenter',w:2,c:'Westport followers'},
+ {k:'disk',t:'The leader’s disk',s:'fsync + write-ahead log',w:1,c:'Leader’s disk'},
+ {k:'mem',t:'In memory',s:'the leader’s RAM',w:0,fixed:1}];
+const DIS={
+ crash:{c:'Process crash',t:'The database process crashes',fx:{mem:'lost',disk:'ok',dc:'ok',region:'ok',backup:'ok'},n:'It restarts and recovers from its log on disk. Anything held only in memory is gone.'},
+ machine:{c:'Machine dies',t:'The leader’s machine dies',fx:{mem:'lost',disk:'down',dc:'ok',region:'ok',backup:'ok'},n:'Its disk still has the data, but nobody can reach it until the machine is fixed or the disk is moved. Replicas keep serving, though an asynchronous one may miss the newest writes.'},
+ power:{c:'Power cut',t:'A power cut across Westport',fx:{mem:'lost',disk:'risk',dc:'risk',region:'ok',backup:'ok'},n:'Memory is wiped on every machine at once. Disks usually keep their data, but SSDs have been shown to break their promises on a sudden power cut: even fsync isn’t guaranteed.'},
+ fire:{c:'Datacenter fire',t:'A fire in the Westport datacenter',fx:{mem:'lost',disk:'lost',dc:'lost',region:'ok',backup:'ok'},n:'Every copy in one building goes at once. Only copies somewhere else survive.'},
+ firm:{c:'SSD firmware bug',t:'A firmware bug in Otterpost’s SSD model',fx:{mem:'lost',disk:'corr',dc:'corr',region:'corr',backup:'ok'},n:'Illustrative: every server uses the same SSD model. Disk firmware has bugs like any software, and copies on the same hardware share them. Drives fail in other ways too: an SSD left without power can start losing data within weeks, and hard drives get fewer bad sectors than SSDs but die outright more often.'},
+ rot:{c:'Silent corruption',t:'Corruption found weeks later',fx:{mem:'corr',disk:'corr',dc:'corr',region:'corr',backup:'bad'},n:'Data can rot slowly without anyone noticing. By then, replicas and recent backups hold the bad data too. Only an older backup is clean. Subtle bugs between the storage engine and the filesystem can also corrupt files after a crash.'},
+ drop:{c:'Table dropped',t:'A bad deploy drops the parcels table',fx:{mem:'gone',disk:'gone',dc:'gone',region:'gone',backup:'ok'},n:'The drop is a valid write, so every replica copies it straight away. Only a backup from before the deploy still has the table.'}};
+const LST={ok:['intact','check','var(--ok)','var(--ok-bg)','var(--ok-line)'],old:['last night’s','check','var(--h3)','var(--h3-bg)','var(--h3)'],
+ risk:['at risk','alert','var(--h3)','var(--h3-bg)','var(--h3)'],down:['out of reach','alert','var(--h3)','var(--h3-bg)','var(--h3)'],
+ lost:['lost','x','var(--no)','var(--no-bg)','var(--no-line)'],corr:['corrupted','x','var(--no)','var(--no-bg)','var(--no-line)'],
+ gone:['dropped','x','var(--no)','var(--no-bg)','var(--no-line)'],bad:['corrupt too','x','var(--no)','var(--no-bg)','var(--no-line)']};
+function ladderOut(sel,d){
+  const fx=DIS[d].fx,live=['region','dc','disk'].filter(k=>sel.has(k)),nm={disk:'the leader’s disk',dc:'the Westport followers',region:'the Eastvale follower'};
+  const ok=live.filter(k=>fx[k]==='ok');
+  if(ok.length)return ['ok','Survives on '+ok.map(k=>nm[k]).join(' and ')+'.'];
+  if(live.some(k=>fx[k]==='risk'))return ['mid','Probably survives on disk, unless an SSD broke its promise when the power went.'];
+  if(live.some(k=>fx[k]==='down'))return ['mid','Not lost, but out of reach until the machine is fixed or its disk is moved.'];
+  if(sel.has('backup'))return fx.backup==='ok'?['mid','Restore last night’s backup. Everything since, including this booking, is gone.']:['no','Recent backups are corrupt too. Restore an older one and lose weeks of data.'];
+  return ['no','Lost. No copy survived.'];
+}
+const waitOf=sel=>RUNGS.reduce((a,r)=>a+(sel.has(r.k)?r.w:0),0);
+function Ladder(L,host,o){
+  o=Object.assign({id:'ld',sel:['mem','disk'],toggle:true,dis:Object.keys(DIS),on:()=>{}},o||{});
+  const ID=o.id,S={sel:new Set(o.sel),d:null,tried:new Set(),busy:false};
+  host.insertAdjacentHTML('beforeend','<div class="tp">'+
+   '<div class="tp-lbl">Pick a disaster</div><div class="tp-ctl" id="'+ID+'-d"></div>'+
+   '<svg class="tp-svg" id="'+ID+'-svg" viewBox="0 0 330 248" role="img" aria-label="Durability ladder: memory at the bottom, then the leader’s disk, followers in Westport, a follower in Eastvale and a nightly backup at the top"></svg>'+
+   '<div id="'+ID+'-out" aria-live="polite"></div><div class="tp-small" id="'+ID+'-w"></div>'+
+   (o.toggle?'<div class="tp-lbl">Rungs the commit waits for (tap to switch)</div><div class="tp-ctl" id="'+ID+'-t"></div>':'')+'</div>');
+  const q=s=>host.querySelector(s),svg=q('#'+ID+'-svg');
+  function draw(){
+    if(!svg.isConnected)return;
+    let s='<path d="M10 3V245M320 3V245" style="stroke:var(--line2);stroke-width:5;stroke-linecap:round"/>';
+    RUNGS.forEach((r,j)=>{const y=6+j*48,on=S.sel.has(r.k),st=S.d&&on?DIS[S.d].fx[r.k]:null,ls=st?LST[st==='ok'&&r.k==='backup'?'old':st]:null;
+      const f=ls?ls[3]:on?'var(--pri-bg)':'var(--soft)',sk=ls?ls[4]:on?'var(--pri)':'var(--line2)';
+      s+='<g data-k="'+r.k+'" style="cursor:'+(o.toggle&&!r.fixed?'pointer':'default')+'">'+rc(18,y,294,40,10,'fill:'+f+';stroke:'+sk+';stroke-width:1.8'+(on?'':';stroke-dasharray:5 4'))+
+       tx(30,y+17,r.t,{z:12.5,b:1,f:on?'var(--ink)':'var(--muted)'})+tx(30,y+32,r.s,{f:'var(--muted)'});
+      if(ls)s+=icn(ls[1],296,y+13,13,ls[2])+tx(286,y+17,ls[0],{z:11.5,b:1,f:ls[2],a:'e'});
+      else s+=tx(300,y+17,!on?'off':r.fixed?'always':r.w?'+'+r.w+' wait':'no wait',{z:11.5,b:1,f:on?'var(--pri)':'var(--muted)',a:'e'});
+      s+='</g>';});
+    svg.innerHTML=s;
+    const w=waitOf(S.sel);
+    q('#'+ID+'-w').innerHTML='Each commit waits <b>'+w+' unit'+(w===1?'':'s')+'</b> for its copies <span style="display:inline-flex;gap:2px;vertical-align:middle;margin-left:4px">'+Array.from({length:8},(_,k)=>'<i style="width:9px;height:9px;border-radius:2px;background:'+(k<w?'var(--pri)':'var(--soft2)')+'"></i>').join('')+'</span> <i>(illustrative)</i>';
+    if(o.toggle)RUNGS.filter(r=>!r.fixed).forEach(r=>{const b=q('#'+ID+'-t'+r.k);b.className='chip'+(S.sel.has(r.k)?' sel':'');b.setAttribute('aria-pressed',S.sel.has(r.k));});
+    [...q('#'+ID+'-d').children].forEach(b=>b.classList.toggle('sel',b.dataset.d===S.d));
+    const out=q('#'+ID+'-out');
+    if(S.d){const v=ladderOut(S.sel,S.d);out.innerHTML='<div class="tp-v '+v[0]+'"><b>'+DIS[S.d].t+'.</b> '+v[1]+'</div><p class="tp-small">'+DIS[S.d].n+'</p>';}
+    else out.innerHTML='';
+  }
+  function toggle(k){const r=RUNGS.find(x=>x.k===k);if(!o.toggle||r.fixed||S.busy)return;S.sel.has(k)?S.sel.delete(k):S.sel.add(k);draw();o.on({type:'rung',k});}
+  if(o.toggle){q('#'+ID+'-t').innerHTML=RUNGS.filter(r=>!r.fixed).map(r=>'<button class="chip" id="'+ID+'-t'+r.k+'">'+r.c+'</button>').join('');
+    RUNGS.filter(r=>!r.fixed).forEach(r=>{q('#'+ID+'-t'+r.k).onclick=()=>toggle(r.k);});
+    svg.addEventListener('click',e=>{const g=e.target.closest('g[data-k]');if(g)toggle(g.dataset.k);});}
+  q('#'+ID+'-d').innerHTML=o.dis.map(d=>'<button class="chip" data-d="'+d+'" id="'+ID+'-d'+d+'">'+DIS[d].c+'</button>').join('');
+  o.dis.forEach(d=>{q('#'+ID+'-d'+d).onclick=()=>{if(S.busy)return;S.d=d;S.tried.add(d);draw();o.on({type:'dis',d,v:ladderOut(S.sel,d)});};});
+  draw();
+  return {S,draw,toggle,pick(d){S.d=d;draw();}};
+}
+
+/* =====================================================================
+   4. DOCZOOM: one 20 KB document, interrupted at 10 KB.
+   ===================================================================== */
+const DZ={
+ power:{c:'Power fails mid-overwrite',a:'old',b1:'Old and new spliced together',b2:'The crash log puts the old doc back, whole'},
+ net:{c:'Connection drops at 10 KB',a:'frag',b1:'An unreadable 10 KB fragment is stored',b2:'The fragment is thrown away; the old doc stays'},
+ read:{c:'Someone reads mid-write',a:'old',b1:'The reader gets half old, half new',b2:'A lock on the doc: the reader waits, then sees the new doc whole'}};
+function DocZoom(L,host,o){
+  const ID=o.id,S={busy:false,done:new Set()};
+  host.insertAdjacentHTML('beforeend','<div class="tp"><div class="tp-ctl" id="'+ID+'-p"></div><svg class="tp-svg" id="'+ID+'-svg" viewBox="0 0 330 176" role="img" aria-label="Write 4, a 20 KB document, shown as 20 blocks: what could happen without protection, and what the storage engine does"></svg><div id="'+ID+'-out" aria-live="polite"></div></div>');
+  const q=s=>host.querySelector(s),svg=q('#'+ID+'-svg'),out=q('#'+ID+'-out');
+  const CC={old:['var(--h3-bg)','var(--h3)'],new:['var(--pri-bg)','var(--pri)'],frag:['var(--no-bg)','var(--no)'],empty:['var(--card)','var(--line2)']};
+  function draw(r1,r2,t1,t2,haz,eye){
+    if(!svg.isConnected)return;
+    const row=(y,c)=>c.map((k,j)=>rc(15+j*15,y,13,26,3,'fill:'+CC[k][0]+';stroke:'+CC[k][1]+';stroke-width:1.2'+(k==='empty'?';stroke-dasharray:3 2':''))).join('');
+    let s=tx(15,15,'If nothing protected a single object',{z:11.5,b:1,f:'var(--muted)'})+row(22,r1)+(t1?tx(15,64,t1,{z:12,b:1,f:'var(--no)'}):'')+
+      tx(15,91,'What the storage engine actually does',{z:11.5,b:1,f:'var(--muted)'})+row(98,r2)+(t2?tx(15,140,t2,{z:12,b:1,f:'var(--ok)'}):'');
+    if(haz)s+=ln(164,18,164,52,'stroke:var(--no);stroke-width:2.5;stroke-dasharray:5 3')+ln(164,94,164,128,'stroke:var(--no);stroke-width:2.5;stroke-dasharray:5 3');
+    if(eye)s+='<g transform="translate(300 '+eye+')"><path d="M-14 0Q0 -11 14 0Q0 11 -14 0Z" style="fill:var(--card);stroke:var(--h1);stroke-width:1.8"/><circle r="3.5" style="fill:var(--h1)"/></g>';
+    s+=[['old','old doc',15],['new','new doc',105],['frag','garbage',195]].map(([k,t,x])=>rc(x,157,12,12,3,'fill:'+CC[k][0]+';stroke:'+CC[k][1])+tx(x+17,167,t,{f:'var(--muted)'})).join('');
+    svg.innerHTML=s;
+  }
+  const fill=(n,a,b)=>Array.from({length:20},(_,j)=>j<n?a:b);
+  async function run(k){
+    if(S.busy||!svg.isConnected)return;S.busy=true;const P=DZ[k];
+    [...q('#'+ID+'-p').children].forEach(b=>b.classList.toggle('sel',b.dataset.k===k));
+    out.innerHTML='<div class="tp-v info">Writing the new 20 KB doc…</div>';
+    const base=P.a==='frag'?'empty':'old';
+    for(let n=0;n<=10;n+=2){draw(fill(n,P.a==='frag'?'frag':'new',base),fill(n,'new','old'),'','',false,k==='read'?10:0);await L.sleep(70);if(!svg.isConnected)return;}
+    draw(fill(10,P.a==='frag'?'frag':'new',base),fill(10,'new','old'),'','',true,k==='read'?10:0);await L.sleep(450);if(!svg.isConnected)return;
+    const r2=k==='read'?fill(20,'new','new'):fill(0,'new','old');
+    draw(fill(10,P.a==='frag'?'frag':'new',base),r2,P.b1,P.b2,k!=='read',k==='read'?10:0);
+    out.innerHTML='<div class="tp-v mid">Meanwhile, writes 1 to 3 already landed: parcels 43, credit $656, counter 43. The doc still says 42. One object is safe; the booking is still half done.</div>';
+    S.done.add(k);S.busy=false;o.on(k);
+  }
+  q('#'+ID+'-p').innerHTML=Object.keys(DZ).map(k=>'<button class="chip" data-k="'+k+'" id="'+ID+'-p'+k+'">'+DZ[k].c+'</button>').join('');
+  Object.keys(DZ).forEach(k=>{q('#'+ID+'-p'+k).onclick=()=>run(k);});
+  draw(fill(0,'new','old'),fill(0,'new','old'),'','',false,0);
+  return {S,run};
+}
+
+/* =====================================================================
+   5. TRIES: retry attempts after different errors.
+   squares: k written · u rolled back · x failed here · n never ran · c committed
+   ===================================================================== */
+const TRY={
+ dead:{c:'Deadlock',e:'Attempt 1 deadlocks with another booking and is aborted.',a:[['uuxnn',['aborted','deadlock'],0,60],['kkkkc',['committed','OP-48213'],0,60]],
+   v:['ok','Fine. A deadlock is a transient error, so the retry simply works. This is exactly what aborts are for.']},
+ reply:{c:'Reply lost',e:'Attempt 1 commits, but the network drops the reply. The app thinks it failed.',a:[['kkkkc',['committed','reply lost'],0,60],['kkkkc',['committed again','as OP-48214'],0,60]],
+   v:['no','Booked twice. The first attempt had worked. With no duplicate check of its own, the app booked and charged Bramble & Bolt twice.']},
+ load:{c:'Overload',e:'Peak Week: attempt 1 is rejected because the Parcel DB is overloaded.',a:[['xnnnn',['aborted','overloaded'],0,95],['xnnnn',['aborted','overloaded'],0,120],['xnnnn',['aborted','overloaded'],0,150]],
+   v:['no','Worse. Every app server retrying at once piles more load onto a database that is already struggling. Limit retries, back off, and treat overload differently.']},
+ perm:{c:'Permanent error',e:'Attempt 1 breaks a rule: merchant M-71 doesn’t exist (a typo for M-17).',a:[['xnnnn',['aborted','no merchant M-71'],0,62],['xnnnn',['aborted','no merchant M-71'],0,64],['xnnnn',['aborted','no merchant M-71'],0,66]],
+   v:['no','Pointless. A constraint violation is permanent: every retry fails the same way. Only transient errors are worth retrying.']},
+ hook:{c:'Webhook sent',e:'Attempt 1 calls Bramble & Bolt’s status webhook, then deadlocks and is aborted.',a:[['uuxnn',['aborted','after the webhook'],1,60],['kkkkc',['committed','webhook sent again'],1,60]],
+   v:['no','The writes were rolled back; the webhook wasn’t. It went out on both attempts. Side effects outside the database aren’t undone by an abort.']},
+ die:{c:'App crashes',e:'Attempt 1 aborts during a failover. Then Tobias’s app server crashes before it can retry.',a:[['uxnnn',['aborted','failover'],0,60],['nnnnn',['never sent','server crashed'],0,60]],
+   v:['no','Lost. The booking only lived in the crashed server’s memory, so the data it was trying to write is gone.']}};
+function Tries(L,host,o){
+  const ID=o.id,S={busy:false,done:new Set(),k:null,shown:0};
+  host.insertAdjacentHTML('beforeend','<div class="tp"><div class="tp-lbl">Pick what goes wrong</div><div class="tp-ctl" id="'+ID+'-p"></div>'+
+   '<div class="tp-v info" id="'+ID+'-e">Pick an error to start.</div>'+
+   '<svg class="tp-svg" id="'+ID+'-svg" viewBox="0 0 330 148" role="img" aria-label="Each attempt of the booking as five squares: writes 1 to 4 and COMMIT, plus a webhook marker"></svg>'+
+   '<div class="tp-ctl"><button class="btn pri" id="'+ID+'-r" disabled>'+L.ic('cycle')+'Let the app retry</button></div><div id="'+ID+'-out" aria-live="polite"></div></div>');
+  const q=s=>host.querySelector(s),svg=q('#'+ID+'-svg'),out=q('#'+ID+'-out');
+  const SQ={k:['var(--ok-bg)','var(--ok-line)','var(--ok)',0],u:['var(--soft)','var(--line2)','var(--muted)',1],x:['var(--no-bg)','var(--no-line)','var(--no)',0],n:['var(--card)','var(--line2)','var(--muted)',1],c:['var(--ok-bg)','var(--ok-line)','var(--ok)',0]};
+  function draw(rows,partial){
+    if(!svg.isConnected)return;
+    let s='';svg.setAttribute('viewBox','0 0 330 '+(Math.max(1,rows.length)*48+4));
+    if(!rows.length)s+=tx(165,30,'Each attempt will appear here',{z:12,f:'var(--muted)',a:'m'});
+    rows.forEach((a,r)=>{const y=4+r*48,n=r===rows.length-1&&partial!=null?partial:6;
+      s+=tx(4,y+26,'Try '+(r+1),{z:12,b:1});
+      a[0].split('').forEach((ch,j)=>{if(j>=n)return;const c=SQ[ch],x=46+j*25;
+        s+=rc(x,y+8,21,26,5,'fill:'+c[0]+';stroke:'+c[1]+';stroke-width:1.5'+(c[3]?';stroke-dasharray:3 2':''))+(ch==='x'?icn('x',x+10.5,y+21,12,c[2]):tx(x+10.5,y+25,j===4?'C':j+1,{z:11,b:1,f:c[2],a:'m'}));});
+      if(n>5){if(a[2])s+=rc(172,y+8,24,26,5,'fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5')+icn('send',184,y+21,13,'var(--h4)');
+        const ok=a[0][4]==='c';
+        s+=tx(204,y+19,a[1][0],{z:12,b:1,f:ok?'var(--ok)':'var(--no)'})+tx(204,y+34,a[1][1],{z:11,f:'var(--muted)'});}});
+    svg.innerHTML=s;
+  }
+  function impact(rows){const p=rows.filter(a=>a[0][4]==='c').length,wh=rows.reduce((x,a)=>x+a[2],0),ld=rows.length?rows[rows.length-1][3]:60;
+    const t=(lab,v,bad)=>'<div'+(bad?' class="bad"':'')+'><b>'+v+'</b>'+lab+'</div>';
+    return '<div class="tp-db">'+t('parcels booked',p,p!==1)+t('charged','$'+8*p,p!==1)+t('webhooks',wh,wh>1)+t('DB load',ld+'%',ld>100)+'</div>';}
+  async function show(rows,from){for(let r=from;r<rows.length;r++){for(let n=0;n<=6;n++){draw(rows.slice(0,r+1),n);await L.sleep(55);if(!svg.isConnected)return false;}}return true;}
+  async function pick(k){
+    if(S.busy||!svg.isConnected)return;S.busy=true;S.k=k;S.shown=1;const P=TRY[k];
+    [...q('#'+ID+'-p').children].forEach(b=>b.classList.toggle('sel',b.dataset.k===k));
+    q('#'+ID+'-e').className='tp-v info';q('#'+ID+'-e').innerHTML=P.e;out.innerHTML='';q('#'+ID+'-r').disabled=true;
+    if(!await show(P.a.slice(0,1),0))return;
+    out.innerHTML=impact(P.a.slice(0,1));q('#'+ID+'-r').disabled=false;S.busy=false;
+  }
+  async function retry(){
+    if(S.busy||!S.k||S.shown>1||!svg.isConnected)return;S.busy=true;q('#'+ID+'-r').disabled=true;const P=TRY[S.k];
+    if(!await show(P.a,1))return;
+    S.shown=P.a.length;out.innerHTML=impact(P.a)+'<div class="tp-v '+P.v[0]+'">'+P.v[1]+'</div>';
+    S.done.add(S.k);S.busy=false;o.on(S.k);
+  }
+  q('#'+ID+'-p').innerHTML=Object.keys(TRY).map(k=>'<button class="chip" data-k="'+k+'" id="'+ID+'-p'+k+'">'+TRY[k].c+'</button>').join('');
+  Object.keys(TRY).forEach(k=>{q('#'+ID+'-p'+k).onclick=()=>pick(k);});
+  q('#'+ID+'-r').onclick=retry;
+  draw([]);
+  return {S,pick,retry};
+}
+
+/* ---------- static figures for the Learn screens ---------- */
+const FIG_WRONG=()=>fig(206,'Tobias’s booking code and another app server both talk to the Parcel DB. Five numbered places where things go wrong.',
+  rc(4,8,108,38,10,'fill:var(--h4-bg)')+tx(58,31,'Another app server',{z:11.5,b:1,f:'var(--h4)',a:'m'})+
+  rc(4,90,108,56,10,'fill:var(--h1-bg)')+tx(58,114,'Tobias’s',{z:12,b:1,f:'var(--h1)',a:'m'})+tx(58,130,'booking code',{z:12,b:1,f:'var(--h1)',a:'m'})+
+  ln(112,27,220,86,'stroke:var(--line2);stroke-width:2')+ln(112,118,220,112,'stroke:var(--line2);stroke-width:2')+
+  cyl(220,60,104,90,'var(--h2-bg)','var(--h2)')+tx(272,108,'Parcel DB',{z:12.5,b:1,f:'var(--h2)',a:'m'})+tx(272,124,'bookings, credit',{f:'var(--muted)',a:'m'})+
+  pin(1,108,92)+pin(2,166,115)+pin(3,300,62)+pin(4,204,96)+pin(5,150,48)+
+  [[1,'app crashes halfway',2,170],[2,'network cuts out',2,186],[3,'database or disk fails',2,202],[4,'two writers collide',166,170],[5,'a read sees half a write',166,186]].map(([n,t,x,y])=>pin(n,x+9,y-4)+tx(x+22,y,t,{z:11.5})).join(''));
+const FIG_HISTORY=()=>fig(178,'Timeline: 1975 IBM System R, late 2000s NoSQL, today a trade-off. Below, two opposite claims from the NoSQL years.',
+  ln(24,40,306,40,'stroke:var(--line2);stroke-width:3')+
+  [[24,'var(--h1)'],[165,'var(--h4)'],[306,'var(--h2)']].map(([x,c])=>'<circle cx="'+x+'" cy="40" r="8" style="fill:'+c+'"/>').join('')+
+  tx(8,24,'1975',{z:12.5,b:1,f:'var(--h1)'})+tx(165,24,'late 2000s',{z:12.5,b:1,f:'var(--h4)',a:'m'})+tx(322,24,'today',{z:12.5,b:1,f:'var(--h2)',a:'e'})+
+  tx(8,66,'IBM System R',{z:11.5,b:1})+tx(8,81,'sets the style',{f:'var(--muted)'})+tx(8,95,'SQL databases',{f:'var(--muted)'})+tx(8,109,'still copy',{f:'var(--muted)'})+
+  tx(165,66,'NoSQL wave',{z:11.5,b:1,a:'m'})+tx(165,81,'drops transactions',{f:'var(--muted)',a:'m'})+tx(165,95,'or waters the',{f:'var(--muted)',a:'m'})+tx(165,109,'word down',{f:'var(--muted)',a:'m'})+
+  tx(322,66,'A trade-off',{z:11.5,b:1,a:'e'})+tx(322,81,'benefits and',{f:'var(--muted)',a:'e'})+tx(322,95,'costs, weighed',{f:'var(--muted)',a:'e'})+tx(322,109,'case by case',{f:'var(--muted)',a:'e'})+
+  rc(4,124,158,38,12,'fill:var(--no-bg)')+tx(83,140,'“Big systems can’t',{z:11.5,f:'var(--no)',a:'m'})+tx(83,155,'have transactions”',{z:11.5,f:'var(--no)',a:'m'})+
+  rc(168,124,158,38,12,'fill:var(--no-bg)')+tx(247,140,'“Serious apps with',{z:11.5,f:'var(--no)',a:'m'})+tx(247,155,'valuable data need them”',{z:11.5,f:'var(--no)',a:'m'})+
+  tx(165,176,'Two loud claims from those years',{z:11,f:'var(--muted)',a:'m'}));
+const mini={
+ A:'<svg viewBox="0 0 120 40" aria-hidden="true">'+rc(4,16,24,14,3,'fill:var(--ok-bg);stroke:var(--ok-line)')+rc(32,16,24,14,3,'fill:var(--ok-bg);stroke:var(--ok-line)')+rc(60,16,24,14,3,'fill:var(--no-bg);stroke:var(--no-line)')+icn('x',72,23,10,'var(--no)')+'<path d="M84 12C70 0 30 0 14 11" style="fill:none;stroke:var(--h1);stroke-width:2"/>'+ar(20,7,14,11,'var(--h1)',2)+rc(92,16,24,14,3,'fill:var(--card);stroke:var(--line2);stroke-dasharray:3 2')+'</svg>',
+ C:'<svg viewBox="0 0 120 40" aria-hidden="true">'+rc(30,3,60,34,6,'fill:var(--card);stroke:var(--h4);stroke-width:1.5')+ln(38,13,72,13,'stroke:var(--h4);stroke-width:2')+ln(38,21,66,21,'stroke:var(--h4);stroke-width:2')+ln(38,29,70,29,'stroke:var(--h4);stroke-width:2')+'<circle cx="81" cy="21" r="6" style="fill:var(--h4)"/>'+icn('check',81,21,9,'var(--card)')+'</svg>',
+ I:'<svg viewBox="0 0 120 40" aria-hidden="true">'+ar(6,11,110,11,'var(--h3)',2.5)+ar(6,30,110,30,'var(--h3)',2.5)+ln(6,20.5,114,20.5,'stroke:var(--line2);stroke-width:1.5;stroke-dasharray:4 3')+'</svg>',
+ D:'<svg viewBox="0 0 120 40" aria-hidden="true">'+cyl(42,3,36,34,'var(--h2-bg)','var(--h2)')+'<circle cx="86" cy="28" r="7" style="fill:var(--ok-strong)"/>'+icn('check',86,28,10,'var(--card)')+'</svg>'};
+const FIG_ATOMIC=()=>fig(166,'Left: in multi-threaded code, another thread sees x equal 5 or 6, never in between. Right: in ACID, three writes, a fault at write 3, and an undo arrow over all of them.',
+  rc(2,4,160,158,12,'fill:var(--soft)')+tx(82,24,'In multi-threaded code',{z:12,b:1,f:'var(--h3)',a:'m'})+
+  rc(14,42,58,28,8,'fill:var(--card);stroke:var(--h3);stroke-width:1.5')+tx(43,61,'x = 5',{z:12,b:1,a:'m'})+ar(76,56,90,56,'var(--h3)',2)+
+  rc(94,42,58,28,8,'fill:var(--card);stroke:var(--h3);stroke-width:1.5')+tx(123,61,'x = 6',{z:12,b:1,a:'m'})+
+  '<g transform="translate(82 100)"><path d="M-18 0Q0 -13 18 0Q0 13 -18 0Z" style="fill:var(--card);stroke:var(--h3);stroke-width:1.8"/><circle r="4.5" style="fill:var(--h3)"/></g>'+
+  tx(82,134,'another thread sees 5 or 6,',{a:'m'})+tx(82,149,'never something in between',{a:'m'})+
+  rc(168,4,160,158,12,'fill:var(--soft)')+tx(248,24,'In ACID',{z:12,b:1,f:'var(--h2)',a:'m'})+
+  rc(184,38,76,22,6,'fill:var(--ok-bg);stroke:var(--ok-line)')+tx(222,53,'write 1',{z:11.5,b:1,a:'m'})+
+  rc(184,66,76,22,6,'fill:var(--ok-bg);stroke:var(--ok-line)')+tx(222,81,'write 2',{z:11.5,b:1,a:'m'})+
+  rc(184,94,76,22,6,'fill:var(--no-bg);stroke:var(--no-line)')+tx(222,109,'write 3',{z:11.5,b:1,f:'var(--no)',a:'m'})+pin('!',184,94)+
+  '<path d="M264 105C290 98 290 56 266 49" style="fill:none;stroke:var(--h2);stroke-width:2.2"/>'+ar(272,50,266,49,'var(--h2)',2.2)+tx(306,82,'undo',{z:11.5,b:1,f:'var(--h2)',a:'m'})+
+  tx(248,138,'a fault partway: abort,',{a:'m'})+tx(248,153,'discard every write',{a:'m'}));
+const FIG_CONS=()=>fig(198,'Four meanings of consistency, with the ACID one highlighted. Below, Otterpost’s code holds the rule; the Parcel DB checks only foreign keys and unique codes.',
+  [['replicas agree · ch. 5',4,4,0],['consistent hashing · ch. 6',168,4,0],['CAP: linearizable · ch. 9',4,34,0],['ACID: your rules hold',168,34,1]].map(([t,x,y,h])=>rc(x,y,158,26,13,'fill:'+(h?'var(--h4-bg)':'var(--soft)')+(h?';stroke:var(--h4);stroke-width:1.8':''))+tx(x+79,y+17,t,{z:11.5,b:h,f:h?'var(--h4)':'var(--muted)',a:'m'})).join('')+
+  tx(165,78,'One word, four meanings in this book',{f:'var(--muted)',a:'m'})+
+  rc(4,90,142,104,12,'fill:var(--h4-bg)')+tx(14,110,'Otterpost’s code',{z:12.5,b:1,f:'var(--h4)'})+tx(14,131,'Rule: credit =',{z:11.5})+tx(14,146,'$1,000 − $8 × parcels',{z:11.5,b:1})+tx(14,172,'only the app knows it',{f:'var(--muted)',i:1})+
+  ar(150,142,186,142,'var(--line2)',2)+tx(168,134,'writes',{z:10.5,f:'var(--muted)',a:'m'})+
+  cyl(192,90,134,104,'var(--h2-bg)','var(--h2)')+tx(259,122,'Parcel DB',{z:12.5,b:1,f:'var(--h2)',a:'m'})+
+  icn('check',214,138,12,'var(--ok)')+tx(224,142,'foreign keys',{z:11.5})+icn('check',214,156,12,'var(--ok)')+tx(224,160,'unique codes',{z:11.5})+tx(259,180,'stores the rest as given',{z:11,f:'var(--muted)',a:'m'}));
+const FIG_DUR=()=>fig(154,'What durable has meant: archive tape historically, then disk or SSD with a log, more recently copies on other nodes. The commit is reported only after the writes or copies finish.',
+  '<circle cx="42" cy="44" r="14" style="fill:none;stroke:var(--h1);stroke-width:2.2"/><circle cx="70" cy="44" r="14" style="fill:none;stroke:var(--h1);stroke-width:2.2"/><path d="M42 58H70" style="stroke:var(--h1);stroke-width:2.2"/>'+
+  tx(56,84,'archive tape',{z:11.5,b:1,a:'m'})+tx(56,99,'historically',{f:'var(--muted)',a:'m'})+ar(92,44,126,44,'var(--line2)',2)+
+  cyl(142,24,46,42,'var(--h2-bg)','var(--h2)')+tx(165,84,'disk or SSD',{z:11.5,b:1,a:'m'})+tx(165,99,'then',{f:'var(--muted)',a:'m'})+ar(204,44,236,44,'var(--line2)',2)+
+  [[252,36],[276,52],[300,36]].map(([x,y])=>'<circle cx="'+x+'" cy="'+y+'" r="11" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>').join('')+
+  tx(276,84,'copies on nodes',{z:11.5,b:1,a:'m'})+tx(276,99,'more recently',{f:'var(--muted)',a:'m'})+
+  rc(4,118,92,30,8,'fill:var(--pri-bg)')+tx(50,137,'write',{z:11.5,b:1,f:'var(--pri)',a:'m'})+ar(98,133,108,133,'var(--line2)',2)+
+  rc(110,118,120,30,8,'fill:var(--h3-bg)')+tx(170,137,'wait: disk / copies',{z:11.5,b:1,f:'var(--h3)',a:'m'})+ar(232,133,242,133,'var(--line2)',2)+
+  rc(244,118,82,30,8,'fill:var(--ok-bg)')+tx(285,137,'“committed”',{z:11.5,b:1,f:'var(--ok)',a:'m'}));
+const FIG_ONE=()=>fig(172,'A 20 KB parcel document as 20 blocks, 10 already overwritten. Three questions about what happens now, and the two things storage engines do.',
+  tx(15,14,'One 20 KB parcel doc, half overwritten',{z:12,b:1})+
+  Array.from({length:20},(_,j)=>rc(15+j*15,22,13,26,3,'fill:'+(j<10?'var(--pri-bg)':'var(--h3-bg)')+';stroke:'+(j<10?'var(--pri)':'var(--h3)')+';stroke-width:1.2')).join('')+
+  ln(164,18,164,54,'stroke:var(--no);stroke-width:2.5;stroke-dasharray:5 3')+
+  tx(15,66,'10 KB of the new doc',{f:'var(--pri)',b:1})+tx(315,66,'the old doc’s rest',{f:'var(--h3)',b:1,a:'e'})+
+  [[1,'Connection drops: is a broken fragment stored?',88],[2,'Power fails: are old and new spliced?',106],[3,'Someone reads: do they see half of each?',124]].map(([n,t,y])=>pin(n,23,y-4)+tx(37,y,t,{z:11.5})).join('')+
+  rc(4,140,158,28,14,'fill:var(--ok-bg)')+tx(83,158,'crash log → all or nothing',{z:11.5,b:1,f:'var(--ok)',a:'m'})+
+  rc(168,140,158,28,14,'fill:var(--ok-bg)')+tx(247,158,'lock per object → isolated',{z:11.5,b:1,f:'var(--ok)',a:'m'}));
+const FIG_MULTI=()=>fig(178,'Three cases where writes to several objects must stay in step: foreign keys, copied data and secondary indexes. Below: BEGIN to COMMIT on one connection groups writes; a key-value multi-put may half succeed.',
+  [[2,'Foreign keys'],[113,'Copied data'],[224,'Index']].map(([x,t])=>rc(x,4,104,120,12,'fill:var(--soft)')+tx(x+52,22,t,{z:11.5,b:1,a:'m'})).join('')+
+  rc(14,32,80,22,6,'fill:var(--card);stroke:var(--h1);stroke-width:1.5')+tx(54,47,'parcel row',{a:'m'})+ar(54,56,54,76,'var(--h1)',2)+
+  rc(14,78,80,22,6,'fill:var(--card);stroke:var(--h1);stroke-width:1.5')+tx(54,93,'merchant row',{a:'m'})+tx(54,116,'must exist',{f:'var(--muted)',a:'m'})+
+  [30,48,66].map((y,j)=>rc(121,y,48,15,4,'fill:var(--card);stroke:var(--h4);stroke-width:1.2')+tx(145,y+11.5,'OP-'+(j+1),{z:10.5,a:'m'})).join('')+
+  ar(172,55,184,55,'var(--h4)',2)+rc(186,40,26,30,6,'fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5')+tx(199,60,'3',{z:13,b:1,f:'var(--h4)',a:'m'})+tx(165,116,'must match',{f:'var(--muted)',a:'m'})+
+  rc(232,32,88,22,6,'fill:var(--card);stroke:var(--h3);stroke-width:1.5')+tx(276,47,'OP-48213 · W2',{z:10.5,a:'m'})+ar(276,56,276,76,'var(--h3)',2)+
+  rc(232,78,88,22,6,'fill:var(--card);stroke:var(--h3);stroke-width:1.5')+tx(276,93,'W2 → OP-48213',{z:10.5,a:'m'})+tx(276,116,'must update',{f:'var(--muted)',a:'m'})+
+  rc(2,134,160,40,12,'fill:var(--h2-bg)')+tx(82,151,'BEGIN … COMMIT',{z:11.5,b:1,f:'var(--h2)',a:'m'})+tx(82,166,'on one connection',{a:'m'})+
+  rc(168,134,160,40,12,'fill:var(--no-bg)')+tx(248,151,'Key-value “multi-put”',{z:11.5,b:1,f:'var(--no)',a:'m'})+tx(248,166,'may succeed for some keys',{a:'m'}));
+const FIG_ABORT=()=>fig(198,'Left: an ACID database undoes every write after an error, so the app can retry. Right: a leaderless store keeps what it did, so the app cleans up. Bottom: many ORMs don’t retry at all.',
+  rc(2,4,160,126,12,'fill:var(--ok-bg)')+tx(82,22,'ACID database',{z:12,b:1,f:'var(--ok)',a:'m'})+
+  rc(168,4,160,126,12,'fill:var(--h3-bg)')+tx(248,22,'Leaderless: best effort',{z:12,b:1,f:'var(--h3)',a:'m'})+
+  [[18,'error halfway','undo every write','safe to retry','var(--ok)'],[184,'error halfway','keeps what it did','the app cleans up','var(--h3)']].map(([x,a,b,c,col])=>
+    rc(x,32,128,22,6,'fill:var(--card);stroke:var(--no-line);stroke-width:1.5')+tx(x+64,47,a,{z:11.5,b:1,f:'var(--no)',a:'m'})+ar(x+64,56,x+64,66,col,2)+
+    rc(x,68,128,22,6,'fill:var(--card);stroke:'+col+';stroke-width:1.5')+tx(x+64,83,b,{z:11.5,b:1,a:'m'})+ar(x+64,92,x+64,102,col,2)+
+    rc(x,104,128,22,6,'fill:var(--card);stroke:'+col+';stroke-width:1.5')+tx(x+64,119,c,{z:11.5,b:1,f:col,a:'m'})).join('')+
+  rc(2,138,326,56,12,'fill:var(--no-bg)')+tx(14,157,'Many ORMs (Rails’s ActiveRecord, Django)',{z:11.5,b:1,f:'var(--no)'})+
+  tx(14,173,'don’t retry: the error bubbles up as an exception,',{z:11,f:'var(--no)'})+tx(14,188,'the user sees an error, and their input is lost.',{z:11,f:'var(--no)'}));
+
 Course.lesson({
-  id:'0015', title:'What a transaction promises', minutes:18, icon:'shield',
+  id:'0015', title:'What a transaction promises', minutes:20, icon:'shield',
   goals:['Say what each letter of ACID really promises, and which one is the app’s job','Tell when one-object operations are enough and when you need a multi-object transaction','Decide when retrying an aborted transaction is safe, and when it backfires'],
-  parts:['Why transactions','ACID','One object or many','Aborts and retries'],
+  parts:['All or nothing','The four letters','One object or many','Aborts and retries'],
   read:'Read the start of chapter 7, up to “Weak Isolation Levels”, for the full ACID discussion and the sidebar on replication and durability.',
   glossary:{
     acid:'ACID: Atomicity, Consistency, Isolation, Durability. A popular label for the safety promises of transactions. Each database fills it in its own way, so the label alone tells you little.',
@@ -25,7 +501,8 @@ Course.lesson({
     race:'Race condition: a bug that only appears when two clients happen to touch the same data at nearly the same moment.',
     denorm:'Denormalization: keeping a copy or summary of data in a second place (like a stored count) so reads are faster. The copy must then be kept in step by hand.',
     cas:'Compare-and-set: a single-object write that only happens if the value is still what you read earlier. If someone changed it, the write does nothing and you try again.',
-    backoff:'Exponential backoff: waiting longer before each new retry (say 1, 2, then 4 seconds), so retries don’t pile onto a system that is already struggling.'
+    backoff:'Exponential backoff: waiting longer before each new retry (say 1, 2, then 4 seconds), so retries don’t pile onto a system that is already struggling.',
+    fsync:'fsync: a call that tells the operating system to push data all the way to the disk, instead of leaving it in memory for a while.'
   },
   cheatsheet:[
     'A <b>transaction</b> groups reads and writes into one unit: <b>commit</b> all of it or <b>abort</b> all of it, so the app can retry instead of untangling a half-done job.',
@@ -38,100 +515,102 @@ Course.lesson({
     'Retry only <b>transient</b> errors, a limited number of times with backoff. Watch for lost replies (double work), side effects outside the database and overload.'
   ],
   steps:[
-/* ---------- PART 1: WHY TRANSACTIONS ---------- */
+/* ---------- PART 1: ALL OR NOTHING ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tobias’s booking code inserts a parcel, then deducts its price from the merchant’s credit. The server crashes between the two steps. With no protection, what is left in the Parcel DB?</h1>');
   L.mc(L.card,['A booked parcel that nobody paid for','Nothing, because the booking failed','Both writes, because the code was right'],0,
-   'The first write happened and the second never did. The data is now half-done, and nobody knows which half. This lesson is about the tool that prevents that.',
+   'The first write happened and the second never did. The data is now half done, and nobody knows which half. This lesson is about the tool that prevents that.',
    'Nothing undoes the first write by itself. The parcel row is there, the payment isn’t: a half-done booking.');}},
 {part:0,src:'Chapter 7 · Transactions',run(L){
-  L.h(L.kick('learn','Many things can go wrong')+'<h1 class="q">A transaction turns a messy failure into a clean “try again”</h1>'+
-   L.prose('The book opens chapter 7 with a list of what goes wrong in real data systems:')+
-   L.list([['alert','Crashes mid-way','The database, its hardware or the app can die halfway through a series of writes.'],
-     ['compass','Network cuts','The app can lose its link to the database, or one database '+L.g('node','node')+' to another.'],
-     ['people','Clients colliding','Two clients write at once and overwrite each other, or one reads data that is only half updated.']],1)+
-   L.prose('A <b>'+L.g('transaction','transaction')+'</b> groups several reads and writes into one unit. Either all of it takes effect (<b>commit</b>) or none of it does (<b>abort</b>, or rollback). After an abort the app can simply try again. It never has to work out a <b>partial failure</b>, where some steps happened and some didn’t.'));
+  L.h(L.kick('learn','Many things can go wrong')+'<h1 class="q">A transaction turns a messy failure into a clean “try again”</h1>'+CSS+FIG_WRONG()+
+   L.prose('Any of these can leave a booking half done. A <b>'+L.g('transaction','transaction')+'</b> groups reads and writes into one unit: it either <b>commits</b> all of them or <b>aborts</b> all of them. After an abort, the app simply tries again.'));
   L.done();}},
-{part:0,src:'Chapter 7 · Transactions',pts:1,
- solve:async L=>{L.$('#crash').click();},
+{part:0,src:'Chapter 7 · Transactions',
+ solve:async L=>{for(const v of [1,2,4]){setRange(L,'x3-r',v);await L.sleep(30);}},
  run(L){
-  const W=['Insert the parcel row','Deduct $8 from credit','Add 1 to “parcels today”'];
-  const rows=(id,st)=>{const el=L.$('#'+id);if(!el)return;el.innerHTML=W.map((w,j)=>{const s=st[j];
-    const c=s==='ok'?'var(--ok)':s==='no'?'var(--no)':s==='undo'?'var(--muted)':'var(--muted)';
-    const icn=s==='ok'?'check':s==='no'?'x':s==='undo'?'cycle':'clock';
-    return '<div style="display:flex;gap:6px;align-items:flex-start;margin:6px 0;color:'+c+(s==='undo'?';text-decoration:line-through':'')+';font-size:13.5px">'+L.ic(icn)+'<span>'+w+'</span></div>';}).join('');};
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">A booking makes three writes. Crash the server right after write 2, once without a transaction and once with one.</h1>'+
-   L.lanes([['alert','No transaction','<div id="la"></div><div class="res" id="ra"></div>',4],['shield','One transaction','<div id="lb"></div><div class="res" id="rb"></div>',2]])+
-   '<button class="btn pri" id="crash" style="margin-top:14px">'+L.ic('flame')+'Crash after write 2</button><div id="cq"></div>');
-  rows('la',['','','']);rows('lb',['','','']);
-  L.$('#crash').onclick=function(){this.remove();
-    setTimeout(()=>{rows('la',['ok','','']);rows('lb',['ok','','']);},250);
-    setTimeout(()=>{rows('la',['ok','ok','']);rows('lb',['ok','ok','']);},550);
-    setTimeout(()=>{if(!L.$('#la'))return;rows('la',['ok','ok','no']);rows('lb',['undo','undo','undo']);
-      L.$('#ra').innerHTML='<span style="color:var(--no)">Parcel booked and paid, but the counter is one short. Run it again and the merchant pays twice.</span>';
-      L.$('#rb').innerHTML='<span style="color:var(--ok)">Aborted: both writes undone. Nothing changed, so it’s safe to run again.</span>';
-      const q=L.$('#cq');q.innerHTML='<h2 class="sub">Which side can Tobias’s code simply retry?</h2>';
-      L.mc(q,['The side without a transaction','The side with a transaction'],1,
-       'After an abort, the app knows nothing changed. That is the whole point: error handling becomes “just try again”.',
-       'Without a transaction, a retry inserts a second parcel and charges again. Only the aborted transaction left a clean slate.');},900);};}},
+  const tried=new Set();let fin=false;
+  L.h(L.kick('ex','Try it live · crash scissors')+'<h1 class="q">Tobias’s booking makes four writes, with no transaction. Drag the scissors to crash the server at different points.</h1>'+CSS+'<div id="x3"></div><div class="tp-done" id="x3t"></div>');
+  const upd=()=>{L.$('#x3t').innerHTML=[1,2,3,3.5].map(c=>'<span class="'+(tried.has(c)?'y':'')+'">'+(c===3.5?'mid write 4':'after write '+c)+'</span>').join('');};
+  Strip(L,L.$('#x3'),{id:'x3',tx:false,cut:5,on:r=>{
+    if([1,2,3,3.5].includes(r.c))tried.add(r.c);upd();
+    if(tried.size>=3&&!fin){fin=true;
+      sheetAt(L,L.$('#x3-out'),'info','No safe place to crash','Every cut between write 1 and write 4 leaves a <b>partial failure</b>: some writes landed, some didn’t, and at least one check breaks. Tobias’s code can’t easily tell which. A retry risks doing writes twice. Next: the same crash inside a transaction.');L.done();}}});
+  upd();}},
+{part:0,src:'Chapter 7 · Transactions',pts:1,
+ solve:async L=>{L.$('#p4c').children[1].click();for(let i=0;i<150&&!L.$('#p4fin');i++)await L.sleep(30);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Same booking, now between <b>BEGIN</b> and <b>COMMIT</b>. The server crashes right after write 2. After the restart, what is left?</h1>'+CSS+
+   '<div class="tp-ctl" id="p4c"></div><div id="p4"></div><div id="p4x"></div>');
+  const s=Strip(L,L.$('#p4'),{id:'p4',tx:true,cut:2,live:false,lock:true,txBtn:false});
+  ['Writes 1 and 2 stay; 3 and 4 never ran','Nothing: writes 1 and 2 are undone','All four: the database finishes the job'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');const r=await s.play();if(!r)return;
+      const ok=j===1;L.award(ok);
+      sheetAt(L,L.$('#p4-out'),ok?'ok':'no',ok?'Right: rolled back':'It rolled everything back','The crash came before COMMIT, so the database discarded writes 1 and 2. Every check passes, and the app knows <b>nothing changed</b>, so it can simply retry. In SQL databases, everything between BEGIN and COMMIT on one connection counts as one transaction.');
+      L.$('#p4x').innerHTML='<p class="tp-small" id="p4fin">Now drag the scissors anywhere. Every cut before COMMIT leaves no trace.</p>';s.unlock();L.done();};
+    L.$('#p4c').appendChild(b);});}},
 {part:0,src:'Chapter 7 · The Slippery Concept of a Transaction',run(L){
-  L.h(L.kick('learn','Not a law of nature')+'<h1 class="q">Transactions were designed on purpose, and fashions about them swing</h1>'+
-   L.flow([['book','1975','IBM’s System R sets the style','still copied by most SQL databases',1],['layers','Late 2000s','NoSQL databases drop transactions or weaken the word','',4],['scale','Today','A design choice with costs and benefits','',2]])+
-   L.prose('When NoSQL arrived, many people believed transactions and scalability could not go together. Some vendors said the opposite: that any serious app with valuable data must have them. The book’s verdict on both camps:')+
+  L.h(L.kick('learn','Not a law of nature')+'<h1 class="q">Transactions were designed on purpose, and fashions about them swing</h1>'+CSS+FIG_HISTORY()+
    L.quote('Both viewpoints are pure hyperbole.','Martin Kleppmann, chapter 7')+
-   L.prose('Transactions exist to make the app’s life simpler: the database takes care of certain errors and concurrency issues (its <b>safety guarantees</b>). Some apps weaken or skip them for speed or availability. To choose, you need to know exactly what they promise and what they cost.'));
+   L.prose('Transactions make apps simpler by handling some faults and concurrency for you. To decide if you need them, know what they promise and cost.'));
   L.done();}},
-{part:0,src:'Chapter 7 · The Slippery Concept of a Transaction',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">At a conference, Femi hears three claims about transactions. Which one matches the book?</h1>');
-  L.mc(L.card,['Big systems must drop transactions to scale','Valuable data always needs full ACID','They are a trade-off you weigh case by case'],2,
-   'Like any design choice, transactions have advantages and limits. The rest of this chapter shows what you get and what it costs.',
-   'The book calls both extreme claims hype. Transactions are a trade-off: you weigh what they promise against what they cost.');}},
 
-/* ---------- PART 2: ACID ---------- */
+/* ---------- PART 2: THE FOUR LETTERS ---------- */
 {part:1,src:'Chapter 7 · The Meaning of ACID',run(L){
-  L.h(L.kick('learn','Four letters')+'<h1 class="q">ACID is a useful idea and a vague label</h1>'+
-   L.prose('Theo Härder and Andreas Reuter coined '+L.g('acid','ACID')+' in 1983 to give database fault tolerance precise words. But each database implements it differently, and isolation in particular is fuzzy. Today “ACID compliant” doesn’t tell you which guarantees you actually get. It has become mostly a marketing term.')+
-   L.tiers([['cycle','Atomicity','If something fails partway, undo everything.'],['check','Consistency','The data keeps obeying your app’s rules.'],['people','Isolation','Transactions running at once don’t interfere.'],['lock','Durability','Once committed, the data isn’t lost.']])+
-   L.note('Systems that don’t meet ACID are sometimes called <b>BASE</b> (Basically Available, Soft state, Eventual consistency). The book finds that even vaguer: in practice it just means “not ACID”.','info'));
+  const tile=(k,cls,name,d,who)=>'<div class="'+cls+'"><div class="lt"><b>'+k+'</b><span>'+name+'</span></div>'+mini[k]+'<div class="d">'+d+'</div><span class="who">'+who+'</span></div>';
+  L.h(L.kick('learn','Four letters')+'<h1 class="q">ACID: four different promises under one label</h1>'+CSS+
+   '<div class="tp-acid">'+tile('A','','Atomicity','A fault partway? Undo every write.','database’s job')+tile('C','c','Consistency','Your app’s rules stay true.','your app’s job')+
+   tile('I','','Isolation','Transactions running at once don’t collide.','database’s job')+tile('D','','Durability','Committed data isn’t forgotten.','database’s job')+'</div>'+
+   L.prose('Härder and Reuter coined '+L.g('acid','ACID')+' in 1983. Each database fills it in differently, so “ACID compliant” now says little: it’s mostly marketing. Systems that aren’t are sometimes called <b>BASE</b>, which really just means “not ACID”.'));
   L.done();}},
-{part:1,src:'Chapter 7 · The Meaning of ACID · Atomicity',run(L){
-  L.h(L.kick('learn','A is for “abortability”')+'<h1 class="q">Atomicity is about faults, not about two users at once</h1>'+
-   L.lanes([['cycle','In multi-threaded code','“Atomic” means no other thread can see a half-finished operation.',3],
-            ['shield','In ACID','“Atomic” means: if a fault hits partway, the whole transaction is aborted and its writes are thrown away.',2]])+
-   L.prose('The fault can be a crash, a broken network link, a full disk or a broken rule (a constraint). Without '+L.g('atomicity','atomicity')+', the app can’t tell which changes landed. Retrying risks doing things twice.')+
-   L.prose('With atomicity, an aborted transaction changed nothing, so the app can safely retry. The book suggests <b>abortability</b> would have been a better name. Who sees what while others write is a different letter: I, for isolation.'));
+{part:1,src:'Chapter 7 · Atomicity',run(L){
+  L.h(L.kick('learn','A is for “abortability”')+'<h1 class="q">Atomicity is about faults, not about two users at once</h1>'+CSS+FIG_ATOMIC()+
+   L.prose('In ACID, '+L.g('atomicity','atomicity')+' covers a fault partway through: a crash, a cut connection, a full disk or a broken constraint. The transaction is aborted and its writes discarded. The book suggests “abortability” as the clearer name.'));
   L.done();}},
-{part:1,src:'Chapter 7 · The Meaning of ACID · Atomicity',pts:1,run(L){
+{part:1,src:'Chapter 7 · Atomicity',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame says: “ACID atomicity means two bookings running at the same moment can’t see each other’s half-done work.” Which letter actually covers that?</h1>');
   L.mc(L.card,['Atomicity','Durability','Isolation'],2,
    'Right. What concurrent transactions can see of each other is isolation. Atomicity is about undoing writes after a fault.',
    'That’s isolation. In ACID, atomicity means “abort and discard everything if a fault hits partway”. It says nothing about concurrency.');}},
-{part:1,src:'Chapter 7 · The Meaning of ACID · Consistency',run(L){
-  L.h(L.kick('learn','The odd letter out')+'<h1 class="q">“Consistency” is the app’s job, not the database’s</h1>'+
-   L.prose('The word has at least four meanings in this book: replica consistency (chapter 5), consistent hashing (chapter 6), consistency in the CAP theorem (chapter 9), and the C in ACID.')+
-   L.prose('ACID consistency means your data obeys certain '+L.g('invariant','invariants')+'. For Otterpost: <i>every merchant’s credit balance equals their top-ups minus the prices of their parcels.</i> If each transaction starts valid and keeps it valid, the rule always holds.')+
-   L.note('<b>The database can’t know your rules.</b> It can check a few (foreign keys, uniqueness), but if Otterpost’s code writes a wrong balance, the database just stores it. Atomicity, isolation and durability belong to the database; consistency belongs to the app.','scale')+
-   '<p class="small" style="margin-top:10px">A footnote in the book reports a remark that the C was mostly added to make the acronym work.</p>');
+{part:1,src:'Chapter 7 · Isolation',
+ solve:async L=>{L.$('#r9-w').click();await idle(L,L.race.S);L.$('#r9-s').click();await idle(L,L.race.S);},
+ run(L){
+  L.h(L.kick('ex','See it happen · isolation')+'<h1 class="q">During a flash sale, two app servers book Bramble & Bolt parcels at the same moment. The database has no built-in increment, so each reads the counter, adds 1, writes it back. Run it both ways.</h1>'+CSS+'<div id="r9"></div>');
+  L.race=Race(L,L.$('#r9'),{id:'r9',on:()=>{
+    if(L.race.S.ran.size===2){
+      sheetAt(L,L.$('#r9-out'),'info','That’s the I in ACID','Atomicity was on both times and didn’t help. '+L.g('isolation','Isolation')+' means concurrent transactions can’t step on each other. Textbooks define it as <b>serializability</b>: the result is as if they ran one after another. It costs speed, so it’s rarely used. Oracle 11g’s “serializable” setting is really something weaker (next lesson).');L.done();}}});}},
+{part:1,src:'Chapter 7 · Consistency',run(L){
+  L.h(L.kick('learn','The odd letter out')+'<h1 class="q">“Consistency” is the app’s job, not the database’s</h1>'+CSS+FIG_CONS()+
+   L.prose('ACID’s C means your '+L.g('invariant','invariants')+', rules that must always hold, stay true. Only the app knows them; the database checks a few, like foreign keys and uniqueness. A, I and D belong to the database. C belongs to the app.'));
   L.done();}},
-{part:1,src:'Chapter 7 · The Meaning of ACID · Isolation',run(L){
-  L.h(L.kick('ex','Isolation, step by step')+'<h1 class="q">Two bookings, one counter, one lost increment</h1>');
-  L.beats(L.card,[
-   ['The counter','The merchant dashboard keeps Bramble & Bolt’s <b>parcels booked today</b> as a number in the Parcel DB. It says 42. (Assume there is no built-in increment, so the code reads, adds 1, writes.)'],
-   ['Two at once','During a flash sale, two app servers book a parcel at the same moment. <b>Both read 42.</b>'],
-   ['Both write','Each adds 1 and writes <b>43</b>. Two parcels were booked, but the counter went up by one. This is a '+L.g('race','race condition')+'.'],
-   ['The promise','ACID <b>isolation</b> means concurrent transactions can’t step on each other. Textbooks define it as <b>serializability</b>: the result is the same as if the transactions had run one after another.'],
-   ['The reality','Serializable isolation costs performance, so it is rarely used. Oracle 11g has a level called “serializable” that is actually something weaker, called snapshot isolation. The next lesson covers these weaker levels.']],
-   'Isolation is the letter about concurrency. Its strongest form, serializability, is the ideal, and it is often not what you are running.');}},
-{part:1,src:'Chapter 7 · The Meaning of ACID · Durability',run(L){
-  L.h(L.kick('learn','D is for “don’t forget”')+'<h1 class="q">Committed data should survive a crash, within limits</h1>'+
-   L.prose('<b>Durability</b> promises that once a transaction commits, its data won’t be forgotten, even after a hardware fault or crash. On one machine that means it is on disk or SSD, usually with a write-ahead '+L.g('log','log')+' for recovery. With '+L.g('replication','replication')+' it may mean copied to some number of nodes. Either way, the database must wait for that before it says “committed”.')+
-   L.prose('The book’s sidebar lists how each method can still lose data:')+
-   L.list([['Disk only','The machine dies: the data is safe but unreachable until it is fixed.'],
-     ['Replicas only','A power cut or a bug can take down every replica at once. Asynchronous followers can miss recent writes.'],
-     ['Hardware lies','SSDs can break their promises on power loss, and firmware has bugs. One study found 30–80% of SSDs develop a bad block within four years.'],
-     ['Silent rot','Data can corrupt slowly, unnoticed, until replicas and recent backups are corrupted too.']],3)+
-   L.note('No single technique gives a perfect guarantee. Use disk, replication <b>and</b> backups together.','lock'));
+{part:1,src:'Chapter 7 · Consistency',
+ solve:async L=>{L.$('#c11b').click();await L.sleep(20);L.$('#c11go').click();await idle(L,L.strip.S);},
+ run(L){
+  let fin=false;
+  L.h(L.kick('ex','Try it live · break the C')+'<h1 class="q">Every booking now runs inside a transaction, with no crash. Can it still break Otterpost’s rules? Pick Tobias’s code, then run it.</h1>'+CSS+
+   '<div class="tp-ctl" id="c11c"></div><button class="btn pri" id="c11go">'+L.ic('play')+'Run the booking</button><div id="c11"></div>');
+  const s=L.strip=Strip(L,L.$('#c11'),{id:'c11',tx:true,cut:5,scissors:false,drag:false,range:false,live:false});
+  [['ok','Correct code','c11a'],['bug80','Bug: deducts $80','c11b'],['skip','Bug: skips the counter','c11d']].forEach(([k,t,id],j)=>{
+    const b=document.createElement('button');b.className='chip'+(j===0?' sel':'');b.id=id;b.textContent=t;
+    b.onclick=()=>{if(s.S.busy)return;[...L.$('#c11c').children].forEach(x=>x.classList.toggle('sel',x===b));s.setCode(k);};L.$('#c11c').appendChild(b);});
+  L.$('#c11go').onclick=async()=>{const r=await s.play();if(!r)return;
+    if(r.code!=='ok'&&!fin){fin=true;
+      sheetAt(L,L.$('#c11-out'),'info','A clean commit of wrong data','Atomic, isolated, durable, and still wrong. The database can’t know that the credit must equal $1,000 − $8 × parcels; it just stores what the code writes. Keeping invariants true is the app’s job. (Joe Hellerstein has remarked that the C was added mainly to make the acronym work.)');L.done();}};}},
+{part:1,src:'Chapter 7 · Durability',run(L){
+  L.h(L.kick('learn','D is for “don’t forget”')+'<h1 class="q">Committed means written somewhere that survives a crash</h1>'+CSS+FIG_DUR()+
+   L.prose('<b>Durability</b>: once committed, the booking survives a crash. The database reports “committed” only after the disk write ('+L.g('fsync','fsync')+' plus a log) or the copies finish. No setup is perfect: lose every disk and backup together, and nothing helps.'));
   L.done();}},
+{part:1,src:'Chapter 7 · Replication and Durability',
+ solve:async L=>{for(const d of ['crash','machine','fire'])L.$('#l13-d'+d).click();},
+ run(L){
+  let fin=false;
+  L.h(L.kick('ex','Try it live · durability ladder')+'<h1 class="q">A booking just committed. Switch rungs on and off, then hit it with disasters. Where does it survive?</h1>'+CSS+'<div id="l13"></div><div class="tp-done" id="l13t"></div>');
+  const lad=Ladder(L,L.$('#l13'),{id:'l13',sel:['mem','disk'],on:()=>{
+    L.$('#l13t').innerHTML='<span class="'+(lad.S.tried.size>=3?'y':'')+'">Disasters tried: '+lad.S.tried.size+' of 3</span>';
+    if(lad.S.tried.size>=3&&!fin){fin=true;
+      sheetAt(L,L.$('#l13-out'),'info','Every rung has a gap','Disk survives crashes but not a fire. Replicas stay available, but one bug or power cut can hit them all, and they copy bad writes too. Backups miss today’s data. SSDs fail as well: one study found 30–80% develop a bad block within four years. Use the rungs <b>together</b>.');L.done();}}});
+  L.$('#l13t').innerHTML='<span>Disasters tried: 0 of 3</span>';}},
 {part:1,src:'Chapter 7 · The Meaning of ACID',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which letter of ACID?',['Atomicity','Consistency','Isolation','Durability'],[
@@ -141,39 +620,54 @@ Course.lesson({
    ['The power fails one second after a booking commits. After the restart, the booking is still there.',3,'Committed data survives a crash: durability.'],
    ['The booking API only says “booked” once the write has reached two replicas.',3,'Waiting for the copies before reporting a commit is how a replicated database offers durability.'],
    ['Femi decides no merchant may book with a negative balance. The database stores whatever it is told.',1,'Only the app knows this rule, so keeping it is the app’s job: consistency.']]);}},
-{part:1,src:'Chapter 7 · The Meaning of ACID · Replication and Durability',pts:1,run(L){
-  L.h(L.kick('pr','Kwame’s proposal')+'<h1 class="q">“Each region’s Parcel DB leader now has two followers in the same datacenter: three copies,” says Kwame. “We can stop the nightly backups.” What should Zainab answer?</h1><div id="hq"></div>');
-  L.mc(L.$('#hq'),['Agree: three copies make data loss impossible','Keep backups: one fault can hit every copy','Agree, as long as all replicas run on SSDs'],1,
-   'A power cut or a bug can hit all replicas together, and slow corruption can spread to every copy. Disk, replication and backups each cover gaps the others leave.',
-   'Replicas share risks: a power cut, a bug that crashes every node, or slow corruption that gets copied everywhere. SSDs fail too. Backups are still needed.');}},
+{part:1,src:'Chapter 7 · Replication and Durability',pts:1,
+ solve:async L=>{L.$('#l15-tdisk').click();L.$('#l15-tregion').click();L.$('#l15-tbackup').click();await L.sleep(20);L.$('#l15go').click();for(let i=0;i<150&&!L.$('#l15ok');i++)await L.sleep(30);},
+ run(L){
+  let first=true,running=false;
+  const GOALS=[['crash','Process crash: the booking survives',v=>v[0]==='ok'],['machine','Leader’s machine dies: still reachable',v=>v[0]==='ok'],['fire','Westport datacenter fire: survives',v=>v[0]==='ok'],['drop','Table dropped: last night’s data comes back',v=>v[0]==='ok'||/last night/.test(v[1])]];
+  L.h(L.kick('pr','Challenge · Kwame’s Peak Week checklist')+'<h1 class="q">Pass all four disasters, with each commit waiting <b>6 units or less</b> (illustrative units). Pick the rungs, then run the drill.</h1>'+CSS+
+   '<div id="l15"></div><button class="btn pri" id="l15go" style="margin-top:6px">'+L.ic('play')+'Run the drill</button><div id="l15res"></div>');
+  const lad=Ladder(L,L.$('#l15'),{id:'l15',sel:['mem','disk'],dis:GOALS.map(g=>g[0])});
+  L.$('#l15go').onclick=async()=>{
+    if(running)return;running=true;lad.S.busy=true;L.$('#l15go').disabled=true;L.$('#l15res').innerHTML='';
+    const res=[];
+    for(const g of GOALS){lad.pick(g[0]);const v=ladderOut(lad.S.sel,g[0]);res.push([g[1],g[2](v)]);await L.sleep(380);if(!L.$('#l15'))return;}
+    const w=waitOf(lad.S.sel);res.push(['Each commit waits '+w+' units (6 or less)',w<=6]);
+    L.$('#l15res').innerHTML='<ul class="tp-chk">'+res.map(x=>'<li class="'+(x[1]?'ok':'no')+'">'+L.ic(x[1]?'check':'x')+'<span>'+x[0]+'</span></li>').join('')+'</ul>';
+    const pass=res.every(x=>x[1]);if(first){L.award(pass);first=false;}
+    running=false;lad.S.busy=false;L.$('#l15go').disabled=false;
+    if(pass){L.$('#l15go').disabled=true;L.$('#l15res').insertAdjacentHTML('beforeend','<span id="l15ok"></span>');
+      sheetAt(L,L.$('#l15res'),'ok','Drill passed','A copy in <b>another region</b> survives the crash, the dead machine and the fire. Only a <b>backup</b> brings back a dropped table, because replicas copy the drop at once. The leader’s disk is optional here (1 more unit), but cheap insurance. Westport followers can’t survive the fire and push the wait past 6.');L.done();}
+    else sheetAt(L,L.$('#l15res'),'no','Not yet','Look at the red lines. Which disaster takes out every copy in Westport? Which one do replicas copy straight away? Change the rungs and run the drill again.');};}},
+{part:1,src:'Chapter 7 · Replication and Durability',pts:1,
+ solve:async L=>{L.$('#l16-ddrop').click();L.$('#l16-dfirm').click();for(let i=0;i<50&&!L.$('#l16q .opts');i++)await L.sleep(20);},
+ run(L){
+  let asked=false;
+  L.h(L.kick('pr','Kwame’s proposal')+'<h1 class="q">“Each region’s Parcel DB leader now has two followers in the same datacenter: three copies,” says Kwame. “We can stop the nightly backups.” Test his setup on two disasters, then answer.</h1>'+CSS+'<div id="l16"></div><div id="l16q"></div>');
+  const lad=Ladder(L,L.$('#l16'),{id:'l16',sel:['mem','disk','dc'],toggle:false,dis:['crash','fire','firm','rot','drop'],on:()=>{
+    if(lad.S.tried.size>=2&&!asked){asked=true;
+      L.$('#l16q').innerHTML='<h2 class="sub" style="margin-top:14px">What should Zainab answer?</h2>';
+      L.mc(L.$('#l16q'),['Agree: three copies make data loss impossible','Keep backups: one fault can hit every copy','Agree, as long as all replicas run on SSDs'],1,
+       'A dropped table, a shared firmware bug or slow corruption reaches every replica together. Disk, replication and backups each cover gaps the others leave, so use them together.',
+       'Replicas share risks: a bad write is copied everywhere at once, and one bug or power cut can hit them all. SSDs fail too. Backups are still needed.');}}});}},
 
 /* ---------- PART 3: ONE OBJECT OR MANY ---------- */
-{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations',run(L){
-  L.h(L.kick('learn','Several objects, kept in step')+'<h1 class="q">Atomicity and isolation matter most when one job writes several things</h1>'+
-   L.prose('Counting Bramble & Bolt’s parcels every time the dashboard loads is slow. So Otterpost stores a <b>parcels today</b> counter beside the parcels: '+L.g('denorm','denormalization')+'. Now every booking writes two objects: a new parcel row and the counter.')+
-   L.lanes([['eye','Without isolation','A dashboard shows the new parcel in the list, but the counter hasn’t gone up yet. It saw half of the booking.',4],
-            ['alert','Without atomicity','The counter update fails but the parcel row stays. The two are now out of step for good.',3]])+
-   L.prose('How does the database know which writes belong together? In relational databases, usually everything between <b>BEGIN TRANSACTION</b> and <b>COMMIT</b> on one client connection. Many non-relational databases have no such grouping. A “multi-put” that writes several keys may succeed for some keys and fail for others.'));
+{part:2,src:'Chapter 7 · Single-object writes',run(L){
+  L.h(L.kick('learn','Even one object needs protecting')+'<h1 class="q">Writing one 20 KB document raises three questions</h1>'+CSS+FIG_ONE()+
+   L.prose('Storage engines almost always protect one object on one node: a crash-recovery log and a lock per object. Some add atomic increment and '+L.g('cas','compare-and-set')+'. Useful, but these are <b>not transactions</b>, whatever the marketing calls them.'));
   L.done();}},
-{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations · Single-object writes',run(L){
-  L.h(L.kick('learn','Even one object needs protecting')+'<h1 class="q">Writing one 20 KB parcel document raises three questions</h1>'+
-   L.list([['Network drops at 10 KB','Is an unreadable half-document stored?'],['Power fails mid-overwrite','Do the old and new values end up spliced together?'],['Someone reads mid-write','Do they see a half-updated value?']],2)+
-   L.prose('Storage engines almost always protect a <b>single object</b> on one node: a log for crash recovery gives atomicity, and a lock per object gives isolation. Some add an <b>atomic increment</b> or '+L.g('cas','compare-and-set')+', which stop two clients from overwriting each other’s change.')+
-   L.note('These are useful, but they are <b>not transactions</b>. Calling them “lightweight transactions” or “ACID” is marketing. A transaction groups several operations on several objects into one unit.','alert'));
+{part:2,src:'Chapter 7 · Single-object writes',
+ solve:async L=>{for(const k of Object.keys(DZ)){L.$('#z18-p'+k).click();await idle(L,L.dz.S);}},
+ run(L){
+  let fin=false;
+  L.h(L.kick('ex','Edge cases · one object')+'<h1 class="q">Back to write 4 of Tobias’s booking, with no transaction. Interrupt the 20 KB dashboard doc three ways.</h1>'+CSS+'<div id="z18"></div>');
+  L.dz=DocZoom(L,L.$('#z18'),{id:'z18',on:()=>{
+    if(L.dz.S.done.size===3&&!fin){fin=true;
+      sheetAt(L,L.$('#z18-out'),'info','One object is safe. The booking isn’t.','The engine keeps the doc whole: old or new, never half. But the parcel row, the credit and the counter are separate objects that already changed. Single-object protection can’t tie them together. Selling it as “lightweight transactions” is misleading: a transaction groups several objects into one unit.');L.done();}}});}},
+{part:2,src:'Chapter 7 · The need for multi-object transactions',run(L){
+  L.h(L.kick('learn','When one object isn’t enough')+'<h1 class="q">Three common cases need several writes to land together</h1>'+CSS+FIG_MULTI()+
+   L.prose('Foreign keys, '+L.g('denorm','denormalized')+' copies and secondary indexes must change together. BEGIN … COMMIT groups their writes; a key-value multi-put may leave some done and some not.'));
   L.done();}},
-{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations · The need for multi-object transactions',run(L){
-  L.h(L.kick('learn','When one object isn’t enough')+'<h1 class="q">Three common cases need several writes to land together</h1>'+
-   L.prose('Many distributed databases dropped multi-object transactions: they are hard across '+L.g('partition','partitions')+' and can get in the way of very high availability or speed. Nothing makes them impossible, though (chapter 9). And many apps need them:')+
-   L.list([['pointer','Foreign keys','A new parcel row points to its merchant and its address. Insert them together, or the references point at nothing.'],
-     ['layers','Denormalized copies','The parcels-today counter must move with the parcel rows. Document databases without joins push you to copy data like this.'],
-     ['eye','Secondary indexes','An index on recipient postcode is a separate object. Without isolation, a parcel can show up in one index and not yet in another.']],1)+
-   L.prose('You can build such apps without transactions, but error handling gets much harder and concurrency bugs creep in.'));
-  L.done();}},
-{part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these jobs needs a multi-object transaction?</h1>');
-  L.mc(L.card,['Updating one courier’s phone number in their row','Inserting a parcel and adding 1 to “parcels today”','Reading one parcel’s status by its tracking code'],1,
-   'Two objects that must stay in step: the parcel row and the denormalized counter.',
-   'That one touches a single object. The parcel plus its counter is two objects that must change together.');}},
 {part:2,src:'Chapter 7 · Single-Object and Multi-Object Operations',pts:5,run(L){
   L.h(L.kick('pr','One object or many?')+'<h1 class="q">Sort each Otterpost job.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['One object is enough','Needs a multi-object transaction'],[
@@ -182,42 +676,36 @@ Course.lesson({
    ['Replace a parcel’s whole label document in one write',0,'Storage engines make a single-object write atomic and isolated.'],
    ['Insert a parcel that points to a merchant row created in the same step',1,'Two rows that refer to each other: the foreign key must be valid.'],
    ['Set status to “out for delivery” only if it is still “at hub”',0,'That’s compare-and-set on one object.']],
-   'One object: the storage engine and operations like increment or compare-and-set cover you. Several objects in step: you need a transaction.');}},
+   'One object: the storage engine, increment or compare-and-set cover you. Several objects in step need a transaction. Many distributed stores dropped those: hard across '+L.g('partition','partitions')+' and costly for speed or availability, though not impossible (chapter 9). Document stores without joins push you to copy data; without transactions, keeping it right is your code’s job.');}},
 
 /* ---------- PART 4: ABORTS AND RETRIES ---------- */
-{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',run(L){
-  L.h(L.kick('learn','Abort, then retry')+'<h1 class="q">An abort is only useful if someone retries</h1>'+
-   L.prose('ACID databases follow one philosophy: if a transaction might break atomicity, isolation or durability, abandon it completely rather than leave it half done.')+
-   L.lanes([['shield','ACID style','“All or nothing.” An aborted transaction left no trace.',2],
-            ['alert','Best-effort style','Leaderless stores do what they can and won’t undo what already happened. Recovery is the app’s job.',4]])+
-   L.prose('Yet many developers only think about the happy path. The book notes that popular ORMs (code libraries that map objects to tables, such as Rails’s ActiveRecord and Django) don’t retry aborted transactions. The error bubbles up, the user’s input is lost, and they see an error. That wastes the main benefit of aborts: <b>safe retries</b>.'));
+{part:3,src:'Chapter 7 · Handling errors and aborts',run(L){
+  L.h(L.kick('learn','Abort, then retry')+'<h1 class="q">An abort is only useful if someone retries</h1>'+CSS+FIG_ABORT()+
+   L.prose('ACID databases undo a failed transaction; leaderless stores keep what they did. Many ORMs (libraries mapping objects to tables) never retry, wasting the point of aborts: <b>safe retries</b>.'));
   L.done();}},
-{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',run(L){
-  L.h(L.kick('learn','Retrying isn’t perfect')+'<h1 class="q">Five ways a retry can go wrong</h1>'+
-   L.list([['The reply was lost','The commit worked, but the network failed before the client heard. A retry does it twice, unless the app has its own duplicate check.'],
-     ['The system is overloaded','Retrying adds load. Limit retries, use '+L.g('backoff','exponential backoff')+', and treat overload errors differently.'],
-     ['The error is permanent','Retry after transient errors (deadlock, isolation conflict, a network blip, failover). A broken constraint will just fail again.'],
-     ['Side effects escaped','An email or call to another system happens even if the transaction aborts. Retrying sends it again. (Two-phase commit, chapter 9, can tie systems together.)'],
-     ['The client dies too','If the client crashes while retrying, the data it was trying to write is lost.']],4));
-  L.done();}},
-{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',pts:5,run(L){
+{part:3,src:'Chapter 7 · Handling errors and aborts',
+ solve:async L=>{const t=L.tries;for(const k of Object.keys(TRY)){L.$('#t22-p'+k).click();await idle(L,t.S);L.$('#t22-r').click();await idle(L,t.S);}},
+ run(L){
+  let fin=false;
+  L.h(L.kick('ex','Edge cases · retry lab')+'<h1 class="q">Tobias’s booking is aborted, and the app retries. Is retrying always safe? Try all six errors.</h1>'+CSS+'<div id="t22"></div><div class="tp-done" id="t22t"></div>');
+  const upd=()=>{L.$('#t22t').innerHTML=Object.keys(TRY).map(k=>'<span class="'+(L.tries.S.done.has(k)?'y':'')+'">'+TRY[k].c+'</span>').join('');};
+  L.tries=Tries(L,L.$('#t22'),{id:'t22',on:()=>{upd();
+    if(L.tries.S.done.size===6&&!fin){fin=true;
+      sheetAt(L,L.$('#t22-out'),'info','Retrying is simple, not perfect','Retry only <b>transient</b> errors (deadlock, isolation conflict, network blip, failover), a limited number of times with '+L.g('backoff','exponential backoff')+'. Guard against a commit whose reply was lost. Keep side effects like webhooks out of the retry, or tie systems together with two-phase commit (chapter 9).');L.done();}}});
+  upd();}},
+{part:3,src:'Chapter 7 · Handling errors and aborts',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'What about retrying this?',['Fine to retry','Pointless: it fails again','May run twice','A side effect repeats','Makes overload worse'],[
-   ['A booking aborted because of a deadlock with another booking.',0,'A deadlock is transient. Retrying is exactly what aborts are for.'],
-   ['A booking failed because its tracking code breaks a uniqueness rule.',1,'A constraint violation is permanent. The same request fails the same way.'],
-   ['The commit worked, but the reply was lost. Tobias’s app retries the booking.',2,'Without a duplicate check, the parcel is booked and charged twice.'],
-   ['The booking calls the merchant’s status webhook, then aborts and is retried.',3,'The webhook already went out. Each retry sends another one.'],
-   ['In Peak Week the Parcel DB is overloaded, and every server retries at once, again and again.',4,'Instant, unlimited retries add load to a database that is already struggling. Limit them and back off.']]);}},
-{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',pts:1,run(L){
+   ['Ravi’s scan update is aborted because it clashed with another transaction (an isolation conflict).',0,'An isolation conflict is transient. The next attempt will most likely go through.'],
+   ['A merchant’s top-up fails because the amount breaks a “must be positive” rule.',1,'A constraint violation is permanent. The same request fails the same way every time.'],
+   ['A $50 credit top-up committed, but the reply was lost. The dashboard sends the top-up again.',2,'The first commit worked. Without a duplicate check, the merchant gets $100 of credit.'],
+   ['Each booking attempt texts the recipient a pickup code before committing. The commit aborts and is retried.',3,'The text went out on the first attempt. Each retry sends another one: the abort didn’t undo it.'],
+   ['During Peak Week the Parcel DB rejects writes because it is overloaded. Every app server retries instantly, again and again.',4,'Instant, unlimited retries add load to a database that is already struggling. Limit them and back off.']]);}},
+{part:3,src:'Chapter 7 · Handling errors and aborts',pts:1,run(L){
   L.h(L.kick('pr','Write the rule')+'<h1 class="q">Zainab writes a retry rule for Tobias’s booking code. Tap each piece until the rule is safe.</h1>');
   L.sentence(L.card,[['Retry every error','Retry only transient errors'],['instantly, with no limit','a few times, with backoff'],['and check for duplicates','and trust each runs once']],[1,1,0],
    [['A broken constraint or other permanent error will just fail again.'],['Instant, unlimited retries pile load onto a database that may already be overloaded.'],['If a commit worked but its reply was lost, a blind retry books the parcel twice.']],
-   'Retry what can succeed next time, don’t add to overload, and guard against a commit that already happened.');}},
-{part:3,src:'Chapter 7 · Single-Object and Multi-Object Operations · Handling errors and aborts',pts:1,run(L){
-  L.h(L.kick('pr','Best effort')+'<h1 class="q">Otterpost’s courier location store uses leaderless replication. A write reaches two replicas and fails on the third. Who has to deal with that?</h1><div id="hq"></div>');
-  L.mc(L.$('#hq'),['The store rolls back the two writes that worked','Otterpost’s own code has to recover from it','Nobody: leaderless replicas can’t disagree'],1,
-   'Leaderless stores work on a best-effort basis. They won’t undo what they already did, so recovering from errors is the app’s job.',
-   'A leaderless store won’t undo writes it has already made. Unlike an ACID transaction, the app must handle the error.');}}
+   'Retry what can succeed next time, don’t add to overload, and guard against a commit that already happened.');}}
   ]
 });
 </script>

@@ -13,252 +13,694 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0033 only. Two signature models, reused through the lesson:
+   1. The duplicate onion: four nested rings, each one the reach of one
+      duplicate check (outermost: the whole booking from the packer’s
+      click; then one API call from Bramble & Bolt’s server; then one
+      transaction between the API server and the Parcel DB; innermost:
+      one TCP connection). A retry starts in one ring. A check catches
+      it only if the retry started inside that check’s ring. The Parcel
+      DB in the middle counts parcels booked (1 or 2).
+   2. The audit chain: Bramble & Bolt’s October booking events as a hash
+      chain, the ledger derived from them, and the merchant’s own
+      records. Inject faults, then run three checks (walk the hash
+      chain, re-derive the ledger, compare end to end); each has its
+      own blind spot.
+   Plus: the slot-claim log (uniqueness by partition), the crash-and-
+   replay splitter (multi-partition without atomic commit), the wait
+   slider (timeliness vs integrity) and the apology trade-off chart.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.card [hidden]{display:none!important}'+
+ '.pic33{width:100%;display:block;margin:4px 0 2px}'+
+ '.t33{font:600 12.5px var(--sans);fill:var(--ink)}.m33{font:500 11.5px var(--sans);fill:var(--muted)}.b33{font:700 14.5px var(--sans);fill:var(--ink)}.k33{font:700 11px var(--sans);fill:var(--muted);letter-spacing:.03em}'+
+ '.capt33{font-size:15.5px;line-height:1.5;margin:10px 0 0}.capt33.sm{font-size:13.5px;color:var(--muted);margin-top:6px}'+
+ '.rd33{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.5;margin:8px 0 4px;min-height:44px}'+
+ '.row33{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 8px}.row33 .chip{margin:0;min-height:38px;font-size:14px;padding:6px 11px;text-align:left}'+
+ '.lab33{font-size:12px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 3px}'+
+ '.vd33{display:inline-block;font-weight:700;border-radius:99px;padding:1px 9px;font-size:13px;margin:0 6px 2px 0}.vd33.ok{background:var(--ok-bg);color:var(--ok)}.vd33.no{background:var(--no-bg);color:var(--no)}.vd33.mu{background:var(--soft2);color:var(--muted)}'+
+ '.mx33{width:100%;border-collapse:collapse;font-size:13.5px;margin:8px 0}.mx33 th,.mx33 td{padding:6px 3px;border-bottom:1px solid var(--line);text-align:center;vertical-align:middle}.mx33 th:first-child,.mx33 td:first-child{text-align:left}.mx33 th{font-size:11.5px;color:var(--muted);font-weight:700}'+
+ '.mx33 .y{color:var(--ok);font-weight:700;font-size:17px}.mx33 .n{color:var(--no);font-weight:700;font-size:17px}.mx33 .u{color:var(--faint)}.mx33 tr.cur td{background:var(--pri-bg)}'+
+ '.rng33{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14.5px;margin:8px 0}.rng33 input{grid-column:1/3;width:100%;accent-color:var(--pri);height:34px}.rng33 b{font-variant-numeric:tabular-nums}'+
+ '.step33{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:74px}.step33 .n{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.res33{list-style:none;margin:8px 0;padding:0;display:flex;flex-direction:column;gap:5px}.res33 li{border-radius:10px;padding:7px 10px;font-size:14px;line-height:1.4;background:var(--soft)}'+
+ '</style>');
+
+/* ---------------- tiny SVG helpers ---------------- */
+const tx=(x,y,t,cls,st)=>'<text x="'+x+'" y="'+y+'" class="'+(cls||'t33')+'"'+(st?' style="'+st+'"':'')+'>'+t+'</text>';
+const txc=(x,y,t,cls,st)=>'<text x="'+x+'" y="'+y+'" text-anchor="middle" class="'+(cls||'t33')+'"'+(st?' style="'+st+'"':'')+'>'+t+'</text>';
+const txr=(x,y,t,cls,st)=>'<text x="'+x+'" y="'+y+'" text-anchor="end" class="'+(cls||'t33')+'"'+(st?' style="'+st+'"':'')+'>'+t+'</text>';
+const rc=(x,y,w,h,fill,stroke,sw,dash,rx)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(rx==null?10:rx)+'" style="fill:var(--'+fill+');stroke:var(--'+(stroke||'line2')+');stroke-width:'+(sw||1.5)+(dash?';stroke-dasharray:5 4':'')+'"/>';
+const f1=n=>Math.round(n*10)/10;
+const arr=(x1,y1,x2,y2,col,dash,w)=>{const a=Math.atan2(y2-y1,x2-x1),hx=x2-8*Math.cos(a),hy=y2-8*Math.sin(a),s=Math.sin(a),c=Math.cos(a),k=col||'muted';
+  return '<path d="M'+f1(x1)+' '+f1(y1)+' L'+f1(hx)+' '+f1(hy)+'" style="fill:none;stroke:var(--'+k+');stroke-width:'+(w||2)+(dash?';stroke-dasharray:5 4':'')+'"/>'+
+   '<path d="M'+f1(x2)+' '+f1(y2)+' L'+f1(hx-4.5*s)+' '+f1(hy+4.5*c)+' L'+f1(hx+4.5*s)+' '+f1(hy-4.5*c)+'z" style="fill:var(--'+k+')"/>';};
+const pill=(x,y,w,t,kind)=>{const f=kind==='ok'?'ok-bg':kind==='no'?'no-bg':'soft2',s=kind==='ok'?'ok':kind==='no'?'no':'line2',c=kind==='ok'?'ok':kind==='no'?'no':'muted';
+  return rc(x,y,w,20,f,s,1.5,false,10)+txc(x+w/2,y+14,t,'k33','fill:var(--'+c+')');};
+const vd=(k,t)=>'<span class="vd33 '+k+'">'+t+'</span>';
+const svg33=(h,label,body)=>'<svg class="pic33" viewBox="0 0 340 '+h+'" role="img" aria-label="'+label+'">'+body+'</svg>';
+const money=c=>'$'+(c/100).toFixed(2);
+
+/* =================== Signature 1: the duplicate onion =================== */
+const RG=['Whole booking, from the click','One API call from the shop','One transaction, API ↔ DB','One TCP connection'];
+const RX=k=>({x:4+14*k,y:4+36*k,w:332-28*k,h:292-48*k});
+const ORG=[
+ {t:'Packer clicks “Book” again',d:'The packer saw an error and clicked again, so the shop sends a brand-new call.'},
+ {t:'Shop server retries',d:'The reply was lost, so Bramble & Bolt’s server sent the booking again as a new request.'},
+ {t:'API server reruns the transaction',d:'The DB connection timed out after COMMIT, so the API server reconnected and ran it again.'},
+ {t:'TCP resends a packet',d:'A packet looked lost, so TCP sent it again on the same connection.'}];
+const IDS={api:{k:2,t:'API server'},shop:{k:1,t:'shop server'},form:{k:0,t:'booking form'}};
+function onionEval(s){
+  const g=[{n:'TCP sequence numbers',tag:'TCP',k:3,on:true}];
+  if(s.tpc)g.push({n:'two-phase commit recovery',tag:'2PC',k:2,on:true});
+  if(s.id)g.push({n:'the request ID from the '+IDS[s.id].t,tag:'ID',k:IDS[s.id].k,on:!!s.uq,id:true});
+  if(s.o==null)return {g,caught:null,by:[],unchecked:false};
+  const by=g.filter(x=>x.on&&x.k<=s.o);
+  return {g,caught:by.length>0,by,unchecked:!!(s.id&&!s.uq&&IDS[s.id].k<=s.o)};
+}
+function onionSVG(s,R,anim){
+  let h='';
+  for(let k=0;k<4;k++){const r=RX(k),hit=R.by.some(x=>x.k===k);
+    h+='<rect x="'+r.x+'" y="'+r.y+'" width="'+r.w+'" height="'+r.h+'" rx="'+(18-2*k)+'" style="fill:var(--'+(k%2?'card':'soft')+');stroke:var(--'+(hit?'ok':'line2')+');stroke-width:'+(hit?3:1.5)+'"/>';
+    h+=tx(r.x+10,r.y+22,RG[k]);
+    const gs=R.g.filter(x=>x.k===k);
+    if(gs.length){const lab=gs.map(x=>x.tag).join('+'),w=16+lab.length*7.4,x=r.x+r.w-8-w,live=gs.some(x=>x.on);
+      h+='<rect x="'+f1(x)+'" y="'+(r.y+8)+'" width="'+f1(w)+'" height="20" rx="10" style="fill:var(--'+(hit?'ok-bg':live?'pri-bg':'soft2')+');stroke:var(--'+(hit?'ok':live?'pri':'line2')+');stroke-width:1.5'+(live?'':';stroke-dasharray:4 3')+'"/>'+
+        txc(f1(x+w/2),r.y+22,lab,'k33','fill:var(--'+(hit?'ok':live?'pri-deep':'muted')+')');}
+  }
+  const n=R.caught===false?2:1,bad=n===2;
+  h+=rc(66,152,208,96,'card',bad?'no':'line2',bad?2.5:1.5)+txc(170,172,'Parcel DB','t33')+
+    txc(170,199,n+(n===1?' parcel booked':' parcels booked'),'b33','fill:var(--'+(bad?'no':R.caught?'ok':'ink')+')')+
+    txc(170,218,money(420*n)+' charged to Bramble & Bolt','m33');
+  if(s.uq)h+=rc(102,226,136,17,'pri-bg','pri',1,false,8)+txc(170,238.5,'UNIQUE (request_id)','k33','fill:var(--pri-deep)');
+  if(s.o!=null){const y0=RX(s.o).y+18,col=R.caught?'ok':'no';
+    h+=arr(232,y0+11,232,150,col,!R.caught,2.5)+
+      '<circle cx="232" cy="'+y0+'" r="10" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:2"/>'+txc(232,y0+4.5,'↻','t33','fill:var(--'+col+')');
+    if(anim)h+='<circle r="5" cx="232" cy="'+y0+'" style="fill:var(--'+col+')"><animate attributeName="cy" from="'+y0+'" to="148" dur="0.6s" fill="freeze"/></circle>';}
+  return h;
+}
+function onionRead(s,R){
+  if(s.o==null)return 'Pick where the retry starts. So far: one booking, 1 parcel, $4.20.';
+  let t=(R.caught?vd('ok','1 parcel'):vd('no','2 parcels'))+ORG[s.o].d+' ';
+  if(R.caught)t+='Caught by '+R.by.map(x=>x.n).join(' and ')+': the retry started inside its ring.';
+  else t+='No working check’s ring contains where it started, so every layer sees a brand-new booking.';
+  if(R.unchecked)t+=' The request ID was carried along, but with no unique constraint the Parcel DB never checked it.';
+  return t;
+}
+function Onion(host,cfg){
+  const s=Object.assign({o:null,tpc:false,id:null,uq:false},cfg.s||{}),P=cfg.pre,ctl=cfg.ctl||[];
+  let html=svg33(300,'Four nested rings, each the reach of one duplicate check. Outermost: the whole booking from the packer’s click. Then one API call from the shop. Then one transaction between the API server and the Parcel DB. Innermost: one TCP connection. The Parcel DB in the middle counts parcels booked.','');
+  if(!cfg.noRead)html+='<div class="rd33" aria-live="polite"></div>';
+  if(ctl.includes('o'))html+='<div class="lab33">Where the retry starts</div><div class="row33">'+ORG.map((x,k)=>'<button class="chip" id="'+P+'o'+k+'">'+x.t+'</button>').join('')+'</div>';
+  if(ctl.includes('g'))html+='<div class="lab33">Duplicate checks</div><div class="row33"><span class="chip static">TCP: always on</span><button class="chip" id="'+P+'tpc"></button><button class="chip" id="'+P+'uq"></button></div>'+
+    '<div class="lab33">Request ID made in the…</div><div class="row33">'+[['none','nowhere'],['api','API server'],['shop','shop server'],['form','booking form']].map(x=>'<button class="chip" id="'+P+'id-'+x[0]+'">'+x[1]+'</button>').join('')+'</div>';
+  host.innerHTML=html;
+  const svg=host.querySelector('svg'),rd=host.querySelector('.rd33');
+  const o={s};
+  o.draw=anim=>{const R=onionEval(s);svg.innerHTML=onionSVG(s,R,anim);if(rd)rd.innerHTML=cfg.read?cfg.read(s,R):onionRead(s,R);
+    if(ctl.includes('o'))ORG.forEach((_,k)=>{const b=host.querySelector('#'+P+'o'+k);if(b)b.classList.toggle('sel',s.o===k);});
+    if(ctl.includes('g')){const t=host.querySelector('#'+P+'tpc'),u=host.querySelector('#'+P+'uq');
+      t.textContent='2PC recovery: '+(s.tpc?'on':'off');t.classList.toggle('sel',s.tpc);
+      u.textContent='Unique constraint: '+(s.uq?'on':'off');u.classList.toggle('sel',s.uq);
+      ['none','api','shop','form'].forEach(k=>host.querySelector('#'+P+'id-'+k).classList.toggle('sel',(s.id||'none')===k));}
+    return R;};
+  o.set=(p,anim)=>{Object.assign(s,p);const R=o.draw(anim);if(cfg.on)cfg.on(s,R);return R;};
+  if(ctl.includes('o'))ORG.forEach((_,k)=>{host.querySelector('#'+P+'o'+k).onclick=()=>o.set({o:k},true);});
+  if(ctl.includes('g')){host.querySelector('#'+P+'tpc').onclick=()=>o.set({tpc:!s.tpc});host.querySelector('#'+P+'uq').onclick=()=>o.set({uq:!s.uq});
+    ['none','api','shop','form'].forEach(k=>{host.querySelector('#'+P+'id-'+k).onclick=()=>o.set({id:k==='none'?null:k});});}
+  o.draw(false);
+  return o;
+}
+
+/* ---------------- $11 becomes $22: a sequence diagram you step through ---------------- */
+function seqSVG(st){
+  let h=rc(14,4,72,26,'h1-bg','h1')+txc(50,22,'App')+rc(250,4,80,26,'h2-bg','h2')+txc(290,22,'Database');
+  h+='<path d="M50 30 V206 M290 30 V206" style="stroke:var(--line2);stroke-width:1.5;stroke-dasharray:3 4"/>';
+  const msg=(y,t,col,back,dash)=>(back?arr(288,y,52,y,col,dash):arr(52,y,288,y,col,dash))+txc(170,y-5,t,'m33',col&&col!=='muted'?'fill:var(--'+col+')':'');
+  if(st>=1){h+=msg(50,'BEGIN')+msg(70,'UPDATE 1234: + $11')+msg(90,'UPDATE 4321: − $11')+msg(110,'COMMIT');
+    h+=txr(284,126,'committed ✓','m33','fill:var(--ok)');}
+  if(st>=2){h+=msg(142,'reply lost: connection timed out','no',true,true)+'<circle cx="270" cy="142" r="8" style="fill:var(--no-bg);stroke:var(--no)"/>'+txc(270,146,'✗','k33','fill:var(--no)');}
+  if(st>=3){h+=rc(56,152,228,16,'soft2','soft2',1,false,6)+txc(170,164,'new connection','k33');
+    const g=st>=4;
+    h+=msg(186,g?'2PC: reconnect, ask “did it commit?”':'BEGIN · +$11 · −$11 · COMMIT, again',g?'ok':'no');
+    if(g)h+=txr(284,202,'yes: nothing reruns','m33','fill:var(--ok)');}
+  const moved=st===0?0:st===3?22:11,bad=moved===22;
+  h+=rc(4,214,332,52,bad?'no-bg':moved?'ok-bg':'soft',bad?'no':moved?'ok':'line2')+tx(16,236,'Moved from 4321 to 1234','t33')+tx(16,254,bad?'twice: not idempotent':moved?'once':'nothing yet','m33')+
+    txr(322,250,'$'+moved,'b33','font-size:24px;fill:var(--'+(bad?'no':moved?'ok':'muted')+')');
+  return svg33(270,'Sequence diagram: an app sends a money transfer to a database, the reply is lost, and the app reruns it on a new connection',h);
+}
+
+/* ---------------- static pictures for Learn screens ---------------- */
+const PIC_REMEMBER=(()=>{let h=rc(2,2,164,132,'soft','line2')+tx(12,22,'Read-only service')+
+  pill(14,34,140,'bug ships','no')+arr(84,56,84,70)+pill(14,72,140,'fix it, restart','')+arr(84,94,84,108)+pill(14,110,140,'back to normal ✓','ok');
+ h+=rc(174,2,164,132,'soft','line2')+tx(184,22,'Database')+pill(186,34,140,'bug writes bad data','no')+arr(256,56,256,70)+
+  tx(186,86,'still there next year…','m33');
+ for(let j=0;j<6;j++)h+='<rect x="'+(188+j*23)+'" y="94" width="18" height="12" rx="3" style="fill:var(--no-bg);stroke:var(--no)"/>';
+ h+=tx(186,126,'and in copies, backups','m33','fill:var(--no)');
+ h+=rc(2,142,336,42,'ok-bg','ok')+tx(12,159,'Append-only data helps','t33','fill:var(--ok)')+tx(12,176,'buggy code can add bad records, not destroy good ones','m33','fill:var(--ink)');
+ h+=rc(2,192,164,84,'pri-bg','pri')+tx(12,212,'Serializable +','t33')+tx(12,228,'atomic commit','t33')+tx(12,246,'strong, but usually one','m33')+tx(12,262,'datacenter; limits scale','m33');
+ h+=rc(174,192,164,84,'soft2','line2')+tx(184,212,'Cross your fingers','t33')+tx(184,232,'fine only if losing or','m33')+tx(184,248,'corrupting some data','m33')+tx(184,264,'now and then is OK','m33');
+ h+=tx(4,298,'Transactions: the main tool for ~40 years, but…','t33');
+ h+=rc(2,306,164,44,'no-bg','no')+tx(12,323,'Weak isolation','t33','fill:var(--no)')+tx(12,340,'levels confuse people','m33','fill:var(--ink)');
+ h+=rc(174,306,164,44,'no-bg','no')+tx(184,323,'Jepsen tests','t33','fill:var(--no)')+tx(184,340,'found broken promises','m33','fill:var(--ink)');
+ return svg33(352,'Left: a read-only service recovers from a bug by restarting. Right: a database keeps a bad write for good; append-only data means buggy code cannot destroy good records. Then the two traditional choices, strong transactions or crossing your fingers. Last: transactions have been the main tool for about 40 years, but weak isolation levels confuse people and Jepsen tests found databases breaking their promises',h);})();
+
+const PIC_IDS=(()=>{let h=rc(64,4,212,58,'card','line2')+txc(170,24,'Book courier · Bramble & Bolt')+
+  rc(78,32,184,22,'pri-bg','pri',1.5,true,6)+txc(170,47,'hidden field: id = bb-7f3','m33','fill:var(--pri-deep)');
+ h+=arr(132,62,132,98)+arr(208,62,208,98)+txr(124,84,'try 1 · bb-7f3','m33')+tx(216,84,'try 2 · bb-7f3','m33');
+ h+=rc(92,98,156,28,'soft','line2')+txc(170,117,'Merchant API server','t33');
+ h+=arr(132,126,132,150)+arr(208,126,208,150);
+ h+=rc(4,150,332,110,'card','line2')+tx(14,170,'Parcel DB · table “requests”')+txr(326,170,'UNIQUE (request_id)','k33','fill:var(--pri-deep)');
+ h+=rc(14,180,312,32,'ok-bg','ok')+tx(24,201,'bb-7f3 · OP-48213 · $4.20')+txr(316,201,'✓ inserted','t33','fill:var(--ok)');
+ h+=rc(14,220,312,32,'no-bg','no',1.5,true)+tx(24,241,'bb-7f3 · again')+txr(316,241,'✗ exists → abort','t33','fill:var(--no)');
+ h+=rc(4,268,332,42,'ok-bg','ok')+tx(14,285,'✓ The DB’s constraint holds at weak isolation','t33','fill:var(--ok)')+tx(14,302,'app code that checks, then inserts, may not','m33','fill:var(--ink)');
+ h+=rc(4,316,332,42,'h3-bg','h3')+tx(14,333,'Bonus: “requests” is a small event log','t33','fill:var(--h3)')+tx(14,350,'balances could be derived from it downstream','m33','fill:var(--ink)');
+ return svg33(362,'A booking form holds a hidden request ID, bb-7f3. Both tries carry it through the API server to the Parcel DB, where a unique constraint inserts the first and rejects the second. The database keeps that constraint right even at weak isolation, unlike app code that checks then inserts. The requests table is also a small event log',h);})();
+
+const PIC_E2E=(()=>{const rows=[
+  ['Duplicates',['Form','Network','API server','Parcel DB'],[1,1],'TCP: one connection','a request ID, from the form to the DB'],
+  ['Corruption',['Sender','Network','Receiver','Disk'],[1,1],'Ethernet, TCP, TLS checksums','end-to-end checksums on the data'],
+  ['Snooping',['Laptop','WiFi','Internet','Server'],[1,2],'WiFi password, then TLS','end-to-end encryption and authentication']];
+ let h='';
+ rows.forEach((r,j)=>{const y=4+j*88,X=[6,90,174,258];
+  h+=tx(6,y+14,r[0]);
+  const xs=X[r[2][0]]-2,xe=X[r[2][1]]+78;
+  h+='<path d="M'+xs+' '+(y+36)+' V'+(y+30)+' H'+xe+' V'+(y+36)+'" style="fill:none;stroke:var(--muted);stroke-width:1.5"/>'+txc((xs+xe)/2,y+26,r[3],'m33');
+  r[1].forEach((n,q)=>{h+=rc(X[q],y+40,76,22,'soft','line2',1.5,false,6)+txc(X[q]+38,y+55,n,'m33','fill:var(--ink)');if(q<3)h+='<path d="M'+(X[q]+76)+' '+(y+51)+' H'+X[q+1]+'" style="stroke:var(--line2);stroke-width:2"/>';});
+  h+=rc(6,y+67,328,17,'ok-bg','ok',1,false,8)+txc(170,y+79.5,'✓ '+r[4],'k33','fill:var(--ok)');});
+ return svg33(266,'Three paths, for duplicates, corruption and snooping. A lower-layer guard covers only the middle hop; only an end-to-end guard covers the whole path',h);})();
+
+const PIC_UNIQUE=(()=>{let h=rc(6,6,116,26,'h1-bg','h1',1.5,false,13)+txc(64,23,'Mrs. Okoro','t33','fill:var(--h1)')+rc(218,6,116,26,'h2-bg','h2',1.5,false,13)+txc(276,23,'Dan','t33','fill:var(--h2)');
+ h+=arr(80,32,118,52)+arr(260,32,222,52)+rc(76,52,188,30,'card','line2')+txc(170,72,'Last place · W4, Tue 18–19');
+ h+=txc(170,104,'Who decides which claim wins?','k33');
+ const R=[['One leader decides','every claim goes through one node','works','ok'],['Partition by the value','same slot → same partition, in order','scales','ok'],['Async multi-leader','two leaders can both say “yes”','breaks','no']];
+ R.forEach((r,j)=>{const y=114+j*44;h+=rc(4,y,332,40,r[3]==='ok'?'soft':'no-bg',r[3]==='ok'?'line2':'no')+tx(14,y+17,r[0])+tx(14,y+33,r[1],'m33')+pill(272,y+10,56,r[2],r[3]);});
+ return svg33(248,'Mrs. Okoro and Dan claim the last place in a delivery slot at the same moment. One leader, or partitioning by the slot, picks one winner. Asynchronous multi-leader replication can accept both',h);})();
+
+const PIC_SPLIT=(()=>{let h=rc(54,4,232,32,'card','line2')+txc(170,25,'Bramble & Bolt: book, id bb-7f3');
+ h+=arr(170,36,170,50)+rc(18,50,304,36,'soft','line2',1.5,true)+txc(170,65,'0 · Credit check, partitioned by merchant')+txc(170,80,'stops overspending: only valid bookings go on','m33');
+ h+=arr(170,86,170,100);
+ const D=48;
+ h+=rc(18,52+D,304,40,'h3-bg','h3')+txc(170,68+D,'1 · Request log')+txc(170,84+D,'one message, partitioned by request ID','m33');
+ h+=arr(170,92+D,170,106+D)+rc(26,106+D,288,40,'h1-bg','h1')+txc(170,122+D,'2 · Splitter (deterministic)')+txc(170,138+D,'emits two messages, both carrying bb-7f3','m33');
+ h+=arr(120,146+D,88,168+D)+arr(220,146+D,252,168+D);
+ h+=rc(4,168+D,164,40,'card','line2')+txc(86,184+D,'debit $4.20')+txc(86,200+D,'ledger · by merchant M-17','m33');
+ h+=rc(172,168+D,164,40,'card','line2')+txc(254,184+D,'create OP-48213')+txc(254,200+D,'Parcel DB · by parcel','m33');
+ h+=arr(86,208+D,86,224+D)+arr(254,208+D,254,224+D)+rc(4,224+D,332,34,'ok-bg','ok')+txc(170,246+D,'3 · Consumers drop repeated IDs, apply once','t33','fill:var(--ok)');
+ return svg33(262+D,'A booking first passes a credit check partitioned by merchant. It then goes into a request log as one message. A deterministic splitter emits a debit for the ledger and a create for the Parcel DB, both carrying the request ID. Consumers drop repeats by ID',h);})();
+
+const PIC_TI=(()=>{let h=rc(2,2,164,150,'h1-bg','h1')+tx(12,22,'Timeliness','t33','fill:var(--h1)')+tx(12,38,'an up-to-date view','m33');
+ h+=tx(12,62,'Tracking page')+tx(12,80,'now: “at hub”','m33')+arr(30,86,30,104)+tx(40,100,'wait','m33')+tx(12,120,'later: “out for delivery”','m33')+pill(12,128,120,'fixes itself ✓','ok');
+ h+=rc(174,2,164,150,'h2-bg','h2')+tx(184,22,'Integrity','t33','fill:var(--h2)')+tx(184,38,'no corruption','m33');
+ h+=tx(184,62,'October invoice')+tx(184,80,'now: ≠ sum of charges','m33')+arr(202,86,202,104)+tx(212,100,'wait','m33')+tx(184,120,'later: still ≠','m33')+pill(184,128,140,'needs check + repair','no');
+ h+=rc(2,162,336,60,'soft','line2')+tx(12,182,'Your card statement')+tx(12,199,'Today’s purchase not shown yet: normal.','m33')+tx(12,215,'Balance ≠ sum of purchases: a disaster.','m33','fill:var(--no)');
+ h+=rc(2,230,336,42,'h1-bg','h1')+tx(12,247,'Timeliness comes in strengths','t33','fill:var(--h1)')+tx(12,264,'strong: linearizability · weaker: read-your-writes','m33','fill:var(--ink)');
+ h+=rc(2,278,336,42,'soft','line2')+tx(12,295,'ACID transactions give both','t33')+tx(12,312,'async dataflow: integrity; timeliness if you wait','m33','fill:var(--ink)');
+ return svg33(322,'Two cards. Timeliness: a stale tracking page fixes itself if you wait. Integrity: a wrong invoice stays wrong until someone checks and repairs it. Timeliness comes in strengths, from linearizability to read-your-writes. ACID transactions give both; asynchronous dataflow gives integrity, and timeliness only if the client waits for its answer',h);})();
+
+const PIC_SORRY=(()=>{const R=[['Two shops pick the same handle','ask one to pick another',.12],['Sold more than in stock','restock, say sorry, discount',.3],['Overbooked flight','refund or upgrade',.42],['Card charged twice','refund one: fees, a complaint',.32],['Wrong email sent','can’t unsend: send a correction',.38],['Cash paid out of an ATM','can’t take it back',1]];
+ let h=txr(334,14,'cost of saying sorry →','k33');
+ R.forEach((r,j)=>{const y=22+j*40,bad=r[2]>=1;
+  h+=rc(2,y,336,36,bad?'no-bg':'soft',bad?'no':'line2')+tx(10,y+15,r[0])+tx(10,y+30,r[1],'m33',bad?'fill:var(--no)':'');
+  h+='<rect x="236" y="'+(y+12)+'" width="'+f1(8+r[2]*86)+'" height="12" rx="6" style="fill:var(--'+(bad?'no':'ok')+')"/>';});
+ h+=rc(2,266,164,24,'ok-bg','ok',1.5,false,12)+txc(84,282,'cheap: write now, fix later','k33','fill:var(--ok)')+rc(174,266,164,24,'no-bg','no',1.5,false,12)+txc(256,282,'costly: check before acting','k33','fill:var(--no)');
+ return svg33(294,'Six broken rules and the cost of fixing each afterwards, from asking someone to pick another name (cheap) to cash paid out of an ATM (cannot be taken back)',h);})();
+
+/* ---------------- check first or fix later: cases dropped on the cost-of-sorry scale ---------------- */
+const SC20=[
+ {t:'Two recipients grab the last place in a Peak Week delivery slot.',s:'slot',c:.2,r:1,up:false,w:'Apologize to one and offer the next slot or a small discount: a cheap compensating transaction.'},
+ {t:'Paying couriers’ weekly earnings to their bank accounts.',s:'payout',c:.95,r:0,up:false,w:'Like cash from an ATM, money paid out is hard to get back. Check before this step.'},
+ {t:'Bramble & Bolt’s prepaid credit dips slightly below zero in a flash sale, within a daily limit.',s:'credit',c:.3,r:1,up:true,w:'Like an overdraft with a daily limit: the risk is capped and the fix is simply billing them.'},
+ {t:'Two small merchants pick the same shop handle on the dashboard.',s:'handle',c:.08,r:1,up:true,w:'Ask one of them to choose another, like a clashing username.'}];
+function sorryScaleSVG(placed,anim){
+  const X=c=>f1(14+c*312);
+  let h=tx(4,14,'Otterpost cases','k33')+txr(336,14,'cost of saying sorry →','k33');
+  h+=rc(4,52,254,30,'ok-bg','ok',1.5,false,15)+rc(262,52,74,30,'no-bg','no',1.5,false,15);
+  h+=tx(4,128,'← cheap: fix later','k33','fill:var(--ok)')+txr(336,128,'can’t undo: check first →','k33','fill:var(--no)');
+  if(!placed.length)h+=txc(170,106,'(nothing placed yet)','m33');
+  placed.forEach((p,q)=>{const c=SC20[p.k],x=X(c.c),col=p.ok?'ok':'no',last=anim&&q===placed.length-1;
+    h+='<g>'+(last?'<animateTransform attributeName="transform" type="translate" from="0 -40" to="0 0" dur="0.4s" fill="freeze"/>':'')+
+      '<circle cx="'+x+'" cy="67" r="13" style="fill:var(--card);stroke:var(--'+col+');stroke-width:2.5"/>'+txc(x,71.5,String(p.k+1),'t33','fill:var(--'+col+')')+
+      txc(x,c.up?42:108,c.s,'t33')+'</g>';});
+  return svg33(134,'A cost-of-sorry scale: the left part is cheap to fix later, the right end cannot be undone and needs a check first. Each case you decide is placed on it'+(placed.length?': '+placed.map(p=>SC20[p.k].s+(p.k===1?' at the cannot-undo end':' in the cheap part')).join(', '):''),h);
+}
+
+const PIC_MODEL=(()=>{let h=rc(2,2,164,112,'ok-bg','ok')+tx(12,22,'We plan for','t33','fill:var(--ok)')+tx(12,46,'• processes crash','m33','fill:var(--ink)')+tx(12,66,'• power goes out','m33','fill:var(--ink)')+tx(12,86,'• messages lost or late','m33','fill:var(--ink)');
+ h+=rc(174,2,164,112,'soft','line2')+tx(184,22,'We assume never')+tx(184,46,'• fsync’d data is lost','m33','fill:var(--ink)')+tx(184,66,'• memory flips a bit','m33','fill:var(--ink)')+tx(184,86,'• CPU maths is wrong','m33','fill:var(--ink)');
+ h+='<path d="M326 4 L318 30 L330 52 L320 80 L328 112" style="fill:none;stroke:var(--no);stroke-width:2"/>';
+ h+=tx(4,140,'…but rare isn’t never:','t33','fill:var(--no)');
+ const T=[['data rots on idle disks',0],['bit flips, even rowhammer',1],['TCP checksums miss some',0],['MySQL broke a unique rule',1],['PostgreSQL serializable allowed write skew',2],['app code: far less tested, far more bugs',2]];
+ T.forEach((t,j)=>{const full=t[1]===2,x=t[1]===1?172:2,w=full?336:166,y=150+(j<4?Math.floor(j/2):j-2)*28;h+=rc(x,y,w,23,'no-bg','no',1,false,11)+txc(x+w/2,y+15.5,t[0],'k33','fill:var(--no)');});
+ h+=tx(4,280,'So read it back and check:','t33','fill:var(--ok)');
+ const loop=(cx,cy)=>'<path d="M'+(cx+7)+' '+(cy-5)+' A9 9 0 1 0 '+(cx+9)+' '+(cy+2)+'" style="fill:none;stroke:var(--ok);stroke-width:2"/><path d="M'+(cx+3)+' '+(cy-9)+' L'+(cx+10)+' '+(cy-6)+' L'+(cx+5)+' '+(cy+1)+'z" style="fill:var(--ok)"/>';
+ h+=rc(2,288,164,58,'ok-bg','ok')+loop(148,306)+tx(12,306,'HDFS, Amazon S3','t33')+tx(12,323,'re-read files, compare','m33','fill:var(--ink)')+tx(12,338,'replicas, move disks','m33','fill:var(--ink)');
+ h+=rc(174,288,164,58,'ok-bg','ok')+loop(320,306)+tx(184,306,'Your backups','t33')+tx(184,323,'try a restore now and','m33','fill:var(--ink)')+tx(184,338,'then, not after a loss','m33','fill:var(--ink)');
+ return svg33(350,'What a system model plans for (crashes, power loss, lost messages) and what it assumes never happens (lost disk data, memory bit flips, wrong maths). Then six ways the never cases do happen. Last, two checks: HDFS and Amazon S3 keep re-reading files and comparing replicas, and you should try restoring your backups now and then',h);})();
+
+const PIC_AUDIT=(()=>{let h=rc(2,2,140,150,'soft','line2')+tx(12,22,'Only table changes')+
+  tx(12,48,'UPDATE ledger','m33','fill:var(--ink);font-family:monospace')+tx(12,64,'SET amount = 5.10','m33','fill:var(--ink);font-family:monospace')+tx(12,80,'WHERE line = 3','m33','fill:var(--ink);font-family:monospace')+
+  txc(72,124,'why?','b33','font-size:22px;fill:var(--no)');
+ h+=rc(150,2,188,150,'pri-bg','pri')+tx(160,22,'Events + fixed code');
+ ['e1','e2','e3'].forEach((e,j)=>{h+=rc(162+j*58,32,44,24,'card','pri',1.5,false,6)+txc(184+j*58,48,e,'k33','fill:var(--pri-deep)');if(j<2)h+=arr(206+j*58,44,220+j*58,44,'pri');});
+ h+=arr(244,56,244,72,'pri')+rc(184,72,120,24,'card','pri',1.5,false,6)+txc(244,88,'billing code v12','k33','fill:var(--pri-deep)')+arr(244,96,244,112,'pri')+rc(204,112,80,24,'card','pri',1.5,false,6)+txc(244,128,'ledger','k33','fill:var(--pri-deep)');
+ h+=rc(2,162,336,30,'soft2','soft2')+txc(170,182,'Hashes show the event log wasn’t corrupted','m33','fill:var(--ink)');
+ h+=rc(2,198,336,30,'soft2','soft2')+txc(170,218,'Rerun the code: same events must give the same ledger','m33','fill:var(--ink)');
+ h+=rc(2,236,336,44,'no-bg','no')+tx(12,253,'Kleppmann’s worry: ACID taught blind trust','t33','fill:var(--no)')+tx(12,270,'NoSQL weakened guarantees before audit tools existed','m33','fill:var(--ink)');
+ return svg33(282,'Left: table changes show what changed but not why. Right: immutable events run through a fixed version of the billing code produce the ledger, which can be replayed and checked. Last: Kleppmann fears ACID culture taught blind trust, and NoSQL weakened the guarantees before audit tools existed',h);})();
+
+/* ---------------- slot claims in a partitioned log ---------------- */
+const WHO=[{n:'Mrs. Okoro',c:'h1'},{n:'Dan',c:'h2'}];
+function slotSVG(key,ph){
+  const part=key==='slot'?[1,1]:[0,1];
+  const done=j=>key==='slot'?ph>j:ph>=1;
+  const res=j=>!done(j)?null:key==='rec'?'ok':(j===0?'ok':'no');
+  const left=p=>{let n=1;[0,1].forEach(j=>{if(part[j]===p&&res(j)==='ok')n--;});return n;};
+  let h=tx(4,15,'Last place: zone W4, Tue 18:00–19:00')+txr(336,15,key==='slot'?'by slot':'by recipient','k33','fill:var(--pri-deep)');
+  [0,1].forEach(p=>{const y=26+p*74,ms=[0,1].filter(j=>part[j]===p);
+    h+=rc(4,y,212,64,'soft','line2')+tx(12,y+17,'Partition '+p,'k33')+arr(200,y+40,226,y+40);
+    ms.forEach((j,q)=>{const x=108-q*98,w=WHO[j];h+='<g style="opacity:'+(done(j)?.35:1)+'">'+rc(x,y+24,88,30,w.c+'-bg',w.c,1.5,false,8)+txc(x+44,y+44,w.n,'t33','fill:var(--'+w.c+')')+'</g>';});
+    if(!ms.length)h+=tx(14,y+44,'(no claims here)','m33');
+    const lf=left(p);
+    h+=rc(228,y,108,64,'card','line2')+txc(282,y+19,'Processor '+p)+txc(282,y+36,'local DB says','m33')+txc(282,y+54,lf+(lf===1?' place left':' places left'),'t33',lf===0?'fill:var(--muted)':'');});
+  h+=rc(4,176,332,64,'card','line2')+tx(12,193,'Output stream','k33');
+  [0,1].forEach(j=>{const r=res(j);if(r)h+=pill(12+j*162,206,154,WHO[j].n+': '+(r==='ok'?'accepted':'rejected'),r);});
+  if(!res(0)&&!res(1))h+=tx(12,222,'(nothing yet)','m33');
+  return svg33(244,'Two log partitions, each read in order by its own processor with a local count of places left. An output stream shows which claims were accepted',h);
+}
+
+/* ---------------- crash and replay in the booking pipeline ---------------- */
+function crashSVG(st){
+  let h;
+  if(st.log)h=rc(4,4,332,48,'h3-bg','h3')+tx(14,20,'Request log · by request ID','k33')+rc(14,26,214,20,'card','h3',1.5,false,6)+tx(22,40,'bb-7f3 · book OP-48213 · $4.20','m33','fill:var(--ink)');
+  else h=rc(4,4,332,48,'soft2','line2',1.5,true)+tx(14,20,'No request log','k33')+tx(14,40,'the shop sends both messages itself','m33');
+  const spCol=st.sp==='crash'?'no':st.sp==='again'?'h1':'line2',spF=st.sp==='crash'?'no-bg':st.sp==='again'?'h1-bg':'card';
+  const spT={idle:'waiting',run:'running',crash:'✗ crashed',again:'restarted from checkpoint',dead:'✗ crashed, gone'}[st.sp];
+  h+=arr(170,52,170,66)+rc(80,66,180,40,spF,spCol)+txc(170,84,st.log?'Splitter':'Shop’s own code')+txc(170,99,spT,'m33',st.sp==='crash'||st.sp==='dead'?'fill:var(--no)':'');
+  h+=arr(120,106,88,122)+arr(220,106,252,122);
+  h+=rc(4,122,164,62,'soft','line2')+tx(12,138,'Ledger stream · M-17','k33');
+  st.deb.forEach((d,j)=>{const x=12+j*76,dr=d==='drop';h+=rc(x,146,70,28,dr?'soft2':'card',dr?'line2':'h3',1.5,dr,6)+txc(x+35,164,dr?'✗ repeat':'debit 4.20','k33','fill:var(--'+(dr?'muted':'h3')+')');});
+  h+=rc(172,122,164,62,'soft','line2')+tx(180,138,'Parcel stream','k33');
+  st.cre.forEach((d,j)=>{const x=180;h+=rc(x,146,130,28,'card','h2',1.5,false,6)+txc(x+65,164,'create OP-48213','k33','fill:var(--h2)');});
+  h+=arr(86,184,86,198)+arr(254,184,254,198);
+  const twice=st.ch>420,none=st.ch>0&&st.pc===0&&st.end;
+  h+=rc(4,198,164,60,twice?'no-bg':'card',twice?'no':'line2')+tx(12,216,'Billing ledger')+tx(12,236,'charged '+money(st.ch),'b33','fill:var(--'+(twice?'no':'ink')+')')+tx(12,252,st.dd?'drops repeated IDs':'no ID check','m33');
+  h+=rc(172,198,164,60,none?'no-bg':'card',none?'no':'line2')+tx(180,216,'Parcel DB')+tx(180,236,st.pc+(st.pc===1?' parcel':' parcels'),'b33','fill:var(--'+(none?'no':'ink')+')')+tx(180,252,st.dd?'drops repeated IDs':'no ID check','m33');
+  return svg33(262,'Booking pipeline: request log, splitter, a ledger stream and a parcel stream, then the billing ledger and the Parcel DB with their totals',h);
+}
+
+/* ---------------- the wait slider: timeliness vs integrity ---------------- */
+const WROWS=[
+ {n:'Tracking page (Mrs. Okoro)',src:'Parcel DB: out for delivery',v0:'Shown: at hub',v1:'Shown: out for delivery',heal:true},
+ {n:'October invoice (Bramble & Bolt)',src:'Parcel charges add up to $28.20',v0:'Invoice total: $32.40'},
+ {n:'Support search (Signe’s team)',src:'Parcel DB: 300 new parcels',v0:'Index: those 300 are missing'}];
+function waitSVG(m){
+  let h='';
+  WROWS.forEach((r,k)=>{const y=2+k*70,ok=r.heal&&m>=2;
+    h+=rc(2,y,336,64,ok?'ok-bg':'soft',ok?'ok':'line2')+tx(12,y+19,r.n)+tx(12,y+37,r.src,'m33')+tx(12,y+55,ok?r.v1:r.v0,'t33','fill:var(--'+(ok?'ok':'no')+')')+
+     pill(250,y+8,80,ok?'in step':'out of step',ok?'ok':'no');});
+  return svg33(212,'Three problems: a stale tracking page, an invoice that does not add up, and a search index missing parcels, each with what the source says and what is shown',h);
+}
+
+/* ---------------- the apology trade-off chart ---------------- */
+const INC=x=>8+80*Math.pow(1-x,2),OUT=x=>6+72*Math.pow(x,2.2);
+const CX=x=>44+x*280,CY=v=>156-v*1.25;
+function tradeSVG(x){
+  const pts=f=>{let d='';for(let j=0;j<=40;j++){const u=j/40;d+=(j?' L':'M')+f1(CX(u))+' '+f1(CY(f(u)));}return d;};
+  let best=0,bv=1e9;for(let j=0;j<=100;j++){const u=j/100,v=INC(u)+OUT(u);if(v<bv){bv=v;best=u;}}
+  let h=tx(4,14,'apologies (illustrative)','k33')+'<path d="M44 20 V156 H326" style="fill:none;stroke:var(--line2);stroke-width:1.5"/>';
+  h+=tx(44,172,'less coordination','m33')+txr(326,172,'more','m33');
+  h+='<path d="'+pts(INC)+'" style="fill:none;stroke:var(--h1);stroke-width:2.5"/><path d="'+pts(OUT)+'" style="fill:none;stroke:var(--h4);stroke-width:2.5"/><path d="'+pts(u=>INC(u)+OUT(u))+'" style="fill:none;stroke:var(--ink);stroke-width:1.5;stroke-dasharray:5 4"/>';
+  h+='<path d="M'+f1(CX(best))+' 24 V156" style="stroke:var(--ok);stroke-width:1.5;stroke-dasharray:3 3"/>'+txc(f1(CX(best)),186,'sweet spot','k33','fill:var(--ok)');
+  [[INC,'h1'],[OUT,'h4'],[u=>INC(u)+OUT(u),'ink']].forEach(([f,c])=>{h+='<circle cx="'+f1(CX(x))+'" cy="'+f1(CY(f(x)))+'" r="6" style="fill:var(--card);stroke:var(--'+c+');stroke-width:3"/>';});
+  const lg=(x,c,t,d)=>'<path d="M'+x+' 206 H'+(x+18)+'" style="stroke:var(--'+c+');stroke-width:'+(d?1.5:2.5)+(d?';stroke-dasharray:4 3':'')+'"/>'+tx(x+23,210,t,'m33','fill:var(--ink)');
+  h+=lg(4,'h1','inconsistencies')+lg(124,'h4','outages, slowness')+lg(262,'ink','total',true);
+  return svg33(216,'Chart: as coordination grows, apologies for inconsistencies fall and apologies for outages and slowness rise. The total is lowest at a sweet spot in between',h);
+}
+
+/* =================== Signature 2: the audit chain =================== */
+const AP=[420,420,510,420,630,420];
+const hsh=(p,i,c)=>(p*31+(i+1)*977+c*13)%65536;
+const hex=n=>n.toString(16).padStart(4,'0');
+const FAULT={
+ flip:{t:'Disk flips a bit in event #4',s:'Bit flip in the log'},
+ twice:{t:'Ledger applies #2 twice',s:'Applied twice'},
+ lost:{t:'Ledger skips #5',s:'Line lost'},
+ db:{t:'DB bug writes line #3 wrong',s:'DB bug, wrong amount'},
+ bad:{t:'Booking code writes a wrong price into #6',s:'Wrong price in the event'}};
+function auditState(F){
+  const ev=AP.map((c,i)=>({i,c}));
+  if(F.has('bad'))ev[5].c=720;
+  let p=0;ev.forEach(e=>{p=hsh(p,e.i,e.c);e.h=p;});
+  let led=ev.map(e=>({i:e.i,c:e.c}));
+  if(F.has('db'))led[2].c=5100;
+  if(F.has('lost'))led=led.filter(l=>l.i!==4);
+  if(F.has('twice'))led.splice(led.findIndex(l=>l.i===1)+1,0,{i:1,c:420});
+  if(F.has('flip'))ev[3].c=428;
+  return {ev,led,mer:AP.slice()};
+}
+const chkHash=S=>{let p=0;for(const e of S.ev){p=hsh(p,e.i,e.c);if(p!==e.h)return e.i;}return -1;};
+const cmpLines=(S,ref)=>{const f=new Set(),seen={};S.led.forEach((l,j)=>{if(seen[l.i]||l.c!==ref[l.i])f.add('L'+j);seen[l.i]=1;});ref.forEach((c,i)=>{if(!seen[i])f.add('X'+i);});return f;};
+const chkDer=S=>cmpLines(S,S.ev.map(e=>e.c)),chkE2E=S=>cmpLines(S,S.mer);
+const CHECKS={hash:'Walk the hash chain',der:'Re-derive the ledger',e2e:'Compare end to end'};
+const caughtBy=(S,k)=>k==='hash'?chkHash(S)>=0:(k==='der'?chkDer(S):chkE2E(S)).size>0;
+const CATCH={};Object.keys(FAULT).forEach(f=>{const S=auditState(new Set([f]));CATCH[f]={};Object.keys(CHECKS).forEach(k=>{CATCH[f][k]=caughtBy(S,k);});});
+function auditSVG(S,mk,opt){
+  opt=opt||{};mk=mk||{};
+  let h=tx(4,14,'Event log · hash chain','k33')+txr(336,14,'lesson’s own model','m33');
+  const hb=mk.hash==null?null:mk.hash;
+  S.ev.forEach((e,i)=>{const col=i%3,row=Math.floor(i/3),x=4+col*114;
+    const Y=22+row*68,bad=hb!=null&&hb>=0&&i===hb,after=hb!=null&&hb>=0&&i>hb,ok=hb!=null&&(hb<0||i<hb);
+    h+=rc(x,Y,104,54,bad?'no-bg':'card',bad?'no':ok?'ok':'line2',bad?3:ok?2:1.5,after)+
+      tx(x+8,Y+16,'#'+(i+1)+' · bb-70'+(i+1),'m33')+tx(x+8,Y+34,money(e.c),'b33',e.c!==AP[i]&&opt.reveal?'fill:var(--no)':'')+tx(x+8,Y+48,'hash '+hex(e.h),'m33','font-family:monospace')+
+      (bad?txr(x+98,Y+34,'✗','b33','fill:var(--no)'):'');
+    if(col<2)h+=arr(x+104,Y+27,x+114,Y+27,'line2');});
+  h+='<path d="M286 76 V83 H56 V88" style="fill:none;stroke:var(--line2);stroke-width:2"/>';
+  const D=mk.der||new Set(),E=mk.e2e||new Set(),tot=S.led.reduce((a,l)=>a+l.c,0);
+  h+=tx(4,162,'Ledger (derived) → invoice','k33')+txr(336,162,'invoice '+money(tot),'t33',tot!==2820&&opt.reveal?'fill:var(--no)':'');
+  let cells=[];
+  for(let i=0;i<6;i++){S.led.forEach((l,j)=>{if(l.i===i)cells.push({lab:'#'+(i+1),c:l.c,j});});
+    if(!S.led.some(l=>l.i===i)&&(D.has('X'+i)||E.has('X'+i)))cells.push({lab:'#'+(i+1),miss:true});}
+  cells.forEach((c,q)=>{const x=4+q*47,y=170,flag=c.miss||D.has('L'+c.j)||E.has('L'+c.j),chk=(mk.der||mk.e2e)&&!flag;
+    h+=rc(x,y,43,40,flag?'no-bg':'card',flag?'no':chk?'ok':'line2',flag?2:1.5,c.miss,6)+txc(x+21.5,y+15,c.lab,'m33')+txc(x+21.5,y+32,c.miss?'?':(c.c/100).toFixed(2),'t33',flag?'fill:var(--no)':'');});
+  h+=tx(4,232,'Bramble & Bolt’s own records','k33')+txr(336,232,opt.hideMer&&!mk.e2e?'ask them':'expects '+money(2820),'t33');
+  const merBad=new Set();S.led.forEach((l,j)=>{if(E.has('L'+j))merBad.add(l.i);});for(let i=0;i<6;i++)if(E.has('X'+i))merBad.add(i);
+  AP.forEach((c,i)=>{const x=4+i*47,y=240,b=merBad.has(i),hid=opt.hideMer&&!mk.e2e;
+    h+=rc(x,y,43,40,b?'no-bg':'soft',b?'no':'line2',1.5,hid,6)+txc(x+21.5,y+15,'#'+(i+1),'m33')+txc(x+21.5,y+32,hid?'…':(c/100).toFixed(2),'t33');});
+  return svg33(284,'Six booking events in a hash chain, the ledger lines derived from them with the invoice total, and Bramble & Bolt’s own records of the same six bookings',h);
+}
+function auditRead(S,mk){
+  const out=[];
+  if(mk.hash!=null)out.push(mk.hash>=0?vd('no','Hash chain')+'broken at event #'+(mk.hash+1)+': its stored bytes no longer match its hash.':vd('ok','Hash chain')+'intact: the log is as it was written.');
+  const desc=set=>{const n=set.size;return n+' line'+(n===1?'':'s')+' differ'+(n===1?'s':'');};
+  if(mk.der)out.push(mk.der.size?vd('no','Re-derive')+desc(mk.der)+' from what the events say.':vd('ok','Re-derive')+'the ledger matches the events.');
+  if(mk.e2e)out.push(mk.e2e.size?vd('no','End to end')+desc(mk.e2e)+' from Bramble & Bolt’s records.':vd('ok','End to end')+'the bill matches what Bramble & Bolt booked.');
+  return out.join('<br>');
+}
+
+/* =================================================================== */
 Course.lesson({
-  id:'0033', title:'Aiming for correctness', minutes:20, icon:'shield',
-  goals:['Stop retries from doubling work with an end-to-end request ID','Enforce constraints across partitions with logs instead of atomic commit','Tell timeliness from integrity, and decide when to check, apologize or audit'],
+  id:'0033', title:'Aiming for correctness', minutes:22, icon:'shield',
+  goals:['Stop retries from doubling work with a request ID made at the client and checked at the database','Enforce uniqueness and multi-partition writes with ordered logs instead of atomic commit','Tell timeliness from integrity, and catch corruption with end-to-end audits'],
   parts:['End to end','Constraints','Timeliness vs integrity','Trust, but verify'],
-  read:'Read the “Aiming for Correctness” section of chapter 12 for the full money-transfer walk-through and Kleppmann’s case for self-auditing systems.',
+  read:'Read “Aiming for Correctness” in chapter 12 for the full money-transfer walk-through and Kleppmann’s case for self-auditing systems.',
   glossary:{
+    exactlyonce:'Exactly-once semantics (better called effectively-once): even if some work is retried after a fault, the visible result is as if every input was processed exactly once.',
     idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
     'request-id':'Request ID (operation identifier): a unique ID created once for an operation by the client, sent with every retry and checked at the database, so a repeat can be recognized and ignored.',
     'end-to-end':'End-to-end argument: the idea (Saltzer, Reed and Clark, 1984) that some jobs, like removing duplicates or catching corruption, can only be done completely by the applications at the two ends. Lower layers can help but can’t finish the job.',
-    'timeliness':'Timeliness: users see the system in an up-to-date state. A timeliness problem, like a stale read, goes away if you wait and try again.',
-    'integrity':'Integrity: no corruption: nothing lost, nothing contradictory or false, and derived data that matches its source. An integrity problem stays until someone finds it and repairs it.',
+    tob:'Total order broadcast: a way of sending messages so that none are lost and every node gets them in exactly the same order. Also called atomic broadcast.',
+    timeliness:'Timeliness: users see data that is current. A timeliness problem, like a stale read, goes away if you wait and try again.',
+    integrity:'Integrity: no corruption: nothing lost, nothing contradictory or false, and derived data that matches its source. An integrity problem stays until someone finds it and repairs it.',
     compensating:'Compensating transaction: a new, separate transaction that undoes the effects of an earlier committed one. To the database it is just another transaction.',
-    'auditing':'Auditing: checking the integrity of data, for example by re-reading it, comparing copies or rerunning the processing that produced it.',
-    'merkle':'Merkle tree: a tree of hashes. Changing any record changes the hashes above it, and it can prove efficiently that a record is part of a dataset.'
+    auditing:'Auditing: checking the integrity of data, for example by re-reading it, comparing copies or rerunning the processing that produced it.',
+    merkle:'Merkle tree: a tree of hashes. Changing any record changes the hashes above it, and it can prove efficiently that a record is part of a dataset.'
   },
   cheatsheet:[
-    'Even <b>serializable transactions</b> can’t stop an app bug or a repeated request from writing wrong data.',
-    'TCP, database transactions and 2PC each remove duplicates only <b>within their own scope</b>. Fix it end to end: a <b>request ID</b> made by the client, checked by a unique constraint.',
-    '<b>End-to-end argument:</b> only the endpoints can fully guarantee correctness. Lower layers just make problems rarer.',
-    'Uniqueness needs <b>consensus</b>: one leader, or route every claim on a value to <b>one log partition</b> processed in order.',
-    'Multi-partition writes without atomic commit: log <b>one message</b>, derive per-partition messages deterministically, <b>dedupe by request ID</b>.',
-    '<b>Timeliness</b> violations are temporary; <b>integrity</b> violations are permanent. Integrity matters more.',
-    '<b>Loose constraints:</b> write now, apologize later (a compensating transaction), unless the action is hard to undo. Coordinate only where you must.',
-    '<b>Trust, but verify:</b> audit end to end, replay events through deterministic code, and test your restores.'
+    'Even <b>serializable transactions</b> can’t stop an app bug, or a repeated request, from writing wrong data.',
+    'TCP, transactions and 2PC each catch duplicates <b>only inside their own ring</b>. A retry that starts further out looks brand new.',
+    'Fix it end to end: a <b>request ID made once at the client</b> (hidden form field or hash of the form), carried through, and <b>checked by a unique constraint</b>.',
+    '<b>End-to-end argument:</b> only the endpoints can fully guarantee correctness. Lower layers make problems rarer, not impossible.',
+    'Uniqueness needs <b>consensus</b>: one leader, or route every claim on a value to <b>one log partition</b> read in order.',
+    'Multi-partition writes without atomic commit: log <b>one message</b>, split it <b>deterministically</b>, <b>dedupe by request ID</b>.',
+    '<b>Timeliness</b> problems fix themselves; <b>integrity</b> problems are permanent. Relax timeliness (apologize later) where it’s cheap; never integrity.',
+    '<b>Trust, but verify:</b> hash the log, re-derive the derived data, and check the pipeline end to end. Each check has a blind spot.'
   ],
   steps:[
 /* ---------- PART 1: END TO END ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt’s server books a parcel through Otterpost’s merchant API. The booking goes through, but the reply never arrives. Their code sends the same request again. What might happen?</h1>');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Bramble & Bolt’s server books a parcel through Otterpost’s merchant API. The booking goes through, but the reply never arrives, so their code sends the same request again. What might happen?</h1>');
   L.mc(L.card,['Otterpost books two parcels and charges twice','Nothing: the network quietly drops the copy'],0,
-   'From Otterpost’s side the retry looks like a brand-new booking. This lesson is about making that retry harmless.',
+   'To Otterpost the retry looks like a brand-new booking. This lesson is about making that retry harmless.',
    'The network only drops copies inside one connection. A retry sent later looks like a brand-new booking, so the parcel can be booked and charged twice.');}},
+
 {part:0,src:'Chapter 12 · Aiming for Correctness',run(L){
-  L.h(L.kick('learn','Why correctness is hard')+'<h1 class="q">Databases remember their mistakes</h1>'+
-   L.prose('If a service only reads data, a bug is easy to recover from: fix it, restart, done. A database is built to remember things more or less forever, so a wrong write can last forever too.')+
-   L.prose('For about forty years, '+L.g('transaction','transactions')+' (atomicity, isolation, durability) have been the main tool for building correct apps. Kleppmann argues these foundations are weaker than they look: weak isolation levels confuse people, and independent tests (the Jepsen experiments) have found databases that break their own promises when the network fails. Simple designs often work at low load with no faults, then show subtle bugs under pressure.')+
-   L.lanes([['lock','Serializable + atomic commit','Strong guarantees, but they usually work only inside one datacenter, and they limit scale and fault tolerance.',1],
-            ['alert','Cross your fingers','Simpler, but only fine if you can live with losing or corrupting data now and then.',4]])+
-   L.note('Kleppmann’s view: transactions aren’t going away, but they aren’t the last word. This lesson covers his other ways to think about correctness in dataflow systems.','bulb'));
+  L.h(L.kick('learn','Why correctness is hard')+'<h1 class="q">Databases remember their mistakes</h1>'+PIC_REMEMBER+
+   '<p class="capt33">Restart a read-only service and its bug is gone; a database keeps a bad write. Even serializable '+L.g('transaction','transactions')+' can’t stop an app bug writing wrong data. Kleppmann: transactions stay, but aren’t the last word.</p>');
   L.done();}},
-{part:0,src:'Chapter 12 · The End-to-End Argument for Databases',run(L){
-  L.h(L.kick('learn','Exactly-once execution')+'<h1 class="q">A perfect database can still store the wrong thing</h1>'+
-   L.prose('Serializable transactions don’t save you if the application has a bug that writes wrong data or deletes good data. That’s one reason Kleppmann favours immutable, append-only data: it is easier to recover when faulty code can’t destroy what was there.')+
-   L.prose('A subtler problem: something fails while processing a message. You can give up (and lose data) or retry. But maybe the first try <i>did</i> succeed and you just never heard back.')+
-   L.flow([['x','Give up','Data is lost.','',4],['cycle','Retry blindly','It may run twice.','',3],['check','Retry safely','Same effect as running once.','',2]],false)+
-   L.prose('Running twice is a form of corruption: a merchant billed twice, a counter bumped twice. <b>Exactly-once</b> means the final effect is as if no fault happened, even though there was a retry. One of the most effective tools is to make the operation '+L.g('idempotence','idempotent')+'. For operations that aren’t naturally idempotent, that takes care: extra metadata (such as the IDs of operations already applied) and fencing during failover.'));
-  L.done();}},
-{part:0,src:'Chapter 12 · Duplicate suppression',run(L){
-  L.h(L.kick('ex','The book’s example')+'<h1 class="q">Every layer removes duplicates, but only inside its own box</h1>');
-  L.beats(L.card,[
-   ['TCP','TCP numbers its packets, so the receiver puts them in order and throws away duplicates. But only within <b>one connection</b>.'],
-   ['The transaction','The book’s example moves $11 from one account to another in one transaction. Many databases tie a transaction to the client’s connection. The client sends COMMIT, then the connection times out before the reply. Did it commit? The client can’t tell.'],
-   ['The retry','The client reconnects and runs the transaction again. That’s a new connection, outside TCP’s duplicate check. The transfer isn’t idempotent, so <b>$22</b> may move instead of $11. The book notes real banks don’t work like this textbook transaction.'],
-   ['Two-phase commit?','2PC lets a coordinator reconnect and tell a database to commit or abort an in-doubt transaction. That covers the hop between the app and the database, but not the hop before it.'],
-   ['The person','A user on a weak phone signal submits a form. The request arrives, the reply doesn’t. They see an error and press “submit again”. To the web server that’s a new request; to the database, a new transaction. No layer can tell it’s a repeat.']],
-   'TCP, transactions and 2PC each catch duplicates only within their own scope. A retry that starts further out always looks brand new.');}},
-{part:0,src:'Chapter 12 · Operation identifiers',pts:1,
- solve:async L=>{L.$('#r0').click();await L.sleep(1700);L.$('#r1').click();await L.sleep(1700);},
+
+{part:0,src:'Chapter 12 · Exactly-once execution of an operation',
+ solve:async L=>{while(L.$('#n3'))L.$('#n3').click();},
  run(L){
-  const RUN=[[
-    '→ POST /parcels','✓ Parcel P-501 booked, −$4.20','✗ Reply lost (timeout)','→ POST /parcels again','✓ Parcel P-502 booked, −$4.20','<b style="color:var(--no)">2 parcels, $8.40 charged</b>'],[
-    '→ POST /parcels · id bb-7f3','✓ bb-7f3 saved, P-501 booked, −$4.20','✗ Reply lost (timeout)','→ POST again · id bb-7f3','✗ bb-7f3 already exists: insert fails, nothing changes','<b style="color:var(--ok)">1 parcel, $4.20 charged</b>']];
-  const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Zainab’s fix: Bramble & Bolt’s system creates one ID per booking, sends it with every try, and the Parcel DB has a unique constraint on it. Run both and compare.</h1>'+
-   L.lanes([['x','Without a request ID','<div id="o0" class="small" style="overflow-wrap:anywhere;min-height:20px"></div><button class="btn pri" id="r0" style="margin-top:10px">'+L.ic('play')+'Book, lose reply, retry</button>',4],
-            ['check','With a request ID','<div id="o1" class="small" style="overflow-wrap:anywhere;min-height:20px"></div><button class="btn pri" id="r1" style="margin-top:10px">'+L.ic('play')+'Book, lose reply, retry</button>',2]])+
-   '<div id="hq"></div>');
-  [0,1].forEach(m=>{L.$('#r'+m).onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const o=L.$('#o'+m);if(!o){clearInterval(t);return;}o.innerHTML+='<div style="margin:3px 0">'+RUN[m][k]+'</div>';k++;
-      if(k>=RUN[m].length){clearInterval(t);seen.add(m);
-        if(seen.size===2&&!L.$('#hq').innerHTML){const q=L.$('#hq');q.innerHTML='<h2 class="sub">What made the second retry harmless?</h2>';
-          L.mc(q,['A shorter timeout on Bramble & Bolt’s side','Running the booking at serializable isolation','The same ID on both tries, plus a unique constraint'],2,
-           'The retry carried the same ID, so the insert failed and the booking couldn’t happen twice. Relational databases can generally keep a unique constraint correct even at weak isolation levels, unlike an app that checks first and inserts after.',
-           'Timeouts and isolation don’t help: the retry is a separate request and a separate transaction. What saved it was the same ID on both tries, rejected the second time by the unique constraint.');}}},220);};});}},
-{part:0,src:'Chapter 12 · The end-to-end argument',run(L){
-  L.h(L.kick('learn','The end-to-end argument')+'<h1 class="q">Only the two ends can finish the job</h1>'+
-   L.prose('The request ID is one case of a general principle, the '+L.g('end-to-end','end-to-end argument')+', set out by Saltzer, Reed and Clark in 1984. In plain words: some jobs can only be done completely by the applications at the two ends of a conversation. Features in the layers between can help, but can’t finish the job.')+
-   L.tiers([['cycle','Duplicates','TCP and stream processors remove duplicates inside their own scope. A person resubmitting after a timeout gets past all of them.','End-to-end fix: a '+L.g('request-id','request ID')+' from the client all the way to the database'],
-            ['alert','Corruption','Ethernet, TCP and TLS checksums catch damage on the wire, but not bugs in the software at either end or bad disks.','End-to-end fix: checksums over the data itself'],
-            ['lock','Snooping','A WiFi password protects the WiFi hop; TLS protects against network attackers, but not a hacked server.','End-to-end fix: end-to-end encryption and authentication']])+
-   L.note('Lower layers are still worth having: they make high-level problems rarer. HTTP requests would often get mangled if TCP didn’t put packets back in order. They’re just not enough on their own.','layers'));
+  const CAP=['The book’s example: one transaction moves $11 from account 4321 to account 1234. Tap through it.',
+   'The app sends BEGIN, both updates and COMMIT on one connection. The database commits: $11 moved.',
+   'The connection times out before the reply arrives. Did it commit? The app can’t tell.',
+   'The app reconnects and runs it again. A new connection is outside TCP’s duplicate check, and the transfer isn’t idempotent: <b>$22</b> moved. Real banks don’t work like this.',
+   'Two-phase commit lets a coordinator reconnect and settle the in-doubt transaction instead of rerunning it. That fixes this hop, but not a person who clicks “submit” again.'];
+  let st=0;
+  L.h(L.kick('ex','Exactly-once execution')+'<h1 class="q">Retry, and $11 becomes $22</h1><div id="sq3"></div><div class="step33" id="sc3" aria-live="polite"></div><button class="btn pri" id="n3">'+L.ic('play')+'Next step</button>'+
+   '<p class="capt33 sm">'+L.g('exactlyonce','Exactly-once')+' means the end effect is as if no fault happened, even after a retry. The surest route is an '+L.g('idempotence','idempotent')+' operation, which may need extra metadata (IDs already applied) and fencing during failover.</p>');
+  const draw=()=>{L.$('#sq3').innerHTML=seqSVG(st);L.$('#sc3').innerHTML='<span class="n">Step '+st+' of 4</span>'+CAP[st];};
+  draw();
+  L.$('#n3').onclick=function(){st++;draw();if(st>=4){this.remove();L.sheet('info','Every layer guards only its own hop','TCP guards one connection. 2PC guards the hop between app and database. A person resubmitting a form sits outside both.');L.done();}};}},
+
+{part:0,src:'Chapter 12 · Duplicate suppression',run(L){
+  L.h(L.kick('learn','Duplicate suppression')+'<h1 class="q">The duplicate onion: each check sees only its own ring</h1><div id="on4"></div>'+
+   '<p class="capt33">Each ring is how far one duplicate check can see. TCP sees one connection; a transaction, even with two-phase commit (2PC), one database session. Here the shop server’s retry starts outside both, so the Parcel DB books twice.</p>');
+  Onion(L.$('#on4'),{pre:'a4',s:{o:1,tpc:true},noRead:true});
   L.done();}},
-{part:0,src:'Chapter 12 · Operation identifiers',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias adds request IDs to the merchant API. Where should each ID be created?</h1>');
-  L.mc(L.card,['In Otterpost’s API server, as each request arrives','In the merchant’s system, once per booking, before the first try','In the Parcel DB, when the parcel row is inserted'],1,
-   'The ID must exist before the first send, so every retry carries the same one. The book suggests a UUID in a hidden form field, or a hash of the form’s fields.',
-   'An ID created when a request arrives is new for every retry, so the retry still looks like a fresh booking. Only the client knows two attempts are the same booking, so it must create the ID once, before the first try.');}},
-{part:0,src:'Chapter 12 · The end-to-end argument',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Is a lower layer enough here?',['A lower layer handles it','Needs an end-to-end fix'],[
-   ['A packet from a hub scanner arrives twice on the same connection.',0,'TCP drops duplicate packets within one connection.'],
-   ['The courier app loses signal in a lift and resends a “delivered” scan after it reconnects.',1,'The resend comes on a new connection, so TCP can’t tell it’s a repeat. The scan needs its own ID from the app.'],
-   ['A bug in the label service writes the wrong postcode, then sends it over TLS.',1,'TLS protects the trip, not mistakes made at either end. Only a check on the data itself catches this.'],
-   ['The packets of a big label file arrive out of order.',0,'TCP puts packets back in order before the app sees them.'],
-   ['A disk on the backup server silently flips bits in last month’s invoices.',1,'Network checksums never see the disk. You need checksums over the data, checked end to end.']]);}},
-{part:0,src:'Chapter 12 · Applying end-to-end thinking in data systems',run(L){
-  L.h(L.kick('learn','Why can’t the database just handle it?')+'<h1 class="q">Tap each card</h1>');
-  L.flips(L.card,[
-   ['What transactions give you','They squash many problems (concurrent writes, broken constraints, crashes, network cuts, disk failures) into two outcomes: commit or abort. A huge simplification.'],
-   ['Why that isn’t enough','The app still needs end-to-end measures like duplicate suppression. A transaction can’t see a retry that starts outside it.'],
-   ['What happens without them','Transactions are expensive, especially across different technologies. Teams that skip them rebuild fault tolerance in app code, and Kleppmann suspects most of that code is wrong, so data gets lost or corrupted.'],
-   ['What he’d like','Abstractions that make end-to-end correctness easy while staying fast and easy to run at scale. He says we haven’t found the right one yet.']],
-   'Next: what this means for rules like “each delivery slot has only so many places”.');}},
+
+{part:0,src:'Chapter 12 · Duplicate suppression',
+ solve:async L=>{L.$('#e5o0').click();L.$('#e5o1').click();L.$('#e5o3').click();},
+ run(L){
+  const tried=new Set();let dbl=false,shown=false;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Start a retry in different rings. Which ones does Otterpost catch?</h1><div id="on5"></div>');
+  Onion(L.$('#on5'),{pre:'e5',ctl:['o','g'],on:(s,R)=>{if(s.o!=null)tried.add(s.o);if(R.caught===false)dbl=true;
+    if(tried.size>=3&&dbl&&!shown){shown=true;L.sheet('info','Where it starts decides everything','A check catches a retry only if the retry starts inside its ring. TCP catches its own resends; anything that starts further out gets through.');L.done();}}});}},
+
+{part:0,src:'Chapter 12 · Duplicate suppression',pts:1,
+ solve:async L=>{L.$('#p6').children[1].click();L.$('#go6').click();await L.sleep(1000);},
+ run(L){
+  let p=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Zainab turns on two-phase commit recovery and runs bookings at serializable isolation. Then Bramble & Bolt’s server retries after a lost reply. How many parcels?</h1><div id="on6"></div>'+
+   '<div class="row33" id="p6"></div><button class="btn pri" id="go6" hidden>'+L.ic('play')+'Send the retry</button>');
+  const o=Onion(L.$('#on6'),{pre:'p6',s:{tpc:true},read:(s,R)=>s.o==null?'Zainab’s setup: TCP plus 2PC recovery. One booking so far: 1 parcel, $4.20.':onionRead(s,R)});
+  ['1 parcel: the database catches it','2 parcels: it gets through'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#go6').hidden=false;};L.$('#p6').appendChild(b);});
+  L.$('#go6').onclick=function(){this.remove();o.set({o:1},true);
+    setTimeout(()=>{if(!L.$('#on6'))return;const ok=p===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'You called it':'It gets through','2PC only covers the hop between the API server and the Parcel DB. Serializable isolation handles transactions running at the same time; this retry is a separate, later transaction. Both work inside that ring; the retry starts outside it.');L.done();},700);};}},
+
+{part:0,src:'Chapter 12 · Operation identifiers',run(L){
+  L.h(L.kick('learn','Operation identifiers')+'<h1 class="q">One ID per booking, made where the booking starts</h1>'+PIC_IDS+
+   '<p class="capt33">The client makes one '+L.g('request-id','request ID')+' per booking (a UUID in a hidden form field, or a hash of the form) and sends it on every try. A unique constraint rejects the repeat, so the booking runs once.</p>');
+  L.done();}},
+
+{part:0,src:'Chapter 12 · Operation identifiers',
+ solve:async L=>{for(let j=0;j<5;j++)L.$('#e8p'+j).click();},
+ run(L){
+  const P=[{nm:'TCP resends a packet',s:{o:3,tpc:false,id:null,uq:false},cap:'Inside one connection, TCP numbers packets and drops the copy. No extra work needed.'},
+   {nm:'ID made by the API server',s:{o:1,tpc:false,id:'api',uq:true},cap:'Too late: each new request from the shop gets a fresh ID, so the retry looks new.'},
+   {nm:'ID made by the shop server, packer clicks again',s:{o:0,tpc:false,id:'shop',uq:true},cap:'The second click is a new call, so the shop server gives it a new ID. The ID must come from where the booking starts.'},
+   {nm:'ID in the form, no unique constraint',s:{o:0,tpc:false,id:'form',uq:false},cap:'The ID travels all the way, but nobody checks it. Carrying is not enough.'},
+   {nm:'ID in the form + unique constraint',s:{o:0,tpc:false,id:'form',uq:true},cap:'Made at the outer end, checked at the inner end: every retry is caught.'}];
+  const seen=new Set();let cur=null,shown=false;
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does a request ID stop protecting you? Run each case.</h1><div class="row33">'+P.map((p,j)=>'<button class="chip" id="e8p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="on8"></div>');
+  const o=Onion(L.$('#on8'),{pre:'e8',read:(s,R)=>cur?onionRead(s,R)+'<br><b>'+cur.cap+'</b>':'Pick a case.'});
+  P.forEach((p,j)=>{L.$('#e8p'+j).onclick=()=>{P.forEach((_,q)=>L.$('#e8p'+q).classList.toggle('sel',q===j));cur=p;o.set(Object.assign({},p.s),true);seen.add(j);
+    if(seen.size===P.length&&!shown){shown=true;L.sheet('info','Made at one end, checked at the other','An ID protects only from the ring where it is made. Make it where the booking starts, and check it where the write lands.');L.done();}};});}},
+
+{part:0,src:'Chapter 12 · The end-to-end argument',run(L){
+  L.h(L.kick('learn','The end-to-end argument')+'<h1 class="q">Only the two ends can finish the job</h1>'+PIC_E2E+
+   '<p class="capt33">Saltzer, Reed and Clark’s '+L.g('end-to-end','end-to-end argument')+' (1984): some jobs can only be finished by the applications at the two ends. Lower layers still help: they make problems rarer, and HTTP would break without TCP’s ordering. They just can’t finish the job.</p>');
+  L.done();}},
+
+{part:0,src:'Chapter 12 · Applying end-to-end thinking in data systems',pts:1,
+ solve:async L=>{L.$('#c10id-form').click();L.$('#c10uq').click();L.$('#go10').click();},
+ run(L){
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Tobias wants all four kinds of retry to be harmless. Set up the checks, then run all four.</h1><div id="on10"></div><button class="btn pri" id="go10">'+L.ic('play')+'Run all four retries</button><ul class="res33" id="r10"></ul>');
+  const o=Onion(L.$('#on10'),{pre:'c10',ctl:['g'],read:(s,R)=>s.o==null?'Set the checks, then run all four retries.':onionRead(s,R)});
+  let graded=false;
+  L.$('#go10').onclick=()=>{const s=o.s,res=[0,1,2,3].map(k=>onionEval(Object.assign({},s,{o:k})).caught),all=res.every(x=>x);
+    L.$('#r10').innerHTML=ORG.map((x,k)=>'<li>'+(res[k]?vd('ok','caught'):vd('no','2 parcels'))+x.t+'</li>').join('');
+    o.set({o:0},true);
+    if(!graded){graded=true;L.award(all);
+      L.sheet(all?'ok':'no',all?'All four caught':'Not all caught yet',(all?'':'Hint: make the ID in the booking form and turn on the unique constraint. Try again; ')+'Transactions squash many problems into commit or abort, a big help, but a retry from outside never reaches them. Kleppmann suspects most homemade fault-tolerance code is wrong, and says we haven’t found the right abstraction yet.');L.done();}
+    else if(all)L.sheet('ok','All four caught','A request ID made at the booking form, checked by the unique constraint, covers every ring.');};}},
 
 /* ---------- PART 2: CONSTRAINTS ---------- */
 {part:1,src:'Chapter 12 · Uniqueness constraints require consensus',run(L){
-  L.h(L.kick('learn','Enforcing constraints')+'<h1 class="q">One winner per value means someone has to decide</h1>'+
-   L.prose('Many features need uniqueness: one account per username, one person per seat. Other rules work the same way: a balance that never goes negative, never selling more than you have in stock. At Otterpost: unique tracking codes, a limited number of places per delivery slot, merchant credit that stays above zero.')+
-   L.prose('In a distributed system, enforcing uniqueness needs '+L.g('consensus','consensus')+': when requests for the same value arrive at the same time, something must pick the winner and reject the rest.')+
-   L.list([['person','One leader decides','The usual way. Fine if you accept sending every request through one node (even from the other side of the world) and it doesn’t fail. Tolerating its failure brings back the consensus problem.'],
-     ['layers','Partition by the value','To scale out, send every request about the same value to the same '+L.g('partition','partition')+': all tries with one request ID, or all claims on one username (by hash).'],
-     ['x','Not asynchronous multi-leader','Two leaders could each accept a conflicting write. To reject a violation immediately, synchronous coordination can’t be avoided.']],1));
+  L.h(L.kick('learn','Enforcing constraints')+'<h1 class="q">One winner per value means someone must decide</h1>'+PIC_UNIQUE+
+   '<p class="capt33">Unique tracking codes, slot places, credit that stays above zero: all need one winner when claims clash. That is '+L.g('consensus','consensus')+'. To reject a clash immediately, some synchronous coordination is unavoidable.</p>');
   L.done();}},
-{part:1,src:'Chapter 12 · Uniqueness in log-based messaging',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Peak Week: two people tap the last place in a delivery slot at the same moment</h1>');
-  L.beats(L.card,[
-   ['The idea','Linh points out that a '+L.g('log','log')+' gives every consumer the same order. That is total order broadcast, which is equivalent to consensus. So a log can decide who came first.'],
-   ['Step 1','Each slot booking becomes a message, appended to the log partition chosen by the hash of the slot: <b>zone W4, Tuesday 18:00–19:00</b>.'],
-   ['Step 2','One stream processor reads that partition in order on a single thread, keeping a local database of places taken. Mrs. Okoro’s message comes first: one place left, so it records it and emits <b>accepted</b>. Dan’s comes next: full, so it emits <b>rejected</b>.'],
-   ['Step 3','Each phone watches the output stream for the answer to its own request.'],
-   ['Scaling','More partitions mean more throughput, because each partition is processed on its own. And the processor can run any validation logic, not just “is it taken?”']],
-   'The core rule: route every write that might conflict to the <b>same partition</b>, and process it there one at a time.');}},
-{part:1,src:'Chapter 12 · Uniqueness in log-based messaging',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">To spread load, Tobias partitions slot bookings by recipient ID instead. What goes wrong?</h1>');
-  L.mc(L.card,['Nothing: each recipient’s own requests stay in order','The processor can no longer keep a local database','Two claims on one slot can land in different partitions'],2,
-   'Conflicting claims are about the same slot, so they must meet in the same partition. Split by recipient, two processors could each give away the last place.',
-   'The problem is that claims on the <i>same slot</i> now land in different partitions, processed by different processors that can each accept one. Partition by the thing that must stay unique.');}},
+
+{part:1,src:'Chapter 12 · Uniqueness in log-based messaging',pts:1,
+ solve:async L=>{L.$('#p12').children[1].click();L.$('#go12').click();await L.sleep(1300);L.$('#fx12').click();await L.sleep(1300);},
+ run(L){
+  let p=null,key='rec',ran=0;
+  L.h(L.kick('try','Predict, then run')+'<h1 class="q">Peak Week. Mrs. Okoro and Dan claim the last place in a slot. Tobias partitions claims by recipient to spread the load. What happens?</h1><div id="sl12"></div><div class="rd33" id="rd12" aria-live="polite">Each partition has one processor reading it in order, with a local count of places left.</div>'+
+   '<div class="row33" id="p12"></div><button class="btn pri" id="go12" hidden>'+L.ic('play')+'Run the processors</button><button class="btn pri" id="fx12" hidden>'+L.ic('play')+'Partition by slot instead, and run</button>'+
+   '<p class="capt33 sm">A log gives every consumer the same order ('+L.g('tob','total order broadcast')+', equivalent to consensus). Each client watches the output stream for its answer.</p>');
+  const draw=ph=>{L.$('#sl12').innerHTML=slotSVG(key,ph);};draw(0);
+  const run=(after)=>{let ph=0;const t=setInterval(()=>{if(!L.$('#sl12')){clearInterval(t);return;}ph++;draw(ph);if(ph>=2){clearInterval(t);after();}},450);};
+  ['1 accepted, 1 rejected','Both accepted'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#go12').hidden=false;};L.$('#p12').appendChild(b);});
+  L.$('#go12').onclick=function(){this.remove();run(()=>{const ok=p===1;L.award(ok);
+    L.$('#rd12').innerHTML=vd('no','Overbooked')+'2 bookings for 1 place. Each processor saw only its own claim, so both said yes.';
+    L.sheet(ok?'ok':'no',ok?'You called it':'Both were accepted','Claims on the same slot landed in different partitions, read by different processors. Partition by the thing that must stay unique. Now fix it.');
+    L.$('#fx12').hidden=false;});};
+  L.$('#fx12').onclick=function(){this.remove();key='slot';draw(0);run(()=>{
+    L.$('#rd12').innerHTML=vd('ok','1 booking')+'Both claims sat in one partition. Its processor read Mrs. Okoro’s first (accepted), then Dan’s (rejected).';
+    L.sheet('info','Conflicting writes, one partition','Route every write that might conflict to the same partition and process it in order. More partitions add throughput, and the processor can run any validation logic, not just “is it taken?”');L.done();});};}},
+
 {part:1,src:'Chapter 12 · Multi-partition request processing',run(L){
-  L.h(L.kick('learn','Across partitions')+'<h1 class="q">A transfer across partitions, without atomic commit</h1>'+
-   L.prose('In the book’s money transfer, the request ID, the payer’s account and the payee’s account may live in three different partitions. Traditionally that needs an atomic commit across all three. That forces it into one order with every other transaction on those partitions, so they can’t work independently and throughput suffers.')+
-   L.flow([['list','1 · Log it','The client gives the request a unique ID. It is appended as one message, partitioned by that ID.','',1],
-           ['layers','2 · Split it','A processor emits a debit for the payer and a credit for the payee, each partitioned by its account, both carrying the ID.','',2],
-           ['check','3 · Apply once','Further processors drop repeated IDs and update the balances.','',3]])+
-   L.prose('Why it works: writing one message is atomic in almost every system, so the request is in the log or it isn’t. If step 2 crashes, it restarts from its last checkpoint and may emit the same instructions again. It is deterministic, so the copies are identical and step 3 drops them by ID.')+
-   L.note('To stop an overdraft, add a processor partitioned by payer account that checks balances first. Only valid requests go into the log at step 1.','shield'));
+  L.h(L.kick('learn','Multi-partition request processing')+'<h1 class="q">Two partitions, no atomic commit</h1>'+PIC_SPLIT+
+   '<p class="capt33">Appending one message is atomic, so the booking is in the log or it isn’t. The splitter is deterministic: after a crash it emits the same two messages again, and consumers drop repeats by ID. No atomic commit needed.</p>');
   L.done();}},
+
+{part:1,src:'Chapter 12 · Multi-partition request processing',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#c14p'+j).click();await L.sleep(1450);}},
+ run(L){
+  const base={log:true,sp:'idle',deb:[],cre:[],ch:0,pc:0,dd:false,end:false};
+  const P=[{nm:'Crash after the debit, no ID check',dd:false,log:true},{nm:'Crash after the debit, consumers drop repeated IDs',dd:true,log:true},{nm:'No request log: the shop sends both',dd:false,log:false}];
+  const FIN=[vd('no','Charged twice')+'The restarted splitter emitted the debit again. With no ID check, the ledger applied it twice: $8.40 for one parcel.',
+   vd('ok','Exactly once')+'Same crash, same two messages again. The ledger saw bb-7f3 a second time and dropped it: $4.20, one parcel.',
+   vd('no','Money, no parcel')+'No message in a log remembers the booking, so nothing restarts the “create”. Bramble & Bolt paid $4.20 for nothing. Avoiding this needs atomic commit.'];
+  const seen=new Set();let tm=null,shown=false;
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Linh’s new booking pipeline drops the two-phase commit with the billing ledger. Crash it three ways.</h1><div class="row33">'+P.map((p,j)=>'<button class="chip" id="c14p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="cr14"></div><div class="rd33" id="rd14" aria-live="polite">Pick a case to run booking bb-7f3.</div>');
+  L.$('#cr14').innerHTML=crashSVG(base);
+  P.forEach((p,j)=>{L.$('#c14p'+j).onclick=()=>{if(tm)clearInterval(tm);P.forEach((_,q)=>L.$('#c14p'+q).classList.toggle('sel',q===j));
+    const F=[Object.assign({},base,{log:p.log,dd:p.dd,sp:'run'}),{deb:['ok'],ch:420},{sp:p.log?'crash':'dead'},p.log?{sp:'again',deb:['ok',p.dd?'drop':'ok'],cre:['ok'],ch:p.dd?420:840,pc:1,end:true}:{end:true}];
+    const C=['Booking bb-7f3 is processed.','The debit goes out first. Bramble & Bolt is charged $4.20.',p.log?'The splitter crashes before “create parcel”.':'The shop’s code crashes before “create parcel”.',FIN[j]];
+    let st=Object.assign({},F[0]),k=0;
+    const show=()=>{L.$('#cr14').innerHTML=crashSVG(st);L.$('#rd14').innerHTML=C[k];};show();
+    tm=setInterval(()=>{if(!L.$('#cr14')){clearInterval(tm);return;}k++;st=Object.assign({},st,F[k]);show();
+      if(k>=3){clearInterval(tm);tm=null;seen.add(j);
+        if(seen.size===3&&!shown){shown=true;L.sheet('info','Integrity without atomic commit','The recipe: write the request as one message, derive everything else with deterministic code, carry the client’s request ID through every stage, and keep messages immutable so you can reprocess. Kleppmann calls it a very promising direction.');L.done();}}},380);};});}},
+
 {part:1,src:'Chapter 12 · Multi-partition request processing',pts:1,run(L){
-  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Linh redesigns parcel booking so it no longer needs two-phase commit between the Parcel DB and the billing ledger. Tap the steps in order.</h1><div id="od"></div>');
-  L.order(L.$('#od'),[
+  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Put Linh’s booking pipeline in order, from the merchant’s click to the stored records.</h1><div id="od15"></div>');
+  L.order(L.$('#od15'),[
    'Bramble & Bolt’s system gives the booking a unique request ID',
    'A credit check, partitioned by merchant, confirms they can pay',
    'The booking is appended to the request log as one message',
    'A processor emits “debit $4.20” and “create parcel”, both with the ID',
    'Ledger and Parcel DB consumers drop repeated IDs and apply each change'],
    'Two differently partitioned stages plus one end-to-end ID: each booking is charged once and creates one parcel, even after crashes, with no atomic commit.');}},
-{part:1,src:'Chapter 12 · Multi-partition request processing',pts:1,run(L){
-  L.h(L.kick('pr','What happens next?')+'<h1 class="q">The splitting processor crashes right after sending “debit $4.20” for booking bb-7f3, before “create parcel”. It restarts from its last checkpoint. What happens?</h1>');
-  L.mc(L.card,['It sends both again; the ledger drops the repeated debit by ID','The debit is applied twice, so Bramble & Bolt pays $8.40','The booking is lost, because the crash happened midway'],0,
-   'The booking message is still in the log, so nothing is lost. The processor is deterministic, so it emits the same two instructions again, and the ledger recognizes bb-7f3 and ignores the repeat.',
-   'The booking is safe in the log, and the repeated debit carries the same ID, so the ledger ignores it. The processor sends both instructions again, and each takes effect exactly once.');}},
 
 /* ---------- PART 3: TIMELINESS VS INTEGRITY ---------- */
 {part:2,src:'Chapter 12 · Timeliness and Integrity',run(L){
-  L.h(L.kick('learn','Two meanings of “consistency”')+'<h1 class="q">Being up to date and being correct are different things</h1>'+
-   L.prose('A transaction is usually '+L.g('linearizability','linearizable')+': once the writer’s commit returns, everyone sees the write. Log consumers are asynchronous: the sender doesn’t wait. (A client <i>can</i> wait for its answer on an output stream, as the slot booking did, but the check is correct whether or not anyone waits.)')+
-   L.prose('Kleppmann says the word “consistency” mixes up two separate needs: '+L.g('timeliness','timeliness')+' and '+L.g('integrity','integrity')+'.')+
-   L.lanes([['clock','Timeliness','Users see an up-to-date state. A stale read is temporary: wait and try again. Linearizability is a strong form of it; read-your-writes is a weaker one.',1],
-            ['shield','Integrity','No corruption: nothing lost, nothing contradictory or false, and derived data (like an index) that matches its source. Problems stay until someone checks and repairs them.',2]])+
-   L.quote('Violations of timeliness are “eventual consistency,” whereas violations of integrity are “perpetual inconsistency.”','Martin Kleppmann')+
-   L.prose('He argues integrity matters far more in most apps. A card purchase missing from today’s statement is normal. A statement that doesn’t add up, or money charged to you but never paid to the shop, is a disaster.'));
+  L.h(L.kick('learn','Two meanings of “consistency”')+'<h1 class="q">Up to date and correct are different things</h1>'+PIC_TI+
+   '<p class="capt33">Kleppmann splits “consistency” into '+L.g('timeliness','timeliness')+' and '+L.g('integrity','integrity')+'. A stale read heals by waiting; corruption doesn’t. He argues integrity matters far more.</p>'+
+   L.quote('…violations of integrity are ‘perpetual inconsistency.’','Martin Kleppmann'));
   L.done();}},
+
 {part:2,src:'Chapter 12 · Timeliness and Integrity',pts:1,
- solve:async L=>{L.$('#pp').children[0].click();L.$('#wt').click();await L.sleep(1300);},
+ solve:async L=>{L.$('#p17').children[0].click();const r=L.$('#r17');r.value=60;r.dispatchEvent(new Event('input',{bubbles:true}));},
  run(L){
-  const P=[['Mrs. Okoro’s tracking page still says “at hub” two minutes after the “out for delivery” scan.','Now shows “out for delivery”.'],
-           ['Bramble & Bolt’s October invoice total doesn’t equal the sum of its parcel charges.','Still wrong. Waiting changes nothing.'],
-           ['Support search can’t find 300 parcels that are in the Parcel DB.','Still missing. The index lost them.']];
-  let p=null;
-  L.h(L.kick('pr','Predict, then wait')+'<h1 class="q">Signe’s team reports three problems. Which one will fix itself if you just wait?</h1><div id="pp"></div>'+
-   '<div id="ws" hidden><div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:6px"><div><div class="small">Simulated time</div><div class="week" id="tm">0 min</div></div><button class="btn pri" id="wt">'+L.ic('clock')+'Wait one hour</button></div><div id="pr"></div></div>');
-  P.forEach((x,j)=>{const b=document.createElement('button');b.className='chip';b.style.textAlign='left';b.textContent=x[0];b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#ws').hidden=false;};L.$('#pp').appendChild(b);});
-  L.$('#wt').onclick=function(){this.remove();let m=0;
-    const t=setInterval(()=>{m+=10;const tm=L.$('#tm');if(!tm){clearInterval(t);return;}tm.textContent=m+' min';
-      if(m>=60){clearInterval(t);
-        L.$('#pr').innerHTML=P.map((x,j)=>'<div class="fb '+(j===0?'ok':'no')+'" style="margin:6px 0">'+L.ic(j===0?'check':'x')+' '+x[1]+'</div>').join('');
-        L.award(p===0);
-        L.sheet(p===0?'ok':'no',p===0?'You called it':'Only the tracking page fixed itself','The stale tracking page was a <b>timeliness</b> problem: the update was on its way. The invoice and the index are <b>integrity</b> problems: they stay wrong until someone finds and repairs them.');L.done();}},180);};}},
+  let p=null,graded=false;
+  L.h(L.kick('pr','Predict, then wait')+'<h1 class="q">Signe’s team reports three problems. Which one will fix itself if you just wait?</h1><div id="w17"></div>'+
+   '<div class="row33" id="p17"></div><div class="rng33" id="rg17" hidden><label for="r17">Minutes waited</label><b id="m17">0 min</b><input type="range" id="r17" min="0" max="60" step="1" value="0"></div>');
+  L.$('#w17').innerHTML=waitSVG(0);
+  ['The tracking page','The invoice','Support search'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#rg17').hidden=false;};L.$('#p17').appendChild(b);});
+  L.$('#r17').oninput=function(){const m=+this.value;L.$('#m17').textContent=m+' min';L.$('#w17').innerHTML=waitSVG(m);
+    if(m>=60&&!graded){graded=true;const ok=p===0;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'You called it':'Only the tracking page healed','The tracking page was a <b>timeliness</b> problem: the update was already on its way. The invoice and the index are <b>integrity</b> problems: an hour, a day or a year won’t fix them. Someone has to find and repair them.');L.done();}};}},
+
 {part:2,src:'Chapter 12 · Timeliness and Integrity',pts:5,run(L){
-  L.h(L.kick('pr','Sort them')+'<h1 class="q">Timeliness or integrity?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Timeliness','Integrity'],[
+  L.h(L.kick('pr','Sort them')+'<h1 class="q">Timeliness or integrity?</h1><div id="bk18"></div>');
+  L.buckets(L.$('#bk18'),['Timeliness','Integrity'],[
    ['A merchant’s dashboard shows today’s parcel count 30 seconds behind.',0,'It catches up on its own. That’s timeliness.'],
    ['A courier’s “delivered” scan was processed twice, so they were paid twice for one drop.',1,'An event taking effect twice is corruption. It stays until someone fixes it.'],
    ['A parcel was charged to Bramble & Bolt but never recorded in the Parcel DB.',1,'Money charged with nothing to show for it: disappearing data, an integrity failure.'],
    ['A recipient reads from a lagging replica and can’t see the slot they just booked.',0,'The replica will catch up. Annoying, but temporary.'],
    ['A buggy consumer dropped an event, so a parcel’s history skips “at hub” forever.',1,'A lost event never comes back by waiting. Integrity.']],
    'Timeliness problems go away with time. Integrity problems need someone to notice and repair them, which is why they matter more.');}},
-{part:2,src:'Chapter 12 · Correctness of dataflow systems',run(L){
-  L.h(L.kick('learn','Correctness of dataflow systems')+'<h1 class="q">Dataflow systems separate the two, and keep integrity</h1>'+
-   L.prose('ACID transactions usually give both: linearizability for timeliness and atomic commit for integrity. So from a transactions point of view, the difference hardly matters. Event-based dataflow systems split them apart: no timeliness guarantee unless a consumer waits, but integrity is central. Losing an event or applying it twice breaks integrity, which is why exactly-once processing matters.')+
-   L.list([['Write one message','The whole booking is a single message, easy to write atomically. This fits event sourcing.'],
-     ['Derive everything else deterministically','The debit and the parcel row come from that message through deterministic functions, much like stored procedures.'],
-     ['Carry one request ID through','The client’s ID passes through every stage, so each stage can drop duplicates.'],
-     ['Keep messages immutable','Derived data can be reprocessed from the log, which makes recovering from bugs easier.']],2)+
-   '<p class="small" style="margin-top:10px">Kleppmann calls this combination a very promising direction: comparable correctness to distributed transactions, potentially with much better performance and robustness.</p>');
-  L.done();}},
+
 {part:2,src:'Chapter 12 · Loosely interpreted constraints',run(L){
-  L.h(L.kick('learn','Loosely interpreted constraints')+'<h1 class="q">Sometimes it’s fine to say sorry later</h1>'+
-   L.prose('A strict uniqueness rule needs consensus, and stream processing can’t avoid that. But Kleppmann points out that many real businesses already live with weaker rules:')+
-   L.list([['Same seat or username twice','Apologize to one person and ask them to choose another. A fix like this is a '+L.g('compensating','compensating transaction')+'.'],
-     ['Sold more than you have','Order more stock, apologize for the delay, offer a discount. You need that process anyway, for when a forklift runs over some of your stock.'],
-     ['Overbooked flights and hotels','Done on purpose, with refunds and upgrades ready. Bad weather and strikes need the same process.'],
-     ['Overdrawn accounts','The bank charges a fee and asks for the money back. A daily withdrawal limit caps the risk.']],3)+
-   L.prose('Whether the apology is cheap enough is a business decision. If it is, write optimistically and check the rule afterwards. Still check <i>before</i> anything that is expensive to undo. These apps still need integrity (never lose a booking), just not timeliness on the rule.'));
+  L.h(L.kick('learn','Loosely interpreted constraints')+'<h1 class="q">Break the rule now, say sorry later?</h1>'+PIC_SORRY+
+   '<p class="capt33">Many businesses already break rules, even on purpose, and fix it with a '+L.g('compensating','compensating transaction')+'. If the apology is cheap, write now and check after. Check first only before steps you can’t undo. Integrity still holds: never lose the booking.</p>');
   L.done();}},
-{part:2,src:'Chapter 12 · Loosely interpreted constraints',pts:4,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Check first, or fix later?',['Check strictly first','Write now, apologize if needed'],[
-   ['Two recipients grab the last place in a Peak Week delivery slot.',1,'Apologize to one and offer the next slot or a small discount. A cheap compensating transaction.'],
-   ['Paying couriers’ weekly earnings to their bank accounts.',0,'Like cash from an ATM, money paid out is hard to get back. Check before this step.'],
-   ['Bramble & Bolt’s prepaid credit dips slightly below zero in a flash sale, within a daily limit.',1,'Like an overdraft with a daily limit: the risk is capped and the fix is simply billing them.'],
-   ['Two small merchants pick the same shop handle on the dashboard.',1,'Ask one of them to choose another, like a clashing username.']]);}},
-{part:2,src:'Chapter 12 · Coordination-avoiding data systems',pts:1,run(L){
-  L.h(L.kick('learn','Coordination-avoiding systems')+'<h1 class="q">Coordinate only where you have to</h1>'+
-   L.prose('Put the two ideas together: dataflow keeps integrity without atomic commit or synchronous coordination across partitions, and many rules can be checked loosely. So many apps can avoid coordination and still keep strong integrity, with better performance and fault tolerance.')+
-   L.lanes([['map','Otterpost’s regions','Westport, Eastvale and Nordhaven could each keep running alone, replicating to each other asynchronously. Weak timeliness (not linearizable), strong integrity.',1],
-            ['lock','Where coordination stays','Serializable transactions in small scopes where they work well. No need for cross-system (XA) transactions. Synchronous checks only before steps you can’t recover from.',3]])+
-   L.prose('Coordination means fewer apologies for inconsistencies, but it can also mean more apologies for outages and slowness. You can’t get apologies to zero; you look for the best trade-off.')+
-   '<div id="cq"><h2 class="sub">Femi asks: should every Otterpost write go through one global coordinator, so nothing is ever inconsistent?</h2></div>');
-  L.mc(L.$('#cq'),['Yes: no inconsistencies means no apologies at all','No: outages and slowness bring their own apologies'],1,
-   'A global coordinator cuts one kind of apology and adds another. Keep coordination for the few steps that really need it.',
-   'Coordination doesn’t remove apologies, it swaps them: fewer for inconsistencies, more for outages and slow responses across regions. Coordinate only where you must.');}},
+
+{part:2,src:'Chapter 12 · Loosely interpreted constraints',pts:4,
+ solve:async L=>{for(let j=0;j<SC20.length;j++){L.$('#q20b'+SC20[j].r).click();await L.sleep(5);const nx=L.$('#nx20');if(nx&&!nx.hidden)nx.click();await L.sleep(5);}},
+ run(L){
+  let k=0,n=0,busy=false;const placed=[];
+  L.h(L.kick('pr','Check first, or fix later?')+'<h1 class="q">Decide each Otterpost case, then see where it lands on the cost-of-sorry scale.</h1><div id="sc20"></div><div class="rd33" id="rd20" aria-live="polite"></div><div class="row33" id="ch20"></div><button class="btn pri" id="nx20" hidden>Next case</button>');
+  const show=()=>{L.$('#sc20').innerHTML=sorryScaleSVG(placed);
+    L.$('#rd20').innerHTML='<b>Case '+(k+1)+' of '+SC20.length+'.</b> '+SC20[k].t;
+    L.$('#ch20').innerHTML=['Check strictly first','Write now, apologize if needed'].map((t,j)=>'<button class="chip" id="q20b'+j+'">'+t+'</button>').join('');
+    [0,1].forEach(j=>{L.$('#q20b'+j).onclick=()=>pick(j);});};
+  const pick=j=>{if(busy)return;busy=true;const c=SC20[k],ok=j===c.r;if(ok)n++;placed.push({k,ok});
+    L.$('#q20b'+j).classList.add('sel');[0,1].forEach(q=>L.$('#q20b'+q).setAttribute('aria-disabled','true'));
+    L.$('#sc20').innerHTML=sorryScaleSVG(placed,true);
+    L.$('#rd20').innerHTML=vd(ok?'ok':'no',ok?'Right':'Not quite')+c.w;
+    if(k<SC20.length-1)L.$('#nx20').hidden=false;
+    else{L.awardMany(n,SC20.length);L.sheet(n===SC20.length?'ok':'info',n+' of '+SC20.length+' right','Where saying sorry is cheap, write now and fix it later with a compensating transaction. Check strictly first only before a step you can’t take back, like paying money out.');L.done();}};
+  L.$('#nx20').onclick=function(){this.hidden=true;k++;busy=false;show();};
+  show();}},
+
+{part:2,src:'Chapter 12 · Coordination-avoiding data systems',run(L){
+  L.h(L.kick('learn','Coordination-avoiding data systems')+'<h1 class="q">Femi asks: why not route every write through one global coordinator?</h1><div id="ch21"></div>'+
+   '<div class="rng33"><label for="r21">How much coordination</label><b id="m21">40%</b><input type="range" id="r21" min="0" max="100" step="1" value="40"></div><div class="rd33" id="rd21" aria-live="polite"></div>'+
+   '<p class="capt33">Dataflow keeps integrity without coordination, so Westport, Eastvale and Nordhaven can each run on their own. Coordinate only before steps you can’t undo. Zero apologies is out of reach; aim for the sweet spot.</p>');
+  let best=0,bv=1e9;for(let j=0;j<=100;j++){const u=j/100,v=INC(u)+OUT(u);if(v<bv){bv=v;best=u;}}
+  const draw=x=>{L.$('#ch21').innerHTML=tradeSVG(x);L.$('#m21').textContent=Math.round(x*100)+'%';
+    L.$('#rd21').innerHTML=Math.abs(x-best)<=.1?vd('ok','Sweet spot')+'Fewest apologies in total. Serializable transactions still fit in small scopes; cross-system (XA) ones aren’t needed.':
+     x<best?vd('no','Too little')+'Nobody waits, but more inconsistencies to apologize for, like an oversold slot.':
+     vd('no','Too much')+'Fewer inconsistencies, but a slow or failed coordinator stalls everyone: more outage apologies.';};draw(.4);
+  L.$('#r21').oninput=function(){draw(+this.value/100);};
+  L.done();}},
 
 /* ---------- PART 4: TRUST, BUT VERIFY ---------- */
 {part:3,src:'Chapter 12 · Trust, but Verify',run(L){
-  L.h(L.kick('learn','Trust, but verify')+'<h1 class="q">The things we assume never break do break, rarely</h1>'+
-   L.prose('Every design rests on a system model: we assume processes crash and networks drop messages, but that data on disk survives, memory isn’t corrupted and the CPU multiplies correctly. Mostly true. But really it’s a matter of probability: does the “impossible” happen often enough to meet it?')+
-   L.list([['box','Hardware','Data can rot on untouched disks, and network corruption sometimes slips past TCP checksums. Kleppmann once saw crash reports that only random memory bit-flips could explain. Rare, but with enough devices it happens.'],
-     ['alert','Database bugs','He has seen MySQL fail to keep a uniqueness constraint and PostgreSQL’s serializable level allow write skew, in mature, well-tested databases.'],
-     ['pencil','Application bugs','Far more likely: app code gets much less testing. Many apps don’t even use foreign keys or unique constraints. ACID consistency assumes the transaction itself is bug-free.']],4)+
-   L.prose('So corruption will happen sooner or later. You need a way to find it: checking the integrity of data is called '+L.g('auditing','auditing')+'. Big storage systems like HDFS and Amazon S3 keep re-reading files and comparing replicas to catch silent corruption. The same logic says: try restoring your backups now and then, or you’ll learn they’re broken only when you need them.')+
-   L.note('Kleppmann fears the culture of ACID databases taught us to trust blindly. When NoSQL weakened the guarantees, the audit tools still weren’t there. He hopes for systems that keep checking their own integrity.','eye'));
+  L.h(L.kick('learn','Trust, but verify')+'<h1 class="q">The things we assume never break do break, rarely</h1>'+PIC_MODEL+
+   '<p class="capt33">A system model sorts faults into “can happen” and “never”. Really it’s probability: with enough machines, rare things happen, even in mature databases. So don’t trust blindly; check. That is '+L.g('auditing','auditing')+'.</p>');
   L.done();}},
+
 {part:3,src:'Chapter 12 · Designing for auditability',run(L){
-  L.h(L.kick('ex','A billing dispute')+'<h1 class="q">Bramble & Bolt says October’s invoice charged for parcels it never booked</h1>');
-  L.beats(L.card,[
-   ['Only tables','Zainab checks the billing tables and the change data capture log. She can see <i>which</i> rows changed, but not <i>why</i>: the app logic that decided those changes ran once and is gone.'],
-   ['An event log','Linh’s booking events are immutable, and every charge is derived from them by deterministic code. Running the same events through the same code version gives the same result every time.'],
-   ['Replay','Hashes show the stored events weren’t corrupted. Replaying October through the same code version reproduces the wrong total exactly, so Linh can step through it and see why: a surcharge rule fired once per retry. They fix the rule and reprocess.'],
-   ['End to end','Kwame adds a nightly check comparing the booking events at the start of the pipeline with the invoice lines at the end. Every disk, network, service and job in between is checked along the way. Like automated tests, it lets the team change things with less fear.'],
-   ['Stronger tools','An audit table, or a log signed by a hardware security module, protects the log, but can’t prove the right entries went in. Kleppmann finds the integrity checking in blockchains interesting, though he is skeptical of their Byzantine fault tolerance and calls proof of work wasteful. A '+L.g('merkle','Merkle tree')+' (a tree of hashes) can efficiently prove a record is in a dataset; certificate transparency uses them.']],
-   'Explicit, deterministic dataflow makes it clear where data came from. That turns “is this right?” into something you can rerun and check.');}},
-{part:3,src:'Chapter 12 · The end-to-end argument again',pts:1,run(L){
-  L.h(L.kick('pr','Your call')+'<h1 class="q">Kwame can afford one new integrity check for billing this quarter. Which one catches the most?</h1>');
-  L.mc(L.card,['A checksum on every disk in the billing ledger','Running the billing jobs at serializable isolation','Comparing log events with final invoice lines, end to end'],2,
-   'An end-to-end comparison includes every disk, network, service and job on the path, so corruption anywhere along the way shows up.',
-   'Disk checksums miss software bugs, and isolation doesn’t stop a buggy rule. Comparing the start of the pipeline with the end checks everything in between, including parts nobody thought of.');}}
+  L.h(L.kick('learn','Designing for auditability')+'<h1 class="q">Table changes say what. Events say why.</h1>'+PIC_AUDIT+
+   '<p class="capt33">Table changes, even via change data capture, don’t show why: the code that decided ran once and is gone. Immutable events through a fixed code version can be hashed, replayed and compared, like time-travel debugging.</p>');
+  L.done();}},
+
+{part:3,src:'Chapter 12 · Designing for auditability',
+ solve:async L=>{L.$('#a24f-flip').click();L.$('#a24c-hash').click();},
+ run(L){
+  let F=new Set(),mk={},shown=false;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Bramble & Bolt disputes October’s invoice. Break something, then check.</h1><div id="au24"></div><div class="rd33" id="rd24" aria-live="polite"></div>'+
+   '<div class="lab33">Inject a fault</div><div class="row33">'+['flip','twice','lost','db'].map(f=>'<button class="chip" id="a24f-'+f+'">'+FAULT[f].t+'</button>').join('')+'</div>'+
+   '<div class="lab33">Run a check</div><div class="row33">'+Object.keys(CHECKS).map(k=>'<button class="chip" id="a24c-'+k+'">'+CHECKS[k]+'</button>').join('')+'</div>');
+  const draw=()=>{const S=auditState(F);L.$('#au24').innerHTML=auditSVG(S,mk,{reveal:true});const tot=S.led.reduce((a,l)=>a+l.c,0);
+    L.$('#rd24').innerHTML=(F.size?'Invoice now '+money(tot)+'. ':'No fault yet. Invoice $28.20, as Bramble & Bolt expects. ')+(Object.keys(mk).length?auditRead(S,mk):F.size?'Nothing has flagged it: without a check, nobody knows.':'');
+    return S;};
+  draw();
+  ['flip','twice','lost','db'].forEach(f=>{L.$('#a24f-'+f).onclick=()=>{F=new Set([f]);mk={};['flip','twice','lost','db'].forEach(g=>L.$('#a24f-'+g).classList.toggle('sel',g===f));draw();};});
+  Object.keys(CHECKS).forEach(k=>{L.$('#a24c-'+k).onclick=()=>{const S=auditState(F);mk[k]=k==='hash'?chkHash(S):k==='der'?chkDer(S):chkE2E(S);draw();
+    if(F.size&&caughtBy(S,k)&&!shown){shown=true;L.sheet('info','Found it','Corruption you never check for stays silent. Here a check turned a hidden fault into a red mark you can trace and repair. Try other faults and checks.');L.done();}};});}},
+
+{part:3,src:'Chapter 12 · Tools for auditable data systems',
+ solve:async L=>{for(const f of Object.keys(FAULT))L.$('#a25p-'+f).click();},
+ run(L){
+  const seen=new Set();let shown=false;
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Every check has a blind spot. Run each fault against all three.</h1>'+
+   '<div class="row33">'+Object.keys(FAULT).map(f=>'<button class="chip" id="a25p-'+f+'">'+FAULT[f].s+'</button>').join('')+'</div><div id="au25"></div>'+
+   '<table class="mx33" id="mx25"><thead><tr><th>Fault</th><th>Hash chain</th><th>Re-derive</th><th>End to end</th></tr></thead><tbody></tbody></table>');
+  const tb=cur=>{L.$('#mx25 tbody').innerHTML=Object.keys(FAULT).map(f=>'<tr'+(f===cur?' class="cur"':'')+'><td>'+FAULT[f].s+'</td>'+Object.keys(CHECKS).map(k=>seen.has(f)?(CATCH[f][k]?'<td class="y" aria-label="caught">✓</td>':'<td class="n" aria-label="missed">✗</td>'):'<td class="u">·</td>').join('')+'</tr>').join('');};
+  L.$('#au25').innerHTML=auditSVG(auditState(new Set()),{},{reveal:true});tb(null);
+  Object.keys(FAULT).forEach(f=>{L.$('#a25p-'+f).onclick=()=>{Object.keys(FAULT).forEach(g=>L.$('#a25p-'+g).classList.toggle('sel',g===f));
+    const S=auditState(new Set([f]));L.$('#au25').innerHTML=auditSVG(S,{hash:chkHash(S),der:chkDer(S),e2e:chkE2E(S)},{reveal:true});seen.add(f);tb(f);
+    if(seen.size===5&&!shown){shown=true;L.sheet('info','No check sees everything','This catch table is the lesson’s own model of the book’s three checks (hashes illustrative). Hashes prove the log wasn’t damaged, not that the right entries went in: a log signed by a hardware security module has the same limit. Kleppmann finds blockchains’ integrity checks interesting, is skeptical of the Byzantine fault tolerance and proof-of-work parts, and points to '+L.g('merkle','Merkle trees')+', as in certificate transparency.');L.done();}};});}},
+
+{part:3,src:'Chapter 12 · The end-to-end argument again',pts:3,
+ solve:async L=>{L.$('#a26c-hash').click();L.$('#a26c-e2e').click();L.$('#go26').click();},
+ run(L){
+  const PL=['flip','twice','bad'],pick=[];let graded=false;
+  const S=auditState(new Set(PL));
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame has time to build two checks this quarter (an illustrative limit). Three faults are hidden in October’s billing. Pick the two that catch them all.</h1>'+
+   '<div id="au26"></div><div class="lab33">Pick two checks</div><div class="row33">'+Object.keys(CHECKS).map(k=>'<button class="chip" id="a26c-'+k+'">'+CHECKS[k]+'</button>').join('')+'</div>'+
+   '<button class="btn pri" id="go26">'+L.ic('play')+'Run the checks</button><ul class="res33" id="r26"></ul>');
+  L.$('#au26').innerHTML=auditSVG(S,{},{hideMer:true});
+  Object.keys(CHECKS).forEach(k=>{L.$('#a26c-'+k).onclick=()=>{const j=pick.indexOf(k);if(j>=0)pick.splice(j,1);else{pick.push(k);if(pick.length>2)pick.shift();}
+    Object.keys(CHECKS).forEach(q=>L.$('#a26c-'+q).classList.toggle('sel',pick.includes(q)));};});
+  L.$('#go26').onclick=()=>{if(!pick.length){L.err('Pick at least one check');return;}
+    const mk={};pick.forEach(k=>{mk[k]=k==='hash'?chkHash(S):k==='der'?chkDer(S):chkE2E(S);});
+    L.$('#au26').innerHTML=auditSVG(S,mk,{hideMer:true});
+    const found=PL.map(f=>pick.some(k=>CATCH[f][k]));
+    L.$('#r26').innerHTML=PL.map((f,j)=>'<li>'+(found[j]?vd('ok','found'):vd('no','missed'))+FAULT[f].t+'</li>').join('');
+    const n=found.filter(x=>x).length;
+    if(!graded){graded=true;L.awardMany(n,3);
+      L.sheet(n===3?'ok':'no',n===3?'All three found':n+' of 3 found','The end-to-end comparison is the one you can’t skip: only it sees a wrong price written into the event itself. Pair it with the hash chain or a re-derivation to catch rot in the log. Checks that span the whole pipeline cover every disk, network and job in between, and like automated tests they let a team change things with less fear.');L.done();}};}}
   ]
 });
 </script>

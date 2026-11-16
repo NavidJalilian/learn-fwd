@@ -13,10 +13,477 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-const CODE=s=>'<div style="background:var(--soft);border-radius:14px;padding:12px 14px;margin:12px 0;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere">'+s+'</div>';
+/* =====================================================================
+   Lesson 0004 only. Two hands-on models used across the lesson:
+   1. Strip – today’s parcel rows in storage order, scanned by Tobias’s
+              loop (one cursor, stops early) and Linh’s query (any number
+              of parallel cursors). Rows can be moved by the database.
+   2. Graph – Otterpost’s place graph (illustrative): a property graph the
+              learner queries with a Cypher pattern; matching spreads one
+              WITHIN hop per round, like a recursive query or Datalog rule.
+   ===================================================================== */
+let FAST=false;
+const wait=ms=>new Promise(r=>setTimeout(r,FAST?Math.min(ms,25):ms));
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+const MKC=['line2','h1','h2','h3','h4','pri','ok','no','muted','ink'];
+const defs=p=>'<defs>'+MKC.map(c=>'<marker id="'+p+c+'" viewBox="0 0 8 8" refX="7.5" refY="4" markerWidth="7" markerHeight="7" markerUnits="userSpaceOnUse" orient="auto"><path d="M0,0.5 L8,4 L0,7.5 z" style="fill:var(--'+c+')"/></marker>').join('')+'</defs>';
+const arw=(p,x1,y1,x2,y2,c,w,dash)=>'<path d="M'+x1+' '+y1+' L'+x2+' '+y2+'" style="fill:none;stroke:var(--'+c+');stroke-width:'+(w||1.6)+(dash?';stroke-dasharray:'+dash:'')+';marker-end:url(#'+p+c+')"/>';
+const box=(x,y,w,h,f,s,rx,extra)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(rx==null?8:rx)+'" style="fill:var(--'+f+');stroke:var(--'+s+');stroke-width:1.5'+(extra||'')+'"/>';
+const FIG=(p,vb,label,inner)=>'<div class="q4fig"><svg viewBox="'+vb+'" role="img" aria-label="'+label+'">'+defs(p)+inner+'</svg></div>';
+const CAP=t=>'<p class="prose q4cap">'+t+'</p>';
+const MONO='font-family:ui-monospace,Menlo,monospace';
+function chips(host,labels,on){labels.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=t;b.onclick=()=>on(j,b);host.appendChild(b);});}
+const CSS='<style>'+
+ '.q4fig{margin:4px 0 2px}.q4fig svg,.q4g svg{width:100%;display:block}.q4fig text,.q4g text,.q4lane text{font-family:var(--sans)}'+
+ '.q4cap{margin-top:10px}'+
+ '.q4code{background:var(--soft);border-radius:14px;padding:10px 12px;margin:10px 0;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.5;overflow-wrap:anywhere}'+
+ '.q4ln{display:flex;flex-wrap:wrap;align-items:center;gap:3px;min-height:22px}.q4ln span{white-space:pre}'+
+ '.q4slot{font:inherit;font-weight:700;min-height:36px;padding:3px 8px;border-radius:9px;border:2px solid var(--pri);border-bottom-width:3px;background:var(--pri-bg);color:var(--pri-deep);margin:2px 0}'+
+ '.q4fix{color:var(--pri-deep);background:var(--pri-bg);border-radius:6px;padding:1px 4px}'+
+ '.q4row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.q4row .btn{min-height:42px}.q4row .chip{margin:0;min-height:40px}'+
+ '.q4read{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:44px}'+
+ '.q4cap2{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:48px}'+
+ '.q4leg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:4px 0;align-items:center}.q4leg span{display:inline-flex;align-items:center;gap:4px}'+
+ '.q4sq{display:inline-block;width:12px;height:12px;border-radius:3px;border:1.5px solid}'+
+ '.q4new{animation:q4pop .5s}@keyframes q4pop{0%{opacity:.15}100%{opacity:1}}'+
+ '.q4lane{background:var(--soft);border-radius:14px;padding:8px 10px;margin:8px 0}.q4lh{display:flex;flex-wrap:wrap;gap:2px 8px;align-items:baseline;font-size:14px;margin-bottom:4px}'+
+ '.q4mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;color:var(--muted)}.q4lr{font-size:13.5px;margin-top:4px;min-height:20px}'+
+ '.q4lane svg{width:100%;display:block}.q4cell{transition:transform .7s cubic-bezier(.3,.8,.3,1)}'+
+ '.q4ph2{display:grid;grid-template-columns:1fr 1fr;gap:8px}.q4ph{border:2px solid var(--line);border-radius:16px;padding:8px;min-width:0}'+
+ '.q4phh{font-size:13.5px;font-weight:700;margin-bottom:4px}.q4sm{font-size:11.5px;margin-bottom:6px;line-height:1.4}'+
+ '.q4st{display:block;width:100%;text-align:left;background:none;border:2px solid transparent;border-radius:9px;padding:6px 7px;margin:3px 0;font-size:13.5px;min-height:38px;line-height:1.25}'+
+ '.q4st.on{background:var(--pri-bg);color:var(--pri-deep);font-weight:600}.q4st.mk{border-color:var(--no)}.q4st i{display:block;font-style:normal;font-size:11.5px;color:var(--muted);font-weight:500}'+
+ 'button.q4st:disabled{cursor:default;color:inherit;opacity:1}button.q4st.on:disabled{color:var(--pri-deep)}'+
+ '.q4ask{font-size:15px;font-weight:600;margin:12px 0 4px}'+
+ '.q4clock{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:14px;margin:6px 0}.q4clock b{font-variant-numeric:tabular-nums}'+
+ '.q4out{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14px;line-height:1.55;margin:8px 0}'+
+ '.q4fact{display:inline-block;font-family:ui-monospace,Menlo,monospace;font-size:12px;background:var(--pri-bg);color:var(--pri-deep);border-radius:7px;padding:2px 6px;margin:2px 3px 2px 0}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '</style>';
+
+/* ================= 1. the storage-order strip ================= */
+const STRIP_B=[0,1,12,5,20,14,2,25,17,9,30,11,3,22,16,27,6,19,13,29,7,24,10,31,4,18,23,15,8,28,21,26];
+function Strip(L,host,o){
+  const ID=o.id,N=32,TD=10;let order=[...Array(N).keys()],cores=1,busy=false;
+  const lanes={a:{cell:{},cur:[],col:'h1'},b:{cell:{},cur:[],col:'h2'}};
+  host.insertAdjacentHTML('beforeend',
+   '<div class="q4leg"><span><i class="q4sq" style="background:var(--ok-bg);border-color:var(--ok-line)"></i>due today</span><span><i class="q4sq" style="background:var(--soft);border-color:var(--line2)"></i>due tomorrow</span><span><i class="q4sq" style="background:var(--ok-strong);border-color:var(--ok-strong)"></i>found</span><span><i class="q4sq" style="background:var(--card);border-color:var(--no);border-style:dashed"></i>missed</span></div>'+
+   '<div class="q4lane"><div class="q4lh"><b style="color:var(--h1)">Tobias’s loop</b><span class="q4mono">for each row: keep it, stop at the first not due today</span></div><svg id="'+ID+'-a" viewBox="0 0 330 52" role="img" aria-label="Rows in storage order, scanned by Tobias’s loop"></svg><div class="q4lr" id="'+ID+'-ar" aria-live="polite"></div></div>'+
+   '<div class="q4lane"><div class="q4lh"><b style="color:var(--h2)">Linh’s query</b><span class="q4mono">SELECT * FROM parcels WHERE due = today</span></div><svg id="'+ID+'-b" viewBox="0 0 330 52" role="img" aria-label="Rows in storage order, scanned by Linh’s query"></svg><div class="q4lr" id="'+ID+'-br" aria-live="polite"></div></div>');
+  const sv={a:host.querySelector('#'+ID+'-a'),b:host.querySelector('#'+ID+'-b')};
+  const X=p=>2+(p%16)*20.4,Y=p=>3+Math.floor(p/16)*25;
+  const alive=()=>sv.a.isConnected;
+  ['a','b'].forEach(k=>{let s='';for(let r=0;r<N;r++)s+='<g class="q4cell" data-k="'+r+'"><rect width="18.5" height="21" rx="4"/><path d="" style="stroke:var(--no);stroke-width:2.2;stroke-linecap:round"/></g>';sv[k].innerHTML=s+'<g class="q4cur"></g>';});
+  function place(){['a','b'].forEach(k=>sv[k].querySelectorAll('g[data-k]').forEach(g=>{const p=order.indexOf(+g.dataset.k);g.style.transform='translate('+X(p)+'px,'+Y(p)+'px)';}));}
+  function paint(){['a','b'].forEach(k=>{const ln=lanes[k];
+    sv[k].querySelectorAll('g[data-k]').forEach(g=>{const r=+g.dataset.k,st=ln.cell[r],today=r<TD;
+      let f=today?'ok-bg':'soft',s=today?'ok-line':'line2',dash='',w=1.3;
+      if(st==='found'){f='ok-strong';s='ok-strong';}
+      if(st==='miss'){f='card';s='no';dash='3 2';w=2;}
+      if(st==='stop'){f='no-bg';s='no';w=2;}
+      const rc=g.firstChild;rc.setAttribute('style','fill:var(--'+f+');stroke:var(--'+s+');stroke-width:'+w+(dash?';stroke-dasharray:'+dash:''));
+      g.lastChild.setAttribute('d',st==='stop'?'M5 6 l8.5 9 m0 -9 l-8.5 9':'');});
+    sv[k].querySelector('.q4cur').innerHTML=ln.cur.map(p=>'<rect x="'+(X(p)-1.5)+'" y="'+(Y(p)-1.5)+'" width="21.5" height="24" rx="5" style="fill:none;stroke:var(--'+ln.col+');stroke-width:3"/>').join('');});}
+  function say(k,h){if(alive())host.querySelector('#'+ID+'-'+k+'r').innerHTML=h;}
+  place();paint();
+  async function run(){
+    if(busy||!alive())return null;busy=true;
+    lanes.a.cell={};lanes.b.cell={};const lp={found:0,ticks:0},q={found:0,ticks:0},seg=N/cores;let ldone=false,t=0;
+    while(!(ldone&&t>=seg)){
+      if(!ldone){const k=order[t];lanes.a.cur=[t];if(k<TD){lanes.a.cell[k]='found';lp.found++;}else{lanes.a.cell[k]='stop';ldone=true;}lp.ticks=t+1;if(t===N-1)ldone=true;}else lanes.a.cur=[];
+      if(t<seg){lanes.b.cur=[];for(let c=0;c<cores;c++){const p=c*seg+t,k=order[p];lanes.b.cur.push(p);if(k<TD){lanes.b.cell[k]='found';q.found++;}}q.ticks=t+1;}else lanes.b.cur=[];
+      paint();
+      say('a','Found <b>'+lp.found+'</b> of 10 · <b>'+lp.ticks+'</b> time steps · 1 cursor'+(cores>1?' (it can’t use the other '+(cores-1)+' cores)':''));
+      say('b','Found <b>'+q.found+'</b> of 10 · <b>'+q.ticks+'</b> time steps · '+cores+' cursor'+(cores>1?'s, side by side':''));
+      await wait(cores===1?50:120);if(!alive())return null;t++;}
+    for(let r=0;r<TD;r++)if(!lanes.a.cell[r])lanes.a.cell[r]='miss';
+    lanes.a.cur=[];lanes.b.cur=[];paint();
+    if(lp.found<TD)say('a','Found <b class="no-t">'+lp.found+'</b> of 10 · stopped after <b>'+lp.ticks+'</b> steps · <span class="no-t">missed '+(TD-lp.found)+'</span>');
+    busy=false;return {loop:lp,q,cores};
+  }
+  function pre(){lanes.a.cell={};lanes.b.cell={};for(let r=0;r<TD;r++){lanes.a.cell[r]='found';lanes.b.cell[r]='found';}lanes.a.cell[TD]='stop';paint();
+    say('a','Last night: found <b>10</b> of 10 · stopped at row 11');say('b','Last night: found <b>10</b> of 10');}
+  async function reorg(){order=STRIP_B.slice();lanes.a.cell={};lanes.b.cell={};paint();place();
+    say('a','The database is moving rows…');say('b','The database is moving rows…');await wait(900);}
+  return {run,pre,reorg,cores:c=>{cores=c;},busy:()=>busy,idle:async()=>{for(let i=0;i<300&&busy;i++)await wait(20);}};
+}
+
+/* ================= 2. Otterpost’s place graph ================= */
+/* id: [type, label, x, y, stage]  stage 9 = only after “add lockers” */
+const GV={
+ wp:['Region','Westport',165,18,1], bb:['Address','B&B depot',40,58,3], w1:['Zone','W1',130,58,1], w2:['Zone','W2',240,58,1],
+ mill:['Address','12 Mill Ln',115,98,1], dock:['Address','3 Dock Rd',200,98,1], oak:['Address','9 Oak Ln',285,98,1],
+ p13:['Parcel','48213',30,146,4], p14:['Parcel','48214',82,146,4], p16:['Parcel','48216',134,146,4], p17:['Parcel','48217',186,146,4], p18:['Parcel','48218',238,146,9], p15:['Parcel','48215',290,146,5],
+ quay:['Address','40 Quay St',62,194,2], elm:['Address','7 Elm St',190,194,2], lk:['Locker','Locker L7',264,194,9],
+ e1:['Zone','E1',62,234,2], e2:['Zone','E2',220,234,2], rv:['District','Riverside',62,274,2], ev:['Region','Eastvale',165,312,2]};
+/* [tail, head, label W/P/D, stage] */
+const GE=[
+ ['w1','wp','W',1],['w2','wp','W',1],['bb','wp','W',3],['mill','w1','W',1],['dock','w2','W',1],['oak','w2','W',1],
+ ['quay','e1','W',2],['e1','rv','W',2],['rv','ev','W',2],['elm','e2','W',2],['e2','ev','W',2],['lk','e2','W',9],
+ ['p13','bb','P',4],['p14','mill','P',4],['p16','elm','P',4],['p17','dock','P',4],['p15','oak','P',5],['p18','oak','P',9],
+ ['p13','quay','D',4],['p14','dock','D',4],['p16','mill','D',4],['p17','elm','D',4],['p15','ev','D',5],['p18','lk','D',9]];
+const SZ={Region:[78,24],District:[70,22],Zone:[34,22],Address:[70,22],Locker:[66,22],Parcel:[46,22]};
+const TY={Region:['h4-bg','h4','h4'],District:['h3-bg','h3','h3'],Zone:['h3-bg','h3','h3'],Address:['card','line2','ink'],Locker:['card','line2','ink'],Parcel:['soft','line2','ink']};
+const EDG={D:'DELIVERED_TO',P:'PICKED_UP_AT'},REG={ev:'Eastvale',wp:'Westport'},HOPS=['*1','*2','*3','*0..','*1..'];
+const nm=k=>GV[k][1],code=k=>'OP-'+GV[k][1];
+const hopOk=(h,d)=>h==='*0..'?true:h==='*1..'?d>=1:d===+h.slice(1);
+const GLEG='<span><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" style="stroke:var(--line2);stroke-width:2"/></svg>WITHIN</span>'+
+ '<span><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" style="stroke:var(--h2);stroke-width:2"/></svg>DELIVERED_TO</span>'+
+ '<span><svg width="22" height="8" aria-hidden="true"><line x1="0" y1="4" x2="22" y2="4" style="stroke:var(--h1);stroke-width:2;stroke-dasharray:4 3"/></svg>PICKED_UP_AT</span>';
+
+function Graph(L,host,o){
+  o=Object.assign({id:'g',stage:9,locker:false,y0:0,noP:false},o||{});
+  const ID=o.id,P=ID+'m',H=330-o.y0;
+  const S={stage:o.stage,locker:o.locker,sets:[],match:null,part:{},trail:null,focus:new Set(),focusE:new Set(),busy:false,newV:new Set(),hiE:new Map()};
+  host.insertAdjacentHTML('beforeend','<div class="q4g"><svg id="'+ID+'-svg" viewBox="0 '+o.y0+' 330 '+H+'" role="img" aria-label="Otterpost’s place graph: Westport places at the top, parcels in the middle, Eastvale places at the bottom. WITHIN edges point from a place to the place that contains it."></svg>'+
+   '<div class="q4leg">'+GLEG+'<span style="font-style:italic">Otterpost’s graph is illustrative</span></div><div class="q4read" id="'+ID+'-rd" aria-live="polite"></div></div>');
+  const svg=host.querySelector('#'+ID+'-svg'),rd=host.querySelector('#'+ID+'-rd');
+  const alive=()=>svg.isConnected;
+  const vis=k=>{const v=GV[k];return v[4]===9?S.locker:v[4]<=S.stage;};
+  const visE=e=>(e[3]===9?S.locker:e[3]<=S.stage)&&!(o.noP&&(e[2]==='P'||GV[e[1]][3]<o.y0));
+  function clip(k,dx,dy){const v=GV[k],s=SZ[v[0]],hw=s[0]/2+1,hh=s[1]/2+1;const t=Math.min(dx?hw/Math.abs(dx):1e9,dy?hh/Math.abs(dy):1e9);return [v[2]+dx*t,v[3]+dy*t];}
+  function reached(k){for(const s of S.sets){const d=s.dist[k];if(d!=null&&d<=s.upto)return s;}return null;}
+  const inEnd=(s,k)=>{const d=s.dist[k];return d!=null&&d<=s.upto&&hopOk(s.l.h,d);};
+  function draw(){
+    if(!alive())return;
+    let s=defs(P);
+    GE.forEach((e,j)=>{if(!visE(e)||!vis(e[0])||!vis(e[1]))return;
+      const a=GV[e[0]],b=GV[e[1]];
+      let col=e[2]==='W'?'line2':e[2]==='P'?'h1':'h2',w=1.4,dash=e[2]==='P'?'4 3':'';
+      if(e[2]==='W'&&S.sets.some(st=>st.dist[e[0]]!=null&&st.dist[e[1]]!=null&&st.dist[e[0]]===st.dist[e[1]]+1&&st.dist[e[0]]<=st.upto)){col='pri';w=2.4;}
+      if(S.hiE.has(j)){col=S.hiE.get(j);w=2.6;}
+      if(S.trail&&S.trail.e.has(j)){col='h3';w=2.6;}
+      if(S.focusE.has(j)){col='h3';w=3;}
+      let d;
+      if(e[0]==='p15'&&e[1]==='ev')d='M290 157 C322 220 322 300 205 312';
+      else{const dx=b[2]-a[2],dy=b[3]-a[3],A=clip(e[0],dx,dy),B=clip(e[1],-dx,-dy);d='M'+A[0].toFixed(1)+' '+A[1].toFixed(1)+' L'+B[0].toFixed(1)+' '+B[1].toFixed(1);}
+      s+='<path d="'+d+'" style="fill:none;stroke:var(--'+col+');stroke-width:'+w+(dash?';stroke-dasharray:'+dash:'')+';marker-end:url(#'+P+col+')"/>';});
+    Object.keys(GV).forEach(k=>{if(!vis(k))return;
+      const v=GV[k],t=v[0],sz=SZ[t],x=v[2]-sz[0]/2,y=v[3]-sz[1]/2,c=TY[t];
+      let fill='var(--'+c[0]+')',stroke='var(--'+c[1]+')',tc='var(--'+c[2]+')',sw=1.5,dash='',op=1,bold=t==='Region'||t==='Parcel';
+      const st=reached(k);
+      if(st){if(st.done&&!inEnd(st,k)){stroke='var(--pri)';dash='3 3';sw=2;}else{fill='var(--pri-bg)';stroke='var(--pri)';sw=2.6;tc='var(--pri-deep)';}}
+      if(t==='Parcel'&&S.match){if(S.match.has(k)){fill='var(--ok-bg)';stroke='var(--ok)';sw=2.6;tc='var(--ok)';}else if(S.part[k]){stroke='var(--pri)';sw=2;dash='3 3';}else op=.45;}
+      if(S.trail&&S.trail.v.has(k)){stroke='var(--h3)';sw=2.6;op=1;}
+      s+='<g'+(S.newV.has(k)?' class="q4new"':'')+' style="opacity:'+op+'">';
+      if(S.focus.has(k))s+='<rect x="'+(x-4)+'" y="'+(y-4)+'" width="'+(sz[0]+8)+'" height="'+(sz[1]+8)+'" rx="'+(t==='Parcel'?15:9)+'" style="fill:none;stroke:var(--h3);stroke-width:2.4;stroke-dasharray:4 3"/>';
+      s+='<rect x="'+x+'" y="'+y+'" width="'+sz[0]+'" height="'+sz[1]+'" rx="'+(t==='Parcel'?11:6)+'" style="fill:'+fill+';stroke:'+stroke+';stroke-width:'+sw+(dash?';stroke-dasharray:'+dash:'')+'"/>';
+      s+=tx(v[2],v[3]+4.2,v[1],'font-size:12px;text-anchor:middle;fill:'+tc+(bold?';font-weight:700':''));
+      if(st&&!(st.done&&!inEnd(st,k))){const bx=x+sz[0]-1,by=y+1;s+='<circle cx="'+bx+'" cy="'+by+'" r="8" style="fill:var(--pri)"/>'+tx(bx,by+4,st.dist[k],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri-ink)');}
+      s+='</g>';});
+    svg.innerHTML=s;
+  }
+  function say(h){if(alive())rd.innerHTML=h;}
+  function spread(target){const dist={[target]:0},rounds=[[target]];let fr=[target];
+    while(fr.length){const nx=[];fr.forEach(v=>GE.forEach(e=>{if(e[2]==='W'&&e[1]===v&&visE(e)&&vis(e[0])&&dist[e[0]]==null){dist[e[0]]=rounds.length;nx.push(e[0]);}}));if(nx.length)rounds.push(nx);fr=nx;}
+    return {dist,rounds};}
+  const lim=s=>s.l.h==='*0..'||s.l.h==='*1..'?s.rounds.length:+s.l.h.slice(1);
+  function clear(){S.sets=[];S.match=null;S.part={};S.trail=null;S.hiE=new Map();S.newV=new Set();}
+  function begin(lines){clear();S.sets=lines.map(l=>{const sp=spread(l.t);return {l,dist:sp.dist,rounds:sp.rounds,upto:-1,done:false};});}
+  function roundMsg(r){S.newV=new Set();const msgs=[];
+    S.sets.forEach(s=>{if(r>lim(s))return;s.upto=r;const nw=s.rounds[r]||[];nw.forEach(k=>S.newV.add(k));
+      const size=Object.keys(s.dist).filter(k=>s.dist[k]<=r).length;const exact=s.l.h[1]!=='0'&&s.l.h.length===2;
+      msgs.push((S.sets.length>1?'<i>'+REG[s.l.t]+'</i>: ':'')+(nw.length?(r===0?'start at '+nw.map(nm).join(', '):'+ '+nw.map(nm).join(', ')):'nothing new')+' <span class="small">(set: '+size+')</span>'+
+        (exact&&r===lim(s)?' · stop: exactly '+r+' hop'+(r===1?'':'s'):(!nw.length?' · so stop':'')));});
+    return '<b>Round '+r+'</b> · '+msgs.join('<br>');}
+  function finish(){
+    S.sets.forEach(s=>{s.done=true;});S.newV=new Set();S.hiE=new Map();S.part={};
+    const m=new Set();
+    Object.keys(GV).filter(k=>GV[k][0]==='Parcel'&&vis(k)).forEach(p=>{let all=true,any=false;const es=[];
+      S.sets.forEach(s=>{const ei=GE.findIndex(e=>e[0]===p&&e[2]===s.l.e&&visE(e));if(ei>=0&&inEnd(s,GE[ei][1])){any=true;es.push(ei);}else all=false;});
+      if(all){m.add(p);es.forEach(ei=>S.hiE.set(ei,'ok'));}else if(any){S.part[p]=1;es.forEach(ei=>S.hiE.set(ei,'pri'));}});
+    S.match=m;draw();
+    const counted=S.sets.map(s=>Object.keys(s.dist).filter(k=>inEnd(s,k)));
+    const list=[...m].sort();
+    say((S.sets.length===1?'<b>Places that count:</b> '+(counted[0].length?counted[0].map(nm).join(', '):'none'):S.sets.map((s,i)=>'<b>In '+REG[s.l.t]+':</b> '+counted[i].length+' places').join(' · '))+
+      '<br><b>Matches:</b> '+(list.length?'<span class="ok-t">'+list.map(code).join(', ')+'</span>':'<span class="no-t">none</span>'));
+    return list;
+  }
+  async function run(lines){
+    if(S.busy||!alive())return null;S.busy=true;
+    if(!FAST&&svg.getBoundingClientRect().top<40)svg.scrollIntoView({behavior:'smooth',block:'start'});
+    begin(lines);const R=Math.max(...S.sets.map(lim));
+    for(let r=0;r<=R;r++){say(roundMsg(r));draw();await wait(560);if(!alive())return null;}
+    await wait(150);if(!alive())return null;
+    const list=finish();S.busy=false;return {match:list};
+  }
+  async function runFwd(l){
+    if(S.busy||!alive())return null;S.busy=true;clear();S.match=new Set();
+    for(const p of Object.keys(GV).filter(k=>GV[k][0]==='Parcel'&&vis(k))){
+      const tv=new Set([p]),te=new Set();let ok=false;const ei=GE.findIndex(e=>e[0]===p&&e[2]===l.e&&visE(e));
+      if(ei>=0){te.add(ei);let v=GE[ei][1],hops=0;tv.add(v);
+        for(;;){if(GV[v][0]==='Region'){ok=v===l.t&&hopOk(l.h,hops);break;}
+          const wi=GE.findIndex(e=>e[0]===v&&e[2]==='W'&&visE(e));if(wi<0)break;te.add(wi);v=GE[wi][1];tv.add(v);hops++;}}
+      S.trail={v:tv,e:te};if(ok)S.match.add(p);
+      say('Start at <b>'+code(p)+'</b> and walk forwards: '+[...tv].slice(1).map(nm).join(' → ')+(ok?' <span class="ok-t">✓ match</span>':' <span class="no-t">✗</span>'));
+      draw();await wait(620);if(!alive())return null;}
+    S.trail=null;const list=[...S.match].sort();
+    list.forEach(p=>{const ei=GE.findIndex(e=>e[0]===p&&e[2]===l.e&&visE(e));S.hiE.set(ei,'ok');});draw();
+    say('<b>Walked forwards from every parcel.</b> Matches: <span class="ok-t">'+list.map(code).join(', ')+'</span>, the same as walking backwards from Eastvale.');
+    S.busy=false;return {match:list};
+  }
+  draw();
+  return {run,runFwd,say,draw,S,begin,roundMsg,finish,
+    stage:n=>{S.stage=n;draw();},locker:on=>{S.locker=on;clear();draw();},
+    focus:(vs,es)=>{S.focus=new Set(vs);S.focusE=new Set(es||[]);draw();},
+    busy:()=>S.busy,idle:async()=>{for(let i=0;i<400&&S.busy;i++)await wait(20);}};
+}
+
+/* the Cypher pattern, with tappable parts */
+function Pat(host,id,lines,edit){
+  edit=edit!==false;let ls=lines.map(l=>Object.assign({},l)),onch=()=>{};
+  const el=document.createElement('div');el.className='q4code';el.id=id;host.appendChild(el);
+  const slot=(i,k,t,aria)=>edit?'<button class="q4slot" id="'+id+'-'+i+k+'" aria-label="'+aria+'. Tap to change">'+t+'</button>':'<b class="q4fix">'+t+'</b>';
+  function draw(){
+    let h='<div class="q4ln"><span>MATCH (p:Parcel)</span></div>';
+    ls.forEach((l,i)=>{
+      if(i)h+='<div class="q4ln"><span>      (p)</span></div>';
+      h+='<div class="q4ln"><span>  -[:</span>'+slot(i,'e',EDG[l.e],'Edge label '+EDG[l.e])+'<span>]-&gt; ()</span></div>';
+      h+='<div class="q4ln"><span>  -[:WITHIN</span>'+slot(i,'h',l.h,'WITHIN hops '+l.h)+'<span>]-&gt;</span></div>';
+      h+='<div class="q4ln"><span>  (:Region {name:\'</span>'+slot(i,'t',REG[l.t],'Region '+REG[l.t])+'<span>\'})'+(i<ls.length-1?',':'')+'</span></div>';});
+    h+='<div class="q4ln"><span>RETURN p.code</span></div>';
+    el.innerHTML=h;
+    if(edit)ls.forEach((l,i)=>{
+      el.querySelector('#'+id+'-'+i+'e').onclick=()=>{l.e=l.e==='D'?'P':'D';draw();onch();};
+      el.querySelector('#'+id+'-'+i+'h').onclick=()=>{l.h=HOPS[(HOPS.indexOf(l.h)+1)%HOPS.length];draw();onch();};
+      el.querySelector('#'+id+'-'+i+'t').onclick=()=>{l.t=l.t==='ev'?'wp':'ev';draw();onch();};});
+  }
+  draw();
+  return {lines:()=>ls.map(l=>Object.assign({},l)),set:n=>{ls=n.map(l=>Object.assign({},l));draw();},onChange:f=>{onch=f;}};
+}
+function setSlot(L,id,i,k,val){for(let n=0;n<6;n++){const b=L.$('#'+id+'-'+i+k);if(!b||b.textContent===val)return;b.click();}}
+
+/* ================= static figures ================= */
+function figDecl(){
+  const p='fa';let s='';
+  s+=tx(84,14,'Imperative: how','font-size:13px;font-weight:700;fill:var(--h1);text-anchor:middle');
+  s+=tx(250,14,'Declarative: what','font-size:13px;font-weight:700;fill:var(--h2);text-anchor:middle');
+  ['1  take the next row','2  due today? keep it','3  not today? stop','4  go back to step 1'].forEach((t,j)=>{const y=24+j*38;
+    s+=box(14,y,140,26,'h1-bg','h1',7)+tx(22,y+17,t,'font-size:12px;fill:var(--ink)');if(j<3)s+=arw(p,84,y+26,84,y+37,'h1',1.4);});
+  s+='<path d="M14 151 H6 V37 H11" style="fill:none;stroke:var(--h1);stroke-width:1.4;marker-end:url(#'+p+'h1)"/>';
+  s+=box(176,24,148,30,'h2-bg','h2',7)+tx(250,43.5,'WHERE due = today','font-size:12.5px;'+MONO+';font-weight:700;fill:var(--h2);text-anchor:middle');
+  s+=arw(p,250,54,250,76,'h2',1.4);
+  s+=box(190,78,120,30,'pri-bg','pri',15)+tx(250,97,'query optimizer','font-size:12px;font-weight:700;fill:var(--pri-deep);text-anchor:middle');
+  ['index?','order?','cores?'].forEach((t,j)=>{const x=180+j*48;s+=arw(p,250,108,x+22,128,'pri',1.2)+box(x,130,44,24,'card','line2',12)+tx(x+22,146,t,'font-size:12px;fill:var(--ink);text-anchor:middle');});
+  s+=tx(250,174,'the database decides how','font-size:12px;fill:var(--muted);text-anchor:middle;font-style:italic');
+  s+=box(4,186,322,40,'h2-bg','h2',10)+tx(165,202,'Why declare: shorter and easier to write,','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)')+tx(165,218,'and the engine can get faster, queries unchanged','font-size:12px;text-anchor:middle;fill:var(--ink)');
+  return FIG(p,'0 0 330 230','Left: an imperative loop of four steps in a fixed order. Right: a declarative condition handed to the query optimizer, which picks an index, an order and how many cores to use. Below: declarative queries are shorter and easier to write, and the engine can get faster with no query change.',s);
+}
+function figCss(){
+  const p='fb';let s='';
+  const node=(x,y,w,t,hl)=>box(x-w/2,y-13,w,26,hl?'pri-bg':'card',hl?'pri':'line2',7)+tx(x,y+4.5,t,'font-size:12px;text-anchor:middle;'+MONO+';fill:var(--'+(hl?'pri-deep':'ink')+')'+(hl?';font-weight:700':''));
+  s+='<path d="M165 33 L85 53 M165 33 L245 53 M85 79 L85 99 M245 79 L245 99" style="stroke:var(--line2);stroke-width:1.5;fill:none"/>';
+  s+=node(165,20,46,'&lt;ul&gt;')+node(85,66,150,'&lt;li class="current"&gt;',true)+node(245,66,52,'&lt;li&gt;')+node(85,112,150,'&lt;p&gt;Out for delivery',true)+node(245,112,80,'&lt;p&gt;At hub');
+  s+='<rect x="4" y="47" width="162" height="84" rx="12" style="fill:none;stroke:var(--pri);stroke-width:2;stroke-dasharray:5 4"/>';
+  s+=tx(85,152,'matches li.current &gt; p','font-size:12px;font-weight:700;fill:var(--pri-deep);text-anchor:middle');
+  s+=tx(245,146,'no match: its &lt;li&gt;','font-size:12px;fill:var(--muted);text-anchor:middle')+tx(245,160,'lacks the class','font-size:12px;fill:var(--muted);text-anchor:middle');
+  return FIG(p,'0 0 330 166','A page tree: a list with two items. The item with class current and its paragraph Out for delivery match the selector; the other item’s paragraph At hub does not.',s);
+}
+function figMRflow(){
+  const p='fc';let s='';
+  const B=[['Store','docs','line2','soft'],['filter','a query','h2','h2-bg'],['map','your code','h1','h1-bg'],['group','by key','h2','h2-bg'],['reduce','your code','h1','h1-bg']];
+  B.forEach((b,j)=>{const x=j*70;s+=box(x+1,18,62,50,b[3],b[2],10)+tx(x+32,40,b[0],'font-size:13px;font-weight:700;text-anchor:middle;fill:var(--'+(b[2]==='line2'?'ink':b[2])+')')+tx(x+32,56,b[1],'font-size:12px;text-anchor:middle;fill:var(--muted)');
+    if(j<4)s+=arw(p,x+63,43,x+70,43,'muted',1.4);});
+  s+='<path d="M142 76 v6 h60 v-6 M282 76 v6 h60 v-6" style="fill:none;stroke:var(--h1);stroke-width:1.6"/>'+tx(242,100,'you write map and reduce','font-size:12px;font-weight:600;fill:var(--h1);text-anchor:middle');
+  s+='<path d="M212 12 v-6 h60 v6" style="fill:none;stroke:var(--h2);stroke-width:1.6"/>'+tx(204,12,'the framework','font-size:12px;font-weight:600;fill:var(--h2);text-anchor:end');
+  return FIG(p,'0 0 344 108','Five boxes: the document store, a declarative filter query, the map function you write, grouping by key done by the framework, and the reduce function you write.',s);
+}
+const MR_CAPS=[
+ 'Each document records one cage of parcels reaching a hub: the hub, the date and how many parcels. Linh wants parcels per hub per month, for Westport hubs (W.) only.',
+ '<b>Filter.</b> A declarative query keeps only Westport documents. (Writing the filter this way is MongoDB’s own extension to MapReduce.)',
+ '<b>map</b> runs once per document. It emits a key (hub + month) and a value (the parcel count).',
+ '<b>Group.</b> The framework collects the pairs by key. Linh writes no code for this step.',
+ '<b>reduce</b> runs once per key and adds the values up: 120 + 85 = <b>205</b>.',
+ 'The results are written to a new collection, <b>monthlyHubReport</b>, ready for the merchant dashboard.'];
+const MR_D=[['W. Central','3 Nov',120,'WC'],['E. Depot','5 Nov',60,null],['W. Central','18 Nov',85,'WC'],['W. North','9 Nov',40,'WN']];
+function figMR(st,pick){
+  const p='fd';let s='',labs='';
+  const D=MR_D,X=[4,86,168,250],H=[62,88,160,234,292,358][st];
+  /* stage labels sit on pills placed where no arrow runs */
+  const lab=(cx,cy,t,on)=>{const w=t.length*6.9+18;labs+='<rect x="'+(cx-w/2).toFixed(1)+'" y="'+(cy-10)+'" width="'+w.toFixed(1)+'" height="20" rx="10" style="fill:var(--card);stroke:var(--'+(on?'pri':'line2')+');stroke-width:1.3"/>'+tx(cx,cy+4.2,t,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--'+(on?'pri':'muted')+')');};
+  D.forEach((d,j)=>{const out=st>=1&&!d[3],sel=st===0&&pick&&pick.has(j);
+    s+='<g style="opacity:'+(out?.4:1)+'">'+box(X[j],4,76,52,sel?'pri-bg':'card',sel?'pri':'line2',9,sel?';stroke-width:2.4':'')+tx(X[j]+38,21,d[0],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(X[j]+38,36,d[1],'font-size:12px;text-anchor:middle;fill:var(--muted)')+tx(X[j]+38,50,d[2]+' parcels','font-size:12px;text-anchor:middle;fill:var(--ink)')+'</g>';
+    if(out)s+='<circle cx="'+(X[j]+72)+'" cy="8" r="8" style="fill:var(--no)"/><path d="M'+(X[j]+68.5)+' 4.5 l7 7 m0 -7 l-7 7" style="stroke:var(--card);stroke-width:2;stroke-linecap:round"/>';
+    if(sel)s+='<circle cx="'+(X[j]+72)+'" cy="8" r="8" style="fill:var(--pri)"/><path d="M'+(X[j]+68)+' 8 l3 3 l5 -6" style="fill:none;stroke:var(--card);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"/>';});
+  if(st>=1)lab(124,72,'filter: Westport',st===1);
+  if(st>=2){lab(124,98,'map: emit pairs',st===2);
+    D.forEach((d,j)=>{if(!d[3])return;s+=arw(p,X[j]+38,56,X[j]+38,120,'h1',1.3)+box(X[j],122,76,32,'h1-bg','h1',8)+tx(X[j]+38,136,d[3]+' 2026-11','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+tx(X[j]+38,149,'→ '+d[2],'font-size:12px;text-anchor:middle;fill:var(--ink)');});}
+  if(st>=3){lab(112,171,'group by key',st===3);
+    s+=arw(p,42,154,70,186,'h2',1.3)+arw(p,206,154,150,186,'h2',1.3)+arw(p,288,154,262,186,'h2',1.3);
+    s+=box(8,188,180,40,'h2-bg','h2',9)+tx(98,204,'WC 2026-11','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)')+tx(98,220,'[120, 85]','font-size:12px;text-anchor:middle;fill:var(--ink)');
+    s+=box(200,188,124,40,'h2-bg','h2',9)+tx(262,204,'WN 2026-11','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)')+tx(262,220,'[40]','font-size:12px;text-anchor:middle;fill:var(--ink)');}
+  if(st>=4){lab(180,243,'reduce: add up',st===4);
+    s+=arw(p,98,228,98,256,'h1',1.3)+arw(p,262,228,262,256,'h1',1.3)+box(58,258,80,26,'h1-bg','h1',13)+tx(98,275,'205','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h1)')+box(222,258,80,26,'h1-bg','h1',13)+tx(262,275,'40','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h1)');}
+  if(st>=5){lab(180,300,'save as a collection',true);
+    s+=arw(p,98,284,98,314,'ok',1.3)+arw(p,262,284,262,314,'ok',1.3)+box(8,316,316,36,'ok-bg','ok-line',10)+tx(166,338,'WC 2026-11: 205   ·   WN 2026-11: 40','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ok)');}
+  return FIG(p,'0 0 330 '+H,'Linh’s MapReduce query, stage '+(st+1)+' of 6. '+MR_CAPS[st].replace(/<[^>]+>/g,''),s+labs);
+}
+function figSpectrum(){
+  const p='fe';let s='';
+  s+=arw(p,165,72,16,72,'line2',2)+arw(p,165,72,314,72,'line2',2);
+  const M=[[40,'SQL','','h2'],[106,'aggregation','pipeline','h2'],[190,'MapReduce','map + reduce','h3'],[282,'IMS, CODASYL,','Tobias’s loop','h1']];
+  M.forEach(m=>{s+='<circle cx="'+m[0]+'" cy="72" r="7" style="fill:var(--'+m[3]+')"/>'+tx(m[0],m[2]?36:50,m[1],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--'+m[3]+')')+(m[2]?tx(m[0],51,m[2],'font-size:12px;text-anchor:middle;fill:var(--muted)'):'');});
+  s+='<path d="M186 82 Q148 124 112 84" style="fill:none;stroke:var(--h2);stroke-width:1.6;stroke-dasharray:4 3;marker-end:url(#'+p+'h2)"/>'+tx(149,128,'MongoDB 2.2 added it','font-size:12px;font-weight:600;fill:var(--h2);text-anchor:middle');
+  s+=tx(40,98,'runs on','font-size:12px;fill:var(--muted);text-anchor:middle')+tx(40,112,'clusters too','font-size:12px;fill:var(--muted);text-anchor:middle');
+  s+=tx(4,152,'← say what','font-size:12.5px;font-weight:700;fill:var(--ink)')+tx(326,152,'say how →','font-size:12.5px;font-weight:700;fill:var(--ink);text-anchor:end');
+  return FIG(p,'0 0 330 158','A line from declarative (say what) on the left to imperative (say how) on the right. SQL and the aggregation pipeline sit at the declarative end, MapReduce in the middle, IMS and CODASYL code and Tobias’s loop at the imperative end. An arrow shows MongoDB 2.2 moving from MapReduce to the aggregation pipeline.',s);
+}
+function figGraphs(){
+  const p='ff';let s='';
+  [['Social graph',52],['Web graph',165],['Road network',278]].forEach(t=>{s+=tx(t[1],14,t[0],'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');});
+  const P=[[22,44],[62,32],[92,58],[36,88],[76,98]];
+  [[0,1],[1,2],[0,3],[3,4],[2,4],[1,3]].forEach(e=>{s+='<line x1="'+P[e[0]][0]+'" y1="'+P[e[0]][1]+'" x2="'+P[e[1]][0]+'" y2="'+P[e[1]][1]+'" style="stroke:var(--h1);stroke-width:1.5"/>';});
+  P.forEach(q=>{s+='<circle cx="'+q[0]+'" cy="'+q[1]+'" r="9" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5"/><circle cx="'+q[0]+'" cy="'+(q[1]-2)+'" r="3" style="fill:var(--h1)"/>';});
+  const W=[[128,30],[188,28],[156,64],[200,88],[130,94]];
+  [[0,1],[1,2],[2,0],[2,3],[4,2],[3,1]].forEach(e=>{const a=W[e[0]],b=W[e[1]],dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy),k=14/l;s+=arw(p,(a[0]+dx*k).toFixed(1),(a[1]+dy*k).toFixed(1),(b[0]-dx*k).toFixed(1),(b[1]-dy*k).toFixed(1),'h2',1.4);});
+  W.forEach(q=>{s+='<rect x="'+(q[0]-8)+'" y="'+(q[1]-10)+'" width="16" height="20" rx="3" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>';});
+  const R=[[238,40],[282,30],[318,56],[252,88],[302,98],[276,64]];
+  [[0,1],[1,2],[0,5],[1,5],[5,3],[5,4],[2,4],[3,4]].forEach(e=>{s+='<line x1="'+R[e[0]][0]+'" y1="'+R[e[0]][1]+'" x2="'+R[e[1]][0]+'" y2="'+R[e[1]][1]+'" style="stroke:var(--h3);stroke-width:3.5;stroke-linecap:round"/>';});
+  R.forEach(q=>{s+='<circle cx="'+q[0]+'" cy="'+q[1]+'" r="5" style="fill:var(--card);stroke:var(--h3);stroke-width:2"/>';});
+  [['people · who','knows whom',52],['pages · the','links between',165],['Otterpost hubs ·','ROAD_TO edges',278]].forEach(t=>{s+=tx(t[2],124,t[0],'font-size:12px;fill:var(--muted);text-anchor:middle')+tx(t[2],138,t[1],'font-size:12px;fill:var(--muted);text-anchor:middle');});
+  return FIG(p,'0 0 330 144','Three small graphs: people linked by who knows whom, web pages linked by arrows, and a road network: Otterpost’s hubs joined by ROAD_TO edges.',s);
+}
+function figProp(){
+  const p='fg';let s='';
+  s+=box(14,20,60,28,'h3-bg','h3',6)+tx(44,38.5,'E1','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+  s+=box(226,20,92,28,'h3-bg','h3',6)+tx(272,38.5,'Riverside','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+  s+=arw(p,76,34,224,34,'ink',1.8)+tx(150,27,'WITHIN','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  s+=tx(150,50,'edge id 7','font-size:12px;text-anchor:middle;fill:var(--muted)');
+  s+=tx(44,64,'vertex id 21','font-size:12px;text-anchor:middle;fill:var(--muted)')+tx(272,64,'vertex id 22','font-size:12px;text-anchor:middle;fill:var(--muted)');
+  const tbl=(x,y,title,cols,rows,ix)=>{let t=tx(x,y,title,'font-size:12.5px;font-weight:700;fill:var(--ink)');let cx=x;
+    cols.forEach((c,j)=>{t+=box(cx,y+6,c[1],22,ix.includes(j)?'h3-bg':'soft',ix.includes(j)?'h3':'line',4)+tx(cx+5,y+21,c[0],'font-size:12px;font-weight:600;fill:var(--'+(ix.includes(j)?'h3':'muted')+')');
+      rows.forEach((r,k)=>{t+=box(cx,y+30+k*24,c[1],22,'card','line',4)+tx(cx+5,y+45+k*24,r[j],'font-size:12px;fill:var(--ink)');});cx+=c[1]+2;});return t;};
+  s+=tbl(4,92,'vertices',[['id',30],['properties',100]],[['21','name: E1'],['22','name: Riverside']],[]);
+  s+=tbl(142,92,'edges',[['id',30],['tail',40],['head',40],['label',70]],[['7','21','22','within']],[1,2]);
+  s+=tx(225,164,'indexed both ways:','font-size:12px;font-weight:600;fill:var(--h3);text-anchor:middle')+tx(225,178,'follow edges forwards','font-size:12px;fill:var(--h3);text-anchor:middle')+tx(225,192,'and backwards','font-size:12px;fill:var(--h3);text-anchor:middle');
+  return FIG(p,'0 0 330 196','Zone E1 has a WITHIN edge to the Riverside district. Below, the same data as two tables: vertices with an id and properties, and edges with an id, tail, head and label. The tail and head columns are both indexed.',s);
+}
+function figCypher(){
+  const p='fh';let s='';
+  const N=[['48213',36,32,'soft','line2','ink',48,11],['40 Quay St',160,32,'card','line2','ink',72,6],['E1',284,32,'h3-bg','h3','h3',36,6],['Riverside',284,104,'h3-bg','h3','h3',74,6],['Eastvale',140,104,'h4-bg','h4','h4',80,6]];
+  s+=arw(p,61,32,123,32,'h2',2)+tx(92,14,'DELIVERED_TO','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)');
+  s+=arw(p,197,32,265,32,'pri',2.4)+tx(231,22,'WITHIN','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri)');
+  s+=arw(p,284,44,284,92,'pri',2.4)+tx(276,72,'WITHIN','font-size:12px;font-weight:700;text-anchor:end;fill:var(--pri)');
+  s+=arw(p,246,104,181,104,'pri',2.4)+tx(214,96,'WITHIN','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri)');
+  N.forEach(n=>{s+=box(n[1]-n[6]/2,n[2]-12,n[6],24,n[3],n[4],n[7])+tx(n[1],n[2]+4.5,n[0],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--'+n[5]+')');});
+  s+=tx(36,60,'(p)','font-size:12px;'+MONO+';text-anchor:middle;fill:var(--muted)')+tx(160,60,'()','font-size:12px;'+MONO+';text-anchor:middle;fill:var(--muted)');
+  s+=tx(140,132,'(:Region {name:\'Eastvale\'})','font-size:12px;'+MONO+';text-anchor:middle;fill:var(--muted)');
+  s+=box(4,144,322,26,'pri-bg','pri',13)+tx(165,161,'WITHIN*0.. = follow WITHIN 0, 1, 2, 3… times','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+  return FIG(p,'0 0 330 174','Parcel 48213 has a DELIVERED_TO edge to 40 Quay St, which is WITHIN E1, which is WITHIN Riverside, which is WITHIN Eastvale. The three WITHIN hops are what WITHIN star zero dot dot matches.',s);
+}
+function figRec(){
+  const p='fi';let s='';
+  const R=[['round 0','Eastvale',1],['round 1','+ E2, Riverside',3],['round 2','+ E1, 7 Elm St',5],['round 3','+ 40 Quay St',6],['round 4','nothing new → stop',6]];
+  s+=tx(4,12,'WITH RECURSIVE in_eastvale: the set grows','font-size:12.5px;font-weight:700;fill:var(--ink)');
+  R.forEach((r,j)=>{const y=30+j*26;s+=tx(4,y+12,r[0],'font-size:12px;font-weight:700;fill:var(--muted)')+tx(62,y+12,r[1],'font-size:12px;fill:var(--'+(j===4?'ok':'ink')+')'+(j===4?';font-weight:700':''));
+    s+=box(222,y,r[2]*16,18,j===4?'ok-bg':'pri-bg',j===4?'ok-line':'pri',4)+tx(216,y+13,r[2],'font-size:12px;font-weight:700;text-anchor:end;fill:var(--pri-deep)');});
+  s+=tx(4,178,'Same query, lines of code (book’s example)','font-size:12.5px;font-weight:700;fill:var(--ink)');
+  s+=tx(4,200,'Cypher','font-size:12px;font-weight:700;fill:var(--h2)')+box(60,188,4*8.8,18,'h2-bg','h2',4)+tx(100,201,'4','font-size:12px;font-weight:700;fill:var(--h2)');
+  s+=tx(4,224,'SQL','font-size:12px;font-weight:700;fill:var(--h1)')+box(60,212,29*8.8,18,'h1-bg','h1',4)+tx(60+29*8.8-6,225,'29','font-size:12px;font-weight:700;text-anchor:end;fill:var(--h1)');
+  return FIG(p,'0 0 330 234','A recursive SQL query builds the set of places in Eastvale round by round: 1, 3, 5, 6 places, then nothing new, so it stops. Below: the book’s query takes 4 lines in Cypher and 29 lines in SQL.',s);
+}
+function figTriple(){
+  const p='fj';let s='';
+  s+=box(6,22,112,40,'card','line2',6)+tx(62,38,'quay','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(62,54,'name: 40 Quay St','font-size:12px;text-anchor:middle;fill:var(--h3)');
+  s+=arw(p,62,62,62,108,'h2',1.8)+tx(70,90,'within','font-size:12px;font-weight:700;fill:var(--h2)');
+  s+=box(45,110,34,24,'h3-bg','h3',6)+tx(62,126.5,'e1','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+  s+=tx(326,12,'subject · predicate · object','font-size:12px;fill:var(--muted);text-anchor:end');
+  s+=box(128,24,198,26,'h3-bg','h3',7)+tx(227,41,'(quay, name, "40 Quay St")','font-size:12px;'+MONO+';text-anchor:middle;fill:var(--ink)');
+  s+=tx(227,66,'object is a value → a property','font-size:12px;font-weight:600;text-anchor:middle;fill:var(--h3)');
+  s+=box(128,96,198,26,'h2-bg','h2',7)+tx(227,113,'(quay, within, e1)','font-size:12px;'+MONO+';text-anchor:middle;fill:var(--ink)');
+  s+=tx(227,138,'object is a vertex → an edge','font-size:12px;font-weight:600;text-anchor:middle;fill:var(--h2)');
+  s+='<path d="M118 50 L126 40 M70 86 L126 108" style="stroke:var(--line2);stroke-width:1.4;stroke-dasharray:3 3;fill:none"/>';
+  return FIG(p,'0 0 330 146','The vertex quay, with the property name 40 Quay St and a within edge to e1, written as two triples: quay name 40 Quay St, a property because the object is a value; and quay within e1, an edge because the object is another vertex.',s);
+}
+function figCodasyl(){
+  const p='fm';let s='';
+  s+=tx(80,14,'CODASYL','font-size:12.5px;font-weight:700;fill:var(--h1);text-anchor:middle')+tx(246,14,'Graph database','font-size:12.5px;font-weight:700;fill:var(--h3);text-anchor:middle');
+  s+='<line x1="160" y1="22" x2="160" y2="180" style="stroke:var(--line);stroke-width:1.5;stroke-dasharray:4 4"/>';
+  /* left: one fixed access path, walked step by step */
+  ['Region','Zone','Address','Parcel'].forEach((t,j)=>{const y=24+j*36;
+    s+=box(38,y,84,22,'h1-bg','h1',6)+tx(80,y+15.5,t,'font-size:12px;font-weight:600;text-anchor:middle;fill:var(--ink)');
+    s+='<circle cx="20" cy="'+(y+11)+'" r="9" style="fill:var(--h1)"/>'+tx(20,y+15,j+1,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--card)');
+    if(j<3)s+=arw(p,80,y+22,80,y+35,'h1',1.4);});
+  s+=tx(80,176,'only way in: the path','font-size:12px;font-weight:600;fill:var(--h1);text-anchor:middle');
+  /* right: free links, direct jump by ID */
+  const N=[['Eastvale',292,36,62,'h4-bg','h4',6],['Riverside',212,62,70,'h3-bg','h3',6],['E1',296,90,34,'h3-bg','h3',6],['40 Quay St',212,118,76,'card','line2',6],['48213',292,146,52,'soft','line2',11]];
+  s+=arw(p,268,139,251,128,'h2',1.6)+arw(p,250,114,277,97,'line2',1.5)+arw(p,279,84,248,70,'line2',1.5)+arw(p,248,53,259,45,'line2',1.5);
+  N.forEach(n=>{s+=box(n[1]-n[3]/2,n[2]-11,n[3],22,n[4],n[5],n[6])+tx(n[1],n[2]+4.2,n[0],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--'+(n[5]==='line2'?'ink':n[5])+')');});
+  s+=box(170,141,62,22,'pri-bg','pri',11)+tx(201,156,'ID 48213','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+  s+=arw(p,233,151,264,147,'pri',1.8,'4 3');
+  s+=tx(246,184,'jump in by ID or index','font-size:12px;font-weight:600;fill:var(--h3);text-anchor:middle');
+  /* the four differences */
+  [['schema','fixed nesting rules','any vertex → any'],['reach','access path only','by ID or index'],['order','ordered sets to keep','no order; sort later'],['queries','imperative, brittle','declarative Cypher']].forEach((r,j)=>{const y=198+j*28;
+    s+=box(4,y,130,22,'h1-bg','h1',11)+tx(69,y+15.5,r[1],'font-size:12px;text-anchor:middle;fill:var(--ink)');
+    s+=tx(165,y+15.5,r[0],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--muted)');
+    s+=box(196,y,130,22,'h3-bg','h3',11)+tx(261,y+15.5,r[2],'font-size:12px;text-anchor:middle;fill:var(--ink)');});
+  return FIG(p,'0 0 330 310','Left, CODASYL: Region, Zone, Address and Parcel records in one fixed chain that a cursor walks in steps 1 to 4. Right, a graph database: Eastvale, Riverside, E1, 40 Quay St and parcel 48213 linked freely, with a direct jump to the parcel by its ID. Below, four differences. Schema: fixed nesting rules versus any vertex to any vertex. Reaching a record: access path only versus by ID or index. Order: ordered sets to maintain versus no order, sort at query time. Queries: imperative and brittle versus declarative Cypher.',s);
+}
+function figSummary(){
+  const p='fk';let s='';
+  const B=(x,y,w,h,f,c,a,b,d)=>box(x,y,w,h,f,c,10)+tx(x+w/2,y+17,a,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--'+c+')')+tx(x+w/2,y+33,b,'font-size:12px;text-anchor:middle;fill:var(--ink)')+(d?tx(x+w/2,y+47,d,'font-size:12px;text-anchor:middle;fill:var(--ink)'):'');
+  s+=B(80,4,170,40,'soft','muted','Hierarchical (IMS)','one big tree');
+  s+=arw(p,165,44,165,62,'muted',1.5)+tx(174,57,'many-to-many hurts','font-size:12px;fill:var(--muted)');
+  s+=B(80,64,170,40,'h2-bg','h2','Relational','tables, joins, many-to-many');
+  s+=arw(p,140,104,82,128,'muted',1.5)+arw(p,190,104,248,128,'muted',1.5)+tx(165,124,'NoSQL','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--muted)');
+  s+=B(4,130,156,54,'h3-bg','h3','Document','self-contained docs,','few links between them');
+  s+=B(170,130,156,54,'h1-bg','h1','Graph','anything may relate','to everything');
+  return FIG(p,'0 0 330 188','History of data models: hierarchical, one big tree; then relational, built for many-to-many; then NoSQL splits two ways, into document databases with few links and graph databases where anything may relate to everything.',s);
+}
+
+/* ================= the purity lab (MapReduce) ================= */
+function Purity(L,host,id,on){
+  const K='key = this.hub + month(this.time)',E='emit(key, this.parcels)';
+  const V=[['Pure',K+'<br>'+E],
+           ['Reads the clock','key = this.hub + month(<b style="color:var(--no)">now()</b>)<br>'+E],
+           ['Shared counter','<b style="color:var(--no)">counter.add(1)</b><br>'+K+'<br>'+E]];
+  const D=[['WC','3 Nov',120],['WN','9 Nov',40],['WC','18 Nov',85],['WN','27 Nov',30]];
+  let v=0,busy=false,st=null;
+  host.insertAdjacentHTML('beforeend','<div class="q4row" id="'+id+'-v" role="group" aria-label="Which map function"></div><div class="q4code" id="'+id+'-c"></div>'+
+    '<div class="q4clock"><span>Clock: <b id="'+id+'-k">30 Nov, 23:58</b></span><span id="'+id+'-n"></span></div>'+
+    '<div class="q4fig"><svg id="'+id+'-s" viewBox="0 0 330 150" role="img" aria-label="Three machines running map. Machine 1 handles documents 1 and 2, machine 2 handles documents 3 and 4 and crashes, machine 3 reruns machine 2’s documents."></svg></div>'+
+    '<div class="q4row"><button class="btn pri" id="'+id+'-go">'+L.ic('play')+'Run, with machine 2 crashing</button></div><div class="q4out" id="'+id+'-o" aria-live="polite">Pick a map function, then run it.</div><p class="small">Machines, clock times, parcel counts and the crash are illustrative.</p>');
+  const $=s=>host.querySelector(s),svg=$('#'+id+'-s');
+  chips($('#'+id+'-v'),V.map(x=>x[0]),(j,b)=>{if(busy)return;v=j;[...$('#'+id+'-v').children].forEach(x=>x.classList.toggle('sel',x===b));st=null;draw();});
+  $('#'+id+'-v').children[0].classList.add('sel');
+  function draw(){
+    if(!svg.isConnected)return;
+    $('#'+id+'-c').innerHTML='<span class="small" style="font-family:var(--sans)">function map() {</span><br>&nbsp;&nbsp;'+V[v][1].replace(/<br>/g,'<br>&nbsp;&nbsp;')+'<br><span class="small" style="font-family:var(--sans)">}</span>';
+    $('#'+id+'-n').innerHTML=v===2?'Shared counter: <b>'+(st?st.counter:0)+'</b>':'';
+    let s='';
+    const rows=[['Machine 1','',[0,1]],['Machine 2','',[2,3]],['Machine 3','the rerun',[2,3]]];
+    rows.forEach((r,ri)=>{const y=6+ri*48;
+      s+=tx(4,y+16,r[0],'font-size:12px;font-weight:700;fill:var(--ink)')+(r[1]?tx(4,y+31,r[1],'font-size:12px;fill:var(--muted)'):'');
+      r[2].forEach((d,ci)=>{const x=82+ci*84,dd=D[d],m=st&&st.m[ri][ci];const lost=st&&ri===1&&st.crash&&m;
+        s+=box(x,y,78,38,m?'pri-bg':'card',m?'pri':'line2',8)+tx(x+39,y+15,dd[0]+' · '+dd[1],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+        if(m)s+=tx(x+39,y+31,'→ '+m,'font-size:12px;text-anchor:middle;fill:var(--'+(m.endsWith('12')?'no':'pri-deep')+')'+(lost?';text-decoration:line-through':''));});
+      const stt=st&&st.s[ri];if(stt)s+=tx(254,y+24,stt[0],'font-size:12.5px;font-weight:700;fill:var(--'+stt[1]+')');});
+    svg.innerHTML=s;
+  }
+  draw();
+  $('#'+id+'-go').onclick=async()=>{
+    if(busy)return;busy=true;$('#'+id+'-go').disabled=true;const me=v;
+    st={m:[[null,null],[null,null],[null,null]],s:[null,null,null],counter:0,crash:false};
+    const key=(d,late)=>me===1&&late?'2026-12':'2026-11';
+    $('#'+id+'-k').textContent='30 Nov, 23:58';$('#'+id+'-o').innerHTML='Running…';draw();await wait(300);
+    st.m[0][0]=key(0);st.m[1][0]=key(2);st.counter+=2;draw();await wait(500);if(!svg.isConnected)return;
+    st.m[0][1]=key(1);st.counter+=1;st.s[0]=['done','ok'];st.crash=true;st.s[1]=['crashed ✗','no'];draw();await wait(600);if(!svg.isConnected)return;
+    $('#'+id+'-k').textContent='1 Dec, 00:02';st.m[2][0]=key(2,1);st.m[2][1]=key(3,1);st.counter+=2;st.s[2]=['done','ok'];draw();await wait(500);if(!svg.isConnected)return;
+    const tot={};[[0,0],[0,1],[2,0],[2,1]].forEach(([r,c])=>{const d=r===0?D[c]:D[2+c];const k=d[0]+' '+st.m[r][c];tot[k]=(tot[k]||0)+d[2];});
+    const rows=Object.keys(tot).map(k=>k+': <b>'+tot[k]+'</b>').join('<br>');
+    let verdict;
+    if(me===0)verdict='<span class="ok-t">✓ Correct:</span> the same report as a run with no crash.';
+    else if(me===1)verdict='<span class="no-t">✗ Wrong:</span> the rerun happened after midnight, so parcels from 18 and 27 November are filed under December.';
+    else verdict='<span class="no-t">✗ Wrong:</span> the report is right, but the counter says 5 documents. There are 4: the crashed attempt was counted too.';
+    $('#'+id+'-o').innerHTML='<b>monthlyHubReport</b><br>'+rows+'<br>'+verdict;
+    busy=false;$('#'+id+'-go').disabled=false;on(me);};
+  return {pick:j=>{$('#'+id+'-v').children[j].click();},go:()=>$('#'+id+'-go').click(),idle:async()=>{for(let i=0;i<300&&busy;i++)await wait(20);}};
+}
+
+/* ============================== the lesson ============================== */
 Course.lesson({
   id:'0004', title:'Query languages and graph models', minutes:20, icon:'map',
-  goals:['Explain why “say what, not how” lets a database get faster without touching your queries','Write a MapReduce query in your head and know what map and reduce may not do','Model connected data as a graph and read a Cypher, SPARQL or Datalog query'],
+  goals:['Explain why a declarative query keeps working, and gets faster, when the database changes how it runs','Say what map and reduce may not do in a MapReduce query, and why','Model connected data as a graph and read a pattern that follows edges any number of hops'],
   parts:['Say what','MapReduce','Graphs','Triples, Datalog'],
   read:'Read the second half of chapter 2 of the book for the full Cypher, SQL, SPARQL and Datalog versions of the same query.',
   glossary:{
@@ -28,18 +495,19 @@ Course.lesson({
     'graph':'Graph: data made of vertices (things, also called nodes or entities) and edges (the links between them, also called relationships or arcs).',
     'property-graph':'Property graph: a graph where every vertex and edge has an ID and key-value properties, and every edge has a label and runs from a tail vertex to a head vertex.',
     'recursive-cte':'Recursive common table expression (WITH RECURSIVE): a SQL feature that keeps adding rows to a set, round after round, until no new rows appear. Used to follow a chain of unknown length.',
-    'triple':'Triple: a three-part fact (subject, predicate, object), such as (hub_c, within, westport). Triple-stores hold all data this way.',
+    'triple':'Triple: a three-part fact (subject, predicate, object), such as (quay, within, e1). Triple-stores hold all data this way.',
+    'rdf':'RDF (Resource Description Framework): a standard format for triples, built for the semantic web, an overhyped idea that websites would publish machine-readable data. Its URIs keep merged datasets from clashing. Triples still make a good internal model.',
     'rule':'Datalog rule: a statement that derives new facts from existing ones. When everything on its right-hand side matches, its left-hand side counts as a new fact.'
   },
   cheatsheet:[
-    '<b>Declarative</b> (SQL, CSS) says what result you want; <b>imperative</b> code says how. Declarative lets the database optimize, reorder and run in parallel without breaking you.',
-    '<b>MapReduce</b> sits in between: map emits key-value pairs, they are grouped by key, reduce combines each group. Both must be <b>pure functions</b>.',
-    'Hand-writing two functions is harder than one query, so MongoDB added the declarative aggregation pipeline: NoSQL reinventing SQL.',
-    'When many-to-many links are everywhere, use a <b>graph</b>: vertices and labelled edges, any vertex may link to any other.',
-    '<b>Cypher</b> matches arrow patterns; <code>*0..</code> follows an edge zero or more times. The same query in SQL needs a clumsy recursive CTE.',
-    '<b>Triples</b> (subject, predicate, object) hold both properties and edges. SPARQL queries them; RDF adds URIs so datasets can merge.',
-    '<b>Datalog</b> builds answers from small rules that derive new facts and can be reused.',
-    'Document, relational and graph all thrive in their own domains. Emulating one in another works, but awkwardly.'
+    '<b>Declarative</b> (SQL, CSS) says what result you want; <b>imperative</b> code says how. The query optimizer picks indexes, join methods and order.',
+    'A declarative query is shorter and easier to write. It promises no row order and no steps, so the database can move rows, speed up its engine and run on many cores with no change to the query.',
+    'A CSS rule stays true as the page changes; imperative DOM code leaves stale styles and must be rewritten to use faster APIs.',
+    '<b>MapReduce</b>: filter, map emits key-value pairs, the framework groups by key, reduce combines each group. map and reduce must be <b>pure</b>, so they can run anywhere, in any order, and be rerun after a failure.',
+    'Two matched functions are harder than one query, so MongoDB added the declarative aggregation pipeline: NoSQL reinventing SQL.',
+    'When anything may link to anything, use a <b>graph</b>: vertices and labelled edges, indexed at both ends so you can walk forwards and backwards. New kinds of vertex need no migration.',
+    'Cypher’s <code>-[:WITHIN*0..]-&gt;</code> follows a chain of any length, even zero. SQL needs <code>WITH RECURSIVE</code>: 29 lines against 4 in the book.',
+    '<b>Triples</b> (SPARQL) and <b>Datalog</b> rules hold and query the same graph; graph databases are not CODASYL again. Document, relational and graph models each thrive in their own domain.'
   ],
   steps:[
 /* ---------- PART 1: SAY WHAT ---------- */
@@ -49,85 +517,83 @@ Course.lesson({
    'The second note says <i>what</i> you want, not <i>how</i> to find it, so a reshuffle can’t break it. That is the idea behind declarative queries.',
    'The first note quietly relies on the shelf order. Once the shelves move, it stops too early. The second only describes the result, so it still works.');}},
 {part:0,src:'Chapter 2 · Query Languages for Data',run(L){
-  L.h(L.kick('learn','Declarative versus imperative')+'<h1 class="q">Say what you want, and let the database decide how</h1>'+
-   L.prose('<b>'+L.g('imperative','Imperative')+'</b> code tells the computer to do steps in a set order. IMS and CODASYL were queried this way. Linh could find Eastvale’s late parcels like this:')+
-   CODE('for each parcel in parcels:\n  if parcel.region == "Eastvale" and parcel.late:\n    add parcel to results')+
-   L.prose('A <b>'+L.g('declarative','declarative')+'</b> language like SQL only states the pattern of the result: conditions, sorting, grouping. The database’s '+L.g('optimizer','query optimizer')+' picks the indexes, the join methods and the order.')+
-   CODE('SELECT * FROM parcels\nWHERE region = \'Eastvale\' AND late;')+
-   L.list([['pencil','Shorter','Usually more concise and easier to work with.'],['layers','Free to improve','It hides the engine’s internals, so the database can get faster without any change to your queries.'],['people','Easy to parallelize','It names no order of steps, so the database may split the work across cores and machines.']],1));
+  L.h(L.kick('learn','Declarative versus imperative')+'<h1 class="q">Say what you want, and let the database decide how</h1>'+figDecl()+
+   CAP('<b>'+L.g('imperative','Imperative')+'</b> code, the way IMS and CODASYL were queried, lists steps in a fixed order. A <b>'+L.g('declarative','declarative')+'</b> query like SQL only states the pattern of the result. The database’s '+L.g('optimizer','query optimizer')+' picks the indexes, join methods and order.')+CSS);
   L.done();}},
-{part:0,src:'Chapter 2 · Query Languages for Data',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame moves the analytics database onto a server with 32 cores instead of 4. Whose report is more likely to speed up with no rewrite?</h1>');
-  L.mc(L.card,['Tobias’s loop that checks parcels one by one','Linh’s SQL query that only describes the result'],1,
-   'Processors now get faster by adding cores, not by much higher clock speeds. A declarative query names no order, so the database is free to run it in parallel.',
-   'A loop spells out steps in a fixed order, which is very hard to split across cores. The declarative query leaves the database free to parallelize.');}},
-{part:0,src:'Chapter 2 · Query Languages for Data',pts:1,
- solve:async L=>{L.$('#pp').children[0].click();L.$('#mv').click();},
+{part:0,src:'Chapter 2 · Query Languages for Data',
+ solve:async L=>{FAST=true;L.$('#s3c').children[2].click();L.$('#s3go').click();await L.s3.idle();},
  run(L){
-  let p=null;const before=[['OP-301','today'],['OP-302','today'],['OP-303','today'],['OP-304','tomorrow'],['OP-305','tomorrow']],after=[['OP-304','tomorrow'],['OP-301','today'],['OP-305','tomorrow'],['OP-302','today'],['OP-303','today']];
-  const draw=rows=>rows.map(r=>'<span class="chip static'+(r[1]==='today'?' ok':'')+'" style="font-size:13.5px;padding:5px 9px">'+r[0]+' · '+r[1]+'</span>').join('');
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Both find parcels due today. Tobias’s loop stops at the first parcel not due today. The database is about to move rows to reclaim disk space. What breaks?</h1><div id="pp"></div>'+
-   '<div id="sim" hidden><div style="background:var(--soft);border-radius:16px;padding:12px;margin:6px 0" id="rows">'+draw(before)+'</div>'+
-   L.lanes([['cycle','Tobias’s loop','Reads from the top, stops at the first “tomorrow.”<div class="res" id="ra">Finds 3 parcels</div>',3],['list','Linh’s SQL','<code>WHERE due = today</code><div class="res" id="rb">Finds 3 parcels</div>',2]])+
-   '<button class="btn pri" id="mv" style="margin-top:12px">'+L.ic('play')+'Reclaim disk space</button></div>');
-  ['Only Tobias’s loop','Only Linh’s SQL','Neither of them'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pp').appendChild(b);});
-  L.$('#mv').onclick=function(){this.remove();L.$('#rows').innerHTML=draw(after);
-    L.$('#ra').innerHTML='<span style="color:var(--no)">Finds 0 parcels: the first row is “tomorrow”</span>';
-    L.$('#rb').innerHTML='<span style="color:var(--ok)">Still finds 3 parcels</span>';
-    L.award(p===0);
-    L.sheet(p===0?'ok':'no',p===0?'You called it!':'Only the loop broke','SQL never promised any order, so the database may move rows freely. Code that walks the rows might depend on their order, and the database can never be sure it doesn’t. A more limited language gives the database more room to optimize.');L.done();};}},
+  let got=false;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Tobias’s loop and Linh’s query both list the 10 parcels due today. Run them, then give the database 32 cores.</h1>'+
+   '<div class="q4row" id="s3c" role="group" aria-label="Number of processor cores"></div><div id="s3"></div><div class="q4row"><button class="btn pri" id="s3go">'+L.ic('play')+'Run both</button></div><p class="small">Time steps are illustrative.</p>'+CSS);
+  const s=L.s3=Strip(L,L.$('#s3'),{id:'s3'});
+  chips(L.$('#s3c'),['1 core','4 cores','32 cores'],(j,b)=>{if(s.busy())return;[...L.$('#s3c').children].forEach(x=>x.classList.toggle('sel',x===b));s.cores([1,4,32][j]);});
+  L.$('#s3c').children[0].classList.add('sel');
+  L.$('#s3go').onclick=async()=>{const r=await s.run();if(!r)return;
+    if(r.cores===32&&!got){got=true;L.sheet('info','Only the query used the extra cores','Linh’s query only names a condition, so the database split the rows into 32 parts and checked them all at once. Tobias’s loop is a list of steps in a fixed order, so it still walks one row at a time. Processors now get faster mostly by adding cores, not by higher clock speeds, so this matters.');L.done();}};}},
+{part:0,src:'Chapter 2 · Query Languages for Data',pts:1,
+ solve:async L=>{FAST=true;L.$('#s4p').children[0].click();for(let i=0;i<300&&!L.$('#s4d');i++)await L.sleep(20);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Overnight, the database moves rows around to reclaim disk space. Whose result changes?</h1><div id="s4"></div><div class="q4row" id="s4p"></div><div id="s4x"></div>'+CSS);
+  const s=Strip(L,L.$('#s4'),{id:'s4'});s.pre();
+  chips(L.$('#s4p'),['Only Tobias’s loop','Only Linh’s query','Both','Neither'],async(j,b)=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+    await s.reorg();const r=await s.run();if(!r)return;const ok=j===0;L.award(ok);L.$('#s4x').innerHTML='<span id="s4d"></span>';
+    L.sheet(ok?'ok':'no',ok?'You called it':'Only the loop broke','The loop quietly relied on today’s rows coming first. After the move it stopped at row 3 and found only 2. SQL never promised any order, so the query still finds all 10. The database can never be sure whether imperative code relies on order; a more limited language gives it more room to optimize.');L.done();});}},
 {part:0,src:'Chapter 2 · Declarative Queries on the Web',run(L){
-  L.h(L.kick('learn','Declarative beyond databases')+'<h1 class="q">CSS is a declarative query language for web pages</h1>'+
-   L.prose('The tracking page shows a list of steps. The current step’s list item has the class <i>current</i>, and its title should be highlighted blue. In CSS that is one rule:')+
-   CODE('li.current &gt; p { background-color: blue; }')+
-   L.prose('The selector describes a pattern: every &lt;p&gt; whose direct parent is an &lt;li&gt; with class <i>current</i>. XSL with XPath works the same way.')+
-   L.prose('The imperative version walks the page with JavaScript: loop over all list items, check the class, loop over the children, and set a style on each matching &lt;p&gt;. It is much longer, and it has two serious problems:')+
-   L.list([['When the class moves, the colour stays','The script set a style once. Rerunning it doesn’t remove old highlights. The browser re-checks a CSS rule and drops the colour as soon as the class is gone.'],
-           ['New, faster APIs mean rewrites','To use a faster browser API you must rewrite the script. Browser makers can speed up CSS without breaking anyone.']],4));
+  L.h(L.kick('learn','Declarative beyond databases')+'<h1 class="q">CSS is a declarative query language for web pages</h1>'+figCss()+
+   CAP('The selector <code>li.current &gt; p</code> names a pattern: every &lt;p&gt; whose parent &lt;li&gt; has the class <i>current</i>. The browser keeps the page matching it. XSL with XPath works the same way. Imperative JavaScript must find and paint each element itself.')+CSS);
   L.done();}},
 {part:0,src:'Chapter 2 · Declarative Queries on the Web',pts:1,
- solve:async L=>{L.$('#nx').click();L.$('#nx').click();},
+ solve:async L=>{L.$('#c6n').click();L.$('#c6n').click();L.$('#c6b-0').click();L.$('#c6b-1').click();L.$('#c6k').click();},
  run(L){
-  const S=['Picked up','At hub','Out for delivery','Delivered'];let cur=0;const js=new Set([0]);
-  const draw=()=>{L.$('#ca').innerHTML=S.map((s,j)=>'<div style="padding:4px 8px;margin:3px 0;border-radius:8px;font-size:14px;'+(j===cur?'background:var(--h2-bg);color:var(--h2);font-weight:600':'')+'">'+s+'</div>').join('');
-    L.$('#cb').innerHTML=S.map((s,j)=>'<div style="padding:4px 8px;margin:3px 0;border-radius:8px;font-size:14px;'+(js.has(j)?'background:var(--h3-bg);color:var(--h3);font-weight:600':'')+'">'+s+(js.has(j)&&j!==cur?' ✗':'')+'</div>').join('');};
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Mrs. Okoro’s parcel moves along. Advance the status and compare the two pages.</h1>'+
-   L.lanes([['list','CSS rule','<div id="ca"></div>',2],['cycle','Tobias’s script, rerun each time','<div id="cb"></div>',3]])+
-   '<button class="btn pri" id="nx" style="margin-top:12px">'+L.ic('play')+'Next status</button><div id="hq"></div>');
+  const S=['Picked up','At hub','Out for delivery','Delivered'];let cur=0,tap=false,checked=false;const js=new Set([0]),mark=new Set();
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Mrs. Okoro’s parcel moves along. Press “Next status” twice and compare the two tracking pages.</h1>'+
+   '<div class="q4ph2"><div class="q4ph"><div class="q4phh" style="color:var(--h2)">CSS rule</div><div class="q4mono q4sm">li.current &gt; p<br>{ background: blue }</div><div id="c6a"></div></div>'+
+   '<div class="q4ph"><div class="q4phh" style="color:var(--h1)">Tobias’s script</div><div class="q4mono q4sm">find li.current,<br>paint its p blue</div><div id="c6b"></div></div></div>'+
+   '<div class="q4row"><button class="btn pri" id="c6n">'+L.ic('play')+'Next status</button></div><div id="c6q"></div><p class="small">Both run again after every change. “current” marks the item with the class.</p>'+CSS);
+  function draw(){
+    L.$('#c6a').innerHTML=S.map((t,j)=>'<div class="q4st'+(j===cur?' on':'')+'">'+t+(j===cur?'<i>current</i>':'')+'</div>').join('');
+    L.$('#c6b').innerHTML=S.map((t,j)=>'<button class="q4st'+(js.has(j)?' on':'')+(mark.has(j)?' mk':'')+'" id="c6b-'+j+'"'+(tap&&!checked?' aria-pressed="'+mark.has(j)+'"':' disabled')+'>'+t+(j===cur?'<i>current</i>':'')+(mark.has(j)?'<i style="color:var(--no)">marked as wrong</i>':'')+'</button>').join('');
+    S.forEach((t,j)=>{L.$('#c6b-'+j).onclick=()=>{if(!tap||checked)return;mark.has(j)?mark.delete(j):mark.add(j);draw();};});}
   draw();
-  L.$('#nx').onclick=function(){if(cur>=S.length-1)return;cur++;js.add(cur);draw();if(cur>=S.length-1)this.remove();
-    if(cur===2&&!L.$('#hq').innerHTML){const q=L.$('#hq');q.innerHTML='<h2 class="sub">What does the browser do for the CSS rule that Tobias’s script never does?</h2>';
-      L.mc(q,['It runs the rule faster on each step','It drops the style once the pattern stops matching','It reruns the script whenever the status changes'],1,
-       'A declarative rule describes <i>which</i> elements should be blue, so the browser keeps the page matching it. The script only ever adds colour.',
-       'Rerunning wasn’t the fix: Tobias’s script already reran and still left old highlights. The browser keeps the page in line with the pattern, removing the style when it no longer applies.');}};}},
+  L.$('#c6n').onclick=function(){if(cur>=2)return;cur++;js.add(cur);draw();
+    if(cur===2){this.remove();tap=true;draw();
+      L.$('#c6q').innerHTML='<p class="q4ask">Tap each step on Tobias’s page that is blue by mistake, then check.</p><div class="q4row"><button class="btn pri" id="c6k">Check</button></div>';
+      L.$('#c6k').onclick=()=>{if(checked)return;checked=true;const ok=mark.size===2&&mark.has(0)&&mark.has(1);L.award(ok);draw();
+        L.sheet(ok?'ok':'no',ok?'Right: two stale highlights':'Picked up and At hub are the stale ones','The script only ever adds a style. Rerunning it never removes the blue from steps that lost the class, so they stay blue until the page reloads. The browser notices when the CSS rule stops matching and drops the blue. And browser makers can speed up CSS without breaking anyone, while the script must be rewritten to use a faster API.');L.done();};}};}},
 
 /* ---------- PART 2: MAPREDUCE ---------- */
 {part:1,src:'Chapter 2 · MapReduce Querying',run(L){
-  L.h(L.kick('learn','MapReduce querying')+'<h1 class="q">Halfway between declarative and imperative</h1>'+
-   L.prose('<b>'+L.g('mapreduce','MapReduce')+'</b> is a programming model for processing large amounts of data in bulk across many machines, made popular by Google. Some NoSQL stores, such as MongoDB and CouchDB, offer a limited form of it for read-only queries over many documents. (Chapter 10 covers MapReduce in general.)')+
-   L.prose('You write small snippets of code, and the framework calls them again and again. They come from functional programming: <b>map</b> (also called collect) and <b>reduce</b> (also called fold or inject).')+
-   L.flow([['eye','Filter','pick the documents','declarative part'],['pointer','map','emit a key and a value per document'],['layers','Group','pairs with the same key'],['check','reduce','combine each group into one result']]));
+  L.h(L.kick('learn','MapReduce querying')+'<h1 class="q">Halfway between declarative and imperative</h1>'+figMRflow()+
+   CAP(L.g('mapreduce','MapReduce')+' processes bulk data across many machines. You write two small functions, <b>map</b> (also called collect) and <b>reduce</b> (fold or inject), and the framework calls them again and again. MongoDB and CouchDB offer a limited form for read-only queries.')+CSS);
   L.done();}},
+{part:1,src:'Chapter 2 · MapReduce Querying',pts:1,
+ solve:async L=>{[0,2,3].forEach(j=>L.$('#m8k').children[j].click());L.$('#m8r').click();for(let k=0;k<6;k++){const b=L.$('#m8n');if(b)b.click();}},
+ run(L){
+  let st=0,fb='';const pick=new Set();
+  L.h(L.kick('ex','Step through')+'<h1 class="q">Linh counts parcels arriving at each Westport hub, per month</h1><div id="m8f"></div><div class="q4cap2" id="m8c" aria-live="polite"></div>'+
+   '<div id="m8q"><p class="q4ask">You are the filter. Tap the documents to keep, then run it.</p><div class="q4row" id="m8k" role="group" aria-label="Documents the filter keeps"></div><div class="q4row"><button class="btn pri" id="m8r">'+L.ic('play')+'Run the filter</button></div></div>'+
+   '<div class="q4row"><button class="btn pri" id="m8n" style="display:none">'+L.ic('play')+'Next step</button></div><p class="small">Hubs, dates and parcel counts are illustrative.</p>'+CSS);
+  const draw=()=>{L.$('#m8f').innerHTML=figMR(st,pick);L.$('#m8c').innerHTML=fb+'<b>'+(st+1)+' of 6 · </b>'+MR_CAPS[st];};
+  chips(L.$('#m8k'),MR_D.map(d=>d[0]+' · '+d[1]),(j,b)=>{if(st)return;pick.has(j)?pick.delete(j):pick.add(j);b.classList.toggle('sel',pick.has(j));b.setAttribute('aria-pressed',pick.has(j));draw();});
+  draw();
+  L.$('#m8r').onclick=()=>{if(st)return;const ok=pick.size===3&&!pick.has(1);L.award(ok);
+    fb=ok?'<span class="ok-t">✓ Same as the filter.</span> ':'<span class="no-t">✗ The filter keeps the three W. hubs and drops E. Depot.</span> ';
+    st=1;L.$('#m8q').remove();L.$('#m8n').style.display='';draw();};
+  L.$('#m8n').onclick=function(){if(st<1||st>=5)return;st++;fb='';draw();if(st===5){this.remove();L.done();}};}},
+{part:1,src:'Chapter 2 · MapReduce Querying',
+ solve:async L=>{FAST=true;const p=L.p9;p.pick(0);p.go();await p.idle();p.pick(1);p.go();await p.idle();},
+ run(L){
+  const tried=new Set();
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">The database may rerun map on another machine after a crash. Try a '+L.g('pure','pure')+' map, then one that breaks the rules.</h1><div id="p9"></div>'+CSS);
+  L.p9=Purity(L,L.$('#p9'),'p9',me=>{tried.add(me);
+    if(tried.has(0)&&(tried.has(1)||tried.has(2))&&!L.$('#p9ok')){L.$('#p9').insertAdjacentHTML('beforeend','<span id="p9ok"></span>');
+      L.sheet('info','Why map and reduce must be pure','They may use only the data passed in: no extra database queries, no side effects. In return the database can run them anywhere, in any order, and rerun them after a failure, as it just did. They can still parse strings, call library functions and do calculations.');L.done();}});}},
 {part:1,src:'Chapter 2 · MapReduce Querying',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh counts parcels arriving at each hub per month</h1>');
-  L.beats(L.card,[
-   ['The data','Each time a cage of parcels reaches a hub, a document is stored: the hub, the time, the region and how many parcels were in the cage.'],
-   ['The filter','A query keeps only Westport documents. MongoDB lets you write this filter declaratively.'],
-   ['map','Called once per matching document. It builds a key from the hub and the month and emits it with the parcel count:'+CODE('emit("Westport Central 2026-11", this.parcels)')],
-   ['Two documents','One cage of 120 on 3 November and one of 85 on 18 November give emit(“… 2026-11”, 120) and emit(“… 2026-11”, 85).'],
-   ['reduce','The pairs are grouped by key, and reduce runs once per key: reduce(“Westport Central 2026-11”, [120, 85]) returns <b>205</b>.'],
-   ['The output','The results are written to a new collection, say <i>monthlyHubReport</i>, ready for the merchant dashboard.']],
-   'map turns each document into key-value pairs; the framework groups them by key; reduce folds each group into one answer.');}},
-{part:1,src:'Chapter 2 · MapReduce Querying',pts:1,run(L){
-  L.h(L.kick('try','Put it in order')+'<h1 class="q">Tap the steps of Linh’s MapReduce query in the order they happen.</h1>');
-  L.order(L.card,['Filter documents with the query','Call map once per document','Group emitted pairs by key','Call reduce once per key','Write results to a collection'],
-   'Filter, map, group by key, reduce, write out. The framework does the grouping; you only write map and reduce.');}},
-{part:1,src:'Chapter 2 · MapReduce Querying',run(L){
-  L.h(L.kick('learn','The rules, and the twist')+'<h1 class="q">map and reduce must be pure functions</h1>'+
-   L.prose('A '+L.g('pure','pure function')+' uses only the data passed in. It may not run extra database queries and may not have side effects. In return, the database can run it anywhere, in any order, and rerun it after a failure. It can still parse strings, call library functions and do calculations.')+
-   L.prose('MapReduce has no monopoly on spreading a query over many machines: SQL can run as a chain of MapReduce steps, or on distributed engines that don’t use MapReduce at all.')+
-   L.prose('The catch: writing two carefully matched functions is often harder than writing one query, and a declarative language gives an optimizer more room. So MongoDB 2.2 added the declarative <b>aggregation pipeline</b>, which is like a subset of SQL written in JSON.')+
-   L.quote('A NoSQL system may find itself accidentally reinventing SQL, albeit in disguise.','Martin Kleppmann, chapter 2'));
+  L.h(L.kick('learn','The twist')+'<h1 class="q">NoSQL drifts back towards SQL</h1>'+figSpectrum()+
+   CAP('Two carefully matched functions are often harder to write than one query, and give an optimizer less room. So MongoDB 2.2 added the declarative aggregation pipeline: roughly a subset of SQL, written in JSON. SQL isn’t tied to one machine either.')+
+   L.quote('A NoSQL system may find itself accidentally reinventing SQL, albeit in disguise.','Martin Kleppmann, chapter 2')+CSS);
   L.done();}},
 {part:1,src:'Chapter 2 · MapReduce Querying',pts:5,run(L){
   L.h('<div id="qk"></div>');
@@ -140,117 +606,148 @@ Course.lesson({
 
 /* ---------- PART 3: GRAPHS ---------- */
 {part:2,src:'Chapter 2 · Graph-Like Data Models',run(L){
-  L.h(L.kick('learn','When everything links to everything')+'<h1 class="q">Graphs: vertices and edges</h1>'+
-   L.prose('Tree-shaped data or unrelated records suit documents. When many-to-many links are common, a '+L.g('graph','graph')+' becomes the natural model: <b>vertices</b> (the things) and <b>edges</b> (the links between them).')+
-   L.flow([['people','Social graph','people, and who knows whom'],['book','Web graph','pages, and the links between them'],['map','Road network','junctions, and the roads joining them']],false)+
-   L.prose('Well-known algorithms run on these: a sat-nav finds the shortest path through a road network; PageRank ranks web pages by their links.')+
-   L.note('Vertices needn’t all be the same kind of thing. The book notes that Facebook keeps one graph whose vertices are people, places, events, check-ins and comments, with many kinds of edges. Otterpost’s graph could hold hubs, zones, roads, couriers and parcels together.','bulb'));
+  L.h(L.kick('learn','When everything links to everything')+'<h1 class="q">Graphs: vertices and edges</h1>'+figGraphs()+
+   CAP('When many-to-many links are common, use a '+L.g('graph','graph')+': <b>vertices</b> (things) and <b>edges</b> (links). Sat-navs find shortest paths over roads, like the ROAD_TO edges between Otterpost’s hubs; PageRank ranks web pages. Facebook’s one graph mixes many kinds of thing.')+CSS);
   L.done();}},
 {part:2,src:'Chapter 2 · Property Graphs',run(L){
-  L.h(L.kick('learn','Property graphs')+'<h1 class="q">What a vertex and an edge are made of</h1>'+
-   L.lanes([['box','Each vertex has','A unique ID · its outgoing edges · its incoming edges · properties (key-value pairs)',2],
-            ['arrow','Each edge has','A unique ID · the <b>tail</b> vertex it starts at · the <b>head</b> vertex it ends at · a label (the kind of link) · properties',3]])+
-   L.prose('In a '+L.g('property-graph','property graph')+' (Neo4j, Titan, InfiniteGraph) you can picture the store as two tables:')+
-   CODE('vertices(vertex_id, properties)\nedges(edge_id, tail_vertex, head_vertex, label, properties)\n-- indexes on BOTH tail_vertex and head_vertex')+
-   L.list([['Any vertex may link to any other','No schema limits which things can be connected.'],['Walk both ways','Indexes on both ends let you follow edges forward and backward.'],['Labels keep it tidy','Different kinds of links live in one graph without a mess.']],1));
+  L.h(L.kick('learn','Property graphs')+'<h1 class="q">What a vertex and an edge are made of</h1>'+figProp()+
+   CAP('In a '+L.g('property-graph','property graph')+' (Neo4j, Titan, InfiniteGraph) every vertex and edge has an ID and properties; each edge has a label, a tail and a head. Any vertex may link to any other, and labels keep many kinds of link tidy in one graph.')+CSS);
   L.done();}},
-{part:2,src:'Chapter 2 · Property Graphs',run(L){
-  L.h(L.kick('ex','Otterpost’s location graph')+'<h1 class="q">Why Zainab sketches places as a graph</h1>');
-  L.beats(L.card,[
-   ['The book’s example','Lucy, born in Idaho, and Alain, born in Beaune, France, are married and live in London. France splits into régions and départements, the US into states and counties. Lucy’s home is known to the city, her birthplace only to the state.'],
-   ['Otterpost’s version','Addresses lie WITHIN zones, zones WITHIN regions. But Eastvale adds districts between zones and the region, and some pickup points are known only to the zone, not the street.'],
-   ['As edges','Parcel OP-7120 has a PICKED_UP_AT edge to an address in Westport and a DELIVERED_TO edge to an address in Eastvale. Hubs link to each other with ROAD_TO edges carrying a travel time.'],
-   ['Why a graph fits','Different structures per region and different levels of detail would be painful in fixed tables. In a graph, each place simply points WITHIN whatever contains it.'],
-   ['Room to grow','Later, Otterpost can add vertices for vans or lockers and new edge labels without redesigning anything. The book calls graphs good for evolvability.']],
-   'A graph handles uneven structures and mixed levels of detail, and stretches easily as new features add new kinds of things and links.');}},
-{part:2,src:'Chapter 2 · The Cypher Query Language',run(L){
-  L.h(L.kick('learn','The Cypher query language')+'<h1 class="q">Draw the pattern with arrows</h1>'+
-   L.prose('Cypher is a declarative query language for property graphs, created for Neo4j (named after a character in <i>The Matrix</i>). An edge is an arrow: <code>(hubC) -[:WITHIN]-&gt; (westport)</code>. Linh wants every parcel picked up in Westport and delivered in Eastvale:')+
-   CODE('MATCH\n  (p) -[:PICKED_UP_AT]-&gt; () -[:WITHIN*0..]-&gt; (:Region {name:"Westport"}),\n  (p) -[:DELIVERED_TO]-&gt; () -[:WITHIN*0..]-&gt; (:Region {name:"Eastvale"})\nRETURN p.code')+
-   L.prose('<code>:WITHIN*0..</code> means “follow a WITHIN edge zero or more times,” like <code>*</code> in a regular expression. An address may sit one, two or three levels below its region.')+
-   L.note('Linh doesn’t say <i>how</i> to run it. The optimizer may scan every parcel forwards, or start at the two region vertices and walk incoming edges backwards. It picks whichever it predicts is faster.','compass'));
-  L.done();}},
-{part:2,src:'Chapter 2 · The Cypher Query Language',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A rural parcel’s DELIVERED_TO edge points straight at the Eastvale region vertex, with no address or zone in between. Does Linh’s query match it?</h1>');
-  L.mc(L.card,['No, the pattern needs at least one WITHIN edge','Only if there is an index on the name property','Yes, zero WITHIN hops lets the region itself match'],2,
-   '<code>*0..</code> means zero or more. Zero hops means the vertex it reached is itself checked against “Eastvale.”',
-   'The <code>0</code> in <code>*0..</code> allows zero hops, so a parcel delivered straight to the region vertex matches. Indexes only change speed, not results.');}},
-{part:2,src:'Chapter 2 · Graph Queries in SQL',run(L){
-  L.h(L.kick('learn','Graph queries in SQL')+'<h1 class="q">Possible, but clumsy</h1>'+
-   L.prose('If graph data lives in the vertices and edges tables, can SQL query it? Yes, with difficulty. In normal SQL you know in advance which joins you need. In a graph query you may have to cross an <b>unknown number</b> of edges before you reach the vertex you want.')+
-   L.prose('Since SQL:1999, a '+L.g('recursive-cte','recursive common table expression')+' (<code>WITH RECURSIVE</code>) can express this: start with the region, then keep adding everything WITHIN it, round after round, until no new rows appear.')+
-   L.flow([['pencil','Cypher','4 lines','in the book’s example',2],['list','SQL','29 lines','same query, same answer',3]],false)+
-   L.prose('That gap doesn’t make SQL bad. It shows that each data model is built for different uses, so pick the one that suits your app.'));
-  L.done();}},
-{part:2,src:'Chapter 2 · Graph Queries in SQL',pts:1,
- solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#nr');if(b)b.click();}},
+{part:2,src:'Chapter 2 · Property Graphs',pts:1,
+ solve:async L=>{for(let k=0;k<4;k++){const b=L.$('#b14n');if(b)b.click();}L.$('#b14k').children[0].click();},
  run(L){
-  const R=[['Eastvale'],['Riverside district','Old Town district'],['Zone E1','Zone E2','Zone E3'],['12 Mill Lane','40 Quay St','Eastvale hub'],[]];let r=0;
-  const draw=()=>{L.$('#set').innerHTML=R.slice(0,r+1).map((g,j)=>g.map(x=>'<span class="chip static'+(j===r?' ok':'')+'" style="font-size:13.5px;padding:5px 9px">'+x+'</span>').join('')).join('');
-    L.$('#rl').innerHTML='<b>Round '+r+'</b> · '+(r===0?'start with the region':R[r].length?'added '+R[r].length+' new, one level deeper':'nothing new, so stop');};
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Zainab builds the set <i>in_eastvale</i> with a recursive query. Press “Next round” and watch it grow.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0"><div class="small" id="rl" style="margin-bottom:8px"></div><div id="set"></div></div>'+
-   '<button class="btn pri" id="nr">'+L.ic('play')+'Next round</button><div id="gq"></div>');
-  draw();
-  L.$('#nr').onclick=function(){r++;draw();if(r>=R.length-1){this.remove();const q=L.$('#gq');q.innerHTML='<h2 class="sub">Why couldn’t Zainab use a fixed number of joins here?</h2>';
-    L.mc(q,['SQL allows at most three joins in one query','Places sit different numbers of levels below the region','The edges table has no index on head_vertex'],1,
-     'In Eastvale an address sits three levels below the region; in Westport, with no districts, two; a rural drop-off, zero. The recursion keeps going until a round adds nothing, however deep that is.',
-     'SQL has no such join limit, and an index only changes speed. The real problem is that the number of WITHIN hops varies from place to place.');}};}},
+  let st=1;
+  const C=['<b>Westport.</b> Each address lies WITHIN a zone, each zone WITHIN the region. Every grey arrow is an edge labelled WITHIN.',
+   '<b>Eastvale is organised differently.</b> Zone E1 sits inside the Riverside district, an extra level; E2 doesn’t. Fixed tables would need a column per level. The graph just adds edges.',
+   '<b>Mixed detail.</b> Bramble &amp; Bolt’s depot is only known to be in Westport, with no zone. That’s fine: it points WITHIN whatever contains it.',
+   '<b>Parcels join the same graph</b> with new edge labels, PICKED_UP_AT and DELIVERED_TO. One store holds many kinds of things.',
+   '<b>A rural drop-off.</b> OP-48215 is known only as “Eastvale”: its DELIVERED_TO edge points straight at the region.'];
+  L.h(L.kick('ex','Build it up')+'<h1 class="q">Zainab sketches Otterpost’s places as a graph</h1><div id="b14g"></div><div class="q4cap2" id="b14c" aria-live="polite"></div><div id="b14q"></div><div class="q4row"><button class="btn pri" id="b14n">'+L.ic('play')+'Add the next layer</button></div>'+CSS);
+  const g=Graph(L,L.$('#b14g'),{id:'g14',stage:1});g.say('Layer 1 of 5');
+  let fb='';
+  const cap=()=>{L.$('#b14c').innerHTML=fb+C[st-1];g.say('Layer '+st+' of 5');};cap();
+  L.$('#b14n').onclick=function(){if(st>=4){
+      if(L.$('#b14k'))return;this.remove();
+      L.$('#b14q').innerHTML='<p class="q4ask">Your call: OP-48215 is known only as “Eastvale”. Where should its DELIVERED_TO edge point?</p><div class="q4row" id="b14k" role="group" aria-label="Where the edge points"></div>';
+      chips(L.$('#b14k'),['Straight at the Eastvale region','At a guessed Eastvale zone','Nowhere: it needs an address'],(j,b)=>{if(st>=5)return;b.classList.add('sel');const ok=j===0;L.award(ok);
+        fb=ok?'<span class="ok-t">✓ Right.</span> ':'<span class="no-t">✗ No need to guess or wait:</span> ';
+        st=5;g.stage(5);cap();
+        L.sheet(ok?'ok':'no',ok?'Point it at what you know':'Point it at the region','Any vertex may link to any other, so the edge can go straight to the region. A guessed zone would be wrong data, and no fixed depth is required. The book’s version: Lucy, born in Idaho, and Alain, born in Beaune, France, are married and live in London. France splits into régions and départements, the US into states and counties, and Lucy’s birthplace is known only to the state. Add vertices for allergens and foods, and you could ask what each person can safely eat. Graphs are good for evolvability.');L.done();});
+      return;}
+    st++;g.stage(st);cap();
+  };}},
+{part:2,src:'Chapter 2 · The Cypher Query Language',run(L){
+  L.h(L.kick('learn','The Cypher query language')+'<h1 class="q">Draw the pattern with arrows</h1>'+figCypher()+
+   CAP('Cypher, made for Neo4j (and named after a character in <i>The Matrix</i>), writes edges as arrows. <code>*0..</code> means follow WITHIN zero or more times, like <code>*</code> in a regular expression. You never say how: the optimizer may start at the parcels or at Eastvale.')+CSS);
+  L.done();}},
+{part:2,src:'Chapter 2 · The Cypher Query Language',
+ solve:async L=>{FAST=true;L.$('#q16go').click();await L.g16.idle();setSlot(L,'q16',0,'h','*0..');L.$('#q16go').click();await L.g16.idle();},
+ run(L){
+  let got=false;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Find every parcel delivered in Eastvale. Run the pattern, then tap its coloured parts to change it.</h1><div id="q16g"></div><div id="q16p"></div><div class="q4row"><button class="btn pri" id="q16go">'+L.ic('play')+'Run pattern</button></div>'+CSS);
+  const g=L.g16=Graph(L,L.$('#q16g'),{id:'g16'});
+  const pat=Pat(L.$('#q16p'),'q16',[{e:'D',h:'*2',t:'ev'}]);
+  g.say('Each round follows WITHIN edges one more step backwards from the region. The badge on a place is the round it joined the set.');
+  L.$('#q16go').onclick=async()=>{const ls=pat.lines(),r=await g.run(ls);if(!r)return;
+    if(!got&&ls[0].e==='D'&&ls[0].t==='ev'&&r.match.join()==='p13,p15,p17'){got=true;
+      L.sheet('info','All three, at three different depths','The set grew one hop per round until a round added nothing. With <code>*0..</code> every place in Eastvale counts, whether it sits 0, 2 or 3 hops below the region. A fixed hop count only finds places at that exact depth.');L.done();}};}},
+{part:2,src:'Chapter 2 · Graph Queries in SQL',pts:1,
+ solve:async L=>{FAST=true;L.$('#q17c').children[0].click();for(let i=0;i<300&&!L.$('#q17d');i++)await L.sleep(20);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">OP-48215’s DELIVERED_TO edge points straight at the Eastvale region, with no address in between. Does this pattern match it?</h1><div id="q17p"></div><div class="q4row" id="q17c"></div><div id="q17g"></div><span id="q17x"></span>'+CSS);
+  Pat(L.$('#q17p'),'q17',[{e:'D',h:'*0..',t:'ev'}],false);
+  const g=Graph(L,L.$('#q17g'),{id:'g17'});g.focus(['p15'],[GE.findIndex(e=>e[0]==='p15'&&e[2]==='D')]);
+  g.say('OP-48215 and its edge are outlined in amber.');
+  chips(L.$('#q17c'),['Yes, it matches','No, it doesn’t match','Only if name is indexed'],async(j,b)=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+    g.focus([],[]);const r=await g.run([{e:'D',h:'*0..',t:'ev'}]);if(!r)return;const ok=j===0;L.award(ok);L.$('#q17x').id='q17d';
+    L.sheet(ok?'ok':'no',ok?'Yes: zero hops counts':'It matches','<code>*0..</code> means zero or more hops. In round 0 the set already holds Eastvale itself, so an edge pointing straight at the region counts. A person’s LIVES_IN edge in the book works the same way: it may point at a street, a city or a whole region. An index only changes speed, never results.');L.done();});}},
+{part:2,src:'Chapter 2 · Graph Queries in SQL',run(L){
+  L.h(L.kick('learn','Graph queries in SQL')+'<h1 class="q">Possible, but clumsy</h1>'+figRec()+
+   CAP('In SQL you usually know your joins in advance; here the number of hops isn’t fixed. Since SQL:1999, a '+L.g('recursive-cte','recursive query')+' (<code>WITH RECURSIVE</code>) grows a set round by round until nothing changes. It works, but different models suit different uses.')+CSS);
+  L.done();}},
+{part:2,src:'Chapter 2 · Graph Queries in SQL',
+ solve:async L=>{FAST=true;for(let k=0;k<4;k++){L.$('#q19b').children[k].click();await L.sleep(10);await L.g19.idle();}},
+ run(L){
+  const tried=new Set();let cur=-1;
+  const C=[
+   ['Zero hops',{e:'D',h:'*1..',t:'ev'},'n','With <code>*1..</code> the region itself is left out of the set, so OP-48215, delivered straight to Eastvale, is <b>missed</b>. Only <code>*0..</code> allows a path with no WITHIN hop at all.'],
+   ['Uneven depth',{e:'D',h:'*2',t:'ev'},'n','Exactly 2 hops is like a fixed number of joins: it finds only 7 Elm St’s parcel. 40 Quay St sits 3 levels down and the rural drop-off 0. When depths vary, the hop count must be open-ended.'],
+   ['New kind of place',{e:'D',h:'*0..',t:'ev'},'lk','Otterpost adds parcel lockers: a new vertex type, and OP-48218 delivered to one. No schema change, no migration: any vertex may link to any other. The same pattern now finds <b>4</b> parcels.'],
+   ['Walk forwards',{e:'D',h:'*0..',t:'ev'},'fwd','This time the database starts at each parcel and follows edges forwards, instead of starting at Eastvale and walking backwards. Same 3 parcels. The query never said which way: that choice is the optimizer’s.']];
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Where does the pattern stop helping you? Run each case.</h1><div class="q4row" id="q19b"></div><div class="q4cap2" id="q19c" aria-live="polite">Pick a case.</div><div id="q19g"></div><div id="q19p"></div>'+CSS);
+  const g=L.g19=Graph(L,L.$('#q19g'),{id:'g19'});const pat=Pat(L.$('#q19p'),'q19',[{e:'D',h:'*0..',t:'ev'}],false);
+  g.say('Each case sets the pattern below and runs it.');
+  chips(L.$('#q19b'),C.map(c=>c[0]),async(j,b)=>{if(g.busy())return;cur=j;[...L.$('#q19b').children].forEach(x=>x.classList.toggle('sel',x===b));
+    const c=C[j];pat.set([c[1]]);g.locker(c[2]==='lk');L.$('#q19c').innerHTML='Running…';
+    const r=c[2]==='fwd'?await g.runFwd(c[1]):await g.run([c[1]]);if(!r||cur!==j)return;
+    L.$('#q19c').innerHTML='<b>'+c[0]+'.</b> '+c[3];tried.add(j);
+    if(tried.size===4&&!L.$('#q19ok')){L.$('#q19c').insertAdjacentHTML('beforeend','<span id="q19ok"></span>');
+      L.sheet('info','The limits you just saw','A pattern finds only what its edges and hop count describe: <code>*1..</code> or a fixed count silently drops places at other depths. New vertex types cost nothing. And the database is free to pick the direction; your query stays the same.');L.done();}});}},
+{part:2,src:'Chapter 2 · The Cypher Query Language',pts:1,
+ solve:async L=>{FAST=true;setSlot(L,'q20',0,'h','*0..');setSlot(L,'q20',1,'h','*0..');L.$('#q20go').click();await L.g20.idle();},
+ run(L){
+  let first=true,ok=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Linh needs exactly the parcels <b>picked up in Westport</b> and <b>delivered in Eastvale</b>. Tune both lines. Your first run counts.</h1><div id="q20g"></div><div id="q20p"></div><div class="q4row"><button class="btn pri" id="q20go">'+L.ic('play')+'Run pattern</button></div>'+CSS);
+  const g=L.g20=Graph(L,L.$('#q20g'),{id:'g20'});
+  const pat=Pat(L.$('#q20p'),'q20',[{e:'P',h:'*1',t:'wp'},{e:'D',h:'*1',t:'ev'}]);
+  g.say('Both lines must match the same parcel. Look at how deep each pickup and delivery place sits.');
+  L.$('#q20go').onclick=async()=>{if(ok)return;const r=await g.run(pat.lines());if(!r)return;
+    const pass=r.match.join()==='p13,p15,p17';if(first){L.award(pass);first=false;}
+    if(pass){ok=true;L.$('#q20go').disabled=true;L.sheet('ok','Exactly the three','Pickups sit 1 or 2 hops below Westport and deliveries 0, 2 or 3 below Eastvale, so both lines need an open-ended hop count (<code>*0..</code>, or <code>*1..</code> on the pickup side). The right answer is OP-48213, OP-48215 and OP-48217.');L.done();}
+    else L.sheet('no','Not yet','The right set is the parcels whose pickup place is somewhere in Westport and whose delivery place is somewhere in Eastvale, at any depth. Check the edge, hop count and region on each line, then run again.');};}},
 
 /* ---------- PART 4: TRIPLES AND DATALOG ---------- */
 {part:3,src:'Chapter 2 · Triple-Stores and SPARQL',run(L){
-  L.h(L.kick('learn','Triple-stores')+'<h1 class="q">Every fact is a three-part sentence</h1>'+
-   L.prose('A triple-store (Datomic, AllegroGraph and others) is mostly the property graph in different words. All data is stored as '+L.g('triple','triples')+': (subject, predicate, object), as in (Jim, likes, bananas). The subject is a vertex. The object is one of two things:')+
-   L.lanes([['list','A plain value','Then predicate and object are a property. (hub_c, name, “Westport Central”) is like a vertex with {name: “Westport Central”}.',2],
-            ['arrow','Another vertex','Then the predicate is an edge. (hub_c, within, westport) links two vertices with the label <i>within</i>.',3]])+
-   CODE('_:hub_c    a :Hub;    :name "Westport Central"; :within _:westport.\n_:westport a :Region; :name "Westport".')+
-   L.note('That format is <b>Turtle</b>, a readable way to write <b>RDF</b>. RDF was built for the <i>semantic web</i>: sites publishing machine-readable data that could be merged into one web of data. That vision was overhyped and hasn’t happened, but triples are still a good internal model. RDF uses URIs as predicate names, so your <i>within</i> never clashes with someone else’s when data is combined. The URI needn’t point to a real page.','info'));
+  L.h(L.kick('learn','Triple-stores')+'<h1 class="q">Every fact is a three-part sentence</h1>'+figTriple()+
+   CAP('A triple-store (Datomic, AllegroGraph) is mostly a property graph in other words: every fact is a '+L.g('triple','triple')+'. If the object is a plain value, it’s a property; if it’s another vertex, it’s an edge.')+
+   '<div class="q4code" style="white-space:pre">_:quay a :Address;\n       :name "40 Quay St";\n       :within _:e1.</div>'+
+   '<p class="small">That is <b>Turtle</b>, a readable way to write '+L.g('rdf','RDF')+'.</p>'+CSS);
   L.done();}},
 {part:3,src:'Chapter 2 · Triple-Stores and SPARQL',pts:5,run(L){
   L.h(L.kick('pr','Edge or property?')+'<h1 class="q">Zainab loads Otterpost facts as triples. Is each predicate an edge or a property?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Edge','Property'],[
-   ['(op_7120, weightKg, 2.4)',1,'2.4 is a plain number, so weightKg is a property of the parcel vertex.'],
-   ['(op_7120, deliveredTo, addr_9)',0,'addr_9 is another vertex, so deliveredTo is an edge.'],
+   ['(op_48213, weightKg, 2.4)',1,'2.4 is a plain number, so weightKg is a property of the parcel vertex.'],
+   ['(op_48213, deliveredTo, quay)',0,'quay is another vertex, so deliveredTo is an edge.'],
    ['(ravi, drives, van_12)',0,'van_12 is a vertex in the graph, so drives is an edge between Ravi and the van.'],
-   ['(hub_c, name, “Westport Central”)',1,'A text value makes name a property.'],
-   ['(zone_n3, within, westport)',0,'Both ends are vertices, so within is an edge.']],
+   ['(e1, name, “E1”)',1,'A text value makes name a property.'],
+   ['(e1, within, riverside)',0,'Both ends are vertices, so within is an edge.']],
    'Look at the object: a plain value makes a property, another vertex makes an edge. RDF uses the same predicate idea for both.');}},
 {part:3,src:'Chapter 2 · The SPARQL query language',run(L){
-  L.h(L.kick('learn','SPARQL, and an old question')+'<h1 class="q">SPARQL queries triples; graph databases are not CODASYL again</h1>'+
-   L.prose('SPARQL (pronounced “sparkle”) queries RDF triple-stores. It came before Cypher, and Cypher borrowed its pattern matching. Linh’s query is even shorter here:')+
-   CODE('SELECT ?code WHERE {\n  ?p :code ?code.\n  ?p :pickedUpAt  / :within* / :name "Westport".\n  ?p :deliveredTo / :within* / :name "Eastvale".\n}')+
-   '<p class="small">Variables start with ?. Properties and edges use the same syntax, because RDF doesn’t tell them apart.</p><h2 class="sub">Is a graph database just the old network model? Tap each difference.</h2><div id="fl"></div>');
-  L.flips(L.$('#fl'),[
-   ['Schema','CODASYL fixed which record type could nest in which. In a graph, any vertex can link to any other.'],
-   ['Reaching a record','CODASYL: only by following an access path. Graph: jump straight to any vertex by its ID, or find it with an index.'],
-   ['Order','CODASYL kept children in an ordered set the app had to manage. Graph vertices and edges have no order; sort at query time.'],
-   ['Queries','CODASYL queries were imperative and broke when the schema changed. Graphs offer declarative Cypher or SPARQL.']],
-   'No. The book’s answer is that graph databases differ from CODASYL in all four ways.');}},
-{part:3,src:'Chapter 2 · The Foundation: Datalog',run(L){
-  L.h(L.kick('learn','The foundation: Datalog')+'<h1 class="q">Build the answer from small rules</h1>'+
-   L.prose('Datalog is much older than SPARQL or Cypher: academics studied it in the 1980s, and later languages build on it. Datomic uses it, and Cascalog runs it on Hadoop. A triple becomes <i>predicate(subject, object)</i>:')+
-   CODE('name(westport, \'Westport\').\nwithin(zone_n3, westport).\nwithin(addr_9, zone_n3).')+
-   L.prose('Instead of one big SELECT, you write '+L.g('rule','rules')+'. Words starting with a capital letter are variables. When everything on the right of <code>:-</code> matches, the left side counts as a new fact:')+
-   CODE('in_place(Loc, Name) :- name(Loc, Name).                      /* rule 1 */\nin_place(Loc, Name) :- within(Loc, Via), in_place(Via, Name). /* rule 2 */')+
-   L.prose('Rules can use other rules, even themselves, like functions calling functions. That’s awkward for a quick one-off query, but rules can be combined and reused, so it copes better with complex data.'));
+  const C=(t,c)=>'<span style="color:var(--'+c+');font-weight:700">'+t+'</span>';
+  L.h(L.kick('learn','SPARQL, and an old question')+'<h1 class="q">SPARQL queries triples; graph databases are not CODASYL again</h1>'+figCodasyl()+
+   CAP('CODASYL’s network model linked records too, but a graph database differs in all four ways above. SPARQL (“sparkle”) queries triples; Cypher borrowed its pattern matching, so the two look alike:')+
+   '<div class="q4code"><span class="small" style="font-family:var(--sans)">Cypher</span> (p) -[:'+C('DELIVERED_TO','h2')+']-&gt; ()<br>&nbsp;&nbsp;-[:'+C('WITHIN*0..','pri')+']-&gt; (loc)<br><span class="small" style="font-family:var(--sans)">SPARQL</span> ?p :'+C('deliveredTo','h2')+' / :'+C('within*','pri')+' ?loc.</div>'+CSS);
   L.done();}},
-{part:3,src:'Chapter 2 · The Foundation: Datalog',run(L){
-  L.h(L.kick('ex','Watch the rules fire')+'<h1 class="q">How Datalog learns that addr_9 is in Westport</h1>');
-  L.beats(L.card,[
-   ['Rule 1','The fact name(westport, ‘Westport’) exists, so rule 1 applies. New fact: <b>in_place(westport, ‘Westport’)</b>.'],
-   ['Rule 2, once','within(zone_n3, westport) exists, and we just derived in_place(westport, ‘Westport’). New fact: <b>in_place(zone_n3, ‘Westport’)</b>.'],
-   ['Rule 2, again','within(addr_9, zone_n3) exists, plus the fact from the last step. New fact: <b>in_place(addr_9, ‘Westport’)</b>.'],
-   ['Rule 3','A third rule combines them: a parcel picked up at a place in From and delivered to a place in To. Ask <code>?- cross_region(Code, \'Westport\', \'Eastvale\').</code> and Datalog fills in Code.'],
-   ['Same answer','It returns the same parcels as the Cypher and SPARQL versions, reached one small derived fact at a time.']],
-   'Datalog doesn’t store in_place. It derives it, step by step, by applying rules to facts and to facts derived earlier.');}},
+{part:3,src:'Chapter 2 · The Foundation: Datalog',
+ solve:async L=>{L.$('#d24r1').click();for(let k=0;k<6;k++){const b=L.$('#d24r2');if(b.disabled)break;b.click();}L.$('#d24q').click();},
+ run(L){
+  let r=-1,fix=false,asked=false;
+  L.h(L.kick('ex','Watch the rules fire')+'<h1 class="q">Datalog derives which places are in Eastvale, one small fact at a time</h1><div id="d24g"></div>'+
+   '<div class="q4code" style="white-space:pre;font-size:12.5px"><span style="color:var(--muted)">/* rule 1 */</span>\nin_place(Loc, Name) :-\n    name(Loc, Name).\n<span style="color:var(--muted)">/* rule 2 */</span>\nin_place(Loc, Name) :-\n    within(Loc, Via),\n    in_place(Via, Name).\n<span style="color:var(--muted)">/* rule 3 */</span>\ndelivered_in(Code, Name) :-\n    code(P, Code),\n    delivered_to(P, Loc),\n    in_place(Loc, Name).\n?- delivered_in(Code, \'Eastvale\').</div>'+
+   '<div class="q4row"><button class="btn pri" id="d24r1">Apply rule 1</button><button class="btn" id="d24r2" disabled>Apply rule 2</button><button class="btn" id="d24q" disabled>'+L.ic('play')+'Ask rule 3</button></div>'+
+   '<div class="q4out" id="d24f" aria-live="polite"><b>Derived facts:</b> none yet</div>'+CSS);
+  const g=Graph(L,L.$('#d24g'),{id:'g24',y0:124,noP:true});
+  g.say('Capitalised words are variables. A '+L.g('rule','rule')+' applies when everything right of <code>:-</code> matches; its left side then counts as a new fact.');
+  const line={e:'D',h:'*0..',t:'ev'};const facts=[];
+  const show=()=>{L.$('#d24f').innerHTML='<b>Derived facts ('+facts.length+'):</b> '+(facts.length?facts.map(f=>'<span class="q4fact">'+f+'</span>').join(''):'none yet');};
+  const id=k=>k==='ev'?'eastvale':k==='rv'?'riverside':k;
+  L.$('#d24r1').onclick=function(){if(r>=0)return;g.begin([line]);r=0;g.roundMsg(0);g.draw();facts.push('in_place(eastvale, \'Eastvale\')');show();
+    g.say('<b>Rule 1:</b> the fact name(eastvale, \'Eastvale\') exists, so in_place(eastvale, \'Eastvale\') is now a fact. (It does the same for every named place; we follow Eastvale.)');
+    this.disabled=true;L.$('#d24r2').disabled=false;L.$('#d24r2').classList.add('pri');};
+  L.$('#d24r2').onclick=function(){if(r<0||fix)return;const s=g.S.sets[0],nw=s.rounds[r+1]||[];
+    if(!nw.length){fix=true;this.disabled=true;this.classList.remove('pri');L.$('#d24q').disabled=false;L.$('#d24q').classList.add('pri');
+      g.say('<b>Rule 2 finds nothing new.</b> Every fact it could make is already known, so the derivation is complete: '+facts.length+' places are in Eastvale.');return;}
+    r++;g.roundMsg(r);g.draw();
+    const how=nw.map(k=>{const p=GE.find(e=>e[0]===k&&e[2]==='W')[1];facts.push('in_place('+id(k)+', \'Eastvale\')');return 'within('+id(k)+', '+id(p)+') + in_place('+id(p)+', \'Eastvale\') ⇒ <b>in_place('+id(k)+', \'Eastvale\')</b>';});
+    show();g.say('<b>Rule 2, pass '+r+':</b><br>'+how.join('<br>'));};
+  L.$('#d24q').onclick=function(){if(!fix||asked)return;asked=true;this.disabled=true;const list=g.finish();
+    g.say('<b>Rule 3</b> matches every parcel whose DELIVERED_TO place has an in_place fact for Eastvale. Code = <span class="ok-t">'+list.map(p=>GV[p][1]).join(', ')+'</span>. The same parcels Cypher found.');
+    L.sheet('info','Rules built on rules','Datalog, studied by academics in the 1980s, is the foundation later query languages build on; Datomic and Cascalog use it. Rule 2 uses itself, like a function calling itself, and rule 3 reuses both. That’s clumsy for a quick one-off query, but rules combine and get reused, so it copes better with complex data.');L.done();};}},
 {part:3,src:'Chapter 2 · Summary',run(L){
-  L.h(L.kick('learn','The chapter in one picture')+'<h1 class="q">From one big tree to three models that each win somewhere</h1>'+
-   L.tiers([['tree','Hierarchical','Data as one big tree. Poor at many-to-many links.','1960s and 70s'],
-            ['list','Relational','Invented to handle many-to-many links. Still everywhere.','1970s onward'],
-            ['box','Document','Self-contained documents; links between them are rare.','NoSQL, one direction'],
-            ['map','Graph','Anything may be related to everything.','NoSQL, the other direction']])+
-   L.prose('Each model can be emulated in another (a graph in SQL tables, say), but the result is often awkward. Hence different systems for different jobs. Document and graph stores usually don’t enforce a schema, yet the app still assumes one: explicit on write, or implicit on read.')+
-   '<p class="small">Many models were left out: genome databases for similar-sequence search, custom systems for particle physics at hundreds of petabytes, and full-text search (more in chapter 3).</p>');
+  L.h(L.kick('learn','The chapter in one picture')+'<h1 class="q">Three models, each good in its own domain</h1>'+figSummary()+
+   CAP('Any model can emulate another (a graph in SQL tables, say), but the result is often awkward, hence different systems for different jobs. Document and graph stores rarely enforce a schema, yet the app still assumes one: explicit on write, or implicit on read.')+
+   '<p class="small">Not covered here: genome databases for similar-sequence search, custom systems for particle physics at hundreds of petabytes, and full-text search (chapter 3).</p>'+CSS);
   L.done();}},
 {part:3,src:'Chapter 2 · Summary',pts:5,run(L){
   L.h('<div id="qk"></div>');

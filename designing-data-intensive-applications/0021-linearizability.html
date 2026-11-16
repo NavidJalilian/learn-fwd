@@ -13,124 +13,469 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-/* timeline helper: rows = [label, [[start%, end%, text, color 'h1'..'h4', buttonId?], ...]] */
-function TL(rows){
-  return '<div style="margin:10px 0 6px">'+rows.map(r=>'<div style="margin:0 0 8px"><div class="small" style="font-weight:600;line-height:1.3;margin-bottom:3px">'+r[0]+'</div><div style="position:relative;height:34px;background:var(--soft);border-radius:10px">'+
-    r[1].map(b=>{const t=b[4]?'button':'div',c=b[3]||'h2';
-      return '<'+t+(b[4]?' id="'+b[4]+'" type="button"':'')+' style="position:absolute;left:'+b[0]+'%;width:'+(b[1]-b[0])+'%;top:4px;bottom:4px;border-radius:8px;background:var(--'+c+'-bg);border:2px solid var(--'+c+');color:var(--ink);font:600 12px var(--sans);display:flex;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;padding:0 2px">'+b[2]+'</'+t+'>';}).join('')+
-    '</div></div>').join('')+'<div class="small" style="text-align:right;margin-top:-2px">time '+'→</div></div>';
+/* =====================================================================
+   Lesson 0021 only. The signature model, used all through the lesson:
+   Board = an operation-bar timing diagram with a linearizability checker.
+   Each request is a bar from "sent" to "reply". A tick inside the bar
+   marks when the request took effect. The checker walks the ticks in
+   time order over ONE copy of the value (the strip at the bottom) and
+   flags any read or compare-and-set whose result doesn't fit.
+   Also: a photo race (two channels) and a delay-uncertainty slider.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.tlw{margin:6px 0 2px}.tlw svg{width:100%;display:block;touch-action:none;-webkit-user-select:none;user-select:none}'+
+ '.tll{font:600 11.5px var(--sans);fill:var(--muted)}.tlt{font:600 11.5px var(--sans);fill:var(--ink);pointer-events:none}'+
+ '.tls{font:500 11px var(--sans);fill:var(--muted);pointer-events:none}.tlb{cursor:pointer}.tlh{cursor:ew-resize;outline:none}.tlh:focus circle{stroke:var(--pri)!important}'+
+ '.tlr{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.5;margin:8px 0 4px;min-height:44px}'+
+ '.tlrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.tlrow .chip{margin:0;min-height:40px}'+
+ '.vd{display:inline-block;font-weight:700;border-radius:99px;padding:1px 9px;font-size:13px;margin:0 6px 2px 0}'+
+ '.vd.ok{background:var(--ok-bg);color:var(--ok)}.vd.no{background:var(--no-bg);color:var(--no)}'+
+ '.pic{width:100%;display:block;margin:6px 0 4px}.pic text{font-family:var(--sans)}'+
+ '.capt{font-size:15.5px;line-height:1.5;margin:10px 0 0}.capt.sm{font-size:13.5px;color:var(--muted);margin-top:6px}'+
+ '.stepcap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:70px}.stepcap .n{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.rng21{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14px;margin:8px 0}.rng21 input{grid-column:1/3;width:100%;accent-color:var(--pri);height:32px}.rng21 b{font-variant-numeric:tabular-nums}'+
+ '.thumbs{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.thumb{border-radius:12px;padding:8px 10px;font-size:14px;line-height:1.35;border:2px solid var(--line);background:var(--card)}.thumb b{display:block;font-size:12px;color:var(--muted);font-weight:600}'+
+ '.thumb.ok{border-color:var(--ok-line);background:var(--ok-bg)}.thumb.no{border-color:var(--no-line);background:var(--no-bg)}'+
+ '</style>');
+
+const X=t=>10+t*3.2;                       /* time 0..100 -> x 10..330 */
+const ST={p:['Picked up','h4'],h:['At hub','h1'],o:['Out','h3'],d:['Delivered','h2']};
+const CR={a:['$50','h3'],b:['$80','h2']};
+const LK={f:['free','h3'],p1:['Planner 1','h2'],p2:['Planner 2','h4']};
+const LOC={m:['Mill Lane','h3'],k:['Dock Road','h2']};
+const TC={f:['free','h3'],bb:['B&B','h2'],pt:['P&T','h4']};
+const esc2=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+/* is there ANY order of the operations that respects real time
+   (a before b when a ended before b started) and is a valid run of one copy? */
+function linSearch(ops,init){
+  const n=ops.length,used=new Array(n).fill(false),order=[];
+  const free=i=>ops.every((o,j)=>used[j]||j===i||!(o.e<ops[i].s));
+  const dfs=cur=>{
+    if(order.length===n)return true;
+    for(let i=0;i<n;i++){
+      if(used[i]||!free(i))continue;
+      const o=ops[i];let nx=cur;
+      if(o.k==='r'){if(o.v!==cur)continue;}
+      else if(o.k==='w')nx=o.v;
+      else{const hit=cur===o.f;if((o.res==='ok')!==hit)continue;if(hit)nx=o.v;}
+      used[i]=true;order.push(o);
+      if(dfs(nx))return true;
+      used[i]=false;order.pop();
+    }
+    return false;};
+  return dfs(init)?order.slice():null;
 }
+
+/* the timing board */
+function Board(host,cfg){
+  const b={cfg,ops:cfg.ops.map((o,j)=>Object.assign({id:'o'+j},o))};
+  const vals=cfg.vals||ST;
+  const V=v=>v==='?'?'?':(vals[v]?vals[v][0]:v);
+  const C=v=>vals[v]?vals[v][1]:null;
+  const hasSub=b.ops.some(o=>o.sub)||cfg.subs;
+  const anyDrag=!!cfg.drag,LH=(hasSub?62:48)+(anyDrag?22:0),nL=cfg.lanes.length,SY=4+nL*LH+2,H=SY+(cfg.strip===false?18:44);
+  b.ops.forEach(o=>{if(o.t==null)o.t=(o.s+o.e)/2;});
+  host.innerHTML='<div class="tlw"><svg viewBox="0 0 340 '+H+'" role="img" aria-label="'+(cfg.aria||'Timing diagram: one bar per request, from sending it to getting the reply')+'"></svg></div>';
+  const svg=host.querySelector('svg');b.svg=svg;
+  b.op=id=>b.ops.find(o=>o.id===id);
+  b.V=V;
+  const nm=o=>o.nm||cfg.lanes[o.ln].split(' · ')[0];
+  b.nm=nm;
+  const canDrag=o=>!o.fail&&(cfg.drag===true||(Array.isArray(cfg.drag)&&cfg.drag.includes(o.id)));
+  b.run=()=>{
+    const seq=b.ops.filter(o=>!o.fail&&!o.hide).sort((a,c)=>a.t-c.t);
+    let cur=cfg.init;const bad=new Set(),msg={},seg=[[0,cur]],marks=[];
+    seq.forEach(o=>{
+      if(o.k==='w'){cur=o.v;seg.push([o.t,cur]);}
+      else if(o.k==='r'){
+        if(cfg.derive)o.v=cur;
+        else if(o.v!=='?'&&o.v!==cur){bad.add(o.id);msg[o.id]=nm(o)+' got <b>'+V(o.v)+'</b>, but at that tick the one copy says <b>'+V(cur)+'</b>.';}
+        marks.push([o.t,o.v==='?'?null:!bad.has(o.id)]);}
+      else{const hit=cur===o.f;
+        if(cfg.derive)o.res=hit?'ok':'err';
+        else if((o.res==='ok')!==hit){bad.add(o.id);msg[o.id]=nm(o)+'’s compare-and-set says <b>'+(o.res==='ok'?'ok':'error')+'</b>, but at that tick the value is <b>'+V(cur)+'</b>'+(hit?', so it would succeed.':', not '+V(o.f)+', so it must fail.');}
+        if(hit){cur=o.v;seg.push([o.t,cur]);}}
+    });
+    return {seq,bad,msg,seg,marks};};
+  b.draw=()=>{
+    const R=b.run();b.last=R;let s='';const tk=cfg.ticks!==false;
+    let labs='',txt='';const clash={};
+    cfg.lanes.forEach((ln,i)=>{const y=4+i*LH;
+      labs+='<text x="8" y="'+(y+12)+'" class="tll" style="paint-order:stroke;stroke:var(--card);stroke-width:4px;stroke-linejoin:round">'+esc2(ln)+'</text>';
+      s+='<rect x="6" y="'+(y+16)+'" width="328" height="28" rx="9" style="fill:var(--soft)"/>';});
+    if(tk){const pts=R.seq.map(o=>[X(o.t),4+o.ln*LH+(canDrag(o)?52:30),o]);
+      for(let j=1;j<pts.length;j++){const a=pts[j-1],c=pts[j];
+        s+='<line x1="'+a[0]+'" y1="'+a[1]+'" x2="'+c[0]+'" y2="'+c[1]+'" style="stroke:var(--'+(R.bad.has(c[2].id)?'no':'pri')+');stroke-width:2.5;opacity:.85"/>';}}
+    b.ops.forEach(o=>{
+      if(o.hide)return;
+      const y=4+o.ln*LH+18,x1=X(o.s),x2=X(o.fail?100:o.e)-(o.fail?4:0),w=x2-x1;
+      const col=o.fail?null:(o.k==='r'&&o.v==='?')?null:C(o.v);
+      const isBad=tk&&R.bad.has(o.id),isHl=(b.hl||[]).includes(o.id);
+      const fill=o.fail?'var(--soft2)':col?'var(--'+col+'-bg)':'var(--card)';
+      const stroke=isBad?'var(--no)':isHl?'var(--pri)':o.fail?'var(--no)':col?'var(--'+col+')':'var(--line2)';
+      const lab=o.lab||(o.fail?'× no reply':o.k==='w'?'set '+V(o.v):o.k==='r'?V(o.v):V(o.f)+'→'+V(o.v)+' '+(o.res==='ok'?'ok':'error'));
+      const tap=cfg.onTap&&o.tap!==false;
+      s+='<g'+(tap?' data-op="'+o.id+'" class="tlb"':'')+'><rect x="'+x1+'" y="'+y+'" width="'+w+'" height="24" rx="7" style="fill:'+fill+';stroke:'+stroke+';stroke-width:'+(isBad||isHl?3:2)+(o.fail?';stroke-dasharray:5 4':'')+'"/></g>';
+      const est=lab.length*6.4;
+      /* keep the label clear of this bar's tick: slide it to the side with room */
+      let lx=x1+w/2,anc='middle',room=w-8;
+      if(tk&&R.seq.includes(o)){const tx=X(o.t),rR=x2-4-(tx+6),rL=(tx-6)-(x1+4);
+        if(Math.abs(tx-lx)<Math.min(est,room)/2+4){const best=rR>=rL?rR:rL;
+          if(best>=Math.min(est,room)*0.8){room=best;if(rR>=rL){lx=tx+6;anc='start';}else{lx=tx-6;anc='end';}}
+          else clash[o.id]=1;}}
+      txt+='<text x="'+lx+'" y="'+(y+16)+'" text-anchor="'+anc+'" class="tlt" style="paint-order:stroke;stroke:'+fill+';stroke-width:3px;stroke-linejoin:round'+(o.fail?';fill:var(--no)':'')+'"'+(est>room?' textLength="'+Math.max(10,room)+'" lengthAdjust="spacingAndGlyphs"':'')+'>'+esc2(lab)+'</text>';
+      if(o.sub){const ew=o.sub.length*5.9,cx=Math.max(ew/2+4,Math.min(336-ew/2,x1+w/2));
+        s+='<text x="'+cx+'" y="'+(y+39)+'" text-anchor="middle" class="tls"'+(isBad?' style="fill:var(--no)"':'')+'>'+esc2(o.sub)+'</text>';}
+    });
+    if(tk){
+      R.seq.forEach(o=>{const y=4+o.ln*LH+18,x=X(o.t),bd=R.bad.has(o.id);
+        const tst='stroke:var(--'+(bd?'no':'ink')+');stroke-width:2.5;stroke-linecap:round;pointer-events:none',y2=y+(canDrag(o)?33:28);
+        /* when the label can't move clear of the tick, the tick skips the text band */
+        s+=clash[o.id]?'<line x1="'+x+'" y1="'+(y-3)+'" x2="'+x+'" y2="'+(y+3)+'" style="'+tst+'"/><line x1="'+x+'" y1="'+(y+21)+'" x2="'+x+'" y2="'+y2+'" style="'+tst+'"/>':'<line x1="'+x+'" y1="'+(y-3)+'" x2="'+x+'" y2="'+y2+'" style="'+tst+'"/>';
+        if(canDrag(o))s+='<g data-h="'+o.id+'" tabindex="0" role="slider" aria-label="When '+esc2(nm(o))+'’s request took effect" aria-valuemin="'+o.s+'" aria-valuemax="'+o.e+'" aria-valuenow="'+Math.round(o.t)+'" class="tlh"><rect x="'+(x-18)+'" y="'+(y-6)+'" width="36" height="50" style="fill:transparent"/><circle cx="'+x+'" cy="'+(y+34)+'" r="7.5" style="fill:var(--card);stroke:var(--'+(bd?'no':'ink')+');stroke-width:2.5"/></g>';
+        else s+='<circle cx="'+x+'" cy="'+(y+(clash[o.id]?24:12))+'" r="3.5" style="fill:var(--'+(bd?'no':'ink')+');pointer-events:none"/>';});
+    }
+    if(cfg.strip!==false){
+      const y=SY;
+      s+='<text x="8" y="'+(y+12)+'" class="tll">'+(cfg.stripLabel||'The one copy, in tick order')+'</text><text x="332" y="'+(y+12)+'" text-anchor="end" class="tls">time →</text>';
+      if(tk){R.seg.forEach((g,j)=>{const x1=X(g[0]),x2=X(j<R.seg.length-1?R.seg[j+1][0]:100),c=C(g[1])||'line2';
+          s+='<rect x="'+x1+'" y="'+(y+18)+'" width="'+Math.max(0,x2-x1)+'" height="18" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1"/>';
+          if(x2-x1>V(g[1]).length*6.2+6)s+='<text x="'+((x1+x2)/2)+'" y="'+(y+31)+'" text-anchor="middle" class="tls" style="fill:var(--ink)">'+esc2(V(g[1]))+'</text>';});
+        R.marks.forEach(m=>{s+='<path d="M'+X(m[0])+' '+(y+18)+' l-5 -7 h10z" style="fill:var(--'+(m[1]===null?'muted':m[1]?'ok':'no')+')"/>';});}
+      else s+='<rect x="'+X(0)+'" y="'+(y+18)+'" width="320" height="18" rx="4" style="fill:var(--soft);stroke:var(--line);stroke-dasharray:4 4"/><text x="170" y="'+(y+31)+'" text-anchor="middle" class="tls">?</text>';
+    }else s+='<text x="332" y="'+(SY+12)+'" text-anchor="end" class="tls">time →</text>';
+    svg.innerHTML=s+txt+labs;
+  };
+  b.toT=cx=>{const m=svg.getScreenCTM();return ((cx-m.e)/m.a-10)/3.2;};
+  b.setTick=(id,t)=>{const o=b.op(id);o.t=Math.max(o.s+1,Math.min(o.e-1,t));b.draw();if(cfg.onChange)cfg.onChange(b);};
+  b.lin=()=>linSearch(b.ops.filter(o=>!o.fail&&!o.hide),cfg.init);
+  b.place=order=>{const n=order.length,lo=[],hi=[];let prev=-1e9;
+    order.forEach((o,j)=>{let t=Math.max(o.s+1.5,prev+2.5);if(t>o.e-1.5)t=Math.max(o.s+0.5,prev+0.3);lo[j]=t;prev=t;});
+    let nx=1e9;for(let j=n-1;j>=0;j--){const o=order[j];let t=Math.min(o.e-1.5,nx-2.5);if(t<o.s+1.5)t=Math.min(o.e-0.5,nx-0.3);hi[j]=t;nx=t;}
+    const tg={};order.forEach((o,j)=>{tg[o.id]=(lo[j]+hi[j])/2;});return tg;};
+  /* valid ticks for everything except `bad` (left in the middle of its bar) */
+  b.explain=bad=>{const ops=b.ops.filter(o=>!o.fail&&!o.hide&&o.id!==bad);const ord=linSearch(ops,cfg.init);return ord?b.place(ord):{};};
+  b.anim=(tg,ms)=>new Promise(res=>{ms=ms||560;const from={};Object.keys(tg).forEach(k=>from[k]=b.op(k).t);const t0=Date.now();
+    const step=()=>{if(!svg.isConnected){res();return;}
+      const p=Math.min(1,(Date.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+      Object.keys(tg).forEach(k=>{b.op(k).t=from[k]+(tg[k]-from[k])*e;});b.draw();
+      if(p<1)setTimeout(step,16);else{if(cfg.onChange)cfg.onChange(b);res();}};step();});
+  svg.addEventListener('pointerdown',e=>{const g=e.target.closest&&e.target.closest('[data-h]');if(!g)return;e.preventDefault();const id=g.getAttribute('data-h');
+    const mv=ev=>b.setTick(id,b.toT(ev.clientX));
+    const up=()=>{window.removeEventListener('pointermove',mv);window.removeEventListener('pointerup',up);window.removeEventListener('pointercancel',up);if(cfg.onEnd)cfg.onEnd(b);};
+    window.addEventListener('pointermove',mv);window.addEventListener('pointerup',up);window.addEventListener('pointercancel',up);});
+  svg.addEventListener('keydown',e=>{const g=e.target.closest&&e.target.closest('[data-h]');if(!g)return;const d=e.key==='ArrowRight'?2:e.key==='ArrowLeft'?-2:0;if(!d)return;e.preventDefault();
+    const id=g.getAttribute('data-h');b.setTick(id,b.op(id).t+d);const n=svg.querySelector('[data-h="'+id+'"]');if(n)n.focus();if(cfg.onEnd)cfg.onEnd(b);});
+  svg.addEventListener('click',e=>{const g=e.target.closest&&e.target.closest('[data-op]');if(g&&cfg.onTap)cfg.onTap(g.getAttribute('data-op'),b);});
+  b.draw();
+  return b;
+}
+/* drag a tick with real pointer events (used by the autoplay solvers) */
+async function dragTick(L,b,id,t){
+  const h=b.svg.querySelector('[data-h="'+id+'"] circle');if(!h)return;
+  const r=h.getBoundingClientRect(),cy=r.top+r.height/2,m=b.svg.getScreenCTM(),cx=m.a*X(t)+m.e;
+  h.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,clientX:r.left+r.width/2,clientY:cy,pointerId:1,isPrimary:true}));
+  window.dispatchEvent(new PointerEvent('pointermove',{clientX:cx,clientY:cy,pointerId:1,isPrimary:true}));
+  window.dispatchEvent(new PointerEvent('pointerup',{clientX:cx,clientY:cy,pointerId:1,isPrimary:true}));
+  await L.sleep(40);
+}
+const vd=(ok,t)=>'<span class="vd '+(ok?'ok':'no')+'">'+t+'</span>';
+const valTxt=(b,v)=>{const c=(b.cfg.vals||ST)[v];return c?'<b style="color:var(--'+c[1]+')">'+c[0]+'</b>':'<b>?</b>';};
+/* run a preset: place valid ticks (or valid ticks for all but the culprit) */
+async function showPreset(b,p){const tg=p.bad?b.explain(p.bad):b.place(b.lin()||[]);await b.anim(tg,520);}
+
+/* ---------- pictures for Learn screens (inline SVG, theme variables only) ---------- */
+const PIC_SHIELD='<svg class="pic" viewBox="0 0 340 214" role="img" aria-label="Faults from chapter 8 hit an abstraction layer; the app below is protected">'+
+ [['Lost messages',6],['Wrong clocks',118],['Paused nodes',230]].map(f=>'<rect x="'+f[1]+'" y="6" width="104" height="30" rx="15" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.5"/><text x="'+(f[1]+52)+'" y="25" text-anchor="middle" class="tlt" style="fill:var(--no)">'+f[0]+'</text>'+
+   '<line x1="'+(f[1]+52)+'" y1="38" x2="'+(f[1]+52)+'" y2="72" style="stroke:var(--no);stroke-width:2;stroke-dasharray:4 4"/><path d="M'+(f[1]+46)+' 70 l6 8 l6 -8z" style="fill:var(--no)"/>').join('')+
+ '<rect x="12" y="80" width="316" height="54" rx="14" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2.5"/>'+
+ '<text x="170" y="103" text-anchor="middle" style="font:700 13.5px var(--sans);fill:var(--pri)">An abstraction with a promise</text>'+
+ '<text x="170" y="122" text-anchor="middle" class="tls">transactions (chapter 7) · consensus (this chapter)</text>'+
+ '<line x1="170" y1="136" x2="170" y2="158" style="stroke:var(--ok);stroke-width:2.5"/><path d="M164 156 l6 8 l6 -8z" style="fill:var(--ok)"/>'+
+ '<rect x="86" y="166" width="168" height="44" rx="12" style="fill:var(--ok-bg);stroke:var(--ok);stroke-width:2"/>'+
+ '<text x="170" y="185" text-anchor="middle" style="font:700 13px var(--sans);fill:var(--ink)">Your app</text><text x="170" y="201" text-anchor="middle" class="tls">can ignore those faults</text></svg>';
+
+const PIC_EVENTUAL=(()=>{let s='<svg class="pic" viewBox="0 0 340 196" role="img" aria-label="Three copies switch from Out to Delivered at different times; a read in between may get either">';
+  s+='<text x="58" y="12" class="tls">write Delivered arrives →</text>';
+  [[24,104],[62,192],[100,280]].forEach((r,i)=>{const y=r[0],sw=r[1];
+    s+='<text x="6" y="'+(y+17)+'" class="tll">Copy '+(i+1)+'</text>'+
+     '<rect x="58" y="'+y+'" width="'+(sw-58)+'" height="26" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/><text x="'+((58+sw)/2)+'" y="'+(y+17)+'" text-anchor="middle" class="tlt">Out</text>'+
+     '<rect x="'+sw+'" y="'+y+'" width="'+(334-sw)+'" height="26" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>'+(334-sw>70?'<text x="'+((sw+334)/2)+'" y="'+(y+17)+'" text-anchor="middle" class="tlt">Delivered</text>':'');});
+  s+='<line x1="150" y1="18" x2="150" y2="132" style="stroke:var(--pri);stroke-width:2.5;stroke-dasharray:5 4"/>'+
+   '<text x="150" y="148" text-anchor="middle" style="font:600 12px var(--sans);fill:var(--pri)">a read here may get Out or Delivered</text>'+
+   '<path d="M282 158 v6 h52 v-6" style="fill:none;stroke:var(--muted);stroke-width:1.5"/>'+
+   '<text x="334" y="178" text-anchor="end" class="tll">all agree… eventually</text><text x="334" y="193" text-anchor="end" style="font:700 12px var(--sans);fill:var(--no)">When? No promise.</text></svg>';
+  return s;})();
+
+function picOneCopy(k){
+  const cp=(i,y,val,col,st)=>'<rect x="14" y="'+y+'" width="122" height="44" rx="10" style="fill:var(--'+col+'-bg);stroke:var(--'+(st||col)+');stroke-width:'+(st?3:2)+'"/><text x="24" y="'+(y+16)+'" class="tls">Copy '+i+'</text><text x="24" y="'+(y+34)+'" class="tlt" style="font-size:12.5px">'+val+'</text>';
+  const person=(x,y,ini,name)=>'<circle cx="'+x+'" cy="'+y+'" r="17" style="fill:var(--card);stroke:var(--ink);stroke-width:2"/><text x="'+x+'" y="'+(y+5)+'" text-anchor="middle" class="tlt">'+ini+'</text><text x="'+x+'" y="'+(y+33)+'" text-anchor="middle" class="tll">'+name+'</text>';
+  const pill=(x,y,txt,col)=>'<rect x="'+(x-46)+'" y="'+(y-13)+'" width="92" height="22" rx="11" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:1.5"/><text x="'+x+'" y="'+(y+2)+'" text-anchor="middle" class="tlt" style="font-size:11px">'+txt+'</text>';
+  let s='<svg class="pic" viewBox="0 0 340 200" role="img" aria-label="Copies of the parcel status and two people reading them">';
+  if(k<3)s+=cp(1,10,'Delivered','h2',k===0?'pri':null)+cp(2,76,'Out for delivery','h3')+cp(3,142,'Out for delivery','h3',k===2?'no':null);
+  else s+='<rect x="14" y="10" width="122" height="176" rx="12" style="fill:var(--h2-bg);stroke:var(--pri);stroke-width:3"/><text x="75" y="86" text-anchor="middle" class="tll">Acts like</text><text x="75" y="104" text-anchor="middle" style="font:700 14px var(--sans);fill:var(--ink)">one copy</text><text x="75" y="124" text-anchor="middle" class="tlt">Delivered</text>';
+  if(k===0)s+='<text x="144" y="24" class="tls">← Ravi’s app writes</text>';
+  if(k>=1){s+='<line x1="256" y1="40" x2="138" y2="'+(k<3?32:40)+'" style="stroke:var(--h2);stroke-width:2"/>'+pill(198,22,'Delivered','h2');}
+  if(k>=1)s+='<rect x="218" y="88" width="104" height="24" rx="12" style="fill:var(--soft);stroke:var(--line2)"/><text x="270" y="104" text-anchor="middle" class="tls" style="fill:var(--ink)">“It’s delivered!”</text><path d="M264 114 l6 8 l6 -8z" style="fill:var(--line2)"/>';
+  if(k===2)s+='<line x1="256" y1="152" x2="138" y2="164" style="stroke:var(--no);stroke-width:2.5"/>'+pill(198,178,'Out ✗','no');
+  if(k===3)s+='<line x1="256" y1="152" x2="138" y2="150" style="stroke:var(--h2);stroke-width:2"/>'+pill(198,172,'Delivered ✓','h2');
+  s+=person(274,40,'MO','Mrs. Okoro')+person(274,150,'D','Dayo')+'</svg>';
+  return s;
+}
+
+const PIC_LINSER='<svg class="pic" viewBox="0 0 340 352" role="img" aria-label="Linearizability: recency on one object in real time. Serializability: transactions act as if in some serial order.">'+
+ '<rect x="2" y="2" width="336" height="120" rx="14" style="fill:var(--soft)"/>'+
+ '<text x="14" y="23" style="font:700 13.5px var(--sans);fill:var(--h2)">Linearizability</text><text x="14" y="39" class="tls">one object · real time · recency</text>'+
+ '<rect x="30" y="50" width="200" height="22" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/><text x="130" y="65" text-anchor="middle" class="tlt">set Delivered</text>'+
+ '<rect x="112" y="84" width="92" height="22" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/><text x="158" y="99" text-anchor="middle" class="tlt">Delivered</text>'+
+ '<rect x="222" y="84" width="96" height="22" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/><text x="270" y="99" text-anchor="middle" class="tlt">Delivered</text>'+
+ '<polyline points="56,75 120,111 308,111" style="fill:none;stroke:var(--pri);stroke-width:2"/>'+
+ [56,120,308].map(x=>'<line x1="'+x+'" y1="'+(x===56?47:81)+'" x2="'+x+'" y2="'+(x===56?75:111)+'" style="stroke:var(--ink);stroke-width:2.5"/>').join('')+
+ '<text x="326" y="64" text-anchor="end" class="tls">no going back</text>'+
+ '<rect x="2" y="132" width="336" height="218" rx="14" style="fill:var(--soft)"/>'+
+ '<text x="14" y="153" style="font:700 13.5px var(--sans);fill:var(--h3)">Serializability</text><text x="14" y="169" class="tls">whole transactions · some serial order</text>'+
+ '<rect x="30" y="178" width="170" height="22" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/><text x="115" y="193" text-anchor="middle" class="tlt">T1 (reads and writes)</text>'+
+ '<rect x="120" y="204" width="170" height="22" rx="6" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5"/><text x="205" y="219" text-anchor="middle" class="tlt">T2 (reads and writes)</text>'+
+ '<text x="14" y="250" class="tll">acts as if:</text>'+
+ '<rect x="86" y="236" width="44" height="20" rx="5" style="fill:var(--h4-bg);stroke:var(--h4)"/><text x="108" y="250" text-anchor="middle" class="tlt">T2</text>'+
+ '<path d="M136 246 h18" style="stroke:var(--muted);stroke-width:2"/><path d="M152 241 l6 5 l-6 5z" style="fill:var(--muted)"/>'+
+ '<rect x="164" y="236" width="44" height="20" rx="5" style="fill:var(--h3-bg);stroke:var(--h3)"/><text x="186" y="250" text-anchor="middle" class="tlt">T1</text>'+
+ '<text x="326" y="250" text-anchor="end" class="tls">not the real order</text>'+
+ '<rect x="12" y="264" width="316" height="38" rx="9" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.5"/><text x="22" y="279" class="tlt">Two-phase locking, actual serial execution</text><text x="22" y="295" class="tls" style="fill:var(--ok)">→ usually linearizable too</text>'+
+ '<rect x="12" y="306" width="316" height="38" rx="9" style="fill:var(--no-bg);stroke:var(--no-line);stroke-width:1.5"/><text x="22" y="321" class="tlt">Serializable snapshot isolation (SSI)</text><text x="22" y="337" class="tls" style="fill:var(--no)">→ not linearizable: reads skip newer writes</text></svg>';
+
+const PIC_USES=(()=>{
+  const row=(y,a,b,mid,ok1,title,l1,l2)=>
+   '<rect x="2" y="'+y+'" width="336" height="80" rx="14" style="fill:var(--soft)"/>'+
+   '<rect x="12" y="'+(y+10)+'" width="62" height="24" rx="12" style="fill:var(--card);stroke:var(--line2)"/><text x="43" y="'+(y+26)+'" text-anchor="middle" class="tlt" style="font-size:11px">'+a+'</text>'+
+   '<rect x="12" y="'+(y+46)+'" width="62" height="24" rx="12" style="fill:var(--card);stroke:var(--line2)"/><text x="43" y="'+(y+62)+'" text-anchor="middle" class="tlt" style="font-size:11px">'+b+'</text>'+
+   '<line x1="76" y1="'+(y+22)+'" x2="96" y2="'+(y+36)+'" style="stroke:var(--'+(ok1?'ok':'muted')+');stroke-width:2"/><line x1="76" y1="'+(y+58)+'" x2="96" y2="'+(y+44)+'" style="stroke:var(--'+(ok1?'no':'muted')+');stroke-width:2;'+(ok1?'stroke-dasharray:3 3':'')+'"/>'+
+   (ok1?'<text x="84" y="'+(y+18)+'" class="tlt" style="fill:var(--ok)">✓</text><text x="84" y="'+(y+76)+'" class="tlt" style="fill:var(--no)">✗</text>':'')+
+   '<rect x="98" y="'+(y+26)+'" width="60" height="28" rx="8" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2"/><text x="128" y="'+(y+44)+'" text-anchor="middle" class="tlt" style="font-size:11px">'+mid+'</text>'+
+   '<text x="170" y="'+(y+28)+'" style="font:700 12.5px var(--sans);fill:var(--ink)">'+title+'</text><text x="170" y="'+(y+46)+'" class="tls">'+l1+'</text><text x="170" y="'+(y+62)+'" class="tls">'+l2+'</text>';
+  return '<svg class="pic" viewBox="0 0 340 254" role="img" aria-label="Three uses: locks, uniqueness, one up-to-date value">'+
+   row(0,'Planner 1','Planner 2','lock',true,'Locks, leader election','All nodes must agree','who holds the lock.')+
+   row(87,'B&B','P&T','OP-51760',true,'Uniqueness','Reject the second claim','as it’s written.')+
+   row(174,'Westport','Eastvale','credit $12',false,'One up-to-date value','Credit never below $0,','stock, seats.')+'</svg>';})();
+
+const PIC_CAP='<svg class="pic" viewBox="0 0 340 200" role="img" aria-label="Pick two of three is crossed out; when the network works you get both, when it is cut you choose">'+
+ '<polygon points="70,22 22,104 118,104" style="fill:none;stroke:var(--line2);stroke-width:2"/>'+
+ [[70,22,'C'],[22,104,'A'],[118,104,'P']].map(p=>'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="14" style="fill:var(--card);stroke:var(--line2);stroke-width:2"/><text x="'+p[0]+'" y="'+(p[1]+5)+'" text-anchor="middle" style="font:700 13px var(--sans);fill:var(--muted)">'+p[2]+'</text>').join('')+
+ '<text x="76" y="94" text-anchor="middle" class="tls">pick 2</text><line x1="8" y1="118" x2="132" y2="8" style="stroke:var(--no);stroke-width:3.5;stroke-linecap:round"/>'+
+ '<text x="148" y="36" style="font:700 12.5px var(--sans);fill:var(--ink)">“Pick 2 of 3” misleads.</text><text x="148" y="56" class="tls">A network partition is a fault,</text><text x="148" y="72" class="tls">not a choice: you can’t</text><text x="148" y="88" class="tls">opt out of it.</text>'+
+ '<rect x="4" y="128" width="160" height="66" rx="12" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.5"/><text x="84" y="150" text-anchor="middle" style="font:700 12.5px var(--sans);fill:var(--ok)">Network working</text><text x="84" y="168" text-anchor="middle" class="tlt">linearizable</text><text x="84" y="184" text-anchor="middle" class="tlt">and available</text>'+
+ '<rect x="176" y="128" width="160" height="66" rx="12" style="fill:var(--no-bg);stroke:var(--no-line);stroke-width:1.5"/><text x="256" y="150" text-anchor="middle" style="font:700 12.5px var(--sans);fill:var(--no)">Network cut</text><text x="256" y="168" text-anchor="middle" class="tlt">linearizable OR</text><text x="256" y="184" text-anchor="middle" class="tlt">available: choose</text></svg>';
+
 Course.lesson({
-  id:'0021', title:'Linearizability', minutes:20, icon:'layers',
+  id:'0021', title:'Linearizability', minutes:22, icon:'layers',
   goals:['Say what linearizability promises, and spot a read that breaks it','Tell when an app truly needs it: locks, uniqueness, two channels','Explain which setups can provide it, and what it costs'],
   parts:['One copy','The rules','When it matters','The cost'],
   read:'Read chapter 9 of the book, from the start to the end of “The Cost of Linearizability”, for the timing diagrams this lesson rebuilds.',
   glossary:{
-    eventual:'Eventual consistency: if writes stop and you wait, every copy will end up the same. Until then, copies can disagree, and there is no limit on how long “eventually” takes.',
+    eventual:'Eventual consistency (better called convergence): if writes stop and you wait, every copy will end up the same. Until then, copies can disagree, and there is no limit on how long “eventually” takes. Its bugs tend to show only during faults or heavy load.',
+    'consistency-model':'Consistency model: what a replicated store promises about what reads return. Stronger models are easier to use correctly, but can be slower or less fault-tolerant. Not the same as transaction isolation levels (chapter 7), which handle racing transactions; consistency models coordinate copies despite delays and faults.',
     register:'Register: the textbook name for one piece of data you can read and write, such as one key, one row or one document.',
-    cas:'Compare-and-set: a single-object write that only happens if the value is still what you read earlier. If someone changed it, the write does nothing and you try again.',
-    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the result is the same as if they had run one after another.',
+    cas:'Compare-and-set: a single-object write that only happens if the value is still what you expect. If someone changed it, the write does nothing and returns an error.',
+    serializable:'Serializable isolation: the strongest level. Transactions may run at the same time, but the outcome matches running them one at a time.',
     cap:'CAP theorem: the observation that when the network cuts replicas off from each other, a system must choose between staying linearizable and staying available.',
     'split-brain':'Split brain: two nodes both believe they are the leader and both accept writes, which can lose or corrupt data.'
   },
   cheatsheet:[
     '<b>Eventual consistency</b> only promises replicas agree <i>eventually</i>, once writes stop. It says nothing about when.',
     '<b>Linearizability</b> = behave as if there is one copy. Once any read has seen a new value, every later read must see it too.',
-    'A read that overlaps a write may return old or new. A read that starts after another read <i>finished</i> can never be older.',
-    '<b>Linearizable ≠ serializable.</b> One is recency on single objects; the other is transactions in some serial order. Both together = strict serializability.',
+    'Draw each request as a bar. A read that overlaps a write may return old or new; a read that starts after another read <i>finished</i> can never be older. Test: put a tick in every bar; the ticks in time order must be a valid run of one copy.',
+    '<b>Linearizable ≠ serializable.</b> One is recency on single objects; the other is transactions in some serial order. Both together = strict serializability. SSI is not linearizable.',
     'You need it for <b>locks and leader election</b>, <b>hard uniqueness constraints</b> and <b>timing across two channels</b>.',
     'Single-leader: potentially. Consensus: yes. Multi-leader: no. Leaderless: assume no, even with strict quorums.',
     '<b>CAP</b>, better put: when the network is partitioned, choose linearizable <i>or</i> available. Beyond that it says little.',
     'Linearizability is slow <b>all the time</b>, not only during faults. Most systems that drop it do so for speed.'
   ],
   steps:[
-/* ---------- PART 1: ONE COPY ---------- */
+/* ================= PART 1: ONE COPY ================= */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Mrs. Okoro refreshes Otterpost’s tracking page and sees “Delivered.” They call out to their son Dayo, who then refreshes on their own phone and sees “Out for delivery.” Is that OK?</h1>');
   L.mc(L.card,['Yes, two phones can always disagree','No, Dayo looked after Mrs. Okoro saw it'],1,
-   'Dayo knows they refreshed <i>after</i> their mother saw the new status, so they expect news at least as fresh as what their mother saw. This lesson names that expectation.',
+   'Dayo knows they refreshed <i>after</i> their mother saw the new status, so they expect news at least as fresh. This lesson names that expectation, and draws it.',
    'If they had refreshed at the same instant, different answers would be less surprising. But Dayo looked <i>after</i> Mrs. Okoro saw “Delivered,” so an older answer feels wrong. This lesson names that expectation.');}},
+
 {part:0,src:'Chapter 9 · Consistency and Consensus',run(L){
-  L.h(L.kick('learn','The plan for this chapter')+'<h1 class="q">Build one tool with a promise, then let every app lean on it</h1>'+
-   L.prose('Chapter 8 listed everything that goes wrong: lost and delayed messages, wrong clocks, paused and crashed '+L.g('node','nodes')+'. You could just fail and show an error. If that isn’t acceptable, you need to keep working correctly <i>despite</i> faults.')+
-   L.flow([['alert','Messy reality','Crashes, delays, races','',4],['shield','An abstraction','A tool with a simple promise','built once, carefully',2],['check','The app','Can ignore those problems','',1]])+
-   L.prose('Transactions did this in chapter 7: the app pretends nothing crashes, nobody else is writing, and disks never fail. This chapter looks for similar promises for distributed systems. The most important is '+L.g('consensus','consensus')+': getting all nodes to agree on something, such as who the leader is, so you never get '+L.g('split-brain','split brain')+'.'));
+  L.h(L.kick('learn','The plan for this chapter')+'<h1 class="q">Build one tool with a promise, then let every app lean on it</h1>'+PIC_SHIELD+
+   '<p class="capt">Chapter 8 listed what breaks. Build one general tool whose promise hides those faults, as transactions did. The big one is '+L.g('consensus','consensus')+': all '+L.g('node','nodes')+' agree, say on one leader, so there’s no '+L.g('split-brain','split brain')+'.</p>');
   L.done();}},
+
 {part:0,src:'Chapter 9 · Consistency Guarantees',run(L){
-  L.h(L.kick('learn','The weak promise you already have')+'<h1 class="q">“Eventually” doesn’t say when</h1>'+
-   L.prose('Look at two replicas at the same moment and they often hold different data. Most replicated databases promise at least '+L.g('eventual','eventual consistency')+': stop writing, wait, and all replicas will end up returning the same value. A better name would be <b>convergence</b>.')+
-   L.prose('That’s a weak promise. Until replicas converge, a read could return anything or nothing. Write a value, read it straight back, and you may not see it. A database looks like a variable in your program, but it doesn’t behave like one.')+
-   L.note('The bugs hide well. The app works most of the time; the edge cases show up only during a fault, like a network cut, or under heavy concurrency.','alert')+
-   L.prose('Stronger models are easier to use correctly, but they may be slower or less fault-tolerant. They are also a <b>different topic from isolation levels</b>: isolation is about concurrent transactions racing; distributed consistency is about keeping replicas in step despite delays and faults.'));
+  L.h(L.kick('learn','The weak promise you already have')+'<h1 class="q">“Eventually” doesn’t say when</h1>'+PIC_EVENTUAL+
+   '<p class="capt">Most replicated databases promise only '+L.g('eventual','eventual consistency')+': stop writing, wait, and every copy agrees. When? No promise. Until then a read can return anything, even right after your own write. Stronger '+L.g('consistency-model','consistency models')+' fix that, at a cost.</p>');
   L.done();}},
-{part:0,src:'Chapter 9 · Consistency Guarantees',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias writes a parcel’s new address, then reads it straight back from Otterpost’s eventually consistent store. What is Tobias guaranteed to see?</h1>');
-  L.mc(L.card,['Nothing yet; it only converges later','The new address they just wrote','The new address within one second'],0,
-   'Eventual consistency only promises the replicas will agree <i>at some point</i> once writes stop. His read may hit a replica that hasn’t caught up.',
-   'Eventual consistency gives no timing at all. Their read may go to a replica that hasn’t received the write yet, so they could see the old address or nothing.');}},
-{part:0,src:'Chapter 9 · Linearizability',run(L){
-  L.h(L.kick('learn','The strong promise')+'<h1 class="q">Linearizability: act as if there is only one copy</h1>'+
-   L.prose('What if the database could hide its replicas and look like a single copy of the data, with every operation atomic? Every client would see the same thing, and you could forget about replication lag. That is '+L.g('linearizability','linearizability')+', also called atomic, strong, immediate or external consistency.')+
-   L.prose('The core of it is a <b>recency guarantee</b>: as soon as one client’s write completes, every client that reads must see that value, not something older from a stale cache or replica.')+
-   L.note('<b>The book’s example.</b> Two friends in one room check a sports site for the final score of the 2014 World Cup. One refreshes, sees the result and says so out loud. The other refreshes <i>afterwards</i>, but hits a lagging replica and sees the game still running. That is a violation of linearizability.','book')+
-   L.prose('Mrs. Okoro and Dayo are the same story on Otterpost’s tracking page, which reads from followers that lag.'));
-  L.done();}},
+
+{part:0,src:'Chapter 9 · Linearizability',
+ solve:async L=>{while(L.$('#oc4n'))L.$('#oc4n').click();},
+ run(L){
+  const T=['Ravi’s app marks parcel OP-30418 <b>Delivered</b>. Copy 1 has it; copies 2 and 3 are still catching up.',
+   'Mrs. Okoro refreshes, lands on copy 1 and sees <b>Delivered</b>. They call out to Dayo.',
+   'Dayo refreshes <i>after</i> hearing them, lands on lagging copy 3 and sees <b>Out for delivery</b>. Dayo knows they asked later, so this is wrong.',
+   L.g('linearizability','Linearizability')+' forbids it: the system acts as if there were <b>one copy</b>. Once anyone has read Delivered, every later read gets it. It’s a recency guarantee.'];
+  let k=0;
+  L.h(L.kick('ex','The one-copy illusion')+'<h1 class="q">Same page, two phones, two answers</h1><div id="oc4p"></div><div class="stepcap" id="oc4c"></div><button class="btn pri" id="oc4n">Next '+L.ic('arrow')+'</button>');
+  const draw=()=>{L.$('#oc4p').innerHTML=picOneCopy(k);L.$('#oc4c').innerHTML='<span class="n">Step '+(k+1)+' of 4</span>'+T[k];};
+  draw();
+  L.$('#oc4n').onclick=()=>{k++;draw();if(k===3){L.$('#oc4n').remove();
+    L.sheet('info','Other names','Linearizability is also called atomic, strong, immediate or external consistency. The book tells the same story with two friends checking the final score of the 2014 World Cup final.');L.done();}};}},
+
 {part:0,src:'Chapter 9 · Linearizability',pts:1,run(L){
-  L.h(L.kick('pr','Apply it')+'<h1 class="q">Kwame shrugs at the Okoro case: “Our tracking page is eventually consistent. Nothing is broken.” What is the most accurate reply?</h1>');
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame shrugs at the Okoro case: “Our tracking page is eventually consistent. Nothing is broken.” What is the most accurate reply?</h1>');
   L.mc(L.card,['Eventual consistency forbids that; it’s a bug','It’s allowed by eventual consistency, not by linearizability','It breaks both, since Dayo asked after their mother'],1,
    'Kwame is right that the store kept its weak promise. It just doesn’t make the stronger, recency promise that Dayo was expecting.',
-   'Eventual consistency allows any stale read until replicas converge, so the store kept its promise. Only linearizability would rule out Dayo’s older answer.');}},
+   'Eventual consistency allows any stale read until copies converge, so the store kept its promise. Only linearizability would rule out Dayo’s older answer.');}},
 
-/* ---------- PART 2: THE RULES ---------- */
+/* ================= PART 2: THE RULES ================= */
 {part:1,src:'Chapter 9 · What Makes a System Linearizable?',run(L){
-  L.h(L.kick('learn','Reading a timing diagram')+'<h1 class="q">Each request is a bar; the database acts somewhere inside it</h1>'+
-   L.prose('Take one '+L.g('register','register')+': parcel P-311’s status, which starts at “hub”. Ravi’s courier app writes “out”. Each bar runs from when a request is sent to when its reply arrives. The client can’t tell exactly when inside the bar the database handled it.')+
-   TL([['Ravi’s app',[[30,70,'write out','h3']]],['Reader',[[4,22,'→ hub','h2'],[38,56,'→ ?','h4'],[78,96,'→ out','h1']]]])+
-   L.list([['Read ends before the write starts','Must return the old value, “hub”.'],
-     ['Read starts after the write ends','Must return the new value, “out”. The write happened before the read did.'],
-     ['Read overlaps the write','May return either. These two are <b>concurrent</b>: we don’t know if the write has taken effect yet.']],2));
+  L.h(L.kick('learn','Reading a timing diagram')+'<h1 class="q">Each request is a bar. The database acts somewhere inside it.</h1><div id="rd6"></div>'+
+   '<p class="capt">Parcel OP-30418’s status is one '+L.g('register','register')+'. Each bar runs from request to reply; nobody outside sees when inside it the database acted. Ends before the write starts: old. Starts after it ends: new. Overlaps: <b>concurrent</b>, so either.</p>');
+  Board(L.$('#rd6'),{lanes:['Ravi’s app · writes','A reader · reads'],init:'o',ticks:false,strip:false,
+    ops:[{ln:0,k:'w',v:'d',s:30,e:70},{ln:1,k:'r',v:'o',s:4,e:24,sub:'must be Out'},{ln:1,k:'r',v:'?',s:38,e:58,sub:'either'},{ln:1,k:'r',v:'d',s:76,e:96,sub:'must be Delivered'}]});
   L.done();}},
-{part:1,src:'Chapter 9 · What Makes a System Linearizable?',run(L){
-  L.h(L.kick('ex','The extra rule, step by step')+'<h1 class="q">Overlapping reads may return either value, but not in just any pattern</h1>'+
-   TL([['Ravi’s app',[[10,90,'write out','h3']]],['Mrs. Okoro',[[22,40,'→ out','h1']]],['Dayo',[[50,68,'→ ?','h4']]]]));
-  L.beats(L.card,[
-   ['The worry','If overlapping reads could return either value freely, a reader could watch the status flip hub, out, hub, out while the write is in progress. One copy of the data would never do that.'],
-   ['The rule','Imagine the value flips from old to new at <b>one instant</b> somewhere inside the write bar. So once <i>any</i> read has returned the new value, every read that starts later must return it too.'],
-   ['Apply it','Mrs. Okoro’s read returns “out”. Dayo’s read starts after Mrs. Okoro’s ended. So Dayo’s must return “out” as well, even though Ravi’s write hasn’t finished.'],
-   ['Odd but fine','Reads may see “out” before Ravi’s app gets its “ok”. That only means the reply to Ravi was slow on the network.'],
-   ['Odd but fine, too','Requests that overlap may be handled in a different order from the one they were sent in. A request may have been delayed on the way.'],
-   ['The test','Mark the moment each operation took effect. Join the marks in order. The line must <b>always move forward in time</b>, and every read must return the latest write before it.']],
-   'Once a new value has been written or read, all later reads see it, until it is overwritten again.');}},
-{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The write is still going. Reader A’s read returned “out” and finished. Reader B starts after that. What may B’s read return?</h1>'+
-   TL([['Write',[[8,92,'write out','h3']]],['Reader A',[[24,44,'→ out','h1']]],['Reader B',[[56,76,'→ ?','h4']]]]));
-  L.mc(L.card,['It must return “out”','It may return either value','It must return “hub”'],0,
-   'B overlaps the write, but it started after A had already seen “out”. In a linearizable store it can’t go back in time.',
-   'On its own, B overlaps the write, so either value would be fine. But A already saw “out” before B started, so B must see “out” too.');}},
-{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,
- solve:async L=>{L.$('#r3').click();},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',
+ solve:async L=>{await dragTick(L,L.b7,'o0',22);},
  run(L){
-  const why=['It overlaps the write, and nobody had seen “out” yet. The old value is allowed.',
-             'It overlaps the write, so the new value is allowed. It’s the first read to see “out”.',
-             'It started before Mrs. Okoro’s “out” read finished, so the two overlap. The old value is still allowed.',
-             '',
-             'It overlaps the write and returns the new value. Nothing wrong there.'];
-  let first=true,doneYet=false;
-  L.h(L.kick('pr','Spot the violation')+'<h1 class="q">Ravi’s app writes “out”. Five reads come in. Tap the one read that breaks linearizability.</h1>'+
-   TL([['Ravi’s app',[[10,86,'write out','h3']]],['Mrs. Okoro',[[2,18,'hub','h2','r0'],[30,46,'out','h1','r1']]],['Dayo',[[24,40,'hub','h2','r2'],[52,68,'hub','h2','r3']]],['Signe (support)',[[72,88,'out','h1','r4']]]])+
-   '<div id="sv"></div>');
-  [0,1,2,3,4].forEach(k=>{L.$('#r'+k).onclick=()=>{if(doneYet)return;L.$('#sv').innerHTML='';
-    if(k===3){doneYet=true;if(first)L.award(true);L.$('#r3').style.borderColor='var(--no)';
-      L.sheet(first?'ok':'info',first?'You found it':'There it is','Dayo’s second read started <i>after</i> Mrs. Okoro’s read had already returned “out”. It overlaps the write, but it still can’t be older than a read that finished before it began.');L.done();}
-    else{if(first)L.award(false);first=false;L.fb(L.$('#sv'),'<b>That one is allowed.</b> '+why[k]+' Try another.','no');}};});}},
+  const seen={o2:new Set(),o3:new Set()};let fired=false;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Drag the ticks. Each one is the moment that request took effect.</h1>'+
+   '<p class="small" style="margin:0">Start with the write’s tick: that’s when the status flips. Notice which reads never change.</p><div id="b7"></div><div class="tlr" id="r7"></div>');
+  const upd=b=>{L.$('#r7').innerHTML=b.ops.filter(o=>o.k==='r').map(o=>b.nm(o)+': '+valTxt(b,o.v)).join(' · ');
+    ['o2','o3'].forEach(id=>seen[id].add(b.op(id).v));
+    if(!fired&&(seen.o2.size>1||seen.o3.size>1)){fired=true;
+      L.sheet('info','You moved an overlapping read','Mrs. Okoro’s read always gets Out and Kwame’s always gets Delivered: they don’t overlap the write. Dayo’s and Signe’s overlap it, so they are <b>concurrent</b> with it: they get either value, depending on when the flip lands. The line joins the ticks in time order.');L.done();}};
+  L.b7=Board(L.$('#b7'),{lanes:['Ravi’s app · writes','Mrs. Okoro · reads','Dayo · reads','Signe · reads','Kwame · reads'],init:'o',derive:true,drag:true,
+    ops:[{ln:0,k:'w',v:'d',s:20,e:80},{ln:1,k:'r',v:'o',s:2,e:16},{ln:2,k:'r',v:'o',s:28,e:50},{ln:3,k:'r',v:'o',s:56,e:76},{ln:4,k:'r',v:'o',s:84,e:99}],onChange:upd});
+  upd(L.b7);}},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',
+ solve:async L=>{while(L.$('#x8n'))L.$('#x8n').click();},
+ run(L){
+  const S=[
+   {hide:['o1','o2'],ticks:false,t:'Ravi’s app starts writing <b>Delivered</b>. Until its reply comes back, nobody outside knows when the status flips.'},
+   {hide:['o2'],t:'Mrs. Okoro’s read overlaps the write and gets <b>Delivered</b>. So the flip happened before Mrs. Okoro’s tick.'},
+   {t:'Dayo’s read starts after Mrs. Okoro’s ended, so its tick comes later still. Dayo <b>must</b> get Delivered, even though the write hasn’t finished.',hl:['o2']},
+   {t:'Odd but fine: both saw Delivered before Ravi’s app got its ok. The ok was just slow on the network.',hl:['o0']},
+   {t:'The test: join the ticks in time order. Every read must return the latest write before its tick, so the value can never flip back.'}];
+  let k=0;
+  L.h(L.kick('ex','The extra rule')+'<h1 class="q">Once anyone has read the new value, no later read may go back</h1><div id="b8"></div><div class="stepcap" id="c8"></div><button class="btn pri" id="x8n">Next '+L.ic('arrow')+'</button>');
+  const b=Board(L.$('#b8'),{lanes:['Ravi’s app · writes','Mrs. Okoro · reads','Dayo · reads'],init:'o',
+    ops:[{ln:0,k:'w',v:'d',s:8,e:92,t:20},{ln:1,k:'r',v:'d',s:22,e:42,t:30},{ln:2,k:'r',v:'?',s:50,e:70,t:58}]});
+  const draw=()=>{const s=S[k];b.ops.forEach(o=>o.hide=(s.hide||[]).includes(o.id));b.cfg.ticks=s.ticks!==false;b.hl=s.hl||[];b.op('o2').v=k>=2?'d':'?';b.draw();
+    L.$('#c8').innerHTML='<span class="n">Step '+(k+1)+' of '+S.length+'</span>'+s.t;};
+  draw();
+  L.$('#x8n').onclick=()=>{k++;draw();if(k===S.length-1){L.$('#x8n').remove();
+    L.sheet('info','The rule','After a value has been written <i>or read</i>, every later read must see it, until it is replaced.');L.done();}};}},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,
+ solve:async L=>{L.$('#p9d').click();await L.sleep(700);},
+ run(L){
+  let done=false;
+  L.h(L.kick('try','Your turn')+'<h1 class="q">Reader A got Delivered and finished. Reader B starts after. What may B get?</h1><div id="b9"></div>'+
+   '<div class="tlrow"><button class="chip" id="p9o">B gets Out</button><button class="chip" id="p9d">B gets Delivered</button></div>');
+  const b=Board(L.$('#b9'),{lanes:['Ravi’s app · writes','Reader A · reads','Reader B · reads'],init:'o',ticks:false,
+    ops:[{ln:0,k:'w',v:'d',s:8,e:92},{ln:1,k:'r',v:'d',s:22,e:42},{ln:2,k:'r',v:'?',s:54,e:74}]});
+  const pick=async v=>{if(done)return;done=true;const ok=v==='d';L.$(ok?'#p9d':'#p9o').classList.add(ok?'ok':'no');
+    b.op('o2').v=v;b.cfg.ticks=true;b.draw();L.award(ok);
+    await showPreset(b,ok?{}:{bad:'o2'});
+    if(ok)L.sheet('ok','Right: only Delivered','B overlaps the write, so on its own either value would do. But A had already returned Delivered before B started, so B’s tick comes after the flip.');
+    else L.sheet('no','Not allowed','On its own B overlaps the write, so Out looks possible. But A already saw Delivered before B started: B’s tick must come later, after the flip. The red tick shows the clash.');
+    L.done();};
+  L.$('#p9o').onclick=()=>pick('o');L.$('#p9d').onclick=()=>pick('d');}},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,
+ solve:async L=>{L.$('#p10c4').click();await L.sleep(800);},
+ run(L){
+  const why=['It started before anyone saw Delivered and overlaps the write’s start, so Out is allowed.',
+   'It overlaps the write, so Delivered is allowed. It’s simply the first read to see it.',
+   'It overlaps Mrs. Okoro’s read 2, so neither ran strictly after the other. Out is still allowed.','',
+   'It overlaps the write and returns the new value. Nothing wrong there.'];
+  let done=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Ravi’s app writes Delivered. Five reads come in. Tap the one read that breaks linearizability.</h1><div id="b10"></div>'+
+   '<div class="tlrow" id="p10ch">'+[1,2,3,4,5].map(n=>'<button class="chip" id="p10c'+n+'">Read '+n+'</button>').join('')+'</div>');
+  const pick=async n=>{if(done)return;done=true;const ok=n===4;L.$('#p10c'+n).classList.add(ok?'ok':'no');if(!ok)L.$('#p10c4').classList.add('ok');
+    L.award(ok);b.cfg.ticks=true;b.draw();await showPreset(b,{bad:'o4'});
+    if(ok)L.sheet('ok','You found it','Read 4 started after read 2 had already returned Delivered, so its tick must come later and see Delivered. Every other read fits somewhere. That’s what the checker did: it searched for one valid order of ticks. In general that search is expensive.');
+    else L.sheet('no','That one is allowed',why[n-1]+' The checker found the culprit: read 4, which started after read 2 had returned Delivered, yet got Out.');
+    L.done();};
+  const b=Board(L.$('#b10'),{lanes:['Ravi’s app · writes','Mrs. Okoro · reads','Dayo · reads','Signe · reads'],init:'o',ticks:false,onTap:id=>{const n=+id.slice(1);if(n>0)pick(n);},
+    ops:[{ln:0,k:'w',v:'d',s:10,e:86,tap:false},{ln:1,k:'r',v:'o',s:0,e:18,sub:'read 1'},{ln:1,k:'r',v:'d',s:28,e:50,sub:'read 2'},{ln:2,k:'r',v:'o',s:22,e:42,sub:'read 3'},{ln:2,k:'r',v:'o',s:56,e:76,sub:'read 4'},{ln:3,k:'r',v:'d',s:70,e:94,sub:'read 5'}]});
+  [1,2,3,4,5].forEach(n=>{L.$('#p10c'+n).onclick=()=>pick(n);});}},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,
+ solve:async L=>{await dragTick(L,L.b11,'o1',24);await dragTick(L,L.b11,'o2',34);L.$('#k11').click();},
+ run(L){
+  let first=true,fin=false;
+  L.h(L.kick('pr','Place the ticks')+'<h1 class="q">Drag each tick to when that request took effect, until every read and '+L.g('cas','compare-and-set')+' fits one copy.</h1>'+
+   '<div id="b11"></div><div class="tlr" id="r11"></div><button class="btn pri" id="k11">'+L.ic('check')+'Check my ticks</button><div id="f11"></div>');
+  const upd=b=>{const R=b.last;L.$('#r11').innerHTML=R.bad.size?[...R.bad].map(id=>'<span style="color:var(--no)">✗</span> '+R.msg[id]).join('<br>'):'<span style="color:var(--ok)">✓</span> Every read and compare-and-set fits one copy. The line only moves forward.';};
+  L.b11=Board(L.$('#b11'),{lanes:['Hub scanner · writes','Ravi’s app · writes, then compare-and-set','Mrs. Okoro · reads','Tobias’s script · compare-and-set'],init:'p',drag:true,
+    ops:[{ln:0,k:'w',v:'h',s:4,e:30},{ln:1,k:'w',v:'o',s:14,e:60},{ln:2,k:'r',v:'o',s:2,e:40},{ln:1,k:'c',f:'o',v:'d',res:'ok',s:64,e:99},{ln:3,k:'c',f:'h',v:'o',res:'err',s:46,e:84},{ln:2,k:'r',v:'d',s:78,e:99}],onChange:upd});
+  upd(L.b11);
+  L.$('#k11').onclick=()=>{if(fin)return;const ok=L.b11.last.bad.size===0;if(first){L.award(ok);first=false;}
+    L.$('#f11').innerHTML='';
+    if(ok){fin=true;L.sheet(L.$('#f11').dataset.miss?'info':'ok','A valid order','Mrs. Okoro sent the very first request, yet it took effect after both writes. Fine: the requests were concurrent, and theirs may have been delayed. They also saw Out before Ravi’s app got its ok. And Tobias’s compare-and-set failed because, by then, the status was no longer At hub.');L.done();}
+    else{L.$('#f11').dataset.miss=1;L.fb(L.$('#f11'),'<b>Not yet.</b> Hint: Mrs. Okoro got Out, so Ravi’s write must take effect after the hub scan and before Mrs. Okoro’s tick.','no');}};}},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#e12p'+j).click();await L.sleep(620);}},
+ run(L){
+  const P=[
+   {nm:'Okoro, then Dayo',lanes:['Ravi’s app · writes','Mrs. Okoro · reads','Dayo · reads'],init:'o',ops:[{ln:0,k:'w',v:'d',s:8,e:92},{ln:1,k:'r',v:'d',s:22,e:44},{ln:2,k:'r',v:'o',s:52,e:74}],bad:'o2',
+    cap:'Dayo’s read starts after Mrs. Okoro’s returned Delivered, so it must get Delivered too, even mid-write. The book’s football-score story.'},
+   {nm:'Before the ok',lanes:['Ravi’s app · writes','Mrs. Okoro · reads'],init:'o',ops:[{ln:0,k:'w',v:'d',s:8,e:76},{ln:1,k:'r',v:'d',s:24,e:48},{ln:1,k:'r',v:'d',s:80,e:99}],
+    cap:'Mrs. Okoro sees Delivered before Ravi’s app hears ok. Fine: the value didn’t appear before it was written; the ok was just slow on the network.'},
+   {nm:'Out of order',lanes:['Mrs. Okoro · reads','Ravi’s app · writes'],init:'o',ops:[{ln:0,k:'r',v:'d',s:4,e:66},{ln:1,k:'w',v:'d',s:20,e:44}],
+    cap:'Mrs. Okoro’s read was sent before the write, yet got Delivered. Fine: they were concurrent, and the read may have been delayed on the way.'},
+   {nm:'Flips back',lanes:['Ravi’s app · writes','Dayo · reads'],init:'o',ops:[{ln:0,k:'w',v:'d',s:6,e:94},{ln:1,k:'r',v:'d',s:10,e:30},{ln:1,k:'r',v:'o',s:36,e:58},{ln:1,k:'r',v:'d',s:64,e:86}],bad:'o2',
+    cap:'Each read overlaps the write, so alone each could be either. But one copy can’t flip back: after Delivered, Dayo’s next read must stay Delivered.'},
+   {nm:'SSI report',lanes:['Credit top-up · writes','Report, begun earlier · reads'],vals:CR,init:'a',ops:[{ln:0,k:'w',v:'b',s:6,e:42},{ln:1,k:'r',v:'a',s:48,e:76,sub:'reads its snapshot from before'}],bad:'o1',
+    cap:'A report transaction began before Bramble & Bolt’s top-up. Its read comes after the top-up committed, yet under '+L.g('serializable','serializable')+' snapshot isolation it sees the old balance. Serializable: yes. Linearizable: no.'}];
+  const seen=new Set();let shown=false;
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does the rule bite, and where doesn’t it? Run each case.</h1>'+
+   '<div class="tlrow">'+P.map((p,j)=>'<button class="chip" id="e12p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="b12"></div><div class="tlr" id="c12">Pick a case.</div>');
+  P.forEach((p,j)=>{L.$('#e12p'+j).onclick=async()=>{P.forEach((_,q)=>L.$('#e12p'+q).classList.toggle('sel',q===j));
+    const b=Board(L.$('#b12'),{lanes:p.lanes,init:p.init,vals:p.vals,ops:p.ops});
+    L.$('#c12').innerHTML=(p.bad?vd(false,'Not linearizable'):vd(true,'Linearizable'))+'<br>'+p.cap;
+    await showPreset(b,p);seen.add(j);
+    if(seen.size===P.length&&!shown){shown=true;L.sheet('info','The limits of the rule','Overlap gives freedom: reads may see a value early, or be handled in a different order than sent. What’s never allowed is going back after someone has seen the newer value. And serializability doesn’t give you that recency.');L.done();}};});}},
+
+{part:1,src:'Chapter 9 · What Makes a System Linearizable?',pts:1,
+ solve:async L=>{const n={o1:1,o2:1,o3:2,o4:2,o5:2};for(const id in n)for(let j=0;j<n[id];j++)L.$('#q13'+id).click();L.$('#k13').click();await L.sleep(650);},
+ run(L){
+  const cyc=['?','o','d'];let first=true,fin=false;
+  const L2={o1:'A',o2:'B',o3:'C',o4:'D',o5:'E'};
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Set what each read returned so the history is linearizable <i>and</i> someone sees Delivered before Ravi’s app gets its ok.</h1><div id="b13"></div>'+
+   '<div class="tlrow" id="ch13"></div><button class="btn pri" id="k13">'+L.ic('check')+'Check</button><div id="f13"></div>');
+  const b=Board(L.$('#b13'),{lanes:['Ravi’s app · writes','Mrs. Okoro · reads','Dayo · reads','Signe · reads'],init:'o',ticks:false,
+    onTap:id=>{if(L2[id])L.$('#q13'+id).click();},
+    ops:[{ln:0,k:'w',v:'d',s:18,e:80,tap:false},{ln:1,k:'r',v:'?',s:0,e:16,sub:'A'},{ln:2,k:'r',v:'?',s:20,e:38,sub:'B'},{ln:3,k:'r',v:'?',s:41,e:58,sub:'C'},{ln:1,k:'r',v:'?',s:61,e:78,sub:'D'},{ln:2,k:'r',v:'?',s:82,e:99,sub:'E'}]});
+  const chips=()=>{L.$('#ch13').innerHTML=Object.keys(L2).map(id=>'<button class="chip'+(b.op(id).v!=='?'?' sel':'')+'" id="q13'+id+'">'+L2[id]+': '+b.V(b.op(id).v)+' '+L.ic('cycle')+'</button>').join('');
+    Object.keys(L2).forEach(id=>{L.$('#q13'+id).onclick=()=>{if(fin)return;const o=b.op(id);o.v=cyc[(cyc.indexOf(o.v)+1)%3];if(o.v==='?')o.v='o';b.cfg.ticks=false;b.draw();chips();L.$('#f13').innerHTML='';};});};
+  chips();
+  L.$('#k13').onclick=async()=>{if(fin)return;const rs=Object.keys(L2).map(id=>b.op(id));
+    if(rs.some(o=>o.v==='?')){L.err('Set every read first');return;}
+    const w=b.op('o0'),lin=b.lin(),early=rs.some(o=>o.e<w.e&&o.v==='d'),ok=!!lin&&early;
+    if(first){L.award(ok);first=false;}
+    L.$('#f13').innerHTML='';
+    if(ok){fin=true;b.cfg.ticks=true;b.draw();await b.anim(b.place(lin),520);
+      L.sheet('ok','Linearizable, and early','Reads B to D overlap the write, so each may go either way, as long as none goes back after another has seen Delivered. Seeing the value before the writer’s ok is fine: the ok was just slow.');L.done();return;}
+    let m='';
+    if(rs[0].v==='d')m='A finished before the write started, so it must get Out.';
+    else if(rs[4].v==='o')m='E started after the write finished, so it must get Delivered.';
+    else if(!lin){const seenD=rs.find(o=>o.v==='d'&&rs.some(q=>q.s>o.e&&q.v==='o'));const back=seenD&&rs.find(q=>q.s>seenD.e&&q.v==='o');
+      m=back?L2[back.id]+' started after '+L2[seenD.id]+' had returned Delivered, so it can’t get Out.':'No order of ticks fits these results.';}
+    else m='That’s linearizable, but no one saw Delivered before Ravi’s app got its ok. Let a read that overlaps the write return Delivered.';
+    L.fb(L.$('#f13'),'<b>Not yet.</b> '+m,'no');};}},
+
 {part:1,src:'Chapter 9 · Linearizability Versus Serializability',run(L){
-  L.h(L.kick('learn','Two words that sound alike')+'<h1 class="q">Linearizable is not the same as serializable</h1>'+
-   L.prose('Both sound like “can be put in a sequential order”. They are quite different promises.')+
-   L.lanes([['list','Serializability','About <b>transactions</b> that read and write many objects. They behave as if run one at a time, in <i>some</i> order. That order may differ from the order they really ran.',3],
-            ['clock','Linearizability','About <b>reads and writes of one object</b>. A recency promise. It doesn’t group operations, so on its own it doesn’t stop write skew.',2]])+
-   L.prose('A database can offer both: that combination is called <b>strict serializability</b> (or strong one-copy serializability). Two-phase locking and actual serial execution are usually linearizable. ')+
-   L.note('<b>Serializable snapshot isolation is not linearizable</b>, by design. It reads from a consistent snapshot, and the whole point of a snapshot is that it leaves out writes newer than the snapshot.','alert'));
+  L.h(L.kick('learn','Two words that sound alike')+'<h1 class="q">Linearizable is not the same as serializable</h1>'+PIC_LINSER+
+   '<p class="capt">Linearizability: recency on one register; it doesn’t group operations, so alone it won’t stop write skew. Serializability: transactions act as if run one at a time, in <i>some</i> order. Both together: <b>strict serializability</b>.</p>');
   L.done();}},
+
 {part:1,src:'Chapter 9 · Linearizability Versus Serializability',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which promise is this?',['Linearizability','Serializability','Both at once'],[
@@ -139,35 +484,89 @@ Course.lesson({
    ['The database may pretend transaction B ran before A, even though A really started first.',1,'Serializability only needs <i>some</i> serial order, not the real one.'],
    ['Zainab wants transactions in a serial order <i>and</i> every read up to date.',2,'Both together is called strict serializability.'],
    ['It talks about single reads and writes of one register, not transactions.',0,'Linearizability is a single-object guarantee.']]);}},
-{part:1,src:'Chapter 9 · Linearizability Versus Serializability',pts:1,run(L){
-  L.h(L.kick('pr','Apply it')+'<h1 class="q">The Parcel DB runs serializable snapshot isolation. A merchant’s credit top-up has just committed, but a report transaction that started a moment earlier doesn’t see it. Which promise is missing?</h1>');
-  L.mc(L.card,['Serializability','Durability','Linearizability'],2,
-   'The report reads its snapshot, which can leave out newer writes. That stays serializable, but it isn’t a recency guarantee, so it isn’t linearizable.',
-   'SSI is fully serializable, and the top-up is safely stored. What’s missing is recency: a snapshot read can miss a newer committed write, so it isn’t linearizable.');}},
 
-/* ---------- PART 3: WHEN IT MATTERS ---------- */
+/* ================= PART 3: WHEN IT MATTERS ================= */
 {part:2,src:'Chapter 9 · Relying on Linearizability',run(L){
-  L.h(L.kick('learn','When stale is not OK')+'<h1 class="q">A score a few seconds old harms no one. These cases are different.</h1>'+
-   L.list([['lock','Locks and leader election','Only one route planner per region may write routes. One way: each planner tries to grab a lock, and the winner leads. The lock must be linearizable, or nodes disagree on who holds it and it’s useless. Coordination services such as ZooKeeper and etcd provide this using consensus. Details like fencing still matter.'],
-     ['shield','Uniqueness constraints','No two parcels may share a tracking code. To reject the second of two simultaneous claims as it’s written, you need linearizability. It works like taking a lock on the code, or a '+L.g('cas','compare-and-set')+' from “free” to “parcel P-311”.'],
-     ['scale','One up-to-date value','A credit balance that must never go negative, stock you can’t oversell, a seat that can’t be double-booked: all need one value every node agrees on.']],1)+
-   L.note('Not every rule is hard. If you can fix a breach afterwards, like moving an overbooked passenger and paying compensation, you may not need linearizability. Foreign key and attribute constraints don’t need it either.','info'));
+  L.h(L.kick('learn','When stale is not OK')+'<h1 class="q">A score a few seconds old harms no one. These cases are different.</h1>'+PIC_USES+
+   '<p class="capt">Coordination services like ZooKeeper and etcd give linearizable locks using consensus (fencing still matters). A rule you can repair later, like an overbooked slot fixed with an apology, may not need it. Foreign-key checks don’t.</p>');
   L.done();}},
-{part:2,src:'Chapter 9 · Cross-channel timing dependencies',run(L){
-  L.h(L.kick('ex','A race between two channels')+'<h1 class="q">Proof-of-delivery photos at Otterpost</h1>');
-  L.beats(L.card,[
-   ['Setup','When Ravi delivers a parcel, their app uploads a photo to Otterpost’s web server. A background worker makes a small preview for the tracking page.'],
-   ['Two channels','Photos are megabytes; queues are built for small messages. So the server first <b>writes the photo to file storage</b>, then puts a short “make a preview of photo 88” message <b>on a queue</b>.'],
-   ['The race','The queue is faster than replication inside the file storage. The worker gets the message and asks a replica for photo 88, which hasn’t arrived there yet.'],
-   ['The damage','The worker sees no photo, or an older one. If it previews an older photo, the full photo and the preview disagree <b>for good</b>.'],
-   ['The link','Same as the friends and the football score: one channel (the queue, or a voice across the room) outran the other (replication).'],
-   ['Fixes','Linearizable file storage fixes it simply. Because Otterpost controls the queue, it could instead use tricks like the read-your-writes fixes from replication lag, at the cost of more complexity.']],
-   'Without a second channel, nobody notices a stale read; they’d just refresh later. Two channels turn lag into a real bug.');}},
-{part:2,src:'Chapter 9 · Cross-channel timing dependencies',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In the photo story, what made the stale read turn into a real bug?</h1>');
-  L.mc(L.card,['The photos were too large for the file storage','The worker had a slow clock and read too early','A second channel told the worker to act right away'],2,
-   'The queue message raced ahead of replication. Without that second channel, the worker would never have known to look yet.',
-   'File storage was fine, and no clocks were involved. The queue was a second channel that raced ahead of replication, so the worker looked before the photo had arrived.');}},
+
+{part:2,src:'Chapter 9 · Constraints and uniqueness guarantees',pts:1,
+ solve:async L=>{L.$('#u17o1').click();L.$('#k17').click();await L.sleep(650);},
+ run(L){
+  let first=true,fin=false;
+  L.h(L.kick('pr','Claim a tracking code')+'<h1 class="q">Bramble & Bolt and Pip & Thistle both claim tracking code OP&#8209;51760 at once. Set the results so the store behaves like one copy.</h1>'+
+   '<div id="b17"></div><div class="tlrow" id="ch17"></div><button class="btn pri" id="k17">'+L.ic('check')+'Check</button><div id="f17"></div>');
+  const b=Board(L.$('#b17'),{lanes:['Bramble & Bolt’s booking · claims','Pip & Thistle’s booking · claims','Signe’s support search · reads'],vals:TC,init:'f',ticks:false,
+    onTap:id=>{const c=L.$('#u17'+id);if(c)c.click();},
+    ops:[{ln:0,k:'c',f:'f',v:'bb',res:'ok',s:4,e:48,nm:'Bramble & Bolt'},{ln:1,k:'c',f:'f',v:'pt',res:'ok',s:14,e:58,nm:'Pip & Thistle'},{ln:2,k:'r',v:'bb',s:66,e:96,nm:'Signe'}]});
+  const chips=()=>{const o=b.ops;L.$('#ch17').innerHTML=
+    '<button class="chip sel" id="u17o0">B&amp;B’s claim: '+(o[0].res==='ok'?'ok':'error')+' '+L.ic('cycle')+'</button>'+
+    '<button class="chip sel" id="u17o1">P&amp;T’s claim: '+(o[1].res==='ok'?'ok':'error')+' '+L.ic('cycle')+'</button>'+
+    '<button class="chip sel" id="u17o2">Signe sees: '+esc2(b.V(o[2].v))+' '+L.ic('cycle')+'</button>';
+    ['o0','o1'].forEach(id=>{L.$('#u17'+id).onclick=()=>{if(fin)return;const x=b.op(id);x.res=x.res==='ok'?'err':'ok';b.draw();chips();L.$('#f17').innerHTML='';};});
+    L.$('#u17o2').onclick=()=>{if(fin)return;const x=b.op('o2'),c=['bb','pt','f'];x.v=c[(c.indexOf(x.v)+1)%3];b.draw();chips();L.$('#f17').innerHTML='';};};
+  chips();
+  L.$('#k17').onclick=async()=>{if(fin)return;const lin=b.lin();if(first){L.award(!!lin);first=false;}
+    L.$('#f17').innerHTML='';const o=b.ops;
+    if(lin){fin=true;b.cfg.ticks=true;b.draw();await b.anim(b.place(lin),520);
+      L.sheet('ok','Exactly one winner','The first claim to take effect switches the code from free to its parcel; the other compare-and-set finds it taken and returns an error, so that merchant picks another code. Enforcing uniqueness as data is written needs this. It’s like taking a lock on the code.');L.done();return;}
+    const m=o[0].res==='ok'&&o[1].res==='ok'?'Both claims say ok: two parcels would share OP-51760. One copy can only switch from free once.':
+      o[0].res!=='ok'&&o[1].res!=='ok'?'Both claims failed, but the code started free: whichever ran first must succeed.':
+      'Signe must see whoever won the claim.';
+    L.fb(L.$('#f17'),'<b>Not one copy.</b> '+m,'no');};}},
+
+{part:2,src:'Chapter 9 · Cross-channel timing dependencies',
+ solve:async L=>{const r=L.$('#lag18');r.value=50;r.dispatchEvent(new Event('input',{bubbles:true}));L.$('#run18').click();await L.sleep(1550);L.$('#lin18').click();L.$('#run18').click();await L.sleep(1550);},
+ run(L){
+  let lag=10,mode='first',lin=false,busy=false,sawBad=false,fin=false;
+  L.h(L.kick('ex','A race between two channels')+'<h1 class="q">Ravi’s proof-of-delivery photo: can the queue outrun the file storage?</h1>'+
+   '<div id="p18"></div>'+
+   '<div class="rng21"><span>Copy to replica takes <span class="small">(the job arrives at 34)</span></span><b id="lv18">10</b><input type="range" id="lag18" min="0" max="60" value="10" aria-label="Replication lag inside file storage, illustrative time units; the job reaches the resizer at 34"></div>'+
+   '<div class="tlrow"><button class="chip sel" id="m18a">First photo</button><button class="chip" id="m18b">Retake</button><button class="chip" id="lin18">Linearizable storage: off</button></div>'+
+   '<button class="btn pri" id="run18">'+L.ic('play')+'Run the race</button><div class="thumbs" id="th18"></div>');
+  const box=(x,y,w,h,col,t1,id)=>'<rect'+(id?' id="'+id+'b"':'')+' x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="10" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:2"/><text x="'+(x+w/2)+'" y="'+(y+(id?17:h/2+5))+'" text-anchor="middle" style="font:700 12px var(--sans);fill:var(--ink)">'+t1+'</text>'+(id?'<text id="'+id+'" x="'+(x+w/2)+'" y="'+(y+33)+'" text-anchor="middle" class="tls" style="fill:var(--ink)"></text>':'');
+  const P={p1:[[120,26],[180,50]],rep:[[251,72],[251,102]],q1:[[64,48],[64,98]],q2:[[64,138],[64,184]],f:[[120,204],[218,142]]};
+  L.$('#p18').innerHTML='<svg class="pic" viewBox="0 0 340 266" role="img" aria-label="Web server stores the photo, then queues a job; the resizer fetches the photo from a storage replica">'+
+   '<rect x="168" y="2" width="168" height="150" rx="14" style="fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:5 4"/><text x="252" y="18" text-anchor="middle" class="tll">File storage</text>'+
+   Object.keys(P).map(k=>'<line x1="'+P[k][0][0]+'" y1="'+P[k][0][1]+'" x2="'+P[k][1][0]+'" y2="'+P[k][1][1]+'" style="stroke:var(--line2);stroke-width:2;'+(k==='rep'||k==='f'?'stroke-dasharray:4 4':'')+'"/>').join('')+
+   box(8,6,112,42,'h1','Web server')+box(180,28,142,44,'h3','Main copy','mc18')+box(180,102,142,44,'h3','Replica','rp18')+
+   box(8,98,112,40,'h4','Message queue')+box(8,184,112,42,'pri','Resizer')+
+   '<text x="126" y="20" class="tls">1 store</text><text x="70" y="78" class="tls">2 job</text><text x="70" y="166" class="tls">3</text><text x="160" y="186" class="tls" id="ft18">4 fetch</text><text x="258" y="92" class="tls">copying</text>'+
+   '<rect id="gb18" x="8" y="234" width="326" height="28" rx="14" style="fill:var(--soft);stroke:var(--line2)"/><text id="gt18" x="171" y="253" text-anchor="middle" class="tlt">Resizer fetched: (run the race)</text>'+
+   '<circle id="tp18" r="7" cx="-20" cy="-20" style="fill:var(--h1)"/><circle id="tr18" r="7" cx="-20" cy="-20" style="fill:var(--h2)"/><circle id="tj18" r="7" cx="-20" cy="-20" style="fill:var(--h4)"/><circle id="tf18" r="6" cx="-20" cy="-20" style="fill:var(--ink)"/></svg>';
+  const at=(seg,p)=>[seg[0][0]+(seg[1][0]-seg[0][0])*p,seg[0][1]+(seg[1][1]-seg[0][1])*p];
+  const put=(id,xy)=>{const c=L.$(id);if(!c)return;c.setAttribute('cx',xy?xy[0]:-20);c.setAttribute('cy',xy?xy[1]:-20);};
+  const oldTxt=()=>mode==='first'?'no photo 88':'photo 88 (old)';
+  const paint=(id,nw)=>{L.$(id).textContent=nw?'photo 88 (new)':oldTxt();const c=nw?'h2':'h3';L.$(id+'b').style.cssText='fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2';};
+  const setTxt=(p,arr)=>{paint('#mc18',p>=0.15);paint('#rp18',p>=arr);};
+  const got=res=>{const c=res==null?null:res==='ok'?'ok':'no';L.$('#gb18').style.cssText=c?'fill:var(--'+c+'-bg);stroke:var(--'+c+')':'fill:var(--soft);stroke:var(--line2)';
+    L.$('#gt18').textContent='Resizer fetched: '+(res==null?'(run the race)':res==='ok'?'photo 88 (new)':res==='none'?'nothing, no photo 88':'photo 88 (old)');L.$('#gt18').style.fill=c?'var(--'+c+')':'';};
+  const thumbs=res=>{got(res);L.$('#th18').innerHTML=res?'<div class="thumb ok"><b>Full photo</b>photo 88 (new)</div><div class="thumb '+(res==='ok'?'ok':'no')+'"><b>Preview</b>'+(res==='ok'?'matches the new photo':res==='none'?'none: photo 88 not found':'made from the old photo: they disagree for good')+'</div>':'';};
+  const idle=()=>{const arr=0.15+0.8*lag/60;setTxt(0,arr);['#tp18','#tr18','#tj18','#tf18'].forEach(i=>put(i,null));thumbs(null);};
+  idle();
+  L.$('#lag18').oninput=e=>{lag=+e.target.value;L.$('#lv18').textContent=lag;if(!busy)idle();};
+  const setMode=m=>{if(busy)return;mode=m;L.$('#m18a').classList.toggle('sel',m==='first');L.$('#m18b').classList.toggle('sel',m!=='first');idle();};
+  L.$('#m18a').onclick=()=>setMode('first');L.$('#m18b').onclick=()=>setMode('retake');
+  L.$('#lin18').onclick=()=>{if(busy)return;lin=!lin;L.$('#lin18').classList.toggle('sel',lin);L.$('#lin18').textContent='Linearizable storage: '+(lin?'on':'off');L.$('#ft18').textContent=lin?'4 fetch: latest':'4 fetch';idle();};
+  L.$('#run18').onclick=()=>{if(busy)return;busy=true;const arr=0.15+0.8*lag/60,t0=Date.now(),D=1400,lagNow=lag,linNow=lin;
+    const res=linNow||arr<=0.6?'ok':mode==='first'?'none':'old';
+    const step=()=>{if(!L.$('#p18')){busy=false;return;}const p=Math.min(1,(Date.now()-t0)/D);
+      put('#tp18',p<0.15?at(P.p1,p/0.15):null);
+      put('#tr18',p>=0.15&&p<arr?at(P.rep,(p-0.15)/(arr-0.15)):null);
+      put('#tj18',p>=0.15&&p<0.35?at(P.q1,(p-0.15)/0.2):p>=0.35&&p<0.55?at(P.q2,(p-0.35)/0.2):null);
+      put('#tf18',p>=0.6&&p<0.78?at(P.f,(p-0.6)/0.18):null);
+      setTxt(p,linNow?0.6:arr);
+      if(p>=0.78)got(res);
+      if(p<1){setTimeout(step,16);return;}
+      busy=false;thumbs(res);
+      if(res!=='ok')sawBad=true;
+      if(!fin&&sawBad&&linNow&&arr>0.6){fin=true;
+        L.sheet('info','Two channels, one race','The queue and the storage’s own copying are two channels. Without a second channel nobody notices a stale read; they’d just look again later, like Dayo without Mrs. Okoro’s shout. Linearizable storage is the simplest fix. Since Otterpost controls the queue, read-your-writes-style tricks would also work, with more complexity.');L.done();}
+      else if(!fin&&res!=='ok')L.err('Now switch on linearizable storage and run it again.');
+      else if(!fin&&!sawBad)L.err('Drag the lag past 34, then run it.');};
+    step();};}},
+
 {part:2,src:'Chapter 9 · Relying on Linearizability',pts:6,run(L){
   L.h(L.kick('pr','Needs it or not?')+'<h1 class="q">For each Otterpost feature, does a stale read break it, or is a slightly old value fine?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Needs linearizability','Stale is fine'],[
@@ -179,75 +578,89 @@ Course.lesson({
    ['A rare overbooked delivery slot is fixed by moving a parcel and apologising',1,'A loosely interpreted rule, fixed afterwards, may not need linearizability.']],
    'Linearizability earns its cost where two parties must not both “win”: locks, unique codes and balances.');}},
 
-/* ---------- PART 4: THE COST ---------- */
-{part:3,src:'Chapter 9 · Implementing Linearizable Systems',run(L){
-  L.h(L.kick('learn','Which setups can provide it?')+'<h1 class="q">One copy would do it, but one copy can’t survive a crash</h1>'+
-   L.prose('The simplest way to look like one copy is to <i>have</i> one copy. Lose that node and the data is gone or unreachable. So we replicate, and ask which replication methods from chapter 5 can still be linearizable.')+
-   L.tiers([['person','Single-leader: potentially','Reads from the leader, or from synchronously updated followers, can be. But a node may wrongly think it’s still leader, failover with async replication can lose writes, and some databases aren’t linearizable by design.','Partitioning with one leader per partition doesn’t change this.'],
-            ['check','Consensus algorithms: yes','Look a bit like single-leader, but with rules that stop split brain and stale replicas. ZooKeeper and etcd work this way.','',true,'Safe'],
-            ['people','Multi-leader: no','Several nodes take writes at once and replicate later, which creates conflicts. There never was one copy.'],
-            ['layers','Leaderless: probably not','Last-write-wins on clocks breaks it, sloppy quorums break it, and even strict quorums can fail, as the next screen shows.']]));
-  L.done();}},
-{part:3,src:'Chapter 9 · Linearizability and quorums',pts:1,
- solve:async L=>{for(let k=0;k<5&&L.$('#qs');k++){L.$('#qs').click();await L.sleep(5);}},
+/* ================= PART 4: THE COST ================= */
+{part:3,src:'Chapter 9 · Implementing Linearizable Systems',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#s20p'+j).click();await L.sleep(620);}},
  run(L){
-  const S=[
-   {v:[0,0,0],t:'The courier location store holds x = 0 on three replicas (n = 3). A writer sends x = 1 to all three and waits for all of them (w = 3).'},
-   {v:[1,0,0],t:'The write reaches replica 1 first. The other two copies are delayed on the network.',hi:[0]},
-   {v:[1,0,0],t:'Reader A asks replicas 1 and 2 (r = 2). It gets 1 and 0, takes the newer one and returns <b>1</b>. A is done.',hi:[0,1]},
-   {v:[1,0,0],t:'Reader B starts <i>after</i> A finished. It asks replicas 2 and 3, gets 0 and 0, and returns <b>0</b>.',hi:[1,2]},
-   {v:[1,1,1],t:'The write finally reaches replicas 2 and 3, and the writer gets its ok.',hi:[1,2]}];
-  let k=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Strict quorum: w + r = 3 + 2 is more than n = 3. Step through and watch.</h1>'+
-   '<div id="reps" style="display:flex;gap:8px;margin:8px 0"></div><div class="fb info" id="qt" style="min-height:64px"></div>'+
-   '<button class="btn pri" id="qs" style="margin-top:12px">'+L.ic('play')+'Next moment</button><div id="qq"></div>');
-  const draw=()=>{const s=S[k];L.$('#reps').innerHTML=s.v.map((v,j)=>'<div style="flex:1;text-align:center;border-radius:14px;padding:10px 4px;border:2px solid '+((s.hi||[]).includes(j)?'var(--pri)':'var(--line)')+';background:'+(v?'var(--ok-bg)':'var(--card)')+'"><div class="small">Replica '+(j+1)+'</div><div class="week" style="margin:2px 0 0">x = '+v+'</div></div>').join('');
-    L.$('#qt').innerHTML='<b>Moment '+(k+1)+' of '+S.length+'.</b> '+s.t;};
-  draw();
-  L.$('#qs').onclick=function(){k++;draw();if(k===S.length-1){this.remove();const q=L.$('#qq');q.innerHTML='<h2 class="sub">The quorum rule held. Was this run linearizable?</h2>';
-    L.mc(q,['Yes, because w + r > n held throughout','No, B started after A but saw older data','No, because the writer lost its write'],1,
-     'B began after A had returned 1, yet B returned 0. With variable network delays, strict quorums don’t prevent this. Synchronous read repair plus a writer that first reads a quorum’s state can fix it, at a performance cost, and still can’t give you compare-and-set.',
-     'The write wasn’t lost; it reached every replica in the end. The problem is B: it began after A had returned 1, yet it returned 0. Quorums alone don’t stop that.');}};}},
+  const P=[
+   {nm:'Leader reads',lanes:['Ravi’s app · writes to leader','Mrs. Okoro · reads leader','Dayo · reads leader'],init:'o',ops:[{ln:0,k:'w',v:'d',s:6,e:40},{ln:1,k:'r',v:'d',s:44,e:64},{ln:2,k:'r',v:'d',s:70,e:94}],tag:'Single-leader: potentially',
+    cap:'Reads go to the leader (or synchronous followers). It breaks if a node wrongly believes it’s leader, or async failover loses writes; some databases aren’t linearizable by design. One leader per partition changes nothing.'},
+   {nm:'Follower reads',lanes:['Ravi’s app · writes to leader','Mrs. Okoro · reads leader','Dayo · reads a follower'],init:'o',ops:[{ln:0,k:'w',v:'d',s:6,e:30},{ln:1,k:'r',v:'d',s:36,e:56},{ln:2,k:'r',v:'o',s:62,e:86,sub:'the follower hasn’t caught up'}],bad:'o2',tag:'Lagging follower: no',
+    cap:'Dayo’s read starts after the write finished, yet the lagging follower answers Out.'},
+   {nm:'Consensus',lanes:['Planner 1 · claims the lock','Planner 2 · claims the lock','Dispatch · reads the lock'],vals:LK,init:'f',ops:[{ln:0,k:'c',f:'f',v:'p1',res:'ok',s:4,e:44},{ln:1,k:'c',f:'f',v:'p2',res:'err',s:14,e:54},{ln:2,k:'r',v:'p1',s:62,e:92}],tag:'Consensus: yes',
+    cap:'Like single-leader, plus rules that stop split brain and stale replicas. ZooKeeper and etcd work this way (their default reads can be stale; ask for a quorum read or sync()).'},
+   {nm:'Multi-leader',lanes:['Ravi’s app · Westport leader','Hub scanner · Eastvale leader','Mrs. Okoro · Westport','Dayo · Eastvale'],init:'o',ops:[{ln:0,k:'w',v:'d',s:4,e:26},{ln:1,k:'w',v:'h',s:6,e:28},{ln:2,k:'r',v:'d',s:34,e:58},{ln:3,k:'r',v:'h',s:62,e:86}],bad:'o3',tag:'Multi-leader: no',
+    cap:'Both leaders accepted a write at once and swap them later, so a conflict needs resolving. There never was one copy.'},
+   {nm:'Leaderless',lanes:['Ravi’s phone · writes, w = 3','Tracking page A · reads, r = 2','Tracking page B · reads, r = 2'],vals:LOC,init:'m',ops:[{ln:0,k:'w',v:'k',s:4,e:96,sub:'reaches the 3 replicas at different times'},{ln:1,k:'r',v:'k',s:16,e:44,sub:'replies: new, old'},{ln:2,k:'r',v:'m',s:52,e:80,sub:'replies: old, old'}],bad:'o2',tag:'Leaderless: probably not',
+    cap:'n = 3, so w + r > n holds. Yet with variable delays B starts after A finished and gets the older spot. Clock-based last write wins and sloppy quorums break it outright.'}];
+  const seen=new Set();let shown=false;
+  L.h(L.kick('ex','Which setups can be linearizable?')+'<h1 class="q">One copy can’t survive a crash, so we replicate. Run each method.</h1>'+
+   '<div class="tlrow">'+P.map((p,j)=>'<button class="chip" id="s20p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="b20"></div><div class="tlr" id="c20">Pick a setup.</div>');
+  P.forEach((p,j)=>{L.$('#s20p'+j).onclick=async()=>{P.forEach((_,q)=>L.$('#s20p'+q).classList.toggle('sel',q===j));
+    const b=Board(L.$('#b20'),{lanes:p.lanes,init:p.init,vals:p.vals,ops:p.ops});
+    L.$('#c20').innerHTML=vd(!p.bad,p.tag)+'<br>'+p.cap;
+    await showPreset(b,p);seen.add(j);
+    if(seen.size===P.length&&!shown){shown=true;L.sheet('info','The scorecard','Single-leader: potentially. Consensus: yes. Multi-leader: no. Leaderless: assume not. Strict quorums can be made linearizable with synchronous read repair plus writers that first read a quorum, at a speed cost, but never compare-and-set: that needs consensus.');L.done();}};});}},
+
 {part:3,src:'Chapter 9 · The Cost of Linearizability',
- solve:async L=>{L.$('#c0').click();L.$('#c1').click();},
+ solve:async L=>{L.$('#n21c').click();await L.sleep(620);L.$('#n21e').click();await L.sleep(620);},
  run(L){
-  const R=[['Writes and fresh reads work; the leader is here.','Can’t reach the leader. No writes, no fresh reads. Only possibly stale reads from the local follower.'],
-           ['Keeps taking writes and serving reads.','Keeps taking writes too. Writes queue up and are exchanged when the link returns. Nothing is linearizable meanwhile.']];
-  const seen=new Set();
-  L.h(L.kick('ex','Cut the link')+'<h1 class="q">The link between Westport and Eastvale goes down. Both datacenters still reach their own clients. Try both setups.</h1>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="chip" id="c0">'+L.ic('person')+'Single leader in Westport</button><button class="chip" id="c1">'+L.ic('people')+'A leader in each</button></div>'+
-   L.lanes([['home','Westport clients','<div class="res" id="w0">Pick a setup.</div>',1],['home','Eastvale clients','<div class="res" id="w1">Pick a setup.</div>',2]]));
-  [0,1].forEach(j=>{L.$('#c'+j).onclick=()=>{L.$('#c0').classList.toggle('sel',j===0);L.$('#c1').classList.toggle('sel',j===1);seen.add(j);
-    L.$('#w0').innerHTML=R[j][0];L.$('#w1').innerHTML=R[j][1];
-    if(seen.size===2){L.sheet('info','The trade-off','With one leader, the side cut off from it becomes unavailable for anything linearizable. With a leader on each side, both stay up, but the data is no longer one copy.');L.done();}};});}},
+  let link='up',des='one',shown=false;const seen=new Set();
+  L.h(L.kick('ex','Cut the link')+'<h1 class="q">The Westport–Eastvale link fails. Each side still reaches its own clients. Try both designs.</h1>'+
+   '<div class="tlrow"><button class="chip sel" id="n21u">Link up</button><button class="chip" id="n21c">Link cut</button></div>'+
+   '<div class="tlrow"><button class="chip sel" id="n21o">One leader, in Westport</button><button class="chip" id="n21e">A leader in each region</button></div>'+
+   '<div id="b21"></div><div class="tlr" id="c21"></div>');
+  const show=async()=>{L.$('#n21u').classList.toggle('sel',link==='up');L.$('#n21c').classList.toggle('sel',link==='cut');L.$('#n21o').classList.toggle('sel',des==='one');L.$('#n21e').classList.toggle('sel',des==='each');
+    const d=link==='cut'?(des==='one'?{k:'r',v:'d',s:64,e:96,fail:true,sub:'can’t reach the Westport leader'}:{k:'r',v:'o',s:64,e:84,sub:'local leader never got the write'}):(des==='one'?{k:'r',v:'d',s:64,e:94,sub:'asks the Westport leader'}:{k:'r',v:'d',s:64,e:82,sub:'local leader, already synced'});
+    const ops=[{ln:0,k:'w',v:'d',s:6,e:30},{ln:1,k:'r',v:'d',s:36,e:58},Object.assign({ln:2},d)];
+    const b=Board(L.$('#b21'),{lanes:['Ravi’s app · Westport','Mrs. Okoro · Westport','Dayo · Eastvale'],init:'o',subs:true,ops});
+    const bad=link==='cut'&&des==='each';
+    L.$('#c21').innerHTML=link==='up'?vd(true,'Linearizable')+vd(true,'Available')+'<br>With the network working you can have both.':
+      des==='one'?vd(true,'Linearizable')+vd(false,'Eastvale unavailable')+'<br>Eastvale can’t write or make a linearizable read; it waits or errors. Westport carries on.':
+      vd(true,'Available')+vd(false,'Not linearizable')+'<br>Both sides keep working, writes queue up for later, and Dayo gets stale Out.';
+    await showPreset(b,bad?{bad:'o2'}:{});
+    if(link==='cut')seen.add(des);
+    if(seen.size===2&&!shown){shown=true;L.sheet('info','The trade-off','With one leader, clients cut off from it lose writes and linearizable reads until the link is fixed; they can still read the possibly stale follower. With a leader on each side, both stay up, but the data is no longer one copy.');L.done();}};
+  L.$('#n21u').onclick=()=>{link='up';show();};L.$('#n21c').onclick=()=>{link='cut';show();};
+  L.$('#n21o').onclick=()=>{des='one';show();};L.$('#n21e').onclick=()=>{des='each';show();};
+  show();}},
+
 {part:3,src:'Chapter 9 · The CAP theorem',run(L){
   L.h(L.kick('learn','The CAP theorem, and why it’s unhelpful')+'<h1 class="q">When the network is cut, choose: linearizable or available</h1>'+
-   L.quote('Is it better to be alive and wrong or right and dead?','Jay Kreps, quoted at the start of chapter 9')+
-   L.prose('This isn’t only about datacenters. <b>Any</b> linearizable system on <b>any</b> unreliable network faces it: replicas cut off must wait or return errors. Drop linearizability and each replica can carry on alone. This is popularly called the '+L.g('cap','CAP theorem')+'.')+
-   L.list([['“Pick 2 of 3” misleads','Network partitions are faults. They happen whether you choose them or not. A better phrasing: <b>consistent or available when partitioned</b>. When the network works, you can have both.'],
-     ['Very narrow','It covers one consistency model and one kind of fault. It says nothing about delays or dead nodes, and its “availability” doesn’t match the everyday meaning.'],
-     ['Mostly history','It pushed engineers toward shared-nothing systems and helped spark NoSQL. Today the book says it’s best avoided; even the CP/AP labels are flawed.']],3));
+   PIC_CAP+
+   '<p class="capt">Any linearizable system on an unreliable network faces this: that’s the '+L.g('cap','CAP theorem')+'. It covers one model and one fault, and its “availability” isn’t the everyday kind. It helped spark NoSQL; today it’s mostly history.</p>'+
+   L.quote('Is it better to be alive and wrong or right and dead?','Jay Kreps, quoted at the start of chapter 9'));
   L.done();}},
-{part:3,src:'Chapter 9 · Linearizability and network delays',run(L){
-  L.h(L.kick('learn','The cost you pay every day')+'<h1 class="q">Linearizability is slow even when nothing is broken</h1>'+
-   L.prose('Even the RAM in a multi-core computer isn’t linearizable. Each core has its own cache and buffers, written back to main memory later. A thread on another core may read an old value. Nobody blames CAP for that: one core can’t keep going cut off from the rest. The reason is <b>speed</b>.')+
-   L.prose('Many distributed databases skip linearizability for the same reason: performance, not fault tolerance.')+
-   L.note('Can a cleverer algorithm fix it? No. Researchers Attiya and Welch proved that linearizable reads and writes take time at least proportional to how <b>uncertain</b> network delays are. On networks with very variable delays, linearizable operations will be slow.','scale')+
-   '<p class="small" style="margin-top:12px">Weaker models can be much faster, which matters for latency-sensitive systems. Chapter 12 returns to avoiding linearizability without losing correctness.</p>');
-  L.done();}},
-{part:3,src:'Chapter 9 · The Unhelpful CAP Theorem',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The link between Westport and Eastvale is working fine today. What does CAP force Otterpost to give up?</h1>');
-  L.mc(L.card,['Nothing; the choice only comes during a cut','Availability, to stay linearizable','Partition tolerance, to keep both others'],0,
-   'With a healthy network you can have linearizability and full availability. CAP’s choice only bites when replicas are cut off. (Linearizability is still slow, but that’s a separate cost.)',
-   'CAP only forces a choice while the network is partitioned. On a healthy network you can have both. And partitions aren’t optional, so you can’t “give up” tolerating them.');}},
-{part:3,src:'Chapter 9 · The Cost of Linearizability',pts:5,run(L){
+
+{part:3,src:'Chapter 9 · Linearizability and network delays',
+ solve:async L=>{const r=L.$('#u23');r.value=9;r.dispatchEvent(new Event('input',{bubbles:true}));},
+ run(L){
+  let fin=false;
+  L.h(L.kick('learn','The cost you pay every day')+'<h1 class="q">Linearizability is slow even when nothing is broken</h1><div id="p23"></div>'+
+   '<div class="rng21"><span>How much network delays vary</span><b id="v23">low</b><input type="range" id="u23" min="0" max="10" value="1" aria-label="Network delay uncertainty (illustrative)"></div>'+
+   '<p class="capt">Attiya and Welch proved linearizable reads and writes take time at least proportional to how uncertain network delays are. So most systems skip it for speed, not fault tolerance. Chapter 12 shows ways to avoid it without losing correctness.</p>');
+  const draw=u=>{const weak=34+u*2,lin=56+u*26;
+    L.$('#p23').innerHTML='<svg class="pic" viewBox="0 0 340 174" role="img" aria-label="Response time of a nearby read versus a linearizable read, and CPU caches">'+
+     '<text x="6" y="14" class="tll">Read from a nearby copy (not linearizable)</text><rect x="6" y="20" width="'+weak+'" height="22" rx="6" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>'+
+     '<text x="6" y="64" class="tll">Linearizable read</text><rect x="6" y="70" width="'+lin+'" height="22" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/>'+
+     '<text x="'+(lin+12>300?lin-4:lin+12)+'" y="86" '+(lin+12>300?'text-anchor="end" ':'')+'class="tlt">×'+(lin/weak).toFixed(1)+'</text>'+
+     '<text x="334" y="108" text-anchor="end" class="tls">response time (illustrative) →</text>'+
+     '<text x="6" y="128" class="tll">Even multi-core RAM skips it, for speed:</text>'+
+     [['Core 1 cache','x = 1','h2'],['Core 2 cache','x = 0 (old)','h3'],['Main memory','gets 1 later','h1']].map((c,j)=>'<rect x="'+(6+j*112)+'" y="134" width="104" height="38" rx="8" style="fill:var(--'+c[2]+'-bg);stroke:var(--'+c[2]+');stroke-width:1.5"/><text x="'+(58+j*112)+'" y="149" text-anchor="middle" class="tls">'+c[0]+'</text><text x="'+(58+j*112)+'" y="165" text-anchor="middle" class="tlt">'+c[1]+'</text>').join('')+'</svg>';
+    L.$('#v23').textContent=u<4?'low':u<7?'medium':'high';};
+  draw(1);
+  L.$('#u23').oninput=e=>{const u=+e.target.value;draw(u);
+    if(u>=7&&!fin){fin=true;L.sheet('info','Slow all the time','With very variable delays, as on most networks, every linearizable read and write waits out that uncertainty, faults or not, and no faster algorithm exists. CPUs make the same trade: each core’s cache holds its own copy, written to memory later. CAP doesn’t explain that; speed does.');L.done();}};}},
+
+{part:3,src:'Chapter 9 · The Unhelpful CAP Theorem',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Keep or bust?',['Keep: it’s true','Bust: it’s wrong'],[
    ['“Our Parcel DB is a CA system: consistent and available, so we skip partition tolerance.”',1,'Partitions are faults that happen anyway. You only choose how to behave when they do.'],
    ['“During a cut, Eastvale clients of a Westport-led database can still read, but maybe stale data.”',0,'They can read the local follower, but not linearizably, and they can’t write.'],
    ['“Most systems drop linearizability mainly to survive network faults.”',1,'The main reason is speed, and the slowness is there all the time.'],
    ['“With a smarter algorithm, linearizable writes could be as fast as weak ones.”',1,'Attiya and Welch proved the delay grows with network uncertainty. No faster algorithm exists.'],
-   ['“Clients that can reach the leader’s datacenter keep working normally during the cut.”',0,'Only the side cut off from the leader loses linearizable service.']]);}},
+   ['“With the link working, CAP forces Otterpost to give nothing up.”',0,'CAP’s choice only bites while the network is partitioned. On a healthy network you can have both.']]);}},
+
 {part:3,src:'Chapter 9 · The Cost of Linearizability',pts:1,run(L){
   L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Nordhaven is overseas, and every request from there to Westport takes a long trip. Which design should Femi choose?</h1>');
   L.mc(L.card,['Send every read and write to Westport, so all is linearizable','Make nothing linearizable, tracking codes included','Only tracking codes, credit and the route lock pay for it'],2,

@@ -13,10 +13,196 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0034 only. Two hands-on models used across the lesson:
+   1. Loop  – the feedback-loop runner: four couriers’ reliability scores
+              week by week, where the score decides the routes and the
+              routes decide the next score. Safeguard switches.
+   2. Board – the consent flow board: Mrs. Okoro’s data flowing to uses,
+              who each use serves, how long it is kept, and what they
+              chose versus what happens.
+   All scores, route effects, thresholds and parcel counts are illustrative.
+   ===================================================================== */
+const CSS='<style>'+
+ '.dr svg:not(.i){width:100%;height:auto;display:block}.dr svg text{font-family:var(--sans)}'+
+ '.dr-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.dr-row .btn{min-height:42px;padding:8px 12px}.dr-row .chip{margin:0;min-height:40px}'+
+ '.dr-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 4px}'+
+ '.dr-cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:10px 0 4px}'+
+ '.dr-cap .stp{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.dr-rd{display:grid;grid-template-columns:auto 1fr auto;gap:3px 10px;font-size:14px;align-items:center;background:var(--soft);border-radius:14px;padding:9px 12px;margin:8px 0}'+
+ '.dr-rd .mu{color:var(--muted);font-size:13px}.dr-rd b{font-variant-numeric:tabular-nums;text-align:right}'+
+ '.dr-sum{grid-column:1/-1;font-size:14px;line-height:1.45;border-top:1px solid var(--line2);margin-top:4px;padding-top:6px}'+
+ '.dr-sw{width:11px;height:11px;border-radius:4px;display:inline-block;margin-right:6px;vertical-align:-1px}'+
+ '.dr-key{display:flex;gap:6px 14px;flex-wrap:wrap;font-size:12.5px;color:var(--muted);margin:4px 0}.dr-key i{display:inline-block;width:14px;height:9px;border-radius:2px;margin-right:5px;vertical-align:0}'+
+ '.dr-key i.dash{height:0;border-top:2px dashed var(--no);border-radius:0;vertical-align:3px}'+
+ '.dr-rng{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:14.5px;margin:6px 0}.dr-rng input{width:100%;accent-color:var(--pri);height:30px}.dr-rng b{min-width:58px;text-align:right}'+
+ '.dr-two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.dr-two>div{background:var(--soft);border-radius:14px;padding:9px 11px;font-size:13.5px;line-height:1.45;min-width:0}'+
+ '.dr-two .h{font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:4px}.dr-two .r{margin:3px 0}'+
+ '.dr-ok{color:var(--ok);font-weight:700}.dr-no{color:var(--no);font-weight:700}'+
+ '.dr-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}.dr-tiles>div{background:var(--soft);border-radius:14px;padding:10px;font-size:14px;line-height:1.4;display:flex;gap:8px;align-items:flex-start}'+
+ '.dr-tiles svg.i{flex:none;color:var(--pri);width:20px;height:20px}'+
+ '.dr-tasks{margin:8px 0;padding:0;list-style:none}.dr-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0;color:var(--muted)}'+
+ '.dr-tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none}.dr-tasks li.done{color:var(--ok)}.dr-tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.dr-ad{background:var(--soft);border-radius:14px;padding:12px 14px;margin:8px 0 12px;font-family:var(--serif);font-size:18px;line-height:1.55}'+
+ '.dr-ad b{transition:color .3s}'+
+ '.dr-mv{transition:transform .6s cubic-bezier(.2,.8,.2,1)}'+
+ '.dr-node{display:flex;gap:10px;align-items:center;width:100%;text-align:left;background:var(--soft);border:1.5px solid var(--line2);border-radius:14px;padding:9px 12px;min-height:54px;font:inherit;color:var(--ink);cursor:pointer;transition:background .25s,border-color .25s}'+
+ '.dr-node .n{flex:none;width:28px;height:28px;border-radius:50%;background:var(--card);border:1.5px solid var(--line2);display:grid;place-items:center;font-weight:700;font-size:14px;color:var(--muted)}'+
+ '.dr-node b{display:block;font-size:15px;line-height:1.3}.dr-node small{display:block;font-size:13px;color:var(--muted);margin-top:1px;line-height:1.35}'+
+ '.dr-arw{width:2px;height:16px;background:var(--line2);margin:0 0 2px 26px;position:relative}.dr-arw:after{content:"";position:absolute;left:-4px;bottom:-4px;border-left:5px solid transparent;border-right:5px solid transparent;border-top:6px solid var(--line2)}'+
+ '.dr-sec{font-size:12.5px;font-weight:700;color:var(--muted);margin:8px 0 6px}'+
+ '.dr-tag{font-size:12px;color:var(--muted);font-style:italic}'+
+ '</style>';
+
+/* ---------------------------------------------------------------------
+   1. LOOP: the courier-score feedback loop (illustrative numbers)
+   --------------------------------------------------------------------- */
+const CR=[{n:'Ines',w:'Old Town',h:74,hb:0,c:'h1'},{n:'Mei',w:'Old Town',h:73,hb:0,c:'h2'},{n:'Ravi',w:'Harbour',h:70,hb:1,c:'h4'},{n:'Kofi',w:'Harbour',h:69,hb:1,c:'h3'}];
+const LP={H:12,EASY:90,HARD:55,WARD:2,LINE:65,WIN:4,T:12};
+const SWS=[['rotate','Rotate routes'],['noward','Remove “home ward”'],['appeal','Human appeal'],['one','Score for bonuses only'],['forget','Forget data over 4 weeks old']];
+const JT=[0,1,-1,1,0,-1,1,0,-1,0,1,-1,0];
+function loopRun(sw){
+  const P=CR.map(()=>[]),S=[],E=[];
+  const sc=i=>{const p=P[i];let raw;
+    if(sw.forget){const l=p.slice(-LP.WIN);raw=((LP.WIN-l.length)*CR[i].h+l.reduce((a,b)=>a+b,0))/LP.WIN;}
+    else raw=(LP.H*CR[i].h+p.reduce((a,b)=>a+b,0))/(LP.H+p.length);
+    return raw-((!sw.noward&&CR[i].hb)?LP.WARD:0);};
+  for(let t=0;t<=LP.T;t++){
+    const s=CR.map((c,i)=>sc(i));S.push(s);
+    let e;
+    if(sw.rotate)e=CR.map((c,i)=>(i+t)%2===0);
+    else{const o=s.map((v,i)=>[v,i]).sort((a,b)=>b[0]-a[0]).map(x=>x[1]);e=CR.map((c,i)=>o.indexOf(i)<2);}
+    E.push(e);
+    if(t<LP.T)CR.forEach((c,i)=>P[i].push((e[i]?LP.EASY:LP.HARD)+JT[(i*5+t*3)%13]));
+  }
+  return {S,E};
+}
+function loopStats(m,sw,w){
+  const s=m.S[w];const gap=Math.max(...s)-Math.min(...s);
+  const low=CR.filter((c,i)=>s[i]<LP.LINE).map(c=>c.n);
+  return {w,s,gap,low,locked:(sw.appeal||sw.one)?[]:low};
+}
+const LX=t=>40+t*23,LY=v=>10+(95-Math.max(45,Math.min(95,v)))*2.8;
+function Loop(L,host,o){
+  const id=o.id,S={sw:Object.assign({},o.sw||{}),w:0,busy:false};let m=loopRun(S.sw);
+  host.classList.add('dr');
+  host.innerHTML=(o.sws?'<div class="dr-lbl">'+(o.lockSw?'Safeguards this preset switches on':'Safeguards (tap to switch on)')+'</div><div class="dr-row" id="'+id+'-sw"></div>':'')+
+   '<svg id="'+id+'-g" viewBox="0 0 330 222" role="img" aria-label="Line chart of four couriers’ scores by week, with a strip showing the route each courier got each week"></svg>'+
+   '<div class="dr-key"><span><i style="background:var(--ok-bg);border:1px solid var(--ok-line)"></i>city route</span><span><i style="background:var(--no);opacity:.75"></i>rural or stairs</span><span><i class="dash"></i>lockout line ('+LP.LINE+')</span></div>'+
+   '<div class="dr-rd" id="'+id+'-rd" aria-live="polite"></div>'+
+   (o.ctl===false?'':'<div class="dr-row"><button class="btn pri" id="'+id+'-nx">'+L.ic('play')+'Next week</button><button class="btn" id="'+id+'-all">'+L.ic('arrow')+'Run to week 12</button><button class="btn" id="'+id+'-rs">'+L.ic('cycle')+'Reset</button></div>');
+  const chips=()=>{if(!o.sws)return;o.sws.forEach(k=>{const b=L.$('#'+id+'-s-'+k);if(!b)return;const on=!!S.sw[k];b.className='chip'+(on?' sel':'');b.setAttribute('aria-pressed',on);b.innerHTML=(on?L.ic('check'):'')+SWS.find(x=>x[0]===k)[1];});};
+  if(o.sws){const box=L.$('#'+id+'-sw');o.sws.forEach(k=>{const b=document.createElement('button');b.id=id+'-s-'+k;
+    b.onclick=()=>{if(S.busy||o.lockSw)return;S.sw[k]=!S.sw[k];chips();api.reset();if(o.on)o.on({type:'sw',k});};box.appendChild(b);});chips();}
+  function draw(){
+    let g='';
+    [50,60,70,80,90].forEach(v=>{g+='<line x1="40" x2="316" y1="'+LY(v)+'" y2="'+LY(v)+'" stroke="var(--line)" stroke-width="1"/><text x="34" y="'+(LY(v)+4)+'" text-anchor="end" font-size="12" fill="var(--muted)">'+v+'</text>';});
+    g+='<line x1="40" x2="316" y1="'+LY(LP.LINE)+'" y2="'+LY(LP.LINE)+'" stroke="var(--no)" stroke-width="1.6" stroke-dasharray="5 4"/>';
+    [0,4,8,12].forEach(t=>{g+='<text x="'+LX(t)+'" y="164" text-anchor="middle" font-size="12" fill="var(--muted)">'+(t?'wk '+t:'start')+'</text>';});
+    CR.forEach((c,i)=>{const y=172+i*11;g+='<text x="34" y="'+(y+8.5)+'" text-anchor="end" font-size="12" font-weight="700" fill="var(--'+c.c+')">'+c.n[0]+'</text>';
+      for(let t=1;t<=LP.T;t++){const done=t<=S.w,ez=m.E[t-1][i];
+        g+='<rect x="'+(LX(t-1)+1.5)+'" y="'+y+'" width="20" height="9" rx="2" fill="'+(!done?'var(--soft)':ez?'var(--ok-bg)':'var(--no)')+'" stroke="'+(!done?'none':ez?'var(--ok-line)':'none')+'" opacity="'+(done&&!ez?.75:1)+'"/>';}});
+    CR.forEach((c,i)=>{const pts=[];for(let t=0;t<=S.w;t++)pts.push(LX(t)+','+LY(m.S[t][i]).toFixed(1));
+      g+='<polyline points="'+pts.join(' ')+'" fill="none" stroke="var(--'+c.c+')" stroke-width="2.6" stroke-linejoin="round" stroke-linecap="round"/>';
+      g+='<circle cx="'+LX(S.w)+'" cy="'+LY(m.S[S.w][i]).toFixed(1)+'" r="4.2" fill="var(--'+c.c+')" stroke="var(--card)" stroke-width="1.5"/>';});
+    L.$('#'+id+'-g').innerHTML=g;
+    const st=loopStats(m,S.sw,S.w),e=m.E[S.w];
+    let h=CR.map((c,i)=>'<span><i class="dr-sw" style="background:var(--'+c.c+')"></i>'+c.n+'</span><span class="mu">'+c.w+(S.w<LP.T?' · next: '+(e[i]?'city':'stairs'):'')+'</span><b'+(st.s[i]<LP.LINE?' style="color:var(--no)"':'')+'>'+st.s[i].toFixed(0)+'</b>').join('');
+    let sum=(S.w?'Week '+S.w:'Start')+' · gap <b>'+st.gap.toFixed(1)+'</b> pts · locked out: <b'+(st.locked.length?' class="dr-no"':'')+'>'+st.locked.length+'</b>';
+    if(st.locked.length)sum+='<br><span class="dr-no">'+st.locked.join(' and ')+'</span>: below the line, so no Peak shifts, no bonus, no van.';
+    else if(st.low.length)sum+='<br>'+st.low.join(' and ')+' '+(S.sw.one?'fell below the line but lose only the bonus.':'fell below the line, appealed, and a dispatcher reinstated them.');
+    L.$('#'+id+'-rd').innerHTML=h+'<div class="dr-sum">'+sum+'</div>';
+  }
+  const fire=()=>{if(o.on)o.on(Object.assign({type:'week'},loopStats(m,S.sw,S.w)));};
+  const api={S,
+    set(sw){S.sw=Object.assign({},sw);chips();api.reset();},
+    reset(){m=loopRun(S.sw);S.w=0;draw();},
+    jump(n){S.w=n;draw();},
+    step(){if(S.w>=LP.T)return;S.w++;draw();fire();},
+    async runTo(n,ms){S.busy=true;while(S.w<n){if(!host.isConnected){S.busy=false;return false;}S.w++;draw();await L.sleep(ms||95);}S.busy=false;fire();return true;},
+    stats(){return loopStats(m,S.sw,S.w);},
+    count(){return SWS.filter(x=>S.sw[x[0]]).length;}};
+  draw();
+  if(o.ctl!==false){
+    L.$('#'+id+'-nx').onclick=()=>{if(!S.busy)api.step();};
+    L.$('#'+id+'-all').onclick=()=>{if(!S.busy)api.runTo(LP.T);};
+    L.$('#'+id+'-rs').onclick=()=>{if(!S.busy)api.reset();};}
+  return api;
+}
+
+/* ---------------------------------------------------------------------
+   2. BOARD: Mrs. Okoro’s consent flow board (illustrative counts)
+   --------------------------------------------------------------------- */
+const ITEMS=[['addr','Home address',0],['safe','Safe-place note',0],['phone','Phone number',0],['home','At-home times',1],['gps','GPS at the door',1]];
+const USES=[{k:'del',n:'Deliver parcel',d:['addr','safe','phone'],me:1},{k:'eta',n:'Live ETA',d:['gps','addr'],me:1},{k:'sup',n:'Support calls',d:['phone','addr'],me:1},{k:'sell',n:'Sell data',ln:'Sell surveillance',d:['home','addr','gps'],me:0}];
+const KEEP=[['7 days','about 2 parcels',1],['30 days','about 9 parcels',3],['1 year','about 100 parcels',9],['5 years','about 500 parcels',18],['forever','600+ parcels',27]];
+function Board(L,host,o){
+  const id=o.id;const S=Object.assign({on:{del:1,eta:1,sup:1,sell:0},keep:1,lens:false,notice:false,mode:''},JSON.parse(JSON.stringify(o.state||{})));
+  host.classList.add('dr');
+  host.innerHTML='<svg id="'+id+'-g" viewBox="0 0 330 270" role="img" aria-label="Flow board: Mrs. Okoro’s data items on the left flow to the uses on the right, with the data store below"></svg>'+
+   '<div class="dr-key"><span><i style="background:var(--soft2);border:1px solid var(--line2)"></i>given on purpose</span><span><i style="background:var(--h3-bg);border:1px dashed var(--h3)"></i>tracked as a side effect</span><span class="dr-tag">parcel counts illustrative</span></div>'+
+   '<div class="dr-lbl">Uses (tap to switch on or off)</div><div class="dr-row" id="'+id+'-u"></div>'+
+   (o.lens?'<div class="dr-row"><button class="chip" id="'+id+'-lens" aria-pressed="false"></button></div>':'')+
+   (o.retain?'<div class="dr-rng"><label for="'+id+'-k">Keep data for</label><input type="range" id="'+id+'-k" min="0" max="4" step="1" value="'+S.keep+'"><b id="'+id+'-kv"></b></div>':'')+
+   (o.notice?'<div class="dr-row"><button class="chip" id="'+id+'-n" aria-pressed="false"></button></div>':'')+
+   (o.panel?'<div class="dr-two" id="'+id+'-p"></div>':'');
+  const ub=L.$('#'+id+'-u');
+  USES.forEach(u=>{const b=document.createElement('button');b.id=id+'-u-'+u.k;b.onclick=()=>{if(o.locked)return;S.mode='';S.on[u.k]=S.on[u.k]?0:1;draw();if(o.on)o.on({type:'use',k:u.k});};ub.appendChild(b);});
+  if(o.lens)L.$('#'+id+'-lens').onclick=()=>{S.lens=!S.lens;draw();if(o.on)o.on({type:'lens'});};
+  if(o.retain)L.$('#'+id+'-k').oninput=e=>{S.keep=+e.target.value;draw();if(o.on)o.on({type:'keep'});};
+  if(o.notice)L.$('#'+id+'-n').onclick=()=>{S.notice=!S.notice;draw();if(o.on)o.on({type:'notice'});};
+  const IY=i=>22+i*39,UY=j=>22+j*48;
+  function draw(){
+    const out=S.mode==='optout',lens=S.lens;let g='';
+    g+='<text x="2" y="13" font-size="12" font-weight="700" fill="var(--muted)">'+(lens?'Surveillance of Mrs. Okoro':'Mrs. Okoro’s data')+'</text>';
+    g+='<text x="328" y="13" text-anchor="end" font-size="12" font-weight="700" fill="var(--muted)">What it’s used for</text>';
+    USES.forEach((u,j)=>{const on=!out&&S.on[u.k];u.d.forEach(dk=>{const i=ITEMS.findIndex(x=>x[0]===dk);const y1=IY(i)+15,y2=UY(j)+21;
+      g+='<path d="M122 '+y1+' C160 '+y1+',158 '+y2+',196 '+y2+'" fill="none" stroke="'+(on?(u.me?'var(--ok)':'var(--no)'):'var(--line2)')+'" stroke-width="'+(on?2.4:1.4)+'"'+(on?'':' stroke-dasharray="4 4"')+' opacity="'+(on?.9:.7)+'"/>';});});
+    ITEMS.forEach((it,i)=>{const used=!out&&USES.some(u=>S.on[u.k]&&u.d.includes(it[0]));const y=IY(i);
+      g+='<rect x="2" y="'+y+'" width="120" height="30" rx="8" fill="'+(it[2]?'var(--h3-bg)':'var(--soft2)')+'" stroke="'+(it[2]?'var(--h3)':'var(--line2)')+'"'+(it[2]?' stroke-dasharray="4 3"':'')+' opacity="'+(used?1:.45)+'"/>';
+      g+='<text x="10" y="'+(y+19.5)+'" font-size="12.5" fill="var(--ink)" opacity="'+(used?1:.55)+'">'+it[1]+'</text>';});
+    USES.forEach((u,j)=>{const on=!out&&S.on[u.k],y=UY(j);
+      g+='<rect x="196" y="'+y+'" width="132" height="42" rx="9" fill="'+(on?(u.me?'var(--ok-bg)':'var(--no-bg)'):'var(--soft)')+'" stroke="'+(on?(u.me?'var(--ok-line)':'var(--no)'):'var(--line2)')+'" stroke-width="'+(on?1.6:1)+'"/>';
+      g+='<text x="205" y="'+(y+17)+'" font-size="12.5" font-weight="700" fill="'+(on?'var(--ink)':'var(--muted)')+'">'+(lens&&u.ln?u.ln:u.n)+'</text>';
+      g+='<text x="205" y="'+(y+33)+'" font-size="12" fill="'+(!on?'var(--muted)':u.me?'var(--ok)':'var(--no)')+'">'+(!on?'off':u.me?'✓ serves them':'✗ for B&amp;B, unasked')+'</text>';});
+    const k=KEEP[S.keep],asset=S.mode==='asset';
+    g+='<rect x="2" y="222" width="326" height="44" rx="10" fill="'+(asset?'var(--no-bg)':'var(--soft)')+'" stroke="'+(asset?'var(--no)':'var(--line2)')+'" stroke-width="'+(asset?2:1)+'"/>';
+    g+='<text x="11" y="240" font-size="12.5" font-weight="700" fill="var(--ink)">'+(asset?(lens?'Surveillance':'Data')+' = core asset':(lens?'Surveillance store':'Data store'))+'</text>';
+    g+='<text x="11" y="257" font-size="12" fill="var(--muted)">kept '+k[0]+' · '+k[1]+'</text>';
+    for(let b=0;b<k[2];b++){const cx=210+(b%12)*9.5,cy=228+Math.floor(b/12)*10;g+='<rect x="'+cx+'" y="'+cy+'" width="8" height="8" rx="2" fill="'+(S.keep>=3?'var(--no)':'var(--h3)')+'" opacity=".85"/>';}
+    L.$('#'+id+'-g').innerHTML=g;
+    USES.forEach(u=>{const b=L.$('#'+id+'-u-'+u.k),on=!out&&S.on[u.k];b.className='chip'+(on?' sel':'');b.setAttribute('aria-pressed',!!on);b.innerHTML=(on?L.ic('check'):'')+(lens&&u.ln?u.ln:u.n);});
+    if(o.lens){const b=L.$('#'+id+'-lens');b.className='chip'+(S.lens?' sel':'');b.setAttribute('aria-pressed',S.lens);b.innerHTML=L.ic('eye')+'Read “data” as “surveillance”';}
+    if(o.retain){L.$('#'+id+'-k').value=S.keep;L.$('#'+id+'-kv').textContent=k[0];}
+    if(o.notice){const b=L.$('#'+id+'-n');b.className='chip'+(S.notice?' sel':'');b.setAttribute('aria-pressed',S.notice);b.innerHTML=(S.notice?L.ic('check'):'')+'Tell recipients in plain words';}
+    if(o.panel){
+      const rows=[];
+      if(out)rows.push(['no','No parcel at all']);
+      else{USES.forEach(u=>{if(S.on[u.k])rows.push(u.me?['ok',u.n]:['no','Habits sold to B&amp;B']);});
+        if(!rows.length)rows.push(['no','Nothing works']);
+        if(o.retain)rows.push(S.keep<=1?['ok','Purged after '+k[0]]:['no','Kept '+k[0]]);
+        if(o.notice)rows.push(S.notice?['ok','Told how it’s used']:['no','Kept in the dark']);}
+      L.$('#'+id+'-p').innerHTML='<div><div class="h">What Mrs. Okoro chose</div><div class="r">Get the parcel</div><div class="r">Leave it at the side gate</div><div class="r">See when it’s coming</div></div>'+
+        '<div><div class="h">What happens</div>'+rows.map(r=>'<div class="r"><span class="dr-'+r[0]+'">'+(r[0]==='ok'?'✓':'✗')+'</span> '+r[1]+'</div>').join('')+'</div>';}
+  }
+  draw();
+  return {S,draw,
+    set(st){Object.assign(S,JSON.parse(JSON.stringify(st)));draw();},
+    ok(){return !!(S.on.del&&S.on.eta&&S.on.sup&&!S.on.sell&&S.mode!=='optout'&&(!o.retain||S.keep===1)&&(!o.notice||S.notice));}};
+}
+
+function tasks(id,list){return '<ul class="dr-tasks" id="'+id+'">'+list.map((t,j)=>'<li id="'+id+'-'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const e=L.$('#'+id+'-'+j);if(e)e.classList.add('done');}
+function allTicked(L,id){return [...L.$$('#'+id+' li')].every(x=>x.classList.contains('done'));}
+/* tappable "dig deeper" labels under a picture: extra points stay one tap away */
+function more(id,list){return '<div class="dr-lbl">Tap to dig deeper</div><div class="dr-row" id="'+id+'">'+list.map((t,j)=>'<button class="chip" id="'+id+'-'+j+'" aria-expanded="false">'+t[0]+'</button>').join('')+'</div><div id="'+id+'-x" aria-live="polite"></div>';}
+function moreWire(L,id,list){list.forEach((t,j)=>{const b=L.$('#'+id+'-'+j);b.onclick=()=>{[...L.$$('#'+id+' .chip')].forEach(x=>{x.classList.toggle('sel',x===b);x.setAttribute('aria-expanded',x===b);});
+  L.$('#'+id+'-x').innerHTML='<div class="dr-cap"><span class="stp">'+t[0]+'</span>'+t[1]+'</div>';};});}
+
 Course.lesson({
-  id:'0034', title:'Doing the right thing', minutes:18, icon:'scale',
+  id:'0034', title:'Doing the right thing', minutes:20, icon:'scale',
   goals:['Spot how a prediction about people can encode bias, shut people out and feed on itself','Tell tracking that serves users from surveillance, and explain why “consent” is often thin','Apply Kleppmann’s advice on data as power: collect less, purge early, keep people in control'],
-  parts:['Predictions about people','Privacy and tracking','Data, power and you'],
+  parts:['Predictions about people','The score in motion','Privacy and tracking','Data, power and you'],
   read:'Read the “Doing the Right Thing” section and the Summary at the end of chapter 12: it is short, personal and worth reading in full.',
   glossary:{
     'predictive':'Predictive analytics: using data about the past to predict something about the future, such as whether a person will repay a loan or turn up late.',
@@ -31,7 +217,7 @@ Course.lesson({
     'Predictions about individuals can <b>shut people out</b> everywhere at once, with no proof and little chance to appeal.',
     'Biased past data gives biased predictions. Removing a protected field doesn’t help when <b>proxies</b> like postcode remain.',
     'Predictions are right on average and can be <b>wrong for one person</b>. Someone must be accountable, and errors must be fixable.',
-    'Watch for <b>feedback loops</b>: think about the whole system, people included.',
+    'Watch for <b>feedback loops</b> (a score that picks the routes that make the score): think about the whole system, people included.',
     'Tracking that serves the user is a service. Tracking for someone else is closer to <b>surveillance</b>. Consent is thin when users can’t see what they agree to or can’t opt out.',
     '<b>Privacy</b> means choosing what to reveal to whom. Collecting data moves that choice to the company.',
     'Data is power and a hazard: collect less, <b>purge it</b> when no longer needed, and treat users as people, not metrics.'
@@ -41,150 +227,332 @@ Course.lesson({
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tobias says: “A courier score built from GPS data is just maths, so it can’t be unfair.” Do you agree?</h1>');
   L.mc(L.card,['Yes: numbers don’t have opinions','No: it’s only as fair as its data and its use'],1,
-   'Maths applied to unfair data, or used in an unfair way, gives unfair results. This lesson shows how.',
-   'The maths may be neutral, but the data it learns from and the decisions it drives are not. This lesson shows how a score can be unfair without anyone meaning it to be.');}},
+   'Maths applied to unfair data, or used in an unfair way, gives unfair results. This lesson lets you watch it happen.',
+   'The maths may be neutral, but the data it learns from and the decisions it drives are not. This lesson lets you watch a score turn unfair without anyone meaning it to.');}},
+
 {part:0,src:'Chapter 12 · Doing the Right Thing',run(L){
-  L.h(L.kick('learn','The last section of the book')+'<h1 class="q">Every system has consequences, and someone must own them</h1>'+
-   L.prose('Kleppmann ends the book by stepping back. Every system is built for a purpose, maybe just making money, but its effects can reach much further, intended or not. He argues that we, the engineers, are responsible for thinking those effects through and for deciding what kind of world we want to help build.')+
-   L.prose('Many datasets are about <b>people</b>: what they do, what they like, who they are. That data deserves humanity and respect. Codes of ethics for software engineers exist (such as the ACM’s), but he notes they are rarely discussed or enforced.')+
-   L.note('A technology isn’t good or bad in itself; what matters is how it is used and how it affects people. This section is openly Kleppmann’s opinion, written in the first person.','scale'));
+  const CQ=[['Is technology good or bad?','Neither on its own. What counts is the way it is used and who it affects, as true for a search engine as for a gun.'],
+   ['Don’t ethics codes cover this?','Codes such as the ACM’s exist, but they are rarely discussed, applied or enforced, so teams can be cavalier about privacy and harm.'],
+   ['Whose view is this?','Kleppmann says openly that this chapter includes his personal opinions. Reasoning about ethics is hard, he writes, but too important to ignore.']];
+  L.h(L.kick('learn','The last section of the book')+'<h1 class="q">A system’s consequences reach far past its purpose</h1>'+
+   '<div class="dr"><svg viewBox="0 0 330 200" role="img" aria-label="Nested rings: Otterpost’s purpose in the middle, then couriers, then recipients, then the kind of world we live in">'+
+   '<rect x="1" y="1" width="328" height="198" rx="18" fill="var(--h4-bg)"/><text x="16" y="24" font-size="13" font-weight="700" fill="var(--h4)">The kind of world we live in</text>'+
+   '<rect x="14" y="34" width="302" height="152" rx="15" fill="var(--h3-bg)"/><text x="28" y="56" font-size="13" font-weight="700" fill="var(--h3)">Recipients’ homes and habits</text>'+
+   '<rect x="28" y="66" width="274" height="106" rx="12" fill="var(--h2-bg)"/><text x="42" y="88" font-size="13" font-weight="700" fill="var(--h2)">Couriers’ shifts and pay</text>'+
+   '<rect x="44" y="98" width="242" height="60" rx="10" fill="var(--card)" stroke="var(--h1)" stroke-width="1.5"/><text x="165" y="122" text-anchor="middle" font-size="13.5" font-weight="700" fill="var(--h1)">Otterpost’s purpose</text><text x="165" y="141" text-anchor="middle" font-size="12.5" fill="var(--ink)">fast parcels, a profit</text>'+
+   '</svg></div>'+
+   L.prose('Kleppmann ends the book by stepping back. A purpose can be as simple as profit, yet the effects ripple outward, intended or not. Many datasets are about <b>people</b>, so engineers must weigh those effects too.')+
+   more('cq',CQ)+CSS);
+  moreWire(L,'cq',CQ);
   L.done();}},
-{part:0,src:'Chapter 12 · Predictive Analytics',run(L){
+
+{part:0,src:'Chapter 12 · Predictive Analytics',
+ solve:async L=>{L.$('#ap-go').click();for(let i=0;i<80&&!L.$('#ap-cap');i++)await L.sleep(40);},
+ run(L){
+  const D=['Job offers','Air travel','Insurance','Renting a flat','Bank loans'];
   L.h(L.kick('learn','Predictive analytics')+'<h1 class="q">Predicting the weather is one thing. Predicting a person is another.</h1>'+
-   L.lanes([['leaf','About the world','Forecasting the weather or the spread of a disease.',2],
-            ['person','About one person','Will this person reoffend, default on a loan, make costly insurance claims? These predictions change individual lives.',4]])+
-   L.prose('Organizations are naturally cautious: a missed customer costs little, a bad loan costs a lot. So when in doubt, they say no. As '+L.g('predictive','predictive analytics')+' spreads, someone labelled risky (rightly or wrongly) may get that “no” from employers, airlines, insurers, landlords and banks all at once. This has been called <b>algorithmic prison</b>.')+
-   L.prose('Courts presume innocence until guilt is proven. An automated system can shut someone out of society with no proof at all, and with little chance to appeal.'));
-  L.done();}},
+   '<p class="small" style="margin:0 0 6px">Sam has been labelled “risky” by some algorithm, rightly or wrongly. Five firms check that label.</p>'+
+   '<div class="dr"><svg id="ap-g" viewBox="0 0 330 178" role="img" aria-label="Sam, labelled risky, linked to five doors: job offers, air travel, insurance, renting a flat, bank loans"></svg></div>'+
+   '<div class="dr-row"><button class="btn pri" id="ap-go">'+L.ic('play')+'Run the five checks</button></div><div id="ap-x"></div>'+CSS);
+  let n=0;
+  function draw(){let g='<circle cx="48" cy="62" r="15" fill="var(--soft2)" stroke="var(--line2)"/><path d="M22 112 Q22 82 48 82 Q74 82 74 112 Z" fill="var(--soft2)" stroke="var(--line2)"/>'+
+    '<rect x="6" y="122" width="84" height="24" rx="12" fill="var(--no-bg)" stroke="var(--no)"/><text x="48" y="138.5" text-anchor="middle" font-size="12" font-weight="700" fill="var(--no)">“risky”</text>'+
+    '<text x="48" y="166" text-anchor="middle" font-size="12" fill="var(--muted)">Sam</text>';
+    D.forEach((d,k)=>{const y=6+k*34,no=k<n;
+      g+='<path d="M90 96 C120 96,124 '+(y+14)+',150 '+(y+14)+'" fill="none" stroke="'+(no?'var(--no)':'var(--line2)')+'" stroke-width="'+(no?2:1.3)+'"/>';
+      g+='<rect x="150" y="'+y+'" width="176" height="28" rx="8" fill="'+(no?'var(--no-bg)':'var(--soft)')+'" stroke="'+(no?'var(--no)':'var(--line2)')+'"/>';
+      g+='<text x="161" y="'+(y+18.5)+'" font-size="12.5" fill="var(--ink)">'+d+'</text><text x="316" y="'+(y+18.5)+'" text-anchor="end" font-size="12.5" font-weight="700" fill="'+(no?'var(--no)':'var(--muted)')+'">'+(no?'✗ No':'?')+'</text>';});
+    L.$('#ap-g').innerHTML=g;}
+  draw();
+  L.$('#ap-go').onclick=async function(){this.disabled=true;for(n=1;n<=5;n++){draw();await L.sleep(230);if(!L.$('#ap-g'))return;}n=5;draw();this.remove();
+    L.$('#ap-x').innerHTML='<div class="dr-cap" id="ap-cap">When in doubt, each firm says no: a missed customer costs little, a bad loan a lot. Together those “no”s become an <b>algorithmic prison</b>. A court needs proof of guilt; this needs none, and appeal is hard.</div>';
+    L.done();};}},
+
 {part:0,src:'Chapter 12 · Predictive Analytics',run(L){
-  L.h(L.kick('ex','Two proposals land on Femi’s desk')+'<h1 class="q">Otterpost has the data. Should it use it this way?</h1>');
+  L.h(L.kick('ex','Two proposals land on Femi’s desk')+'<h1 class="q">Otterpost has the data. Should it use it this way?</h1>'+
+   '<div class="dr"><svg id="pp-g" viewBox="0 0 330 156" role="img" aria-label="Tobias’s proposal: GPS pings, scans and home ward feed one score, and that one score decides Peak shifts, bonuses and van booking"></svg></div>'+
+   '<div class="dr-rng"><label for="pp-r">Ravi’s late stops</label><input type="range" id="pp-r" min="0" max="10" step="1" value="2"><b id="pp-v" aria-live="polite"></b></div>'+CSS);
+  const PD=['Peak shifts','Bonus','Van booking'];
+  function pdraw(){const late=+L.$('#pp-r').value,sc=94-4*late,ok=sc>=LP.LINE;
+    let g='<defs><marker id="pp-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>';
+    g+='<text x="2" y="12" font-size="12" font-weight="700" fill="var(--muted)">Tobias’s proposal</text><text x="328" y="12" text-anchor="end" font-size="11" font-style="italic" fill="var(--muted)">illustrative: line at '+LP.LINE+'</text>';
+    g+='<rect x="2" y="48" width="84" height="66" rx="10" fill="var(--soft)" stroke="var(--line2)"/>';
+    ['GPS pings,','scans,','home ward'].forEach((t,k)=>{g+='<text x="12" y="'+(68+k*17)+'" font-size="12" fill="var(--ink)">'+t+'</text>';});
+    g+='<path d="M88 81 L104 81" stroke="var(--muted)" stroke-width="2" marker-end="url(#pp-ah)"/>';
+    g+='<rect x="108" y="44" width="74" height="74" rx="12" fill="'+(ok?'var(--ok-bg)':'var(--no-bg)')+'" stroke="'+(ok?'var(--ok-line)':'var(--no)')+'" stroke-width="1.6"/>';
+    g+='<text x="145" y="64" text-anchor="middle" font-size="12" fill="var(--muted)">one score</text><text x="145" y="98" text-anchor="middle" font-size="28" font-weight="700" fill="'+(ok?'var(--ok)':'var(--no)')+'">'+sc+'</text>';
+    PD.forEach((d,k)=>{const y=24+k*44;
+      g+='<path d="M184 81 C200 81,198 '+(y+18)+',210 '+(y+18)+'" fill="none" stroke="'+(ok?'var(--ok)':'var(--no)')+'" stroke-width="1.8" marker-end="url(#pp-ah)"/>';
+      g+='<rect x="214" y="'+y+'" width="114" height="36" rx="9" fill="'+(ok?'var(--ok-bg)':'var(--no-bg)')+'" stroke="'+(ok?'var(--ok-line)':'var(--no)')+'"/>';
+      g+='<text x="224" y="'+(y+22.5)+'" font-size="12.5" fill="var(--ink)">'+d+'</text><text x="318" y="'+(y+22.5)+'" text-anchor="end" font-size="13" font-weight="700" fill="'+(ok?'var(--ok)':'var(--no)')+'">'+(ok?'✓':'✗')+'</text>';});
+    L.$('#pp-g').innerHTML=g;L.$('#pp-v').textContent=late+' → '+sc;}
+  pdraw();L.$('#pp-r').oninput=pdraw;
   L.beats(L.card,[
-   ['The score','Tobias proposes a <b>courier reliability score</b> from 0 to 100, built from GPS pings and scans: late arrivals, failed deliveries, minutes per stop.'],
-   ['Its use','Dispatch would give Peak Week shifts, bonuses and the easiest routes to the highest scores first.'],
-   ['Femi’s question','“What does this mean for couriers?” A low score would touch shifts, pay and van access at once. If the score were ever shared with partner firms, it could follow a courier out the door.'],
-   ['The second request','Bramble & Bolt offers to <b>buy recipients’ delivery habits</b>: when each household is usually home, how often it gets parcels.'],
-   ['The plan','Femi asks the team to judge both proposals with Kleppmann’s arguments in mind.']],
-   'The score is a prediction about people. The data sale is about tracking. This lesson takes them in that order.');}},
+   ['The score','Tobias proposes a <b>courier reliability score</b> from GPS pings and scans: late arrivals, failed deliveries, minutes per stop.'],
+   ['Its use','Dispatch would give Peak Week shifts, bonuses, van booking and the easiest city routes to the highest scores first.'],
+   ['Femi’s question','“What does this mean for couriers?” One number would touch their shifts, pay and van access at once.'],
+   ['The second request','Bramble & Bolt offers to <b>buy recipients’ delivery habits</b>: when each household is usually home, and how often it gets parcels.']],
+   'The score is a prediction about people. The data sale is about tracking. The lesson takes them in that order.');}},
+
 {part:0,src:'Chapter 12 · Predictive Analytics',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ravi’s score drops to 38 after a month of slow rural routes. Shifts, bonuses and van booking all use the same score. What risk does the book warn about?</h1>');
-  L.mc(L.card,['One label shuts Ravi out of many things at once','The score will be too slow to recover next month','Ravi will learn to game the GPS pings instead'],0,
-   'Each “no” looks sensible on its own, but together they box Ravi in. That is the algorithmic-prison worry, at Otterpost scale.',
-   'The book’s worry is different: one label, right or wrong, triggers “no” from many places at once, and the person has little way to appeal.');}},
-{part:0,src:'Chapter 12 · Bias and discrimination',run(L){
-  L.h(L.kick('learn','Bias and discrimination')+'<h1 class="q">Biased data in, biased decisions out</h1>'+
-   L.prose('An algorithm isn’t automatically better or worse than a person. People have biases too, and there is hope that data could give overlooked people a fairer chance. But predictive systems don’t just automate a rule a person wrote: they <b>infer the rules from data</b>, and those rules are opaque. If the input has a systematic bias, the system will most likely learn it and amplify it.')+
-   L.prose('Laws in many countries forbid treating people differently by protected traits such as ethnicity, age, gender or disability. But other data can be a '+L.g('proxy','proxy')+': in a segregated city, a postcode or even an IP address strongly predicts race.')+
-   L.prose('Predictive systems only extrapolate from the past. If the past was discriminatory, they write that into code. A better future takes moral imagination, which only humans can supply.')+
-   L.quote('Data and models should be our tools, not our masters.','Martin Kleppmann'));
-  L.done();}},
-{part:0,src:'Chapter 12 · Bias and discrimination',pts:1,
- solve:async L=>{L.$('#b0').click();L.$('#b1').click();},
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Ravi’s score falls low. Shifts, bonuses and van booking all check that same score. Build the book’s warning.</h1>');
+  L.sentence(L.card,[
+    ['A label from one algorithm','A single late delivery','A weak phone signal'],
+    ['is fixed by the next model update','can bring “no” from many places at once'],
+    ['after proof in a court','with no proof and little chance to appeal']],[0,1,1],
+   [['One late delivery isn’t the issue. The label built from the data is.','The phone isn’t the problem. The label the algorithm attaches is.'],
+    ['Nothing fixes it by itself. The same label is reused everywhere.'],
+    ['That’s the court’s standard. The worry is that an algorithm needs no proof at all.']],
+   'That’s the <b>algorithmic prison</b>: each “no” looks sensible alone, but together they shut Ravi out.');}},
+
+/* ---------- PART 2: THE SCORE IN MOTION ---------- */
+{part:1,src:'Chapter 12 · Feedback loops',
+ solve:async L=>{L.$('#lp1-all').click();for(let i=0;i<100&&!L.$('#lp1-ok');i++)await L.sleep(40);},
  run(L){
-  const draw=(g,t)=>{L.$('#gm').style.width=g*3+'%';L.$('#gv').textContent=g+' points';L.$('#gt').innerHTML=t;};
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Remove the sensitive input and watch the score gap</h1>'+
-   L.note('A made-up example. For years, Westport dispatchers by habit gave couriers from the Harbour ward, a mostly immigrant neighbourhood, the hilliest, stair-heavy routes. Those routes ran late more often. The new score learns from that history.','info')+
-   '<div class="meterrow"><div class="lb">Score gap between groups</div><div class="meter"><div id="gm" style="background:var(--no)"></div></div></div><div class="week" id="gv"></div><p class="small" id="gt"></p>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="b0">'+L.ic('x')+'Remove “nationality”</button><button class="btn" id="b1" disabled>'+L.ic('x')+'Also remove “home ward”</button></div><div id="bq"></div>');
-  draw(22,'Inputs: nationality, home ward, late-arrival history.');
-  L.$('#b0').onclick=function(){this.remove();L.$('#b1').disabled=false;draw(21,'Barely moved: home ward says almost the same thing as nationality here.');};
-  L.$('#b1').onclick=function(){if(this.disabled)return;this.remove();draw(17,'Still there: the late-arrival history itself reflects who got the hard routes in the past.');
-    const q=L.$('#bq');q.innerHTML='<h2 class="sub">Why didn’t removing the sensitive inputs close the gap?</h2>';
-    L.mc(q,['The model needs more data before it becomes fair','Other inputs carry the same bias from the past','Gaps under 20 points are just random noise'],1,
-     'Home ward was a proxy, and the late-arrival history recorded past unfair route choices. The system extrapolated from a biased past.',
-     'More data of the same kind would only repeat the past. Home ward acts as a proxy, and the history itself records who was given the hard routes. The bias lives in the data, not just in one column.');};}},
-{part:0,src:'Chapter 12 · Responsibility and accountability',run(L){
-  L.h(L.kick('learn','Responsibility and accountability')+'<h1 class="q">Who answers for the algorithm’s mistake?</h1>'+
-   L.prose('When a person makes a bad decision, they can be held to account and you can appeal. When an algorithm does, who is responsible? Could you explain its reasoning to a judge?')+
-   L.lanes([['book','A classic credit score','Asks: <i>how did you behave in the past?</i> It uses your own borrowing record, and errors can be corrected (though not easily).',2],
-            ['people','Predictive analytics','Asks: <i>who is similar to you, and how did people like you behave?</i> Wide, opaque inputs. That means stereotyping, for example by where you live. Wrong bucket or wrong data, and there’s almost no recourse.',4]])+
-   L.prose('Predictions are statistical. If average life expectancy is 80, that doesn’t mean you’ll die on your 80th birthday. A prediction can be right on average and wrong for you. Kleppmann calls blind faith in data dangerous: we need algorithms that are accountable and transparent, that don’t reinforce biases, and whose mistakes can be fixed.')+
-   '<p class="small">The same analysis that could steer help to people in need is sometimes used to find vulnerable people and sell them high-cost loans.</p>');
-  L.done();}},
-{part:0,src:'Chapter 12 · Feedback loops',run(L){
+  L.h(L.kick('ex','Explore · the score in motion')+'<h1 class="q">Ines, Mei, Ravi and Kofi start close. Top two scores get city routes; the rest get rural, stair-heavy ones. Step the weeks.</h1><div id="lp1"></div><div id="lp1-x"></div>'+
+   '<p class="small">Illustrative numbers: a city week scores about 90 for anyone, a rural or stairs week about 55, and the score is a running average.</p>'+CSS);
+  Loop(L,L.$('#lp1'),{id:'lp1',on:e=>{if(e.type==='week'&&e.w>=LP.T&&!L.$('#lp1-ok')){
+    L.$('#lp1-x').innerHTML='<span id="lp1-ok"></span>';
+    L.sheet('info','Same effort, split lines','All four work equally hard. A head start of a few points picked the routes, and the routes made the next score. After 12 weeks the gap is about 22 points and Ravi and Kofi are locked out.');L.done();}}});}},
+
+{part:1,src:'Chapter 12 · Feedback loops',
+ solve:async L=>{for(let k=0;k<4;k++){L.$('#fl-nx').click();await L.sleep(20);}},
+ run(L){
+  const FM=[['The fix: systems thinking','Look at the whole '+L.g('systems-thinking','system')+', the people in it included. Does it widen gaps between people, making the rich richer and the poor poorer, or does it fight injustice?'],
+   ['A milder loop: echo chambers','Recommenders that learn what you like to see can end up showing only views you already hold, so stereotypes, misinformation and polarization breed.']];
+  const N=[['Bad luck:','bills missed',165,28],['Credit score','drops',262,100],['Employers','say no',165,172],['Poverty','deepens',68,100]];
   L.h(L.kick('learn','Feedback loops')+'<h1 class="q">Predictions that make themselves come true</h1>'+
-   L.prose('Even milder predictions cause trouble. A service that is good at predicting what people want to see may end up showing them only opinions they already hold: echo chambers where stereotypes and misinformation spread.')+
-   L.prose('Worse are '+L.g('feedback-loop','feedback loops')+' that hit people’s lives. The book’s example: employers check credit scores when hiring.')+
-   L.flow([['alert','Misfortune','A good worker hits bad luck and misses bills.','',4],['down','Score drops','Fewer job offers.','',3],['cycle','Spiral','Joblessness, then poverty, then a worse score.','',4]])+
-   L.prose('We can’t foresee every loop, but many can be predicted with '+L.g('systems-thinking','systems thinking')+'. Ask: does this system widen existing differences (the rich get richer) or fight injustice? And even with good intentions, watch for side effects.'));
+   '<div class="dr"><svg id="fl-g" viewBox="0 0 330 200" role="img" aria-label="A loop: bad luck and missed bills, credit score drops, employers say no, poverty deepens, back to the score"></svg></div>'+
+   '<div class="dr-row"><button class="btn pri" id="fl-nx">'+L.ic('cycle')+'Next step</button></div>'+
+   L.prose('The book’s case: employers check credit scores. A good worker hits bad luck outside their control, and each turn of the '+L.g('feedback-loop','loop')+' pushes the score lower, behind a look of mathematical rigour.')+
+   more('flm',FM)+CSS);
+  moreWire(L,'flm',FM);
+  let k=-1,sc=100;
+  function draw(){let g='<defs><marker id="fl-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker></defs>';
+    ['M225 32 Q262 36 262 80','M262 120 Q262 166 225 170','M105 170 Q68 166 68 120','M68 80 Q68 36 105 32'].forEach(p=>{g+='<path d="'+p+'" fill="none" stroke="var(--line2)" stroke-width="2" marker-end="url(#fl-ah)"/>';});
+    N.forEach((n,j)=>{const on=j===((k%4)+4)%4&&k>=0;g+='<rect x="'+(n[2]-58)+'" y="'+(n[3]-20)+'" width="116" height="40" rx="10" fill="'+(on?'var(--no-bg)':'var(--soft)')+'" stroke="'+(on?'var(--no)':'var(--line2)')+'" stroke-width="'+(on?2:1)+'"/>'+
+      '<text x="'+n[2]+'" y="'+(n[3]-3)+'" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">'+n[0]+'</text><text x="'+n[2]+'" y="'+(n[3]+13)+'" text-anchor="middle" font-size="12" fill="var(--muted)">'+n[1]+'</text>';});
+    g+='<text x="2" y="196" font-size="11" font-style="italic" fill="var(--muted)">score drops: illustrative</text>';
+    g+='<text x="165" y="64" text-anchor="middle" font-size="12" fill="var(--muted)">score</text><rect x="152" y="70" width="26" height="72" rx="6" fill="var(--soft2)"/>';
+    const hgt=72*sc/100;g+='<rect x="152" y="'+(142-hgt)+'" width="26" height="'+hgt+'" rx="6" fill="'+(sc>70?'var(--ok-strong)':sc>50?'var(--h3)':'var(--no)')+'"/>';
+    L.$('#fl-g').innerHTML=g;}
+  draw();
+  L.$('#fl-nx').onclick=()=>{k++;if(k%4===1||k%4===3)sc=Math.max(14,sc-20);draw();if(k===3){L.done();L.$('#fl-nx').innerHTML=L.ic('cycle')+'Go round again';}};}},
+
+{part:1,src:'Chapter 12 · Bias and discrimination',run(L){
+  const BM=[['Aren’t people biased too?','Yes, and there is hope that data could give overlooked people a fairer chance. But a model fed biased data won’t produce fair output.'],
+   ['So what’s the human job?','A model only extrapolates the past. A better future needs moral imagination, which only humans supply.'+L.quote('Data and models should be our tools, not our masters.','Martin Kleppmann')]];
+  const bar=(y,lab,a,cA,cB,tA,tB)=>'<text x="4" y="'+(y+12)+'" font-size="12" fill="var(--ink)">'+lab+'</text><rect x="74" y="'+y+'" width="'+(a*2.5)+'" height="16" rx="3" fill="'+cA+'"/><rect x="'+(74+a*2.5)+'" y="'+y+'" width="'+((100-a)*2.5)+'" height="16" rx="3" fill="'+cB+'" opacity=".8"/>'+
+    '<text x="80" y="'+(y+12)+'" font-size="12" fill="var(--ok)">'+tA+'</text><text x="'+(74+a*2.5+6)+'" y="'+(y+12)+'" font-size="12" fill="var(--card)" font-weight="600">'+tB+'</text>';
+  L.h(L.kick('learn','Bias and discrimination')+'<h1 class="q">Biased data in, biased score out</h1>'+
+   '<div class="dr"><svg viewBox="0 0 330 228" role="img" aria-label="Three stages: past route habits, the late-arrival records they produced, and the rule the model learns, which links home ward to ethnicity as a proxy">'+
+   '<text x="4" y="13" font-size="12.5" font-weight="700" fill="var(--h1)">1 · Years of dispatch habit (made-up)</text>'+
+   bar(22,'Old Town',70,'var(--ok-bg)','var(--no)','city','stairs')+bar(44,'Harbour',30,'var(--ok-bg)','var(--no)','city','stairs')+
+   '<text x="4" y="84" font-size="12.5" font-weight="700" fill="var(--h1)">2 · What the records show</text>'+
+   '<text x="4" y="105" font-size="12" fill="var(--ink)">Old Town</text><rect x="74" y="93" width="44" height="16" rx="3" fill="var(--h3)"/><text x="124" y="105" font-size="12" fill="var(--muted)">few late arrivals</text>'+
+   '<text x="4" y="127" font-size="12" fill="var(--ink)">Harbour</text><rect x="74" y="115" width="104" height="16" rx="3" fill="var(--h3)"/><text x="184" y="127" font-size="12" fill="var(--muted)">many late arrivals</text>'+
+   '<text x="4" y="158" font-size="12.5" font-weight="700" fill="var(--h1)">3 · What the model learns, unseen</text>'+
+   '<rect x="2" y="168" width="176" height="52" rx="10" fill="var(--no-bg)" stroke="var(--no)"/><text x="90" y="190" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--no)">home ward = Harbour</text><text x="90" y="207" text-anchor="middle" font-size="12" fill="var(--ink)">→ lower score</text>'+
+   '<line x1="178" y1="194" x2="226" y2="194" stroke="var(--h4)" stroke-width="2" stroke-dasharray="4 3"/><text x="202" y="186" text-anchor="middle" font-size="12" font-weight="700" fill="var(--h4)">proxy</text>'+
+   '<rect x="226" y="168" width="102" height="52" rx="10" fill="var(--h4-bg)" stroke="var(--h4)"/><text x="277" y="190" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--h4)">ethnicity</text><text x="277" y="207" text-anchor="middle" font-size="12" fill="var(--ink)">(protected)</text>'+
+   '</svg></div>'+
+   L.prose('Nobody wrote “Harbour means late”. The model inferred it from biased history and can’t say why. Drop the protected trait and a '+L.g('proxy','proxy')+' such as home ward, postcode or IP address still carries it. Bias in, bias out, often amplified.')+
+   more('bim',BM)+CSS);
+  moreWire(L,'bim',BM);
   L.done();}},
-{part:0,src:'Chapter 12 · Feedback loops',pts:1,
- solve:async L=>{for(let k=0;k<4;k++)L.$('#nx').click();},
+
+{part:1,src:'Chapter 12 · Bias and discrimination',pts:1,
+ solve:async L=>{L.$('#pw-o').children[1].click();for(let i=0;i<100&&!L.$('#pw-ok');i++)await L.sleep(40);},
  run(L){
-  const A=[74,78,82,85,88],R=[70,62,54,47,41];let m=0;
-  L.h(L.kick('pr','Spin the loop')+'<h1 class="q">Ines and Ravi start with similar scores. The rule: top scores get the easy city routes; the rest get the leftover rural and stair-heavy ones. Step through four months.</h1>'+
-   '<div class="small">Month</div><div class="week" id="mo">0</div>'+
-   '<div class="meterrow"><div class="lb">Ines</div><div class="meter"><div id="ma" style="background:var(--ok-strong)"></div></div><b id="va"></b></div>'+
-   '<div class="meterrow"><div class="lb">Ravi</div><div class="meter"><div id="mr" style="background:var(--no)"></div></div><b id="vr"></b></div>'+
-   '<p class="small" id="lg"></p><button class="btn pri" id="nx">'+L.ic('cycle')+'Next month</button><div id="lq"></div>');
-  const draw=()=>{L.$('#mo').textContent=m;L.$('#ma').style.width=A[m]+'%';L.$('#mr').style.width=R[m]+'%';L.$('#va').textContent=A[m];L.$('#vr').textContent=R[m];};draw();
-  L.$('#nx').onclick=function(){if(m>=4)return;m++;draw();
-    L.$('#lg').textContent=m===1?'Ravi’s slightly lower score gives them the rural routes. Those run later, so Ravi’s score drops.':m===2?'Lower score, even harder routes, more late arrivals.':m===3?'Easy routes keep Ines on time. The gap widens on its own.':'Same two couriers, same effort. The score now “proves” Ravi is unreliable.';
-    if(m===4){this.remove();const q=L.$('#lq');q.innerHTML='<h2 class="sub">What would looking at the whole system have caught first?</h2>';
-      L.mc(q,['GPS pings should be sent more often','Route difficulty feeds back into the score','The score needs a finer scale than 0–100'],1,
-       'The score decided the routes, and the routes drove the score. Thinking about the people and the whole loop, not just the computer part, reveals that.',
-       'The data wasn’t too coarse. The score decided the routes and the routes drove the score: a loop you only see when you look at the whole system, people included.');}};}},
-{part:0,src:'Chapter 12 · Predictive Analytics',pts:5,run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The chart shows 12 weeks with the home-ward field in the score. Zainab removes that field. After 12 new weeks, the gap is…</h1>'+
+   '<div class="opts" id="pw-o"></div><div id="pw"></div><div id="pw-x"></div>'+CSS);
+  const lp=Loop(L,L.$('#pw'),{id:'pw',ctl:false});
+  lp.jump(LP.T);
+  const before=loopRun({}).S[LP.T];const g0=Math.max(...before)-Math.min(...before);
+  let pick=null;
+  ['Close to zero: the bias is gone','A little smaller, still wide','Even wider than before'].forEach((t,j)=>{const b=document.createElement('button');b.className='opt';b.innerHTML='<span class="key">'+(j+1)+'</span><span>'+t+'</span>';
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');[...L.$('#pw-o').children].forEach(x=>x.setAttribute('aria-disabled','true'));
+      lp.set({noward:true});const r=await lp.runTo(LP.T,90);if(!r)return;
+      const ok=j===1,st=lp.stats();L.award(ok);b.classList.add(ok?'ok':'no');if(!ok)L.$('#pw-o').children[1].classList.add('ok');
+      L.$('#pw-x').innerHTML='<div class="dr-cap" id="pw-ok"><span class="stp">With home ward: gap '+g0.toFixed(1)+' · without: gap '+st.gap.toFixed(1)+'</span>Two points closer, and Ravi and Kofi are still locked out.</div>';
+      L.sheet(ok?'ok':'no',ok?'Right: barely moved':'It barely moved','The late-arrival history already records who got the stair-heavy routes, so it carries the same bias as the field you removed. And the score still picks the routes, so the loop keeps widening the gap.');L.done();};
+    L.$('#pw-o').appendChild(b);});}},
+
+{part:1,src:'Chapter 12 · Responsibility and accountability',run(L){
+  let dots='';const P=[[200,76],[222,92],[246,72],[270,96],[292,78],[210,108],[236,112],[262,116],[286,110],[300,96],[230,84],[256,92],[216,64]];
+  P.forEach((p,k)=>{dots+='<circle cx="'+p[0]+'" cy="'+p[1]+'" r="6" fill="var(--soft2)" stroke="var(--line2)"/>';});
+  const WM=[['Who answers for it?','If a human errs, you can appeal. Who answers for an algorithm, and could you explain it to a judge? Kleppmann wants scores that are accountable, transparent and fixable.'],
+   ['Aid or harm?','The same analysis can steer aid to the people who most need it, or help predatory firms find vulnerable people and sell them high-cost loans.']];
+  L.h(L.kick('learn','Responsibility and accountability')+'<h1 class="q">Who answers when the score is wrong?</h1>'+
+   '<div class="dr"><svg viewBox="0 0 330 196" role="img" aria-label="Left: a credit score built from Mei’s own record, with one error that can be fixed. Right: a prediction that puts Mei in a bucket of similar couriers averaging 80 percent on time, though Mei is at 98 percent">'+
+   '<rect x="1" y="1" width="160" height="194" rx="14" fill="var(--h2-bg)"/><text x="12" y="22" font-size="13" font-weight="700" fill="var(--h2)">Credit score</text><text x="12" y="40" font-size="12" fill="var(--ink)">How did <tspan font-weight="700">you</tspan> behave?</text>'+
+   [0,1,2,3,4,5,6,7].map(k=>{const x=14+(k%4)*35,y=54+Math.floor(k/4)*34,bad=k===5;return '<rect x="'+x+'" y="'+y+'" width="28" height="26" rx="6" fill="'+(bad?'var(--no-bg)':'var(--ok-bg)')+'" stroke="'+(bad?'var(--no)':'var(--ok-line)')+'"/><text x="'+(x+14)+'" y="'+(y+17)+'" text-anchor="middle" font-size="12" font-weight="700" fill="'+(bad?'var(--no)':'var(--ok)')+'">'+(bad?'✎':'✓')+'</text>';}).join('')+
+   '<text x="12" y="146" font-size="12" fill="var(--ink)">Your own record.</text><text x="12" y="163" font-size="12" fill="var(--ink)">An error can be fixed</text><text x="12" y="180" font-size="12" fill="var(--muted)">(not easily).</text>'+
+   '<rect x="169" y="1" width="160" height="194" rx="14" fill="var(--h4-bg)"/><text x="180" y="22" font-size="13" font-weight="700" fill="var(--h4)">Prediction</text><text x="180" y="40" font-size="12" fill="var(--ink)">Who is <tspan font-weight="700">like</tspan> you?</text><text x="322" y="22" text-anchor="end" font-size="11" font-style="italic" fill="var(--muted)">illustrative</text>'+
+   '<rect x="184" y="52" width="132" height="76" rx="12" fill="var(--card)" stroke="var(--line2)"/>'+dots+
+   '<circle cx="246" cy="72" r="8" fill="var(--h1)" stroke="var(--card)" stroke-width="2"/>'+
+   '<text x="180" y="146" font-size="12" fill="var(--ink)">Zone E2 avg: 80%</text><text x="180" y="163" font-size="12" font-weight="700" fill="var(--h1)">Mei rated 80%,</text><text x="180" y="180" font-size="12" fill="var(--ink)">really 98%</text>'+
+   '</svg></div>'+
+   L.prose('A credit score uses your own past. Predictive scores judge you by people like you: wide, opaque inputs and stereotypes. Right on average, wrong for Mei, much as an average lifespan of 80 doesn’t mean you’ll die at 80.')+
+   more('wam',WM)+CSS);
+  moreWire(L,'wam',WM);
+  L.done();}},
+
+{part:1,src:'Chapter 12 · Feedback loops',
+ solve:async L=>{for(let p=0;p<5;p++){L.$('#ec-p'+p).click();for(let i=0;i<60&&L.$('#ec-p'+p).dataset.done!=='1';i++)await L.sleep(30);}},
+ run(L){
+  const PR=[
+   ['One score for shifts, bonuses and vans',{},'No safeguards and no appeal. Ravi and Kofi fall below the line and lose shifts, bonus and van all at once: the algorithmic prison, built by one number.'],
+   ['Human appeal, routes still by score',{appeal:true},'A dispatcher reinstates each courier who appeals. That rescues people one at a time, but the gap is just as wide: the loop keeps making new cases.'],
+   ['Score for bonuses only',{one:true},'Using the score for one decision means falling below the line costs a bonus, not a livelihood. Less harm, same bias: the gap still grows.'],
+   ['Forget old data, routes still by score',{forget:true},'Purging old data is good practice, but here it makes the gap starker: without the cushion of old weeks, four bad routes drag a score down fast. Forgetting doesn’t break a loop.'],
+   ['Rotate routes only',{rotate:true},'Everyone gets the same mix of routes, so the loop is broken and the lines stay together. A small gap remains from the biased history and the home-ward field.']];
+  L.h(L.kick('ex','Edge cases · where safeguards stop protecting')+'<h1 class="q">Run each preset and watch the gap and the lockouts</h1>'+
+   '<div class="dr-row" id="ec-ps"></div><div class="dr-cap" id="ec-c"><span class="stp">Pick a preset</span>Each one sets the safeguards and runs 12 weeks.</div><div id="ec"></div>'+CSS);
+  const lp=Loop(L,L.$('#ec'),{id:'ec',ctl:false,sws:SWS.map(x=>x[0]),lockSw:true});
+  const seen=new Set();
+  PR.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='ec-p'+j;b.textContent=p[0];
+    b.onclick=async()=>{if(lp.S.busy)return;[...L.$('#ec-ps').children].forEach(x=>x.classList.toggle('sel',x===b));lp.set(p[1]);
+      const r=await lp.runTo(LP.T,55);if(!r)return;const st=lp.stats();
+      L.$('#ec-c').innerHTML='<span class="stp">'+p[0]+' · gap '+st.gap.toFixed(1)+' · locked out '+st.locked.length+'</span>'+p[2];
+      seen.add(j);b.dataset.done='1';
+      if(seen.size===PR.length&&!L.$('#ec-all')){L.$('#ec-c').insertAdjacentHTML('afterend','<span id="ec-all"></span>');
+        L.sheet('info','Each safeguard has a limit','Appeals and narrower use limit the harm to people. Only changing how routes are assigned breaks the loop, and only removing biased inputs and history closes the last of the gap. You need to see the whole system to know which is which.');L.done();}};
+    L.$('#ec-ps').appendChild(b);});}},
+
+{part:1,src:'Chapter 12 · Feedback loops',pts:1,
+ solve:async L=>{L.$('#ch-s-rotate').click();L.$('#ch-s-noward').click();L.$('#ch-go').click();for(let i=0;i<100&&!L.$('#ch-ok');i++)await L.sleep(40);},
+ run(L){
+  let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Femi’s target for week 12: score gap under 4 points and nobody locked out, using <b>at most two</b> safeguards.</h1><div id="ch"></div>'+
+   '<div class="dr-row"><button class="btn pri" id="ch-go">'+L.ic('check')+'Run the 12-week check</button></div><div id="ch-x"></div>'+CSS);
+  const lp=Loop(L,L.$('#ch'),{id:'ch',sws:SWS.map(x=>x[0]),on:e=>{if(e.type==='sw')L.$('#ch-x').innerHTML='';}});
+  L.$('#ch-go').onclick=async()=>{if(lp.S.busy)return;lp.reset();const r=await lp.runTo(LP.T,60);if(!r)return;const st=lp.stats(),n=lp.count();
+    const rows=[['Gap under 4 points ('+st.gap.toFixed(1)+')',st.gap<4],['Nobody locked out ('+st.locked.length+')',st.locked.length===0],['At most two safeguards ('+n+')',n<=2]];
+    const pass=rows.every(x=>x[1]);
+    L.$('#ch-x').innerHTML='<div class="dr-cap">'+rows.map(x=>'<div>'+(x[1]?'<span class="dr-ok">✓</span> ':'<span class="dr-no">✗</span> ')+x[0]+'</div>').join('')+'</div>'+(pass?'<span id="ch-ok"></span>':'');
+    if(first){L.award(pass);first=false;}
+    if(pass)L.sheet('ok','Target met','Rotating routes breaks the loop: the score no longer picks the work that makes the score. The second safeguard clears the leftover bias, either the home-ward proxy or the biased old history. Appeals and narrow use help people, but neither stops the loop.');
+    else L.sheet('no','Not yet','Look at the red line. If the gap keeps growing, the score is still choosing the routes. If a small gap is left, something biased is still feeding the score. Change the safeguards and run it again.');
+    L.done();};}},
+
+{part:1,src:'Chapter 12 · Predictive Analytics',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Name the problem',['A proxy for a protected trait','No accountability or appeal','A feedback loop','Right on average, wrong for one'],[
    ['The score uses home postcode, which in parts of Westport closely tracks ethnicity.',0,'The postcode stands in for a protected trait, so the bias gets in by the back door.'],
    ['Ines is told their shift cut was “decided by the system”. Nobody can say why or change it.',1,'No one answers for the decision and there’s no way to appeal.'],
    ['Low scorers get the harder routes, which push their scores down further.',2,'The output feeds its own input. A self-reinforcing loop.'],
-   ['Zone E2 couriers average 80% on time, so the model rates Mei at 80%, though Mei is at 98%.',3,'A fair average can still be badly wrong for one person.'],
+   ['Zone E2 couriers average 80% on time (made-up figures), so the model rates Mei at 80%, though Mei is at 98%.',3,'A fair average can still be badly wrong for one person.'],
    ['A GPS glitch logged Kofi as late all week, and there’s no way to correct the record.',1,'Wrong data with no recourse: an accountability failure.']]);}},
 
-/* ---------- PART 2: PRIVACY AND TRACKING ---------- */
-{part:1,src:'Chapter 12 · Privacy and Tracking',run(L){
+/* ---------- PART 3: PRIVACY AND TRACKING ---------- */
+{part:2,src:'Chapter 12 · Privacy and Tracking',run(L){
+  const box=(x,y,w,t,c)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="32" rx="9" fill="var(--card)" stroke="'+c+'" stroke-width="1.5"/><text x="'+(x+w/2)+'" y="'+(y+20.5)+'" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">'+t+'</text>';
   L.h(L.kick('learn','Privacy and tracking')+'<h1 class="q">Who is the customer?</h1>'+
-   L.prose('If a system stores only what a user entered on purpose, so it can do something for them, the system serves the user: the user is the customer. When activity is tracked as a side effect of something else, the relationship blurs. The service starts to have interests of its own.')+
-   L.tiers([['check','Tracking that helps users','Clicks on search results improve the ranking; “people who liked X also liked Y” helps people find things; A/B tests improve the interface.','Users benefit'],
-            ['trend','Tracking for the funders','If ads pay for the service, advertisers are the real customers. Tracking gets more detailed, data is kept longer, profiles are built for marketing.','The user’s interests come second'],
-            ['eye','Surveillance','Kleppmann’s word for the second kind of relationship: a free service that coaxes people to engage, while the tracking mainly serves someone else.','',true]]));
+   '<div class="dr"><svg viewBox="0 0 330 226" role="img" aria-label="Top: the user enters data and the service works for the user. Bottom: the user is tracked, profiles go to advertisers, and advertisers pay the service">'+
+   '<defs><marker id="cu-ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="context-stroke"/></marker></defs>'+
+   '<rect x="1" y="1" width="328" height="104" rx="14" fill="var(--ok-bg)"/><text x="12" y="21" font-size="13" font-weight="700" fill="var(--ok)">The user is the customer</text>'+
+   box(12,34,64,'User','var(--ok-line)')+box(220,34,98,'Service','var(--ok-line)')+
+   '<path d="M78 44 L216 44" stroke="var(--ok)" stroke-width="2" marker-end="url(#cu-ah)"/><text x="147" y="39" text-anchor="middle" font-size="12" fill="var(--ink)">data, on purpose</text>'+
+   '<path d="M218 58 L80 58" stroke="var(--ok)" stroke-width="2" marker-end="url(#cu-ah)"/><text x="147" y="75" text-anchor="middle" font-size="12" fill="var(--ink)">does the job</text>'+
+   '<text x="12" y="96" font-size="12" fill="var(--muted)">Tracking that helps: search ranking, “liked X”, A/B tests</text>'+
+   '<rect x="1" y="114" width="328" height="110" rx="14" fill="var(--no-bg)"/><text x="12" y="134" font-size="13" font-weight="700" fill="var(--no)">Advertisers are the customers</text>'+
+   box(6,160,56,'User','var(--no-line)')+box(112,160,76,'Service','var(--no-line)')+box(230,160,94,'Advertisers','var(--no-line)')+
+   '<path d="M64 176 L108 176" stroke="var(--no)" stroke-width="2" marker-end="url(#cu-ah)"/><text x="86" y="208" text-anchor="middle" font-size="12" fill="var(--ink)">tracked</text>'+
+   '<path d="M190 176 L226 176" stroke="var(--no)" stroke-width="2" marker-end="url(#cu-ah)"/><text x="209" y="208" text-anchor="middle" font-size="12" fill="var(--ink)">profiles</text>'+
+   '<path d="M276 158 Q240 136 160 158" fill="none" stroke="var(--no)" stroke-width="2" marker-end="url(#cu-ah)"/><text x="232" y="146" text-anchor="middle" font-size="12" font-weight="700" fill="var(--no)">$</text>'+
+   '</svg></div>'+
+   L.prose('Data a user enters on purpose, used for them, is a service. Tracking as a side effect blurs that. When ads pay, tracking deepens and profiles grow. Kleppmann’s word for that relationship: '+L.g('surveillance','surveillance')+'.'));
   L.done();}},
-{part:1,src:'Chapter 12 · Surveillance',pts:1,
- solve:async L=>{L.$('#sw').click();},
+
+{part:2,src:'Chapter 12 · Surveillance',pts:1,
+ solve:async L=>{L.$('#sv-sw').click();},
  run(L){
   const T='Join our <w>data</w> team! We stream live <w>data</w> from 3,000 couriers into our <w>data</w> warehouse, where our <w>data</w> scientists turn <w>data</w> into insights.';
-  const show=word=>T.replace(/<w>data<\/w>/g,'<b style="color:'+(word==='data'?'var(--ink)':'var(--no)')+'">'+word+'</b>');
-  L.h(L.kick('try','Try the thought experiment')+'<h1 class="q">Kleppmann suggests a test: replace the word “data” with “surveillance”. Try it on this made-up Otterpost job ad.</h1>'+
-   '<div class="lane" style="margin:8px 0 12px"><p class="prose" id="ad" style="margin:0">'+show('data')+'</p></div>'+
-   '<button class="btn pri" id="sw">'+L.ic('eye')+'Swap the word</button><div id="sq"></div>');
-  L.$('#sw').onclick=function(){this.remove();L.$('#ad').innerHTML=show('surveillance');
-    const q=L.$('#sq');q.innerHTML='<h2 class="sub">What is the swap meant to do?</h2>';
-    L.mc(q,['Prove that Otterpost’s data team is spying','Show that all data collection should be illegal','Make you look at your relationship with the people tracked'],2,
-     'Not all data collection is surveillance, the book says, but looking at it that way helps you see the relationship between collector and collected.',
-     'The book doesn’t claim all collection is surveillance or illegal. The test is a lens: it makes you ask whom the tracking really serves.');};}},
-{part:1,src:'Chapter 12 · Surveillance',run(L){
-  L.h(L.kick('learn','Surveillance')+'<h1 class="q">The biggest surveillance network ever, carried in our pockets</h1>'+
-   L.prose('Kleppmann argues that, in rushing to put software into everything, we built the greatest mass '+L.g('surveillance','surveillance')+' infrastructure in history. Phones, smart TVs, voice assistants, baby monitors and even toys put an internet-connected microphone in nearly every room, often with poor security. Even repressive regimes could only dream of this. The difference: companies collect it, not governments.')+
-   L.list([['shield','“Nothing to hide”','That works only if you fit in with existing power, aren’t part of a marginalized minority, and needn’t fear persecution. Not everyone is so lucky.'],
-     ['alert','“It’s just ads”','Car insurance is already priced from in-car trackers, and some health cover depends on wearing a fitness tracker. When tracking decides insurance or jobs, it no longer looks harmless.'],
-     ['eye','More than you’d think','A smartwatch’s movement sensor can reveal what you type, passwords included, with fair accuracy. And analysis only gets better.']],4));
-  L.done();}},
-{part:1,src:'Chapter 12 · Consent and freedom of choice',run(L){
+  let on=false;const show=()=>T.replace(/<w>data<\/w>/g,'<b style="color:'+(on?'var(--no)':'var(--ink)')+'">'+(on?'surveillance':'data')+'</b>');
+  L.h(L.kick('try','Try the thought experiment')+'<h1 class="q">Kleppmann suggests a test: swap the word “data” for “surveillance”. Try it on this made-up Otterpost job ad.</h1>'+
+   '<div class="dr-ad" id="sv-ad">'+show()+'</div><div class="dr-row"><button class="btn pri" id="sv-sw" aria-pressed="false">'+L.ic('eye')+'Swap the word</button></div><div id="sv-q"></div>'+CSS);
+  L.$('#sv-sw').onclick=function(){on=!on;this.setAttribute('aria-pressed',on);this.innerHTML=L.ic('eye')+(on?'Swap it back':'Swap the word');L.$('#sv-ad').innerHTML=show();
+    if(!L.$('#sv-q').innerHTML){const q=L.$('#sv-q');q.innerHTML='<h2 class="sub">What is the swap meant to do?</h2>';
+      L.mc(q,['Prove that Otterpost’s data team is spying','Show that all data collection should be illegal','Make you look at your relationship with the people tracked'],2,
+       'Not all data collection is surveillance, the book says, but looking at it that way helps you see the relationship between collector and collected.',
+       'The book doesn’t claim all collection is surveillance or illegal. The test is a lens: it makes you ask whom the tracking really serves.');}};}},
+
+{part:2,src:'Chapter 12 · Surveillance',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#hs-b'+j).click();},
+ run(L){
+  const R=[['“I’ve nothing to hide”','That holds only if you fit existing power structures, aren’t part of a marginalized minority and needn’t fear persecution. Not everyone is so fortunate.'],
+   ['“It’s only ads”','Car insurance is already priced from in-car trackers, and some health cover requires a fitness tracker. Once tracking decides insurance or jobs, it isn’t benign.'],
+   ['“They can’t learn much”','A smartwatch’s motion sensor can reveal what you type, passwords included, with fair accuracy. And analysis keeps getting better.'],
+   ['“Privacy is dead anyway”','Some people post their whole lives online, so privacy seems dead. But they are choosing what to reveal, and to whom. That choice is privacy at work. The claim misreads the word, as the next screens show.']];
+  const mic=(x,y)=>'<circle cx="'+x+'" cy="'+y+'" r="11" fill="var(--no-bg)" stroke="var(--no)" stroke-width="1.5"/><rect x="'+(x-3)+'" y="'+(y-6)+'" width="6" height="9" rx="3" fill="var(--no)"/><path d="M'+(x-5)+' '+(y+1)+' Q'+x+' '+(y+7)+' '+(x+5)+' '+(y+1)+'" fill="none" stroke="var(--no)" stroke-width="1.4"/>';
+  const room=(x,y,t,a,b)=>'<text x="'+(x+10)+'" y="'+(y+20)+'" font-size="12.5" font-weight="700" fill="var(--ink)">'+t+'</text><text x="'+(x+10)+'" y="'+(y+38)+'" font-size="12" fill="var(--muted)">'+a+'</text>'+(b?'<text x="'+(x+10)+'" y="'+(y+54)+'" font-size="12" fill="var(--muted)">'+b+'</text>':'')+mic(x+124,y+22);
+  L.h(L.kick('learn','Surveillance')+'<h1 class="q">A microphone in nearly every room</h1>'+
+   '<div class="dr"><svg viewBox="0 0 330 204" role="img" aria-label="A house with four rooms, each holding an internet-connected microphone: smart TV and voice assistant, baby monitor, talking toy, phone">'+
+   '<path d="M8 64 L165 6 L322 64 Z" fill="var(--soft2)" stroke="var(--line2)"/><rect x="18" y="64" width="294" height="136" fill="var(--card)" stroke="var(--line2)"/>'+
+   '<line x1="165" y1="64" x2="165" y2="200" stroke="var(--line2)"/><line x1="18" y1="132" x2="312" y2="132" stroke="var(--line2)"/>'+
+   room(18,66,'Living room','smart TV,','voice assistant')+room(165,66,'Nursery','baby monitor')+room(18,134,'Kid’s room','talking toy')+room(165,134,'Hallway','phone in a pocket')+
+   '</svg></div>'+
+   L.prose('Kleppmann argues we’ve built the biggest mass-surveillance network ever, often poorly secured. Repressive regimes could only dream of it. The difference: companies collect it, not governments. Tap each excuse.')+
+   '<div class="dr-row" id="hs-r"></div><div id="hs-x"></div>'+CSS);
+  const seen=new Set();
+  R.forEach((r,j)=>{const b=document.createElement('button');b.className='chip';b.id='hs-b'+j;b.textContent=r[0];
+    b.onclick=()=>{b.classList.add('sel');seen.add(j);L.$('#hs-x').innerHTML='<div class="dr-cap"><span class="stp">'+r[0]+'</span>'+r[1]+'</div>';if(seen.size===R.length)L.done();};L.$('#hs-r').appendChild(b);});}},
+
+{part:2,src:'Chapter 12 · Consent and freedom of choice',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#cs-b'+j).click();},
+ run(L){
+  const C=[['Can’t see inside','Users don’t know what data they feed in or how it’s used; most privacy policies obscure more than they explain. Derived datasets that mix everyone’s data with outside sources are beyond anyone’s understanding.'],
+   ['Others are in it','One user’s data often says things about other people who never used the service or agreed to anything.'],
+   ['No bargaining','It’s one-way: no dialogue, no way to negotiate how much data you give for what service. The service sets the terms.'],
+   ['Can’t really say no','If a service is essential for social life or work, refusing it has a real cost. Only people with the time, knowledge and security to miss out can afford to say no.']];
+  const PIN=[[52,50],[278,78],[52,108],[278,138]];
   L.h(L.kick('learn','Consent and freedom of choice')+'<h1 class="q">“They agreed to the terms” is weaker than it sounds</h1>'+
-   L.prose('The usual defence: users chose the service, accepted the privacy policy, and get something valuable in return. Kleppmann sees four problems:')+
-   L.list([['They can’t see what they agree to','People don’t know what data they feed in or how it’s used, and most privacy policies hide more than they explain. Derived datasets that combine everyone’s data with outside sources are beyond anyone’s understanding.'],
-     ['Others are in the data','Data from one user often says things about people who never used the service or agreed to anything.'],
-     ['It’s a one-way deal','There is no negotiation over how much data to give and what to get back. The service sets the terms.'],
-     ['Opting out isn’t free','If a service is essential for social life or work, refusing it has a real cost. Only people with time, knowledge and security can afford to say no.']],2));
-  L.done();}},
-{part:1,src:'Chapter 12 · Privacy and use of data',run(L){
+   '<div class="dr"><svg id="cs-g" viewBox="0 0 330 172" role="img" aria-label="A long terms and privacy policy page with four numbered pins marking the weak points of consent"></svg></div>'+
+   L.prose('The usual defence: users chose the service, accepted the policy, and get something valuable back. Kleppmann sees four cracks in that consent. Tap each pin.')+
+   '<div class="dr-row" id="cs-r"></div><div id="cs-x"></div>'+CSS);
+  const seen=new Set();
+  function draw(){let g='<rect x="64" y="4" width="202" height="164" rx="8" fill="var(--card)" stroke="var(--line2)"/><text x="80" y="25" font-size="12.5" font-weight="700" fill="var(--ink)">Terms &amp; privacy policy</text>';
+    for(let y=36,k=0;y<160;y+=8,k++)g+='<rect x="80" y="'+y+'" width="'+(150-((k*37)%50))+'" height="3.5" rx="1.75" fill="var(--soft2)"/>';
+    PIN.forEach((p,j)=>{const s=seen.has(j);g+='<line x1="'+p[0]+'" y1="'+p[1]+'" x2="'+(p[0]<165?80:250)+'" y2="'+p[1]+'" stroke="'+(s?'var(--no)':'var(--pri)')+'" stroke-width="1.5"/><circle cx="'+p[0]+'" cy="'+p[1]+'" r="14" fill="'+(s?'var(--no)':'var(--pri)')+'"/><text x="'+p[0]+'" y="'+(p[1]+4.5)+'" text-anchor="middle" font-size="13" font-weight="700" fill="var(--card)">'+(j+1)+'</text>';});
+    L.$('#cs-g').innerHTML=g;}
+  draw();
+  C.forEach((c,j)=>{const b=document.createElement('button');b.className='chip';b.id='cs-b'+j;b.textContent=(j+1)+' · '+c[0];
+    b.onclick=()=>{b.classList.add('sel');seen.add(j);draw();L.$('#cs-x').innerHTML='<div class="dr-cap"><span class="stp">'+(j+1)+' · '+c[0]+'</span>'+c[1]+'</div>';if(seen.size===4)L.done();};L.$('#cs-r').appendChild(b);});}},
+
+{part:2,src:'Chapter 12 · Privacy and use of data',
+ solve:async L=>{L.$('#pv-a').click();},
+ run(L){
+  const IT=[['Birthday',250,250,'friends','friends'],['At-home times',26,292,'secret','sold to B&B'],['Pharmacy parcels',26,226,'secret','health ads']];
   L.h(L.kick('learn','What privacy really means')+'<h1 class="q">Privacy isn’t secrecy. It’s the right to choose.</h1>'+
-   L.prose('Some say privacy is dead because people post their lives online. Kleppmann calls that a misunderstanding. Privacy means the freedom to choose <b>what to reveal, to whom</b>, and what to keep secret, in each situation. It is a decision right.')+
-   L.flow([['person','Before','The person decides what to reveal.','',2],['arrow','Collection','The company asks to be trusted with it.','',3],['box','After','The company decides, aiming at profit.','',4]])+
-   L.prose('Surveillance doesn’t destroy that right, it <b>moves</b> it to the collector. Companies keep much of what they learn quiet, because revealing it would seem creepy. Intimate facts leak only indirectly, for example through ads aimed at people with a certain illness. Privacy settings help a little, but the service itself still sees everything.')+
-   '<p class="small">Trust relationships like doctor and patient have always existed, but strict ethics and laws governed them. Moving this much private power from individuals to companies has never happened before.</p>');
-  L.done();}},
-{part:1,src:'Chapter 12 · Consent and freedom of choice',run(L){
-  L.h(L.kick('ex','The second proposal')+'<h1 class="q">Bramble & Bolt wants to buy recipients’ delivery habits</h1>');
-  L.beats(L.card,[
-   ['The ask','Bramble & Bolt wants each household’s usual at-home hours and how often it gets parcels, to time its ads and flash-sale emails.'],
-   ['Who agreed?','Recipients aren’t Otterpost’s customers: merchants are. Most recipients never saw Otterpost’s terms; a shop simply sent them a parcel. Neighbours who accept parcels for them are in the data too.'],
-   ['What it reveals','At-home hours show when a house is empty. Regular pharmacy parcels can hint at an illness. Nobody chose to reveal these things.'],
-   ['Opting out?','A recipient can’t easily refuse: the shop picked the carrier, not them.'],
-   ['Femi’s read','Using an address and a chosen slot to deliver serves the recipient. Selling their habits serves someone else, and moves the choice of what to reveal from the recipient to Otterpost.']],
-   'Ask whom the data serves, who never agreed, and who really holds the choice.');}},
-{part:1,src:'Chapter 12 · Privacy and Tracking',pts:6,run(L){
+   '<div class="dr-row"><button class="chip sel" id="pv-b">Before Otterpost collects</button><button class="chip" id="pv-a">After</button></div>'+
+   '<div class="dr"><svg id="pv-g" viewBox="0 0 330 190" role="img" aria-label="Three things about Mrs. Okoro placed between keep secret and make public, and who decides where they sit"></svg></div>'+
+   L.prose('Privacy is the freedom to choose what to reveal, to whom: a <b>decision right</b>. People posting their lives online are using it, so “privacy is dead” is wrong. Surveillance doesn’t destroy the right. It moves it to the collector.')+CSS);
+  let after=false;
+  function draw(){let g='<rect x="2" y="2" width="326" height="30" rx="15" fill="'+(after?'var(--no-bg)':'var(--ok-bg)')+'"/><text x="165" y="22" text-anchor="middle" font-size="13" font-weight="700" fill="'+(after?'var(--no)':'var(--ok)')+'">Who decides: '+(after?'Otterpost, for profit':'Mrs. Okoro')+'</text>';
+    g+='<text x="20" y="184" font-size="12" fill="var(--muted)">← keep secret</text><text x="310" y="184" text-anchor="end" font-size="12" fill="var(--muted)">make public →</text>';
+    IT.forEach((it,k)=>{const y=58+k*42,x=after?it[2]:it[1];
+      g+='<text x="20" y="'+(y-8)+'" font-size="12.5" font-weight="700" fill="var(--ink)">'+it[0]+'</text><text x="310" y="'+(y-8)+'" text-anchor="end" font-size="12" font-weight="600" fill="'+(after&&it[1]!==it[2]?'var(--no)':'var(--muted)')+'">'+(after?it[4]:it[3])+'</text>';
+      g+='<rect x="20" y="'+y+'" width="290" height="8" rx="4" fill="var(--soft2)"/>';
+      g+='<g class="dr-mv" style="transform:translateX('+x+'px)"><circle cx="0" cy="'+(y+4)+'" r="8" fill="'+(after&&it[1]!==it[2]?'var(--no)':'var(--pri)')+'" stroke="var(--card)" stroke-width="2"/></g>';});
+    L.$('#pv-g').innerHTML=g;}
+  draw();
+  const set=a=>{after=a;L.$('#pv-a').classList.toggle('sel',a);L.$('#pv-b').classList.toggle('sel',!a);draw();
+    if(a){L.sheet('info','The right moved','Companies keep much of what they learn quiet, because it would seem creepy; intimate facts leak only through ad targeting. Privacy settings help a little, but the service still sees everything. Kleppmann calls this transfer of privacy rights historically unprecedented.');L.done();}};
+  L.$('#pv-a').onclick=()=>set(true);L.$('#pv-b').onclick=()=>set(false);}},
+
+{part:2,src:'Chapter 12 · Consent and freedom of choice',
+ solve:async L=>{L.$('#bd1-lens').click();L.$('#bd1-u-sell').click();},
+ run(L){
+  L.h(L.kick('ex','The second proposal, as a flow board')+'<h1 class="q">Bramble & Bolt’s deal is switched on. Read it as surveillance, then switch off any use that doesn’t serve Mrs. Okoro.</h1>'+
+   tasks('bd1t',['Turn on the “surveillance” lens','Leave only the uses that serve Mrs. Okoro'])+'<div id="bd1"></div>'+CSS);
+  const bd=Board(L,L.$('#bd1'),{id:'bd1',lens:true,panel:true,state:{on:{del:1,eta:1,sup:1,sell:1}},on:()=>{
+    if(bd.S.lens)tick(L,'bd1t',0);
+    if(bd.ok())tick(L,'bd1t',1);
+    if(allTicked(L,'bd1t')&&!L.$('#bd1-ok')){L.$('#bd1').insertAdjacentHTML('beforeend','<span id="bd1-ok"></span>');
+      L.sheet('info','Whom does it serve?','Recipients aren’t Otterpost’s customers: merchants are. Mrs. Okoro never saw Otterpost’s terms; a shop chose the carrier. Their at-home times show when the house is empty, and neighbours who take parcels in are in the data too. Delivering serves them; selling their habits serves someone else.');L.done();}}});}},
+
+{part:2,src:'Chapter 12 · Privacy and Tracking',pts:6,run(L){
   L.h(L.kick('pr','Whom does it serve?')+'<h1 class="q">Sort each use of recipients’ data</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Serves the recipient','Serves someone else'],[
    ['Using the address and chosen slot to deliver the parcel',0,'This is the service the recipient expects.'],
@@ -194,62 +562,105 @@ Course.lesson({
    ['Flagging homes that often get pharmacy parcels for health-product ads',1,'It exposes intimate information the recipient never chose to share.'],
    ['Remembering a recipient’s “leave with neighbour” note for next time',0,'They entered it on purpose so Otterpost would use it.']],
    'Data the recipient gave on purpose, used for their delivery, is a service. Using it for someone else’s goals starts to look like surveillance.');}},
-{part:1,src:'Chapter 12 · Privacy and use of data',pts:1,run(L){
-  L.h(L.kick('pr','Answer Tobias')+'<h1 class="q">Tobias: “Recipients post their addresses and birthdays online anyway. Privacy is dead.” What’s the best reply?</h1>');
-  L.mc(L.card,['Privacy is choosing what to reveal to whom, not keeping all secret','He’s right: once people share some things, privacy stops mattering','Privacy only covers data that is encrypted when it is stored'],0,
-   'Sharing a birthday with friends is the person’s own choice. Selling their at-home hours takes that choice away. Privacy is a decision right.',
-   'People sharing some things is privacy at work: they chose what to reveal. The book defines privacy as that freedom to choose, which is exactly what selling their data would take away.');}},
 
-/* ---------- PART 3: DATA, POWER AND YOU ---------- */
-{part:2,src:'Chapter 12 · Data as assets and power',run(L){
-  L.h(L.kick('learn','Data as assets and power')+'<h1 class="q">Data isn’t waste. It’s an asset, and a hazard.</h1>'+
-   L.prose('Behavioural data is sometimes called “data exhaust”, as if it were worthless waste. Kleppmann says it’s the other way round: if targeted ads pay for a service, the data about people <i>is</i> the core asset, and the app is just a way to get more of it. '+L.g('data-broker','Data brokers')+', a secretive industry, buy and resell this data, mostly for marketing.')+
-   L.list([['people','Many want it','Companies, and governments too: through secret deals, legal force or theft.'],
-     ['alert','It escapes','Breaches happen worryingly often, insiders leak, and when a company goes bust its data is sold with its other assets.'],
-     ['clock','Think of future rulers','Not every future government will respect human rights. Critics call data a toxic asset; collect it only if the benefit outweighs the risk of it falling into the wrong hands.'],
-     ['eye','Knowledge is power','Watching others while avoiding being watched is a deep form of power. Tech companies hold a lot of it, mostly outside public oversight.']],4));
-  L.done();}},
-{part:2,src:'Chapter 12 · Data as assets and power',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">An investor tells Femi: “Recipients’ delivery data is just exhaust. Selling it is free money.” How would Kleppmann answer?</h1>');
-  L.mc(L.card,['Agreed: it’s waste, so any use of it is a bonus','It’s a valuable asset that also carries real risk','It’s worthless, so it should simply be ignored'],1,
-   'Calling it exhaust hides both sides: people want it because it’s valuable, and that same value makes it a target for breaches, buyers and governments.',
-   'Kleppmann rejects the “exhaust” framing. The data is valuable, which is exactly why holding it is risky: breaches, leaks, sale in bankruptcy, demands from governments.');}},
-{part:2,src:'Chapter 12 · Remembering the Industrial Revolution',run(L){
+/* ---------- PART 4: DATA, POWER AND YOU ---------- */
+{part:3,src:'Chapter 12 · Data as assets and power',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#de-p'+j).click();},
+ run(L){
+  const PR=[
+   ['Sell habits to B&B',{on:{del:1,eta:1,sup:1,sell:1},keep:1,mode:''},'Mrs. Okoro never agreed: the shop chose the carrier. Bramble & Bolt learns when the house is empty, and nobody asked Mrs. Okoro.'],
+   ['Keep data forever',{on:{del:1,eta:1,sup:1,sell:0},keep:4,mode:''},'Years of at-home times pile up in one place. Breaches happen worryingly often, insiders leak, and if Otterpost goes bust the data is sold with its other assets. Critics call it a toxic asset.'],
+   ['Opt out of the service',{on:{del:1,eta:1,sup:1,sell:1},keep:4,mode:'optout'},'Mrs. Okoro can’t pick another carrier: the shop did. Saying no means no parcel. When a service is essential, opting out isn’t a free choice.'],
+   ['Investor: “data is just exhaust”',{on:{del:1,eta:1,sup:1,sell:1},keep:4,mode:'asset'},'If the data pays the bills, it is the core asset, not waste, and the app becomes a way to collect more. Secretive data brokers trade in exactly this.']];
+  L.h(L.kick('ex','Edge cases · data as assets and power')+'<h1 class="q">Run each preset on Mrs. Okoro’s board</h1>'+
+   '<div class="dr-row" id="de-ps"></div><div class="dr-cap" id="de-c"><span class="stp">Pick a preset</span>Each one sets the board the way someone at Otterpost might want it.</div><div id="de"></div>'+CSS);
+  const bd=Board(L,L.$('#de'),{id:'de',retain:true,panel:true,locked:true});
+  L.$('#de-k').disabled=true;
+  const seen=new Set();
+  PR.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='de-p'+j;b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#de-ps').children].forEach(x=>x.classList.toggle('sel',x===b));bd.set(p[1]);L.$('#de-c').innerHTML='<span class="stp">'+p[0]+'</span>'+p[2];seen.add(j);
+      if(seen.size===4&&!L.$('#de-ok')){L.$('#de-c').insertAdjacentHTML('afterend','<span id="de-ok"></span>');
+        L.sheet('info','Valuable, so everyone wants it','Companies want it, and so do governments, by secret deals, legal force or theft. Not every future government will respect rights. Knowledge is power: watching others while avoiding being watched is one of its strongest forms. Weigh every collection against the chance it ends up with the wrong people.');L.done();}};
+    L.$('#de-ps').appendChild(b);});}},
+
+{part:3,src:'Chapter 12 · Remembering the Industrial Revolution',run(L){
+  const bx=(x,y,a,b,c,dash,col)=>'<rect x="'+x+'" y="'+y+'" width="98" height="58" rx="10" fill="var(--card)" stroke="'+col+'" stroke-width="1.5"'+(dash?' stroke-dasharray="5 4"':'')+'/>'+
+    '<text x="'+(x+49)+'" y="'+(y+20)+'" text-anchor="middle" font-size="12" font-weight="700" fill="var(--ink)">'+a+'</text><text x="'+(x+49)+'" y="'+(y+36)+'" text-anchor="middle" font-size="12" fill="var(--ink)">'+b+'</text><text x="'+(x+49)+'" y="'+(y+51)+'" text-anchor="middle" font-size="12" fill="var(--muted)">'+c+'</text>';
+  const ar=(x,y,col)=>'<path d="M'+x+' '+y+' l10 0 m-4 -4 l4 4 l-4 4" fill="none" stroke="'+col+'" stroke-width="2"/>';
   L.h(L.kick('learn','Remembering the Industrial Revolution')+'<h1 class="q">Every big leap has a dark side to clean up</h1>'+
-   L.lanes([['trend','What it brought','Long-run economic growth and much better living standards.',2],
-            ['alert','What it cost','Polluted air and water, terrible housing, long hours, child labour in mines.',4]])+
-   L.prose('Safeguards came slowly: environmental rules, workplace safety, a ban on child labour, food inspections. Business got more expensive, but society gained hugely, and few would go back.')+
-   L.prose('Kleppmann sees the information age the same way. He cites Bruce Schneier’s comparison: data is this age’s pollution problem, and protecting privacy is its environmental challenge. Our grandchildren will judge how we handled it.'));
+   '<div class="dr"><svg viewBox="0 0 330 202" role="img" aria-label="Two rows. Industrial age: growth, then pollution and child labour, then safeguards. Information age: data and automation, then data piling up and leaking, then safeguards still to come">'+
+   '<rect x="1" y="1" width="328" height="96" rx="14" fill="var(--h3-bg)"/><text x="12" y="20" font-size="13" font-weight="700" fill="var(--h3)">Industrial age</text>'+
+   bx(4,30,'Factories','growth, better','living',0,'var(--h3)')+ar(104,59,'var(--h3)')+bx(116,30,'Dark side','smoke, slums,','child labour',0,'var(--no)')+ar(216,59,'var(--h3)')+bx(228,30,'Safeguards','came slowly;','few go back',0,'var(--ok-line)')+
+   '<rect x="1" y="105" width="328" height="96" rx="14" fill="var(--pri-bg)"/><text x="12" y="124" font-size="13" font-weight="700" fill="var(--pri)">Information age</text>'+
+   bx(4,134,'Data','software,','automation',0,'var(--pri)')+ar(104,163,'var(--pri)')+bx(116,134,'Dark side','data piles up,','leaks, festers',0,'var(--no)')+ar(216,163,'var(--pri)')+bx(228,134,'Safeguards?','grandchildren','will judge us',1,'var(--pri)')+
+   '</svg></div>'+
+   L.prose('Rules on pollution, safety and child labour made business costlier, yet society gained hugely. Citing Bruce Schneier, Kleppmann treats data as this age’s pollution, and protecting privacy as its environmental challenge.')+CSS);
   L.done();}},
-{part:2,src:'Chapter 12 · Legislation and self-regulation',run(L){
+
+{part:3,src:'Chapter 12 · Legislation and self-regulation',run(L){
+  const LM=[['Can rules go too far?','Yes. Shared medical data carries privacy risks, but it might also find better diagnoses and treatments. Over-regulation could block such breakthroughs, and balancing the two is hard.'],
+   ['Why it matters: a national park','Our control over our own data is like a national park: unless we protect it, it gets used up and everyone loses. Mass surveillance isn’t inevitable; we can still stop it.'],
+   ['Purging vs immutable logs','Deleting data clashes with the immutable logs of earlier chapters, but Kleppmann thinks that problem can be solved.']];
   L.h(L.kick('learn','Legislation and self-regulation')+'<h1 class="q">Laws help, but the culture has to change too</h1>'+
-   L.prose('Data protection laws may help. The 1995 European Data Protection Directive said personal data must be collected for specified, explicit purposes and must not be excessive. Kleppmann doubts it works online: Big Data is all about collecting as much as possible and exploring it for unforeseen uses. (At the time of writing, updated rules were being developed.) Companies call regulation a brake on innovation, and he grants that is partly fair, for example in medical research.')+
-   L.list([['people','Treat users as people','Not metrics to optimize. Earn trust by limiting what you collect, and explain to users how their data is used.'],
-     ['leaf','Protect it like a national park','Our control over our own data is a shared good. Without care, it gets used up, and everyone loses.'],
-     ['x','Don’t keep data forever','Purge it as soon as it’s no longer needed. That clashes with immutable logs, but he thinks it can be solved.'],
-     ['lock','Enforce with cryptography','Control access through cryptographic protocols, not just through a written policy.']],2));
+   '<div class="dr"><svg viewBox="0 0 330 158" role="img" aria-label="Left: the 1995 EU directive, a narrow funnel for a stated purpose. Right: Big Data, a wide funnel collecting everything for unforeseen uses. They clash">'+
+   '<text x="78" y="16" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ok)">1995 EU directive</text>'+
+   '<path d="M38 28 L118 28 L92 92 L92 120 L64 120 L64 92 Z" fill="var(--ok-bg)" stroke="var(--ok)" stroke-width="1.5"/>'+
+   '<text x="78" y="138" text-anchor="middle" font-size="12" fill="var(--ink)">stated purpose,</text><text x="78" y="150" text-anchor="middle" font-size="12" fill="var(--ink)">not excessive</text>'+
+   '<text x="165" y="76" text-anchor="middle" font-size="22" font-weight="700" fill="var(--no)">≠</text>'+
+   '<text x="252" y="16" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--no)">Big Data</text>'+
+   '<path d="M190 28 L314 28 L276 120 L228 120 Z" fill="var(--no-bg)" stroke="var(--no)" stroke-width="1.5"/>'+
+   [0,1,2,3,4,5,6,7,8].map(k=>'<rect x="'+(204+(k%5)*20)+'" y="'+(40+Math.floor(k/5)*22)+'" width="12" height="12" rx="3" fill="var(--no)" opacity=".7"/>').join('')+
+   '<text x="252" y="138" text-anchor="middle" font-size="12" fill="var(--ink)">collect it all,</text><text x="252" y="150" text-anchor="middle" font-size="12" fill="var(--ink)">explore later</text>'+
+   '</svg></div>'+
+   L.prose('Kleppmann doubts such laws fit Big Data, whose point is finding new uses. Mostly he asks for a culture shift:')+
+   '<div class="dr-tiles"><div>'+L.ic('people')+'<span>Users are people, not metrics</span></div><div>'+L.ic('book')+'<span>Tell them how their data is used</span></div><div>'+L.ic('x')+'<span>Purge data once it’s not needed</span></div><div>'+L.ic('lock')+'<span>Enforce access with cryptography</span></div></div>'+
+   more('lwm',LM)+CSS);
+  moreWire(L,'lwm',LM);
   L.done();}},
-{part:2,src:'Chapter 12 · Legislation and self-regulation',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Would Kleppmann back this?',['In line with the book','Against the book’s advice'],[
-   ['Delete raw GPS pings once pay and ETAs for that day are settled.',0,'Purge data as soon as it’s no longer needed.'],
-   ['Keep all recipient data forever, because a future project might use it.',1,'Unforeseen future uses are exactly what makes stored data risky.'],
-   ['Tell recipients in plain words what Otterpost stores about them, and why.',0,'Educate users instead of keeping them in the dark.'],
-   ['Read couriers’ phone contacts in the app “for future features”.',1,'Collecting beyond the purpose. It also pulls in people who never agreed.'],
-   ['Guard delivery histories with encryption keys, not only a written policy.',0,'He favours enforcing access through cryptography rather than policy alone.']]);}},
-{part:2,src:'Chapter 12 · Summary',run(L){
-  L.h(L.kick('learn','The chapter, and the book, in four cards')+'<h1 class="q">Tap each card</h1>');
-  L.flips(L.card,[
-   ['Integrate by deriving','No one tool fits every need. Pick systems of record and let batch and stream processing derive the rest: indexes, caches, models, reports.'],
-   ['Unbundle the database','Loosely coupled pieces keep a problem in one place. Rerun a transformation to change a view or recover from a bug, and carry dataflow all the way to the user’s screen.'],
-   ['Stay correct without coordinating','End-to-end request IDs, asynchronous constraint checks with apologies when needed, and audits keep integrity, even across regions.'],
-   ['Do the right thing','Data can help or harm people. Engineers share responsibility for building a world that treats people with humanity and respect.']],
-   'That’s the end of the book. Femi now has one decision left.');}},
-{part:2,src:'Chapter 12 · Doing the Right Thing',pts:1,run(L){
+
+{part:3,src:'Chapter 12 · Legislation and self-regulation',pts:1,
+ solve:async L=>{L.$('#bc-u-sell').click();const k=L.$('#bc-k');k.value=1;k.dispatchEvent(new Event('input'));L.$('#bc-n').click();L.$('#bc-go').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Femi’s rules: every use serves Mrs. Okoro, data goes once it’s no longer needed, and recipients are told how it’s used. Set the board.</h1>'+
+   '<p class="small" style="margin:0 0 6px">Support needs a parcel’s record for 30 days after delivery (illustrative).</p><div id="bc"></div>'+
+   '<div class="dr-row"><button class="btn pri" id="bc-go">'+L.ic('check')+'Check the board</button></div>'+CSS);
+  const bd=Board(L,L.$('#bc'),{id:'bc',retain:true,notice:true,panel:true,state:{on:{del:1,eta:1,sup:1,sell:1},keep:4}});
+  L.$('#bc-go').onclick=()=>{const S=bd.S,pass=bd.ok();
+    if(first){L.award(pass);first=false;}
+    const miss=[];
+    if(!(S.on.del&&S.on.eta&&S.on.sup))miss.push('a use that serves Mrs. Okoro is off, so the service breaks');
+    if(S.on.sell)miss.push('the sale to Bramble & Bolt is still on');
+    if(S.keep>1)miss.push('data is kept '+KEEP[S.keep][0]+', far longer than needed');
+    if(S.keep<1)miss.push('7 days is too short: support needs 30');
+    if(!S.notice)miss.push('recipients are still kept in the dark');
+    if(pass)L.sheet('ok','Board set','Delivery, ETA and support serve Mrs. Okoro; the sale is off; records go after 30 days; and recipients are told in plain words. That is Kleppmann’s self-regulation: collect for a purpose, purge early, and educate users instead of keeping them in the dark.');
+    else L.sheet('no','Not yet','Still wrong: '+miss.join('; ')+'. Adjust the board and check again.');
+    L.done();};}},
+
+{part:3,src:'Chapter 12 · Summary',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#sm-'+j).click();},
+ run(L){
+  const SM=[['Integrate by deriving','one record, many derived views','h1','No one tool fits every need. Pick systems of record and let batch and stream processing derive the rest: indexes, caches, models, reports.'],
+   ['Unbundle the database','loose pieces; rerun to fix a view','h2','Loosely coupled pieces keep a problem in one place. Rerun a transformation to change a view or recover from a bug, and carry dataflow all the way to the user’s screen.'],
+   ['Stay correct without coordinating','request IDs, async checks, audits','h3','End-to-end request IDs, asynchronous constraint checks with apologies when needed, and audits keep integrity, even across regions.'],
+   ['Do the right thing','data is about people: weigh the effects','h4','Data can help or harm people. Engineers share responsibility for building a world that treats people with humanity and respect.']];
+  const node=j=>'<button class="dr-node" id="sm-'+j+'" aria-pressed="false"><span class="n">'+(j+1)+'</span><span><b>'+SM[j][0]+'</b><small>'+SM[j][1]+'</small></span></button>';
+  L.h(L.kick('learn','The chapter, and the book, in one chain')+'<h1 class="q">How you build it, then what it’s for. Tap each link.</h1>'+
+   '<div class="dr" role="group" aria-label="A chain of four ideas: three about building data systems right, then one about building the right thing">'+
+   '<div class="dr-sec">Build the system right</div>'+node(0)+'<div class="dr-arw"></div>'+node(1)+'<div class="dr-arw"></div>'+node(2)+'<div class="dr-arw"></div>'+
+   '<div class="dr-sec">…then build the right thing</div>'+node(3)+'</div><div id="sm-x" aria-live="polite"></div>'+CSS);
+  const seen=new Set();let fin=false;
+  SM.forEach((s,j)=>{const b=L.$('#sm-'+j);b.onclick=()=>{seen.add(j);b.setAttribute('aria-pressed','true');
+    b.style.background='var(--'+s[2]+'-bg)';b.style.borderColor='var(--'+s[2]+')';const n=b.querySelector('.n');n.style.background='var(--'+s[2]+')';n.style.borderColor='var(--'+s[2]+')';n.style.color='var(--card)';
+    L.$('#sm-x').innerHTML='<div class="dr-cap"><span class="stp">'+(j+1)+' · '+s[0]+'</span>'+s[3]+(seen.size===4?'<br><b>That’s the end of the book. Femi has one decision left.</b>':'')+'</div>';
+    if(seen.size===4&&!fin){fin=true;L.done();}};});}},
+
+{part:3,src:'Chapter 12 · Doing the Right Thing',pts:1,run(L){
   L.h(L.kick('pr','The final call')+'<h1 class="q">Which plan for the two proposals fits Kleppmann’s arguments best?</h1>');
-  L.mc(L.card,['Ship the score as it is, and sell the data: both bring in value','Ship the score with hidden inputs, and sell the data without names','Use the score only as an explained aid with appeals; don’t sell the data'],2,
-   'Transparency and a way to appeal address bias and accountability, watching the routes guards against the loop, and declining the sale keeps the choice with recipients. That is what Kleppmann asks of engineers.',
-   'Hidden inputs remove any chance to appeal, and selling habits (even without names) still moves recipients’ choices to Otterpost and a merchant. Explained, appealable use and no sale fits the book.');}}
+  L.mc(L.card,['Ship the score as it is, and sell the data: both bring in value','Ship the score with hidden inputs, and sell the data without names','Rotate routes, explain the score and allow appeals; don’t sell the data'],2,
+   'Rotating routes breaks the loop, explanations and appeals give accountability, and declining the sale keeps the choice with recipients. That is what Kleppmann asks of engineers.',
+   'Hidden inputs remove any chance to appeal, and selling habits (even without names) still moves recipients’ choices to Otterpost and a merchant. A loop-free, explained, appealable score and no sale fits the book.');}}
   ]
 });
 </script>

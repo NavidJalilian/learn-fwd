@@ -13,29 +13,435 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0026 only. Two hands-on models used across the lesson:
+   1. JoinMap – where each batch join works: size of the smaller input
+                (across) × what you know about how both inputs are laid
+                out (up). Regions, a draggable dot, shuffle and memory.
+   2. Swap    – tonight’s delivery-window table shipped two ways, side by
+                side: A writes rows into the live store, B builds new
+                files and swaps them in.
+   Smaller visuals: one reducer call (secondary sort), the reducer
+   skyline (hot key), the preemption grid, and the teaching figures.
+   ===================================================================== */
+const MEM=1e6,PARTS=32,BUDGET=215e6;
+const tx=(x,y,s,st,a)=>'<text x="'+x+'" y="'+y+'"'+(a?' text-anchor="'+a+'"':'')+' style="'+(st||'')+'">'+s+'</text>';
+const rc=(x,y,w,h,r,st)=>'<rect x="'+x+'" y="'+y+'" width="'+Math.max(0,w)+'" height="'+h+'" rx="'+r+'" style="'+st+'"/>';
+const ln=(x1,y1,x2,y2,st)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="'+st+'"/>';
+const ft=(sz,c,w)=>'font-size:'+sz+'px;fill:var(--'+(c||'ink')+')'+(w?';font-weight:'+w:'');
+const bx=c=>'fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.5';
+const DEFS='<defs>'+['muted','ok','no','h1','h2','h3','h4','line2','pri'].map(c=>'<marker id="ah-'+c+'" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--'+c+')"/></marker>').join('')+'</defs>';
+const ar=(x1,y1,x2,y2,c,dash)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" marker-end="url(#ah-'+c+')" style="stroke:var(--'+c+');stroke-width:1.6'+(dash?';stroke-dasharray:4 3':'')+'"/>';
+const fig=(h,body,label)=>'<svg class="bj-fig" viewBox="0 0 320 '+h+'" role="img" aria-label="'+label+'">'+DEFS+body+'</svg>';
+const cap=t=>'<p class="bj-cap">'+t+'</p>';
+const more=(s,t)=>'<details class="bj-more"><summary>'+s+'</summary><p>'+t+'</p></details>';
+const cid=n=>'C-'+String(n).padStart(4,'0');
+function fmt(n){
+  if(n>=1e9){const v=n/1e9;return (Math.round(v*10)/10)+' billion';}
+  if(n>=1e6){const v=n/1e6;return (v>=100?Math.round(v):Math.round(v*10)/10)+' million';}
+  return Math.round(n).toLocaleString('en-US');
+}
+function setR(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+function bring(el){if(!el)return;const r=el.getBoundingClientRect();window.scrollBy(0,r.top-110);}
+async function until(L,fn,n){for(let i=0;i<(n||150)&&!fn();i++)await L.sleep(30);}
+
+const CSS='<style>'+
+ '.bj-fig{width:100%;display:block;margin:2px 0 8px}.bj-fig text{font-family:var(--sans)}'+
+ '.bj-drag{touch-action:none;cursor:pointer}'+
+ '.bj-cap{font-size:16px;line-height:1.5;margin:6px 0 4px}'+
+ '.bj-more{margin:8px 0 0;border-top:1px solid var(--line);font-size:14px;line-height:1.5}'+
+ '.bj-more summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;min-height:40px;color:var(--pri);font-weight:600}'+
+ '.bj-more summary::-webkit-details-marker{display:none}'+
+ '.bj-more summary:before{content:"+";display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:99px;border:1.5px solid var(--pri);font-size:14px;line-height:1;flex:none}'+
+ '.bj-more[open] summary:before{content:"–"}'+
+ '.bj-more p{margin:0 0 4px;color:var(--muted)}'+
+ '.bj-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.bj-row .chip,.bj-row .btn{margin:0;min-height:40px}'+
+ '.bj-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 0}'+
+ '.bj-rng{display:grid;grid-template-columns:auto 1fr;gap:2px 10px;align-items:center;font-size:14px;margin:4px 0}.bj-rng b{text-align:right;font-variant-numeric:tabular-nums}.bj-rng input{width:100%;accent-color:var(--pri);height:32px}'+
+ '.bj-panel{background:var(--soft);border-radius:14px;padding:10px 12px;margin:8px 0;font-size:14px;line-height:1.45}'+
+ '.bj-jn{font-weight:700;font-size:15.5px;display:flex;align-items:center;gap:8px}.bj-sw{width:12px;height:12px;border-radius:4px;flex:none}'+
+ '.bj-why{font-size:13.5px;color:var(--muted);margin:3px 0 0;line-height:1.45}'+
+ '.bj-m{display:flex;justify-content:space-between;gap:8px;font-size:13.5px;margin:9px 0 4px}.bj-m b{font-variant-numeric:tabular-nums;text-align:right}'+
+ '.bj-panel .meter,.bj-meter{height:10px}'+
+ '.bj-bud{position:relative;overflow:visible}.bj-bud:after{content:"";position:absolute;left:50%;top:-4px;bottom:-4px;width:2px;background:var(--ink)}'+
+ '.bj-log{background:var(--soft);border-radius:12px;padding:9px 12px;font-size:14.5px;line-height:1.45;margin:8px 0;min-height:44px}'+
+ '.bj-log.ok{background:var(--ok-bg);color:var(--ok)}.bj-log.no{background:var(--no-bg);color:var(--no)}'+
+ '.bj-tk{display:inline-block;font-size:13px;padding:4px 9px;border-radius:99px;border:1.5px solid var(--line2);color:var(--muted);margin:0 6px 6px 0}.bj-tk.on{border-color:var(--c);color:var(--c);font-weight:700}'+
+ '.bj-tabs .chip{min-width:46px;justify-content:center;font-weight:700}'+
+ '.bj-res{background:var(--soft);border-radius:12px;padding:8px 12px;font-size:14px;line-height:1.45;margin:8px 0}.bj-res div{margin:3px 0}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '.bj-leg{display:flex;flex-wrap:wrap;gap:12px;font-size:13px;color:var(--muted);margin:0 0 6px}.bj-leg i{display:inline-block;width:12px;height:12px;border-radius:3px;margin-right:5px;vertical-align:-2px;border:1.5px solid var(--line2)}'+
+ '</style>';
+
+/* ---------- the join strategy map ---------- */
+const JN={bc:['Broadcast hash join','h2'],ph:['Partitioned hash join','h3'],mg:['Map-side merge join','h4'],rs:['Reduce-side sort-merge join','h1']};
+const SHORT={bc:'Broadcast',ph:'Partitioned hash',mg:'Merge',rs:'Reduce-side'};
+const BANDS=['Layout unknown','Partitioned alike','Partitioned + sorted alike'];
+const MX0=10,MX1=312,LO=3,HI=9,BY=[162,100,58],BT=[126,74,22];
+const mx=v=>MX0+(Math.min(HI,Math.max(LO,Math.log10(Math.max(v,1))))-LO)*(MX1-MX0)/(HI-LO);
+function bestJoin(size,band,parts){parts=parts||PARTS;if(size<=MEM)return 'bc';if(band===2)return 'mg';if(band===1&&size/parts<=MEM)return 'ph';return 'rs';}
+function checkJoin(j,size,band,parts){
+  parts=parts||PARTS;
+  if(j==='rs')return '';
+  if(j==='bc')return size<=MEM?'':'Out of memory: the smaller side ('+fmt(size)+' records) doesn’t fit in one mapper.';
+  if(j==='ph'){if(band<1)return 'Missed matches: the inputs aren’t partitioned the same way.';return size/parts<=MEM?'':'Out of memory: even one partition ('+fmt(size/parts)+' records) is too big.';}
+  return band===2?'':'Missed matches: the inputs aren’t partitioned and sorted alike.';
+}
+const WHY={
+  bc:'The whole smaller side fits in memory, so every mapper loads it into a hash table, then scans its own block of the large input.',
+  ph:'Too big for one mapper, but both sides are partitioned alike, so each mapper loads just one partition (a 32nd) of the smaller side.',
+  mg:'Both sides are partitioned and sorted alike, so a mapper reads both files in key order and matches as it goes. Size doesn’t matter.',
+  rs:'Nothing safe to assume, so mappers tag every record with its key and the framework sorts and shuffles it all to reducers. Always works; costs the most.'};
+function mapBody(hide,hl,nolab){
+  const xm=mx(MEM),xp=mx(MEM*PARTS);
+  const reg=(x,y,w,h,k)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" style="fill:'+(hide?'var(--soft)':'var(--'+JN[k][1]+(hl===k?'':'-bg')+')')+(!hide&&hl===k?';fill-opacity:.3':'')+'"/>';
+  let s=reg(MX0,22,xm-MX0,156,'bc')+reg(xm,22,MX1-xm,52,'mg')+reg(xm,74,xp-xm,52,'ph')+reg(xp,74,MX1-xp,52,'rs')+reg(xm,126,MX1-xm,52,'rs');
+  s+=ln(MX0,74,MX1,74,'stroke:var(--card);stroke-width:2')+ln(MX0,126,MX1,126,'stroke:var(--card);stroke-width:2');
+  BANDS.forEach((b,k)=>{s+=tx(MX0+5,BT[k]+15,b,ft(11.5,'muted',600));});
+  if(!hide)s+=ln(xp,74,xp,126,'stroke:var(--h3);stroke-width:1.5;stroke-dasharray:3 3');
+  if(!hide&&!nolab){
+    s+=ln(xp,74,xp,126,'stroke:var(--h3);stroke-width:1.5;stroke-dasharray:3 3');
+    const cb=(MX0+xm)/2;
+    s+=tx(cb,106,'Broadcast',ft(12.5,'h2',700),'middle')+tx(cb,121,'hash join',ft(12.5,'h2',700),'middle');
+    s+=tx((xm+MX1)/2,40,'Merge join',ft(12.5,'h4',700),'middle');
+    s+=tx((xm+xp)/2,100,'Partitioned',ft(11.5,'h3',700),'middle')+tx((xm+xp)/2,114,'hash',ft(11.5,'h3',700),'middle');
+    s+=tx((xp+MX1)/2,100,'Reduce-',ft(11.5,'h1',700),'middle')+tx((xp+MX1)/2,114,'side',ft(11.5,'h1',700),'middle');
+    s+=tx((xm+MX1)/2,146,'Reduce-side join',ft(12.5,'h1',700),'middle');
+  }
+  s+=ln(xm,17,xm,178,'stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3')+tx(xm-5,13,'fits in memory',ft(11.5,'muted',600),'end')+tx(xm+5,13,'too big for one mapper',ft(11.5,'muted',600));
+  s+=ln(MX0,178,MX1,178,'stroke:var(--line2);stroke-width:1.5');
+  ['1k','10k','100k','1M','10M','100M','1B'].forEach((t,k)=>{const x=mx(Math.pow(10,k+3));s+=ln(x,178,x,182,'stroke:var(--line2);stroke-width:1.5')+tx(x,195,t,ft(11.5,'muted'),k===0?'start':k===6?'end':'middle');});
+  s+=tx(161,211,'size of the smaller input (records, log scale)',ft(11.5,'muted'),'middle');
+  return s;
+}
+function mapDot(x,y,n,c,sel){
+  if(n==null)return '<circle cx="'+x+'" cy="'+y+'" r="10" style="fill:var(--card);stroke:var(--ink);stroke-width:3"/><circle cx="'+x+'" cy="'+y+'" r="3.5" style="fill:var(--ink)"/>';
+  return '<circle cx="'+x+'" cy="'+y+'" r="'+(sel?12:10)+'" style="fill:var(--card);stroke:var(--'+(c||'ink')+');stroke-width:'+(sel?3.5:2.5)+'"/>'+tx(x,y+4.5,n,ft(12.5,c||'ink',700),'middle');
+}
+function panelHTML(j,size,large){
+  const c=JN[j][1],sh=j==='rs'?large+size:0,mem=j==='bc'?size:j==='ph'?size/PARTS:0;
+  const memTxt=j==='bc'?fmt(size)+' records':j==='ph'?fmt(size/PARTS)+' records':j==='mg'?'a few records':'one record per key';
+  return '<div class="bj-jn"><span class="bj-sw" style="background:var(--'+c+')"></span>'+JN[j][0]+'</div><div class="bj-why">'+WHY[j]+'</div>'+
+   '<div class="bj-m"><span>Shuffled to reducers</span><b>'+(sh?fmt(sh)+' records':'none')+'</b></div><div class="meter"><div style="width:'+(sh?Math.min(100,sh/large*85):0)+'%;background:var(--h1)"></div></div>'+
+   '<div class="bj-m"><span>Memory per task</span><b>'+memTxt+'</b></div><div class="meter"><div style="width:'+(mem?Math.max(3,mem/MEM*100):3)+'%;background:var(--'+c+')"></div></div>';
+}
+function JoinMap(L,host,o){
+  o=Object.assign({id:'jm',size:3000,band:0,large:876e6,hide:false,drag:true,ctl:true,panel:true,dots:null,nodot:false,on:()=>{}},o||{});
+  const ID=o.id,S={size:o.size,band:o.band,hide:o.hide,busy:false,yo:null,nodot:o.nodot,dots:o.dots};
+  host.insertAdjacentHTML('beforeend','<svg class="bj-fig'+(o.drag?' bj-drag':'')+'" id="'+ID+'-svg" viewBox="0 0 320 216" role="img" aria-label="Join strategy map: size of the smaller input across, what you know about how both inputs are laid out up the side"></svg>'+
+   (o.panel?'<div class="bj-panel" id="'+ID+'-p" aria-live="polite"></div>':'')+(o.dots?'<div class="bj-leg" id="'+ID+'-lg"></div>':'')+
+   (o.ctl?'<div class="bj-rng"><label for="'+ID+'-r">Smaller side</label><b id="'+ID+'-rv"></b><input type="range" id="'+ID+'-r" min="3" max="'+Math.log10(o.large).toFixed(2)+'" step="0.01" style="grid-column:1/3"></div>'+
+    '<div class="bj-lbl">What you know about how both are laid out</div><div class="bj-row" id="'+ID+'-b">'+['Unknown','Partitioned alike','Partitioned + sorted'].map((t,k)=>'<button class="chip" data-b="'+k+'">'+t+'</button>').join('')+'</div>':''));
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg'),alive=()=>svg.isConnected;
+  function draw(){
+    if(!alive())return;
+    const j=bestJoin(S.size,S.band);
+    let s=DEFS+mapBody(S.hide,S.hide||S.nodot||S.dots?null:j,!!S.dots);
+    if(S.dots)s+=S.dots.map(d=>mapDot(d.x,d.y,d.n,d.c,d.sel)).join('');
+    else if(!S.nodot)s+=mapDot(mx(S.size),S.yo!=null?S.yo:BY[S.band]);
+    svg.innerHTML=s;
+    if(o.ctl){$('#'+ID+'-r').value=Math.log10(S.size);$('#'+ID+'-rv').textContent=fmt(S.size)+' records';[...$('#'+ID+'-b').children].forEach((b,k)=>b.classList.toggle('sel',k===S.band));}
+    if(o.dots)$('#'+ID+'-lg').innerHTML=S.hide?'':['bc','ph','mg','rs'].map(k=>'<span><i style="background:var(--'+JN[k][1]+'-bg);border-color:var(--'+JN[k][1]+')"></i>'+SHORT[k]+'</span>').join('');
+    if(o.panel){const p=$('#'+ID+'-p');p.innerHTML=S.hide||S.nodot?'<span class="small">The regions and the cost appear once you commit.</span>':panelHTML(j,S.size,o.large);}
+  }
+  if(o.ctl){
+    $('#'+ID+'-r').addEventListener('input',e=>{if(S.busy)return;S.size=Math.min(o.large,Math.round(Math.pow(10,+e.target.value)));draw();o.on({type:'move'});});
+    [...$('#'+ID+'-b').children].forEach(b=>b.addEventListener('click',()=>{if(S.busy)return;S.band=+b.dataset.b;draw();o.on({type:'move'});}));
+  }
+  if(o.drag){
+    let down=false;
+    const at=e=>{const r=svg.getBoundingClientRect(),x=(e.clientX-r.left)*320/r.width,y=(e.clientY-r.top)*216/r.height;
+      if(y>184||y<16)return;const lg=LO+(Math.min(MX1,Math.max(MX0,x))-MX0)/(MX1-MX0)*(HI-LO);
+      S.size=Math.min(o.large,Math.round(Math.pow(10,lg)));S.band=y<74?2:y<126?1:0;draw();o.on({type:'move'});};
+    svg.addEventListener('pointerdown',e=>{if(S.busy||S.hide||S.nodot)return;down=true;try{svg.setPointerCapture(e.pointerId);}catch(_){}at(e);});
+    svg.addEventListener('pointermove',e=>{if(down)at(e);});
+    ['pointerup','pointercancel'].forEach(t=>svg.addEventListener(t,()=>{down=false;}));
+  }
+  function move(size,band,ms){
+    return new Promise(res=>{
+      const a=Math.log10(S.size),b=Math.log10(size),y0=BY[S.band],y1=BY[band],t0=performance.now();S.busy=true;
+      (function st(){
+        if(!alive()){S.busy=false;res();return;}
+        const p=Math.min(1,(performance.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;
+        S.size=Math.round(Math.pow(10,a+(b-a)*e));S.yo=y0+(y1-y0)*e;if(p>=.5)S.band=band;draw();
+        if(p<1){setTimeout(st,16);return;}
+        S.size=size;S.band=band;S.yo=null;S.busy=false;draw();res();
+      })();
+    });
+  }
+  draw();
+  return {S,draw,move,alive,
+    set:(size,band)=>{S.size=size;S.band=band;S.nodot=false;draw();},
+    reveal:()=>{S.hide=false;draw();},
+    setDots:d=>{S.dots=d;draw();}};
+}
+
+/* ---------- one reducer call: the secondary sort ---------- */
+function Stream(L,host,id,on){
+  const OFF=['09:40','08:02','C','13:30','11:15','15:05'],ON=['C','08:02','09:40','11:15','13:30','15:05'];
+  const S={sorted:false,seq:OFF,cur:-1,mem:[],out:[],peak:0,busy:false,ran:false,speed:1};
+  host.insertAdjacentHTML('beforeend','<svg class="bj-fig" id="'+id+'-svg" viewBox="0 0 320 250" role="img" aria-label="One reducer call for courier C-0017: its records arrive one by one; memory and output shown below"></svg>'+
+   '<div class="bj-lbl">Secondary sort</div><div class="bj-row" id="'+id+'-c"><button class="chip sel" id="'+id+'-off">Off</button><button class="chip" id="'+id+'-on">On</button>'+
+   '<button class="btn pri" id="'+id+'-go">'+L.ic('play')+'Run the reducer</button></div><div class="bj-log" id="'+id+'-log" aria-live="polite">Pick a setting, then run the reducer.</div>');
+  const $=s=>host.querySelector(s),svg=$('#'+id+'-svg'),alive=()=>svg.isConnected;
+  function draw(){
+    if(!alive())return;
+    let s=DEFS;
+    s+=rc(8,4,144,40,8,bx('h2'))+tx(80,20,'Scans mapper',ft(11.5,'ink',700),'middle')+tx(80,36,'emits (C-0017, scan)',ft(11.5,'muted'),'middle');
+    s+=rc(168,4,144,40,8,bx('h1'))+tx(240,20,'Couriers mapper',ft(11.5,'ink',700),'middle')+tx(240,36,'emits (C-0017, van)',ft(11.5,'muted'),'middle');
+    s+=ar(80,45,138,56,'muted')+ar(240,45,182,56,'muted');
+    s+=tx(160,68,S.sorted?'sorted by key, courier record first':'sorted by key; order inside the key not set',ft(11.5,S.sorted?'ok':'muted',600),'middle');
+    S.seq.forEach((r,k)=>{const x=7+k*52,c=r==='C'?'h1':'h2',act=k===S.cur,past=S.cur>k||(S.cur<0&&S.ran);
+      s+='<g style="opacity:'+(past?.45:1)+'">'+rc(x,76,48,44,8,'fill:var(--'+c+'-bg);stroke:var(--'+(act?'pri':c)+');stroke-width:'+(act?3:1.5))+
+        tx(x+24,94,r==='C'?'courier':'scan',ft(11.5,'muted'),'middle')+tx(x+24,111,r==='C'?'van':r,ft(12,'ink',700),'middle')+'</g>';});
+    if(S.cur>=0){const x=7+S.cur*52+24;s+='<path d="M'+(x-7)+' 135 L'+x+' 126 L'+(x+7)+' 135 Z" style="fill:var(--pri)"/>';}
+    s+=tx(8,153,'Reducer memory',ft(12,'ink',700))+tx(312,153,'peak: '+S.peak+' record'+(S.peak===1?'':'s'),ft(11.5,S.peak>1?'no':'muted',700),'end');
+    s+=rc(8,159,304,36,8,'fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:4 3');
+    S.mem.forEach((m,j)=>{const x=14+j*50,c=m==='van'?'h1':'h2';s+=rc(x,164,46,26,6,bx(c))+tx(x+23,181,m,ft(11.5,'ink',700),'middle');});
+    s+=tx(8,213,'Output: (van, scan time)',ft(12,'ink',700));
+    if(S.ran&&S.out.length){const ord=S.out.join()===S.out.slice().sort().join();s+=tx(312,213,ord?'in time order':'out of order',ft(11.5,ord?'ok':'no',700),'end');}
+    S.out.forEach((t,j)=>{const x=8+j*52;s+=rc(x,220,48,26,6,bx('ok'))+tx(x+24,237,t,ft(11.5,'ink',700),'middle');});
+    svg.innerHTML=s;
+  }
+  function log(h,k){if(alive()){const e=$('#'+id+'-log');e.className='bj-log'+(k?' '+k:'');e.innerHTML=h;}}
+  function setSorted(v){if(S.busy)return;S.sorted=v;S.seq=v?ON:OFF;S.mem=[];S.out=[];S.peak=0;S.ran=false;S.cur=-1;
+    $('#'+id+'-off').classList.toggle('sel',!v);$('#'+id+'-on').classList.toggle('sel',v);draw();log('Secondary sort '+(v?'on':'off')+'. Run the reducer.');}
+  $('#'+id+'-off').onclick=()=>setSorted(false);$('#'+id+'-on').onclick=()=>setSorted(true);
+  async function run(){
+    if(S.busy||!alive())return;S.busy=true;$('#'+id+'-go').disabled=true;
+    S.seq=S.sorted?ON:OFF;S.mem=[];S.out=[];S.peak=0;S.ran=false;let known=false;const T=360*S.speed;
+    for(let k=0;k<S.seq.length;k++){
+      if(!alive())return;S.cur=k;const r=S.seq[k];let m;
+      if(r==='C'){known=true;const held=S.mem.slice();S.mem=['van'].concat(held);S.peak=Math.max(S.peak,S.mem.length);
+        if(held.length){draw();log('Courier record: <b>van</b>. Only now can the '+held.length+' held scans be joined.','no');await L.sleep(T);if(!alive())return;
+          S.out=S.out.concat(held);S.mem=['van'];m='Joined the held scans and let them go.';}
+        else m='Courier record first: keep <b>van</b> in a variable.';}
+      else if(known){S.out.push(r);m='Scan '+r+': join it with <b>van</b> and output it.';}
+      else{S.mem.push(r);S.peak=Math.max(S.peak,S.mem.length);m='Scan '+r+': no courier record yet, so <b>hold it in memory</b>.';}
+      draw();log(m);await L.sleep(T);}
+    if(!alive())return;
+    S.cur=-1;S.ran=true;S.busy=false;$('#'+id+'-go').disabled=false;draw();
+    log('Done. Peak memory: <b>'+S.peak+' record'+(S.peak===1?'':'s')+'</b>. Network requests: <b>0</b>.',S.peak===1?'ok':'no');
+    on(S.sorted);
+  }
+  $('#'+id+'-go').onclick=run;
+  draw();
+  return {S,idle:async()=>{await L.sleep(20);while(S.busy)await L.sleep(30);}};
+}
+
+/* ---------- tonight’s output, shipped two ways ---------- */
+const KEYS=['W1','W2','W3','W4','E1','E2'];
+const VALS=[['10–11am','1–2pm','9–10am','2–3pm','11am–noon','3–4pm'],['9–10am','12–1pm','10–11am','3–4pm','10–11am','2–3pm'],['8am–8pm','8am–8pm','8am–8pm','8am–8pm','8am–8pm','8am–8pm']];
+function Swap(L,host,id){
+  const lane=()=>({p:0,rows:[0,0,0,0,0,0],lat:40,peak:40,bad:false,serve:1,v2:0,dead:false,writing:false,st:'Serving last night’s',sc:'muted'});
+  const S={A:lane(),B:lane(),busy:false,speed:1};
+  host.insertAdjacentHTML('beforeend','<svg class="bj-fig" id="'+id+'-svg" viewBox="0 0 320 272" role="img" aria-label="Side by side: A writes rows into the live lookup store, B builds new files and swaps them in"></svg>'+
+   '<div class="bj-leg"><span><i style="background:var(--soft)"></i>last night’s</span><span><i style="background:var(--ok-bg);border-color:var(--ok-line)"></i>tonight’s</span><span><i style="background:var(--no-bg);border-color:var(--no-line)"></i>wrong</span></div>');
+  const svg=host.querySelector('#'+id+'-svg'),alive=()=>svg.isConnected;
+  function laneSVG(x0,Ln,isB){
+    let s=tx(x0,14,isB?'B · build, then swap':'A · write rows live',ft(12,isB?'ok':'no',700));
+    s+=rc(x0,22,152,8,4,'fill:var(--soft2)')+rc(x0,22,152*Ln.p,8,4,'fill:var(--'+(Ln.dead?'no':'pri')+')');
+    s+=tx(x0,46,'tonight’s job: '+Math.round(Ln.p*100)+'%'+(Ln.dead?', died':''),ft(11.5,Ln.dead?'no':'muted',600));
+    if(!isB){[0,1,2,3,4].forEach(k=>{const x=x0+16+k*30;s+=ar(x,54,x,86,Ln.writing?'no':'line2');});}
+    else{
+      s+=rc(x0,54,72,26,6,Ln.serve===1?bx('h2'):'fill:var(--soft);stroke:var(--line2);stroke-width:1.5')+tx(x0+36,71,'v1 · old',ft(11.5,'ink',700),'middle');
+      s+=rc(x0+80,54,72,26,6,'fill:var(--card)')+rc(x0+80,54,72*Ln.v2,26,6,'fill:var(--'+(Ln.bad?'no':'ok')+'-bg)')+
+        rc(x0+80,54,72,26,6,'fill:none;stroke:var(--'+(Ln.dead?'no':Ln.serve===2?'h2':'line2')+');stroke-width:1.5'+(Ln.dead?';stroke-dasharray:4 3':''))+
+        tx(x0+116,71,Ln.dead?'v2 dropped':'v2 · new',ft(11.5,Ln.dead?'no':'ink',700),'middle');
+      const cx=Ln.serve===1?x0+36:x0+116;s+='<path d="M'+(cx-7)+' 83 L'+(cx+7)+' 83 L'+cx+' 91 Z" style="fill:var(--pri)"/>';
+    }
+    KEYS.forEach((k,i)=>{const y=94+i*20,st=Ln.rows[i];
+      const f=st===0?'fill:var(--soft)':st===1?'fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1':'fill:var(--no-bg);stroke:var(--no-line);stroke-width:1';
+      s+=rc(x0,y,152,18,5,f)+tx(x0+6,y+13,k,ft(11.5,'ink',700))+tx(x0+32,y+13,VALS[st][i],ft(11.5,st===2?'no':'ink'));});
+    const hot=Ln.lat>100;
+    s+=tx(x0,231,'tracking page: '+(hot?'slow':Ln.peak>Ln.lat?'was slow':'normal'),ft(11.5,hot||Ln.peak>Ln.lat?'no':'muted',600))+rc(x0,237,152,7,3,'fill:var(--soft2)')+rc(x0,237,152*Math.min(1,Ln.lat/200),7,3,'fill:var(--'+(hot?'no':'ok-strong')+')');
+    s+=tx(x0,263,Ln.st,ft(12,Ln.sc,700));
+    return s;
+  }
+  function draw(){if(alive())svg.innerHTML=DEFS+laneSVG(4,S.A,false)+ln(160,0,160,272,'stroke:var(--line);stroke-width:1.5')+laneSVG(164,S.B,true);}
+  async function run(kind){
+    if(S.busy||!alive())return null;S.busy=true;S.A=lane();S.B=lane();
+    const val=kind==='bug'?2:1,stop=kind==='die'?7:10,T=170*S.speed;
+    S.A.writing=true;S.A.lat=S.A.peak=190;S.B.bad=val===2;S.A.st='Writing row by row…';S.A.sc='no';S.B.st='Still serving v1';S.B.sc='ok';draw();
+    for(let t=1;t<=stop;t++){await L.sleep(T);if(!alive())return null;const p=t/10;S.A.p=S.B.p=p;S.B.v2=p;const w=Math.floor(p*6+1e-9);for(let i=0;i<w;i++)S.A.rows[i]=val;draw();}
+    S.A.writing=false;S.A.lat=40;
+    if(kind==='die'){S.A.dead=S.B.dead=true;S.A.st='Mixed versions live!';S.A.sc='no';S.B.st='v1 still whole';S.B.sc='ok';}
+    else{S.A.st=val===2?'Wrong windows live':'All tonight’s now';S.A.sc=val===2?'no':'ink';S.B.st='Copying v2…';S.B.sc='muted';draw();
+      await L.sleep(320*S.speed);if(!alive())return null;
+      S.B.serve=2;S.B.rows=S.B.rows.map(()=>val);S.B.st=val===2?'Wrong windows live':'Swapped in one step';S.B.sc=val===2?'no':'ok';}
+    S.busy=false;draw();return kind;
+  }
+  draw();
+  return {S,run,draw,alive,
+    rollA:()=>{S.A.st='Code fixed, data not';S.A.sc='no';draw();},
+    rollB:()=>{S.B.serve=1;S.B.rows=[0,0,0,0,0,0];S.B.st='Back to v1: fixed';S.B.sc='ok';draw();}};
+}
+
+/* ---------- teaching figures ---------- */
+function figWhole(){
+  const sc=[17,42,17,103,42,17],cy={17:52,42:104,103:156};
+  let s=tx(8,14,'Scans · 2.4 million',ft(12,'ink',700))+tx(312,14,'Couriers · 3,000',ft(12,'ink',700),'end');
+  sc.forEach((c,k)=>{const y=24+k*26;s+=ln(126,y+10.5,196,cy[c],'stroke:var(--line2);stroke-width:1.4');});
+  sc.forEach((c,k)=>{const y=24+k*26;s+=rc(8,y,118,21,6,bx('h2'))+tx(16,y+15,'scan · '+cid(c),ft(11.5));});
+  [[17,'van'],[42,'bike'],[103,'van']].forEach(([c,v])=>{const y=cy[c]-12;s+=rc(196,y,116,24,6,bx('h1'))+tx(204,y+16,cid(c)+' · '+v,ft(11.5,'ink',600));});
+  s+=rc(8,186,148,38,8,'fill:var(--soft)')+tx(16,201,'Database query',ft(11.5,'ink',700))+tx(16,217,'index → a few records',ft(11.5,'muted'));
+  s+=rc(164,186,148,38,8,bx('ok'))+tx(172,201,'Batch join',ft(11.5,'ok',700))+tx(172,217,'read all → every link',ft(11.5,'ink'));
+  return fig(228,s,'Every scan linked to its courier record in one pass, compared with a database index finding a few records');
+}
+function figLive(){
+  let s=tx(160,18,'one query per scan',ft(11.5,'muted',600),'middle');
+  [36,48,60,72,84].forEach(y=>{s+=ar(94,y,224,y,'muted',true);});
+  s+=rc(8,28,84,62,10,bx('h3'))+tx(50,55,'Linh’s job',ft(12,'ink',700),'middle')+tx(50,72,'2.4M scans',ft(11.5,'muted'),'middle');
+  s+=rc(228,28,84,62,10,bx('no'))+tx(270,55,'Parcel DB',ft(12,'ink',700),'middle')+tx(270,72,'live',ft(11.5,'no',700),'middle');
+  [['1','A round trip each'],['2','Cache helps by luck'],['3','Swamps the DB'],['4','Answers can change']].forEach(([n,t],k)=>{
+    const x=k%2?164:8,y=k<2?104:134;
+    s+=rc(x,y,148,26,7,'fill:var(--no-bg)')+'<circle cx="'+(x+13)+'" cy="'+(y+13)+'" r="8" style="fill:var(--no)"/>'+tx(x+13,y+17,n,ft(11.5,'card',700),'middle')+tx(x+27,y+17.5,t,ft(11.5,'ink',600));});
+  s+=rc(8,172,304,50,10,bx('ok'))+tx(18,192,'Better: copy the courier table into HDFS',ft(12,'ok',700))+tx(18,210,'(say, from a backup via ETL), and join there',ft(11.5,'ink'));
+  return fig(228,s,'A batch job sending one query per scan to the live Parcel DB, with four problems, and the better plan of copying the table');
+}
+function figAddr(){
+  const M=[20,78,136],R=[[36,'C-0017','h1'],[120,'C-0042','h2']],pairs=[[0,0],[1,0],[1,1],[2,1]];
+  let s='';
+  pairs.forEach(([m,r])=>{s+=ar(74,M[m]+17,220,R[r][0]+20,R[r][2]);});
+  M.forEach((y,k)=>{s+=rc(8,y,66,34,8,'fill:var(--soft);stroke:var(--line2);stroke-width:1.5')+tx(41,y+21,'mapper '+(k+1),ft(11.5,'ink',600),'middle');});
+  R.forEach(([y,k,c])=>{s+=rc(222,y,90,40,8,bx(c))+tx(267,y+16,'reducer call',ft(11.5,'muted'),'middle')+tx(267,y+32,k,ft(12,c,700),'middle');});
+  pairs.forEach(([m,r])=>{const my=((M[m]+17)+(R[r][0]+20))/2;s+=rc(121,my-9,54,18,4,'fill:var(--card);stroke:var(--'+R[r][2]+');stroke-width:1.5')+tx(148,my+4,R[r][1],ft(11.5,R[r][2],700),'middle');});
+  [['Join','key: courier ID'],['GROUP BY','key: hub'],['Sessions','key: user']].forEach(([a,b],k)=>{const x=8+k*103;
+    s+=rc(x,174,98,36,8,'fill:var(--soft)')+tx(x+49,189,a,ft(11.5,'ink',700),'middle')+tx(x+49,204,b,ft(11.5,'muted'),'middle');});
+  return fig(214,s,'Mappers send pairs addressed by key; every pair with the same key reaches the same reducer call');
+}
+function figNoReduce(){
+  const names=['Map','Sort','Shuffle','Merge','Reduce'];
+  let s=tx(8,16,'Reduce-side join',ft(12.5,'h1',700))+tx(312,16,'assumes nothing',ft(11.5,'muted'),'end');
+  names.forEach((n,k)=>{const x=8+k*62.5;s+=rc(x,24,54,34,8,bx('h1'))+tx(x+27,45,n,ft(11.5,'ink',600),'middle');if(k)s+=ar(x-8.5,41,x-1,41,'h1');});
+  s+=tx(160,76,'sort, copy over the network, merge: costly',ft(11.5,'muted'),'middle');
+  s+=tx(8,108,'Map-side join',ft(12.5,'h2',700))+tx(312,108,'needs facts about the inputs',ft(11.5,'muted'),'end');
+  s+=rc(8,116,54,40,8,bx('h2'))+tx(35,140,'Map',ft(11.5,'ink',600),'middle');
+  ['Sort','Shuffle','Merge'].forEach((n,k)=>{const x=70.5+k*62.5;s+=rc(x,116,54,22,6,'fill:none;stroke:var(--line2);stroke-width:1.2;stroke-dasharray:4 3')+tx(x+27,131,n,ft(11.5,'faint'),'middle')+ln(x+8,127,x+46,127,'stroke:var(--faint);stroke-width:1.2');});
+  s+=rc(258,116,54,40,8,bx('h2'))+tx(285,133,'one',ft(11.5,'ink',600),'middle')+tx(285,148,'file',ft(11.5,'ink',600),'middle');
+  s+=ar(62,148,256,148,'h2');
+  s+=tx(160,176,'one block in, one file out: no sort, no reducers',ft(11.5,'ok',600),'middle');
+  return fig(184,s,'Reduce-side join runs map, sort, shuffle, merge and reduce; a map-side join only maps and writes one file');
+}
+function figThree(){
+  const P=(y,t,c,right,need)=>rc(0,y,320,88,12,'fill:var(--soft)')+tx(10,y+18,t,ft(12.5,c,700))+tx(310,y+18,right,ft(11.5,c,600),'end')+tx(10,y+80,need,ft(11.5,'muted'));
+  let y=0,s=P(y,'Broadcast hash join','h2','every mapper gets a copy','Needs: the small side fits in memory');
+  s+=rc(10,y+30,58,38,7,bx('h2'))+tx(39,y+46,'3,000',ft(11.5,'ink',700),'middle')+tx(39,y+61,'couriers',ft(11.5,'muted'),'middle');
+  [0,1,2].forEach(k=>{const x=96+k*72;s+='<path d="M68 '+(y+42)+' Q '+(x-6)+' '+(y+24)+' '+(x+22)+' '+(y+31)+'" marker-end="url(#ah-h2)" style="fill:none;stroke:var(--h2);stroke-width:1.4"/>';});
+  [0,1,2].forEach(k=>{const x=96+k*72;s+=rc(x,y+32,64,36,7,'fill:var(--card);stroke:var(--line2);stroke-width:1.5')+tx(x+32,y+47,'mapper '+(k+1),ft(11.5,'ink',600),'middle')+tx(x+32,y+62,'hash table',ft(11.5,'h2'),'middle');});
+  y=94;s+=P(y,'Partitioned hash join','h3','mapper 3: both 3s','Needs: same key, hash and partition count');
+  [['couriers',28],['scans',50]].forEach(([n,dy])=>{s+=tx(10,y+dy+13,n,ft(11.5,'muted'));
+    for(let i=0;i<10;i++){const x=72+i*23,on=i===3;s+=rc(x,y+dy,19,17,4,on?'fill:var(--h3)':'fill:var(--card);stroke:var(--line2);stroke-width:1')+tx(x+9.5,y+dy+12.5,i,ft(11.5,on?'card':'muted',700),'middle');}});
+  s+=rc(72+3*23-3,y+24,25,47,6,'fill:none;stroke:var(--h3);stroke-width:2');
+  y=188;s+=P(y,'Map-side merge join','h4','reads both in key order','Needs: partitioned and sorted alike; any size');
+  [['parcels',28,[11,17,23,42,58]],['attempts',50,[11,11,17,42,42,58]]].forEach(([n,dy,ks])=>{s+=tx(10,y+dy+13,n,ft(11.5,'muted'));
+    ks.forEach((kk,i)=>{const x=72+i*36,on=kk===17;s+=rc(x,y+dy,32,17,4,on?'fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5':'fill:var(--card);stroke:var(--line2);stroke-width:1')+tx(x+16,y+dy+12.5,kk,ft(11.5,on?'h4':'muted',700),'middle');});});
+  return fig(278,s,'Three map-side joins: broadcast hash, partitioned hash and map-side merge, each with the fact it needs');
+}
+function figLayout(m){
+  const rs=m==='rs';
+  let s=tx(8,14,'Input: scans, one file per hour',ft(12,'ink',700))+tx(312,14,'Output',ft(12,'ink',700),'end');
+  ['08:00','09:00','10:00'].forEach((h,k)=>{const y=24+k*48;s+=rc(8,y,108,40,7,bx('h2'))+tx(16,y+16,h+' file',ft(11.5,'ink',700))+tx(16,y+32,'C-0042, C-0007…',ft(11.5,'muted'));s+=ar(116,y+20,122,84,'muted');});
+  s+=rc(124,62,64,44,8,'fill:var(--soft);stroke:var(--line2);stroke-width:1.5')+tx(156,81,rs?'reduce-':'broadcast',ft(11.5,'ink',700),'middle')+tx(156,97,rs?'side join':'join',ft(11.5,'ink',700),'middle');
+  const out=rs?[['part 0','C-0001…C-0999'],['part 1','C-1000…C-1999'],['part 2','C-2000…C-2999']]:[['08:00 out','C-0042, C-0007…'],['09:00 out','C-0311, C-0042…'],['10:00 out','C-0007, C-0950…']];
+  out.forEach(([a,b],k)=>{const y=24+k*48;s+=ar(188,84,200,y+20,'muted')+rc(204,y,108,40,7,bx(rs?'h1':'h2'))+tx(212,y+16,a,ft(11.5,'ink',700))+tx(212,y+32,b,ft(11.5,'muted'));});
+  s+=tx(160,184,rs?'partitioned and sorted by courier ID':'laid out like the hourly scan files',ft(12,rs?'h1':'h2',700),'middle');
+  return fig(192,s,rs?'A reduce-side join writes output partitioned and sorted by courier ID':'A broadcast join writes one output file per hourly input file');
+}
+function figOut(){
+  const rows=[['OLTP query','few records by key','web page','for a user'],['Analytic query','scans many records','report','for a manager'],['Batch job','scans many records','search index or','key-value files']];
+  let s='';
+  rows.forEach((r,k)=>{const y=6+k*66,hi=k===2,st=hi?bx('h2'):'fill:var(--soft)';
+    s+=rc(8,y,128,52,9,st)+tx(16,y+22,r[0],ft(12,'ink',700))+tx(16,y+40,r[1],ft(11.5,'muted'));
+    s+=ar(138,y+26,170,y+26,hi?'h2':'muted');
+    s+=rc(174,y,138,52,9,st)+tx(182,y+22,r[2],ft(12,hi?'h2':'ink',700))+tx(182,y+40,r[3],ft(11.5,hi?'h2':'muted',hi?700:400));});
+  s+=tx(243,208,'served read-only to the app',ft(11.5,'h2',600),'middle');
+  return fig(214,s,'Three kinds of output: OLTP gives a web page, analytics gives a report, a batch job gives files such as a search index or key-value store');
+}
+function figPhilo(){
+  let s=rc(8,22,92,56,9,'fill:var(--soft);stroke:var(--line2);stroke-width:1.5')+tx(16,56,'input files',ft(11.5,'ink',700))+tx(16,71,'unchanged',ft(11.5,'muted'));
+  s+=rc(16,32,12,9,2,'fill:var(--muted)')+'<path d="M18.5 32 v-3 a3.5 3.5 0 0 1 7 0 v3" style="fill:none;stroke:var(--muted);stroke-width:1.6"/>';
+  s+=ar(100,50,110,50,'muted')+rc(112,30,64,40,9,bx('h3'))+tx(144,55,'job',ft(12,'ink',700),'middle');
+  s+=rc(204,8,108,30,7,'fill:var(--soft);stroke:var(--line2);stroke-width:1.5')+tx(212,28,'out/nov-15 · old',ft(11.5,'muted',600));
+  s+=rc(204,46,108,30,7,bx('ok'))+tx(212,66,'out/nov-16 · new',ft(11.5,'ok',700));
+  s+=ar(176,52,202,60,'ok')+tx(258,94,'old output kept',ft(11.5,'muted'),'middle');
+  s+=ar(144,70,144,96,'no',true)+rc(108,98,72,28,7,'fill:var(--no-bg);stroke:var(--no);stroke-width:1.5;stroke-dasharray:4 3')+tx(144,117,'live DB',ft(11.5,'no',600),'middle')+ln(118,113,170,113,'stroke:var(--no);stroke-width:1.6');
+  s+=tx(144,142,'no side effects',ft(11.5,'no',700),'middle');
+  [['Bug? Switch back','ok'],['Retry tasks safely','ok'],['Many jobs, one input','h2'],['Logic ≠ wiring','h2']].forEach(([t,c],k)=>{const x=k%2?164:8,y=k<2?154:186;s+=rc(x,y,148,26,7,bx(c))+tx(x+74,y+17.5,t,ft(11.5,'ink',600),'middle');});
+  return fig(216,s,'Input files never change, the job writes a fresh output directory and keeps the old one, and nothing is written to a live database');
+}
+function figMPP(){
+  let s=rc(8,6,148,202,12,'fill:var(--soft)')+tx(82,26,'MPP database',ft(12.5,'h1',700),'middle');
+  ['Analytic SQL','Query planner','Scheduler','Storage layout'].forEach((t,k)=>{const y=36+k*36;s+=rc(18,y,128,30,7,bx('h1'))+tx(82,y+19.5,t,ft(11.5,'ink',600),'middle');});
+  s+=tx(82,196,'its own data format',ft(11.5,'muted'),'middle');
+  s+=rc(164,6,148,202,12,'fill:var(--soft)')+tx(238,26,'Hadoop',ft(12.5,'h2',700),'middle');
+  ['MapReduce','Hive SQL','HBase','Impala','your code','…'].forEach((t,k)=>{const x=k%2?240:172,y=36+Math.floor(k/2)*34;s+=rc(x,y,64,28,7,'fill:var(--card);stroke:var(--line2);stroke-width:1.5')+tx(x+32,y+18.5,t,ft(11.5,'ink',600),'middle');});
+  s+=rc(172,142,132,40,8,bx('h2'))+tx(238,159,'HDFS',ft(12,'ink',700),'middle')+tx(238,175,'files of any bytes',ft(11.5,'muted'),'middle');
+  s+=tx(238,198,'text, images, video…',ft(11.5,'muted'),'middle');
+  return fig(214,s,'An MPP database is one tightly integrated stack; Hadoop is many engines over a filesystem of any bytes');
+}
+function figSushi(){
+  let s=tx(8,16,'Model first (MPP database)',ft(12,'h1',700));
+  ['Design schema','Import','Query'].forEach((t,k)=>{const x=8+k*104;s+=rc(x,24,96,32,8,bx('h1'))+tx(x+48,44,t,ft(11.5,'ink',600),'middle');if(k)s+=ar(x-8,40,x-1,40,'h1');});
+  s+=tx(8,74,'the data waits until the model is agreed',ft(11.5,'muted'));
+  s+=tx(8,102,'Dump raw first (Hadoop)',ft(12,'h2',700));
+  s+=rc(8,110,104,82,10,bx('h2'))+tx(60,138,'Raw app logs',ft(11.5,'ink',700),'middle')+tx(60,155,'in HDFS today',ft(11.5,'muted'),'middle')+tx(60,172,'any format',ft(11.5,'muted'),'middle');
+  ['ETL → warehouse tables','ML features','Ad-hoc analysis'].forEach((t,k)=>{const y=110+k*30;s+=ar(112,151,146,y+12,'h2')+rc(150,y,162,24,7,'fill:var(--card);stroke:var(--line2);stroke-width:1.5')+tx(158,y+16.5,t,ft(11.5,'ink',600));});
+  return fig(198,s,'Model first: design a schema, import, then query. Dump raw first: raw logs land today and each consumer interprets them');
+}
+function figEngines(){
+  let s=tx(160,14,'One shared cluster',ft(12.5,'ink',700),'middle');
+  [['MapReduce','your own code','h1'],['Hive','SQL on MapReduce','h3'],['HBase','OLTP, random access','h4'],['Impala','MPP-style SQL','h1']].forEach(([a,b,c],k)=>{const x=k%2?164:8,y=k<2?24:72;
+    s+=rc(x,y,148,40,8,'fill:var(--card);stroke:var(--'+c+');stroke-width:1.5')+tx(x+10,y+17,a,ft(12,c,700))+tx(x+10,y+33,b,ft(11.5,'muted'));});
+  s+=ar(82,113,82,127,'h2')+ar(238,113,238,127,'h2');
+  s+=rc(8,130,304,38,9,bx('h2'))+tx(160,154,'HDFS: the same files for every engine',ft(12,'ink',700),'middle');
+  s+=tx(160,188,'no copying data into separate systems',ft(11.5,'muted'),'middle');
+  return fig(194,s,'MapReduce, Hive, HBase and Impala all run on one cluster over the same HDFS files');
+}
+function figFaults(){
+  let s=tx(8,16,'MPP: a node crashes mid-query',ft(12,'h1',700));
+  s+=rc(8,24,304,18,6,'fill:var(--h1-bg)')+rc(8,24,182,18,6,'fill:var(--h1);fill-opacity:.45')+ln(184,22,196,44,'stroke:var(--no);stroke-width:2.5')+ln(196,22,184,44,'stroke:var(--no);stroke-width:2.5');
+  s+=tx(8,60,'Abort and rerun the whole query',ft(11.5,'ink'))+tx(312,60,'short queries: fine',ft(11.5,'muted'),'end');
+  s+=tx(8,90,'MapReduce: one task is killed',ft(12,'h2',700));
+  for(let r=0;r<2;r++)for(let k=0;k<6;k++){const x=8+k*51,y=98+r*20,dead=r===0&&k===3;
+    s+=rc(x,y,46,15,4,dead?'fill:var(--no-bg);stroke:var(--no);stroke-width:1.5':bx('ok'))+(dead?tx(x+23,y+11.5,'rerun',ft(11,'no',700),'middle'):'');}
+  s+=tx(8,152,'Rerun just that task; save results to disk',ft(11.5,'ink'));
+  s+=tx(8,180,'Why so many kills? Shared machines at Google',ft(12,'h3',700));
+  s+=rc(8,188,184,26,6,bx('h1'))+tx(100,205,'online · high priority',ft(11.5,'ink',600),'middle');
+  s+=rc(196,188,116,26,6,bx('h3'))+tx(254,205,'batch · low',ft(11.5,'ink',600),'middle');
+  s+='<path d="M120 216 Q 200 238 252 217" marker-end="url(#ah-no)" style="fill:none;stroke:var(--no);stroke-width:1.6"/>'+tx(186,246,'preempts batch tasks for resources',ft(11.5,'no',600),'middle');
+  return fig(252,s,'An MPP database reruns the whole query after a crash; MapReduce reruns one task. At Google, high-priority services preempt low-priority batch tasks');
+}
+
 Course.lesson({
   id:'0026', title:'Joins and outputs of batch jobs', minutes:20, icon:'layers',
   goals:['Pick the right batch join for two datasets: reduce-side, broadcast, partitioned or merge','Ship a batch job’s output safely, without writing into a live database','Explain how Hadoop differs from an MPP database, and why MapReduce expects tasks to die'],
   parts:['Reduce-side joins','Map-side joins','Batch outputs','Hadoop vs MPP'],
-  read:'Read the second half of the MapReduce section in chapter 10 for the join algorithms and the Google preemption numbers.',
+  read:'Read the second half of the MapReduce section in chapter 10 for the join algorithms, batch outputs and the Google preemption numbers.',
   glossary:{
-    mapper:'Mapper: in MapReduce, your function that is called once for every input record and pulls a key and a value out of it.',
+    mapper:'Mapper: in MapReduce, your function that runs on each input record and pulls out a key and a value.',
     reducer:'Reducer: in MapReduce, your function that is called once per key, with all the values for that key, and writes output records.',
+    shuffle:'Shuffle: MapReduce’s step of partitioning mapper output by reducer, sorting it and copying each part over the network to its reducer.',
     sortmerge:'Sort-merge join: a reduce-side join. Mappers tag every record from both inputs with the join key; the framework sorts by key, so matching records meet in the same reducer call.',
-    secondary:'Secondary sort: arranging the records within one key in a chosen order, such as “the profile record first, then events by time.”',
-    hotkey:'Hot key: a key with far more records than the others (a “celebrity”). It makes one reducer do much more work than the rest, which is called skew.',
+    secondary:'Secondary sort: arranging the records within one key in a chosen order, such as “the courier record first, then scans by time.”',
+    hotkey:'Hot key: a key with far more records than the others (a “celebrity”, or linchpin object). It makes one reducer do much more work than the rest, which is called skew.',
     broadcast:'Broadcast hash join: a map-side join where the small input is loaded whole into a hash table in every mapper, and each mapper scans its part of the large input.',
-    mpp:'MPP (massively parallel processing): analytics databases that split one complex query into stages and pieces, and run many of them at once on different nodes.'
+    partitionedhash:'Partitioned hash join: a map-side join for two inputs partitioned the same way. Each mapper loads one partition of one input into a hash table and scans the matching partition of the other.',
+    mergejoin:'Map-side merge join: a map-side join for inputs partitioned and sorted the same way. A mapper reads both files in key order and matches records as it goes.',
+    'human-fault':'Human fault tolerance: being able to recover from buggy code, for example by rolling back and rerunning a job, or switching back to the old output.',
+    mpp:'MPP (massively parallel processing): analytics databases that split one complex query into stages and pieces, and run many of them at once on different nodes.',
+    'schema-on-read':'Schema-on-read: storing data without enforcing a structure, and letting whoever reads it interpret its structure.',
+    preempt:'Preemption: a scheduler killing a running low-priority task to give its resources to a higher-priority one.'
   },
   cheatsheet:[
-    'Batch jobs join <b>whole datasets</b> by scanning them, not by looking up one record at a time. Copy the other dataset into the cluster instead of querying a live database per record.',
-    '<b>Sort-merge join</b> (reduce-side): mappers emit the join key, the shuffle brings matches together, a <b>secondary sort</b> puts the profile record first. Works on any input.',
-    '<b>Hot keys</b> cause skew: spread them over several reducers (and copy the other side’s record to each), or aggregate in two stages.',
-    'Map-side joins skip the sort: <b>broadcast hash</b> (one side fits in memory), <b>partitioned hash</b> (both sides partitioned the same way), <b>merge</b> (also sorted the same way).',
-    'A join’s output layout matters for the next job: reduce-side output follows the join key, map-side output follows the large input.',
-    'Build outputs (search indexes, key-value files) as <b>new immutable files</b>, then switch servers to them. Never write record by record into a live database.',
+    'Batch jobs join <b>whole datasets</b> by scanning them. Copy the other dataset next to yours; don’t query a live database once per record.',
+    '<b>Sort-merge join</b> (reduce-side): mappers emit the join key, the shuffle brings matches to one reducer call, a <b>secondary sort</b> puts the courier record first. Works on any input.',
+    '<b>Hot keys</b> cause skew, and a job ends with its slowest reducer: spread the hot key over several reducers (copying the other side’s record to each), or aggregate in two stages.',
+    'Map-side joins skip the sort and shuffle: <b>broadcast hash</b> (small side fits in memory), <b>partitioned hash</b> (same key, hash and partition count), <b>merge</b> (also sorted alike).',
+    'Output layout matters for the next job: a reduce-side join’s output follows the join key, a map-side join’s follows the large input.',
+    'Ship outputs (search indexes, key-value files) as <b>new immutable files</b>, then switch servers to them in one step. Never write record by record into a live database.',
     'Immutable inputs + replaced outputs = <b>human fault tolerance</b>: roll back the code and rerun, or switch back to the old output.',
-    'Hadoop vs MPP: store any raw data, run any code, and retry single tasks, because preemption makes tasks die often.'
+    'Hadoop vs MPP: store any raw data (schema-on-read), run any code, retry single tasks, because preemption kills tasks often.'
   ],
   steps:[
 /* ---------- PART 1: REDUCE-SIDE JOINS ---------- */
@@ -45,42 +451,26 @@ Course.lesson({
    'Millions of tiny round trips would be slow and would hammer the live database. This lesson shows how batch jobs join whole datasets in bulk.',
    'One query per scan means 2.4 million round trips to a live database. Copying the courier table and matching in bulk is how batch jobs join.');}},
 {part:0,src:'Chapter 10 · Reduce-Side Joins and Grouping',run(L){
-  L.h(L.kick('learn','Joins in batch jobs')+'<h1 class="q">A batch job joins everything at once</h1>'+
-   L.prose('A join is needed whenever code must see records on both sides of a reference: a foreign key, a document reference or a graph edge. When a database answers a small query, it uses an '+L.g('index','index')+' to find the few records it needs.')+
-   L.prose('MapReduce has no indexes in that sense. It reads <b>all</b> of its input files, what a database would call a full table scan. That is outrageously expensive for a few records, but reasonable for analytics over a great many, especially spread across machines.')+
-   L.note('So in batch processing, a join means resolving <b>every</b> occurrence of a link across the whole dataset: all couriers’ scans at once, not one courier’s.','info')+
-   L.prose('The book’s example is a log of website <b>activity events</b> joined with a database of <b>user profiles</b>, to see which pages are popular with which age groups. The events hold only a user ID. Copying the whole profile into every event would be too wasteful, so the two must be joined. Think of it as a star schema: the events are the fact table, the users a dimension.'));
+  L.h(L.kick('learn','Joins in batch jobs')+'<h1 class="q">A batch join resolves every link at once</h1>'+CSS+figWhole()+
+   cap('A join is needed wherever code must see both sides of a link: a foreign key, a document reference, a graph edge. A database uses an '+L.g('index','index')+' to find a few records. MapReduce has no indexes: it reads every file in full.')+
+   more('The book’s example','Website activity events (the fact table) joined with user profiles (a dimension), to see which pages each age group likes.'));
   L.done();}},
 {part:0,src:'Chapter 10 · Example: analysis of user activity events',run(L){
-  L.h(L.kick('learn','Why not just query the database?')+'<h1 class="q">One remote lookup per record is the wrong shape for batch</h1>'+
-   L.prose('The simplest join would walk through the events and ask the user database, over the network, about each user ID. It works, but the book lists why it performs badly:')+
-   L.list([['clock','Round trips','Throughput is capped by the time each request takes to reach the database and come back.'],
-     ['layers','Caching is luck','How much a local cache helps depends heavily on how the data happens to be spread.'],
-     ['flame','Overload','Running many queries in parallel could easily swamp the database.'],
-     ['cycle','Changing answers','The remote data may change while the job runs, so the job is no longer deterministic: run it twice, get different results.']],4)+
-   L.prose('The better way: take a <b>copy</b> of the user database (for example, extracted from a backup by an ETL process) and put it in the same distributed filesystem as the events. Then MapReduce can bring matching records together and process them on the same machine.'));
+  L.h(L.kick('learn','Don’t ask the live database')+'<h1 class="q">One query per record is the wrong shape</h1>'+CSS+figLive()+
+   cap('Round trips cap the speed, a cache helps only if the data happens to suit it, parallel queries can swamp the database, and data changing mid-job makes reruns give different answers. Join a copy instead.'));
   L.done();}},
-{part:0,src:'Chapter 10 · Sort-merge joins',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh joins scans with couriers, step by step</h1>');
-  L.beats(L.card,[
-   ['Two kinds of mapper','One set of '+L.g('mapper','mappers')+' reads the scans and emits <b>(courier ID, scan)</b>. Another reads the copied courier table and emits <b>(courier ID, vehicle type)</b>.'],
-   ['Partition and sort','The framework partitions and sorts by key. Every record for courier C-0017, from both inputs, now sits side by side in one reducer’s input.'],
-   ['Secondary sort','Linh arranges the order within each key: the courier record first, then that courier’s scans in time order. This is a '+L.g('secondary','secondary sort')+'.'],
-   ['Reduce','The '+L.g('reducer','reducer')+' runs once per courier ID. It reads the first value, stores “van” in a local variable, then walks the scans and outputs (van, on time?) for each.'],
-   ['Next job','A later job counts on-time rates per vehicle type from that output.'],
-   ['Why it’s cheap','The reducer holds one courier record in memory at a time and never makes a network request.']],
-   'This is a '+L.g('sortmerge','sort-merge join')+': mapper output is sorted by key, and the reducer merges the two sorted lists of records.');}},
-{part:0,src:'Chapter 10 · Sort-merge joins',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What makes a courier’s own record reach the reducer before that courier’s scans?</h1>');
-  L.mc(L.card,['The reducer loads every courier record into memory first','The courier table being much smaller than the scans','A secondary sort that orders records within each key'],2,
-   'The secondary sort puts the courier record first and the scans after it in time order, so the reducer never has to buffer scans while waiting.',
-   'The main sort only groups records by key; it doesn’t say which comes first within a key. That is the secondary sort’s job. Size and loading everything into memory play no part.');}},
+{part:0,src:'Chapter 10 · Sort-merge joins',
+ solve:async L=>{const st=L.st;st.S.speed=.15;L.$('#s4-off').click();L.$('#s4-go').click();await st.idle();L.$('#s4-on').click();L.$('#s4-go').click();await st.idle();await until(L,()=>L.s4done);},
+ run(L){
+  const ran=new Set();L.s4done=false;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Watch one '+L.g('reducer','reducer')+' join courier C-0017’s scans. Run it with the secondary sort off, then on.</h1>'+CSS+'<div id="s4"></div>');
+  L.st=Stream(L,L.$('#s4'),'s4',sorted=>{ran.add(sorted);
+    if(ran.size===2&&!L.s4done){L.s4done=true;
+      L.sheet('info','That’s a sort-merge join','Two kinds of '+L.g('mapper','mapper')+' emit the courier ID as the key. Sorting by key lines up the courier record and its scans in one reducer call. A '+L.g('secondary','secondary sort')+' puts the courier record first, so the reducer holds one record and never touches the network. Mapper output is sorted, reducers merge it: a '+L.g('sortmerge','sort-merge join')+'.');L.done();}});}},
 {part:0,src:'Chapter 10 · Bringing related data together in the same place',run(L){
-  L.h(L.kick('learn','The key is an address')+'<h1 class="q">Joins and grouping use the same trick</h1>'+
-   L.prose('You can think of mappers as sending messages to reducers. The key works like a delivery address: every pair with the same key is delivered to the same place, one reducer call. Having all the data lined up in advance, the reducer can be simple, single-threaded code that runs fast with little memory.')+
-   L.prose('This separates <b>getting data to the right machine</b> (the framework’s job) from <b>processing it</b> (your code). Compare a normal app, where database queries sit deep inside application code. Because the framework does all network communication, it can also quietly retry tasks that fail, without your logic noticing.')+
-   L.lanes([['list','Grouping (GROUP BY)','Emit the grouping key, and the reducer aggregates each group: count it, sum a field, or pick the top k.',1],
-            ['person','Sessionization','Gather every event for one user (or session) from many web servers’ logs, to see what they did in order. Useful for A/B tests or judging a marketing campaign.',2]]));
+  L.h(L.kick('learn','The key is an address')+'<h1 class="q">Same key, same place</h1>'+CSS+figAddr()+
+   cap('A mapper’s key works like a delivery address: every pair with the same key reaches the same reducer call. The framework moves the data and retries failed tasks, so the reducer can be simple, single-threaded code using little memory.')+
+   more('Grouping and sessions work the same way','Count, sum or pick the top k per key. Sessionization gathers one user’s events from many servers’ logs, in order: handy for A/B tests or judging a campaign.'));
   L.done();}},
 {part:0,src:'Chapter 10 · GROUP BY',pts:5,run(L){
   L.h('<div id="qk"></div>');
@@ -90,111 +480,183 @@ Course.lesson({
    ['Rebuild each courier’s day from scans scattered across many hub servers’ logs.',0,'That is sessionization: bring every event for one courier together, in time order.'],
    ['Join scans with the courier table to add each courier’s vehicle type.',0,'The scans and the courier records share the courier ID.'],
    ['Find each merchant’s ten busiest postcodes.',1,'Group by merchant, then pick the top ten inside each group.']]);}},
-{part:0,src:'Chapter 10 · Handling skew',run(L){
-  L.h(L.kick('learn','Handling skew')+'<h1 class="q">When one key is far bigger than the rest</h1>'+
-   L.prose('Sending every record for a key to one place breaks down when one key has a huge amount of data. The book’s example is a celebrity with millions of followers. Such keys are called '+L.g('hotkey','hot keys')+' (or linchpin objects). The reducer that gets one has far more work than the others: that imbalance is called <b>skew</b>, or a hot spot.')+
-   L.note('A MapReduce job is only finished when its <b>slowest</b> reducer is finished, and every later job waits for it.','clock')+
-   L.list([['Skewed join (Pig)','A sampling job first finds the hot keys. Mappers then send each hot-key record to one of several reducers, chosen at random. The other input’s records for that key are copied to all of those reducers.'],
-     ['Sharded join (Crunch)','The same idea, but you name the hot keys yourself instead of sampling.'],
-     ['Skewed join (Hive)','Hot keys are listed in the table’s metadata and stored in separate files, then joined with a map-side join.'],
-     ['Two-stage grouping','To aggregate a hot key, first send its records to random reducers that each produce a partial total, then a second job combines the partial totals.']],3));
-  L.done();}},
 {part:0,src:'Chapter 10 · Handling skew',pts:1,
- solve:async L=>{L.$('#spr').click();},
+ solve:async L=>{L.$('#k7').children[2].click();L.$('#k7go').click();await until(L,()=>L.k7ok);},
  run(L){
-  const before=[22,22,100,22,22,22],after=[22,42,42,42,42,22];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh joins all parcels with merchant records, keyed by merchant ID. Bramble & Bolt sends about 15% of all parcels.</h1>'+
-   '<div id="bars">'+before.map((v,j)=>'<div class="meterrow"><div class="lb">Reducer '+(j+1)+(j===2?' <b>(Bramble & Bolt)</b>':'')+'</div><div class="meter"><div id="b'+j+'" style="width:'+v+'%;transition:width .8s;background:'+(j===2?'var(--no)':'var(--h2)')+'"></div></div></div>').join('')+'</div>'+
-   '<p class="small" id="tm">6 of the job’s 20 reducers shown. The job ends when the slowest reducer ends: <b>19 units of work</b>, while most reducers have about 4.</p>'+
-   '<button class="btn pri" id="spr">'+L.ic('play')+'Spread Bramble & Bolt over 4 reducers</button><div id="hq"></div>');
-  L.$('#spr').onclick=function(){this.remove();after.forEach((v,j)=>{const b=L.$('#b'+j);b.style.width=v+'%';b.style.background=(v>30?'var(--h3)':'var(--h2)');});
-    L.$('#tm').innerHTML='Bramble & Bolt’s parcels now go to reducers 2 to 5 at random. The slowest reducer has about <b>8 units</b>, so the whole job finishes more than twice as fast.';
-    const q=L.$('#hq');q.innerHTML='<h2 class="sub">What must now happen to the single Bramble & Bolt merchant record?</h2>';
-    L.mc(q,['It goes to one of the four, picked by hash','It is copied to all four of those reducers','It is dropped and joined in a later job'],1,
-     'Each of the four reducers has some Bramble & Bolt parcels, so each needs the merchant record. That copying is the price of spreading the work.',
-     'Each of the four reducers now holds some Bramble & Bolt parcels, and each must join them. So the merchant record is copied to all four. That copying is the cost of spreading the work.');};}},
+  const base=[10.2,11,10.5,11,10,10.8,10.4,10.9],HOT=15,SP={1:[2],2:[2,3],4:[1,2,3,4],8:[0,1,2,3,4,5,6,7]};
+  let k=1,first=true;L.k7ok=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Bramble & Bolt is a '+L.g('hotkey','hot key')+'. Get Linh’s parcels × merchants join under 15 minutes, copying its merchant record as few times as possible.</h1>'+CSS+
+   '<p class="small" style="margin:-6px 0 6px">It sends about 15% of all parcels, and every record with its key lands on one reducer. A job ends only when its slowest reducer does. Minutes are illustrative.</p>'+
+   '<svg class="bj-fig" id="k7s" viewBox="0 0 320 214" role="img" aria-label="Work per reducer; Bramble &amp; Bolt’s parcels stacked on the reducers that get them"></svg>'+
+   '<div class="bj-lbl">Spread Bramble & Bolt over</div><div class="bj-row" id="k7"></div><div class="bj-log" id="k7r" aria-live="polite"></div>'+
+   '<div class="bj-row"><button class="btn pri" id="k7go">'+L.ic('play')+'Run tonight’s join</button></div>');
+  const load=()=>base.map((b,j)=>b+(SP[k].includes(j)?HOT/k:0));
+  function draw(){
+    const ld=load(),mxv=Math.max(...ld),Y=v=>182-v*5.2;
+    let s=rc(8,6,12,12,3,bx('h4'))+tx(25,16,'Bramble & Bolt parcels',ft(11.5,'muted'))+'<circle cx="190" cy="12" r="6" style="fill:var(--h1)"/>'+tx(200,16,'its merchant record',ft(11.5,'muted'));
+    s+=ln(8,Y(15),312,Y(15),'stroke:var(--ok);stroke-width:1.5;stroke-dasharray:5 4')+tx(312,Y(15)-4,'target 15 min',ft(11.5,'ok',700),'end');
+    s+=ln(8,Y(mxv),312,Y(mxv),'stroke:var(--no);stroke-width:1.5;stroke-dasharray:2 3')+tx(8,Y(mxv)-4,'job ends: '+mxv.toFixed(1)+' min',ft(11.5,mxv>15?'no':'ok',700));
+    base.forEach((b,j)=>{const x=14+j*38,hot=SP[k].includes(j)?HOT/k:0;
+      s+=rc(x,Y(b),30,b*5.2,4,bx('h2'));
+      if(hot){s+=rc(x,Y(b+hot),30,hot*5.2,4,bx('h4'))+'<circle cx="'+(x+15)+'" cy="'+(Y(b+hot/2))+'" r="4.5" style="fill:var(--h1)"/>';}
+      s+=tx(x+15,198,'R'+(j+1),ft(11.5,'muted',600),'middle');});
+    L.$('#k7s').innerHTML=s;
+    L.$('#k7r').innerHTML='Slowest reducer: <b>'+mxv.toFixed(1)+' min</b> · copies of the merchant record: <b>'+k+'</b>';
+    [...L.$('#k7').children].forEach(b=>b.classList.toggle('sel',+b.dataset.k===k));
+  }
+  [1,2,4,8].forEach(n=>{const b=document.createElement('button');b.className='chip';b.dataset.k=n;b.textContent=n+' reducer'+(n>1?'s':'');b.onclick=()=>{k=n;draw();};L.$('#k7').appendChild(b);});
+  draw();
+  L.$('#k7go').onclick=()=>{
+    const t=Math.max(...load()),ok=t<=15&&k<=4;
+    if(first){L.award(ok);first=false;}
+    if(ok){L.k7ok=true;L.$('#k7go').disabled=true;
+      L.sheet('ok','14.8 minutes, 4 copies','Spreading a hot key’s records over random reducers shares the work. The price: each of those reducers needs its own copy of the other side’s record. Pig’s skewed join finds hot keys with a sampling job first; Crunch’s sharded join makes you name them. Hive keeps hot keys in separate files and map-side joins them. To count a hot key, aggregate in two stages: partial totals, then combine.');L.done();}
+    else L.sheet('no',t>15?'Still over 15 minutes':'Fast, but 8 copies',t>15?'The job waits for its slowest reducer, at '+t.toFixed(1)+' minutes. Spread Bramble & Bolt wider and run again.':'Every reducer holding Bramble & Bolt parcels needs its own copy of the merchant record. 4 reducers already beat the target. Try fewer.');};}},
 
 /* ---------- PART 2: MAP-SIDE JOINS ---------- */
 {part:1,src:'Chapter 10 · Map-Side Joins',run(L){
-  L.h(L.kick('learn','Skip the sort')+'<h1 class="q">If you know your inputs, you can drop the reducers</h1>'+
-   L.lanes([['layers','Reduce-side join','Assumes nothing about the input: the mappers can always prepare it. But all the sorting, copying to reducers and merging is expensive. Data may be written to disk several times on the way.',1],
-            ['pointer','Map-side join','Possible only if you can make certain assumptions about the inputs. A cut-down job with <b>no reducers and no sorting</b>: each mapper reads one input block and writes one output file. That’s all.',2]])+
-   L.prose('The next screen shows three map-side joins. Each one depends on a different assumption about the inputs.'));
+  L.h(L.kick('learn','Skip the sort')+'<h1 class="q">Know your inputs, drop the reducers</h1>'+CSS+figNoReduce()+
+   cap('A reduce-side join assumes nothing about its inputs, but the '+L.g('shuffle','shuffle')+' is costly: sorting, network copies, merging, and data written to disk several times. If you know more about the inputs, a map-side join skips it all.'));
   L.done();}},
-{part:1,src:'Chapter 10 · Broadcast hash joins',run(L){
-  L.h(L.kick('learn','Three map-side joins')+'<h1 class="q">Each works under a different assumption</h1>'+
-   L.tiers([['box','Broadcast hash join','<b>One side is small enough to fit in memory.</b> There is one mapper per block of the large input, and each one first loads the whole small input into an in-memory hash table, then scans its block and looks up each record. The small input is “broadcast” to every mapper. A variant keeps the small side in a read-only index on local disk, mostly served from the operating system’s cache.','Pig calls it a replicated join, Hive a MapJoin',true,'Simplest'],
-            ['layers','Partitioned hash join','<b>Both sides are partitioned the same way:</b> same key, same hash function, same number of partitions. Say both are split by the last digit of the user ID. Mapper 3 loads only users ending in 3, then scans only events for those users. Each hash table is much smaller.','Hive calls these bucketed map joins'],
-            ['list','Map-side merge join','<b>Both sides are partitioned the same way and also sorted by the same key.</b> A mapper reads both files in key order and matches records, just as a reducer would. Size no longer matters.','Usually means earlier jobs already put the data in this shape']]));
+{part:1,src:'Chapter 10 · Map-Side Joins',run(L){
+  L.h(L.kick('learn','Three map-side joins')+'<h1 class="q">Each one rests on a different fact</h1>'+CSS+figThree()+
+   cap('Know the small side fits in memory? '+L.g('broadcast','Broadcast')+'. Both sides share key, hash function and partition count? '+L.g('partitionedhash','Partitioned hash')+'. Also sorted by that key? '+L.g('mergejoin','Merge')+', whatever the size.')+
+   more('Other names, and a variant','Pig calls the broadcast join a replicated join and Hive a MapJoin; Hive’s partitioned one is a bucketed map join. A variant keeps the small side in a read-only index on local disk, mostly served from the page cache.'));
   L.done();}},
-{part:1,src:'Chapter 10 · Broadcast hash joins',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh joins 2.4 million scans with Otterpost’s 3,000 couriers. Nobody knows how the two are partitioned. Which join is the simplest good fit?</h1>');
-  L.mc(L.card,['Broadcast hash join','Map-side merge join','Reduce-side sort-merge join'],0,
-   '3,000 courier records fit easily in each mapper’s memory. Every mapper loads them into a hash table and scans its block of scans: no sorting, no reducers.',
-   'A merge join needs both sides partitioned and sorted the same way, which nobody knows here. A sort-merge join would work but pays for sorting and shuffling. With a small courier table, a broadcast hash join is simplest.');}},
-{part:1,src:'Chapter 10 · Map-Side Joins',pts:5,run(L){
-  L.h(L.kick('pr','Pick the join')+'<h1 class="q">Which join fits each of Linh’s jobs best?</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Broadcast hash','Partitioned hash','Map-side merge','Reduce-side'],[
-   ['All of yesterday’s scans joined with the small table of hubs',0,'The hub table easily fits in every mapper’s memory.'],
-   ['Parcels and delivery attempts, both split into 32 partitions by the same hash of parcel ID',1,'Same key, same hash, same number of partitions: each mapper joins one matching pair of partitions.'],
-   ['Parcels and delivery attempts, split the same way and also sorted by parcel ID',2,'Partitioned and sorted alike, so a mapper can merge the two files in key order.'],
-   ['Two huge datasets from other teams; nobody knows how either is partitioned',3,'With no safe assumptions and neither side small, the reduce-side join is the one that always works.'],
-   ['Parcels split by merchant ID into 16 parts, addresses split by postcode into 16 parts',3,'Same number of parts but different keys, so matching records may sit in different partitions. Reduce-side it is.']],
-   'Small side? Broadcast. Same partitioning? Partitioned hash. Same partitioning and sort order? Merge. Otherwise, the reduce-side join.');}},
+{part:1,src:'Chapter 10 · Map-Side Joins',
+ solve:async L=>{setR(L,'m10-r',7.08);L.$('#m10-b').children[1].click();L.$('#m10-b').children[2].click();L.$('#m10-b').children[0].click();await until(L,()=>L.m10done);},
+ run(L){
+  const seen=new Set(['bc']);L.m10done=false;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Linh joins a year of scans (876 million) with a smaller dataset. Drag the dot to find all four joins.</h1>'+CSS+
+   '<p class="small" style="margin:-6px 0 4px">Across: how big the smaller side is. Up: what Linh knows about how both sides are laid out. The 1 million memory limit and 32 partitions are illustrative.</p>'+
+   '<div id="m10t"></div><div id="m10"></div>');
+  const tick=()=>{L.$('#m10t').innerHTML=['bc','ph','mg','rs'].map(k=>'<span class="bj-tk'+(seen.has(k)?' on':'')+'" style="--c:var(--'+JN[k][1]+')">'+(seen.has(k)?'✓ ':'')+SHORT[k]+'</span>').join('');
+    if(seen.size===4&&!L.m10done){L.m10done=true;
+      L.sheet('info','The more you know, the cheaper the join','Every map-side region rests on a fact about the inputs: size, partitioning, or partitioning plus sort order. Where you know none of them, only the reduce-side join is left, and its shuffle moves all 876 million scans.');L.done();}};
+  const jm=JoinMap(L,L.$('#m10'),{id:'m10',size:3000,band:0,on:()=>{seen.add(bestJoin(jm.S.size,jm.S.band));tick();}});
+  tick();}},
+{part:1,src:'Chapter 10 · Broadcast hash joins',pts:1,
+ solve:async L=>{L.$('#p11').children[1].click();await until(L,()=>L.p11done);},
+ run(L){
+  let pick=null;L.p11done=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Linh joins a year of scans with Otterpost’s 3,000 couriers. Nobody knows how either is partitioned. Which join fits best?</h1>'+CSS+
+   '<div id="m11"></div><div class="bj-row" id="p11"></div>');
+  const jm=JoinMap(L,L.$('#m11'),{id:'m11',size:3000,band:0,hide:true,nodot:true,drag:false,ctl:false,panel:false});
+  const opts=[['rs','Reduce-side'],['bc','Broadcast hash'],['ph','Partitioned hash'],['mg','Map-side merge']];
+  opts.forEach(([k,t],j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=k;b.classList.add('sel');
+      bring(L.$('#m11'));jm.set(3000,0);await L.sleep(450);if(!jm.alive())return;jm.reveal();
+      const ok=k==='bc';L.award(ok);b.classList.remove('sel');b.classList.add(ok?'ok':'no');
+      L.sheet(ok?'ok':'no',ok?'Right: broadcast hash join':'It’s the broadcast hash join','3,000 couriers fit easily in each mapper’s memory. Every mapper loads them into a hash table, then streams its own block of scans: no sort, no shuffle. A reduce-side join would also work, but it would shuffle all 876 million scans.');
+      L.p11done=true;L.done();};
+    L.$('#p11').appendChild(b);});}},
+{part:1,src:'Chapter 10 · Partitioned hash joins',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#e12').children[j].click();await L.sleep(20);await until(L,()=>!L.e12busy,200);}await until(L,()=>L.e12done);},
+ run(L){
+  const E=[
+   ['Outgrows memory',[300000,0],[3e6,0],'Linh swaps the 3,000-row courier table for every courier shift ever: 3 million rows. It no longer fits in a mapper’s memory, so the broadcast join is out. Back to the reduce-side join and its full shuffle.'],
+   ['Different keys',[12e6,1],[12e6,0],'Parcels are split by merchant ID into 32 parts, addresses by postcode into 32 parts. Same count, different keys: partition 3 on each side holds unrelated records, so matches would be missed.'],
+   ['Different counts',[12e6,1],[12e6,0],'Same key and hash, but one side has 32 partitions and the other 16. Partition 3 no longer lines up. A partitioned hash join needs the same key, the same hash function and the same number of partitions.'],
+   ['Sorted too',[146e6,1],[146e6,2],'146 million parcels: even a 32nd is too big for memory, so the partitioned hash join is out. But if earlier jobs also sorted both sides by parcel ID, a mapper can merge them in key order. Size stops mattering.']];
+  const tried=new Set();L.e12busy=false;L.e12done=false;
+  L.h(L.kick('pr','Find the limits')+'<h1 class="q">Each map-side join rests on an assumption. Break or add one, and watch where the job lands.</h1>'+CSS+
+   '<div id="m12"></div><div class="bj-row" id="e12"></div><div class="bj-log" id="e12l" aria-live="polite">Pick a case under the map.</div>');
+  const jm=JoinMap(L,L.$('#m12'),{id:'m12',size:3000,band:0,drag:false,ctl:false,panel:false});
+  E.forEach((e,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=e[0];
+    b.onclick=async()=>{if(L.e12busy)return;L.e12busy=true;tried.add(j);[...L.$('#e12').children].forEach(x=>x.classList.toggle('sel',x===b));
+      jm.set(e[1][0],e[1][1]);L.$('#e12l').innerHTML='<b>Before:</b> '+JN[bestJoin(e[1][0],e[1][1])][0]+'.';
+      await L.sleep(500);if(!jm.alive())return;await jm.move(e[2][0],e[2][1],900);if(!jm.alive())return;
+      L.$('#e12l').innerHTML='<b>Now: '+JN[bestJoin(e[2][0],e[2][1])][0]+'.</b> '+e[3];L.e12busy=false;
+      if(tried.size===4&&!L.e12done){L.e12done=true;L.sheet('info','Assumptions are the whole trick','A map-side join is fast only because it knows something about its inputs. When that stops being true, you fall back to the reduce-side join, which assumes nothing. And knowing more (a sort order) can open a cheaper join.');L.done();}};
+    L.$('#e12').appendChild(b);});}},
 {part:1,src:'Chapter 10 · MapReduce workflows with map-side joins',run(L){
-  L.h(L.kick('learn','Layout is part of the output')+'<h1 class="q">Your join choice decides how the next job sees the data</h1>'+
-   L.lanes([['layers','After a reduce-side join','Output is partitioned and sorted by the <b>join key</b>.',1],
-            ['pointer','After a map-side join','Output is partitioned and sorted like the <b>large input</b>, because one map task runs per block of it.',2]])+
-   L.prose('Because map-side joins assume things about size, sorting and partitioning, you need to know a dataset’s physical layout. Knowing its file format and directory is not enough. You also need the number of partitions and the keys it is partitioned and sorted by.')+
-   L.note('In the Hadoop world, this metadata is often kept in HCatalog and the Hive metastore.','book'));
+  L.h(L.kick('learn','Layout is part of the output')+'<h1 class="q">The join you pick shapes the next job’s input</h1>'+CSS+
+   '<div class="bj-row" id="l13"><button class="chip sel" data-m="rs">Reduce-side join</button><button class="chip" data-m="bc">Broadcast join</button></div><div id="f13"></div>'+
+   cap('Tap both. A reduce-side join’s output is split up and ordered by the join key. A map-side join’s follows its large input. So the next job needs more than a folder name: it needs the partition count and keys.')+
+   more('Where that layout is recorded','In Hadoop, this layout metadata often lives in HCatalog and the Hive metastore.'));
+  const show=m=>{L.$('#f13').innerHTML=figLayout(m);[...L.$('#l13').children].forEach(b=>b.classList.toggle('sel',b.dataset.m===m));};
+  [...L.$('#l13').children].forEach(b=>b.onclick=()=>show(b.dataset.m));show('rs');
   L.done();}},
-{part:1,src:'Chapter 10 · MapReduce workflows with map-side joins',pts:1,run(L){
-  L.h(L.kick('pr','Plan the next job')+'<h1 class="q">Job 1 broadcast-joins the scans (stored as one file per hour) with the hub table. Job 2 wants a partitioned hash join of job 1’s output with couriers, by courier ID. Can it run directly?</h1>');
-  L.mc(L.card,['Yes, a join’s output is always partitioned by its key','Yes, since the hub table was sent to every mapper','No, the output is laid out like the hourly scan files'],2,
-   'A map-side join’s output follows the large input, here the hourly scan files, not courier ID. Job 2 would need a reduce-side join, or a step that repartitions by courier ID first.',
-   'Only a reduce-side join’s output follows the join key. A broadcast join runs one mapper per block of the large input, so the output keeps the scans’ hourly layout, not courier ID.');}},
+{part:1,src:'Chapter 10 · Map-Side Joins',pts:1,
+ solve:async L=>{const R=['bc','bc','ph','mg','rs'];for(let j=0;j<5;j++){L.$('#c14t').children[j].click();L.$('#c14c').querySelector('[data-j="'+R[j]+'"]').click();}L.$('#c14go').click();await until(L,()=>L.c14ok);},
+ run(L){
+  const JOBS=[
+   {t:'A year of scans × couriers',f:'876 million scans, 3,000 couriers. Nobody knows how either is partitioned.',size:3000,band:0,large:876e6,x:mx(3000),y:162},
+   {t:'Last week’s scans × merchants',f:'16.8 million scans, 40,000 merchant records (illustrative). Layout unknown.',size:4e4,band:0,large:16.8e6,x:mx(4e4),y:162},
+   {t:'Parcels × delivery attempts',f:'12 million parcels (30 days), 14 million attempts. Both in 32 partitions by the same hash of parcel ID.',size:12e6,band:1,large:14e6,parts:32,x:mx(12e6),y:100},
+   {t:'Parcels × scans, this year',f:'146 million parcels, 876 million scans. Both in 32 partitions by parcel ID, and sorted by parcel ID.',size:146e6,band:2,large:876e6,parts:32,x:mx(146e6),y:58},
+   {t:'Parcels × addresses',f:'146 million parcels split by merchant ID into 16 parts; 60 million addresses split by postcode into 16 parts.',size:60e6,band:0,large:146e6,x:mx(60e6),y:152}];
+  const pick=[null,null,null,null,null];let cur=0,first=true;L.c14ok=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Tonight Linh runs five joins. Pick a join for each, keeping the shuffle under 215 million records.</h1>'+CSS+
+   '<p class="small" style="margin:-6px 0 4px">Tap a job number, read its facts, pick its join. A wrong map-side join crashes or misses matches. Memory (1 million records) and budget are illustrative.</p>'+
+   '<div id="m14"></div><div class="bj-row bj-tabs" id="c14t"></div><div class="bj-panel" id="c14c"></div>'+
+   '<div class="bj-m"><span>Shuffle (line = budget)</span><b id="c14b"></b></div><div class="meter bj-meter bj-bud"><div id="c14bar"></div></div>'+
+   '<div class="bj-row" style="margin-top:12px"><button class="btn pri" id="c14go">'+L.ic('play')+'Run tonight’s jobs</button></div><div id="c14r"></div>');
+  const jm=JoinMap(L,L.$('#m14'),{id:'m14',hide:true,drag:false,ctl:false,panel:false,dots:[]});
+  const cost=j=>pick[j]==='rs'?JOBS[j].large+JOBS[j].size:0;
+  JOBS.forEach((J,j)=>{const b=document.createElement('button');b.className='chip';b.onclick=()=>{cur=j;upd();};L.$('#c14t').appendChild(b);});
+  function upd(){
+    jm.setDots(JOBS.map((J,j)=>({x:J.x,y:J.y,n:j+1,c:pick[j]?JN[pick[j]][1]:'ink',sel:j===cur})));
+    [...L.$('#c14t').children].forEach((b,j)=>{b.classList.toggle('sel',j===cur);b.innerHTML=(j+1)+(pick[j]?' <span class="bj-sw" style="background:var(--'+JN[pick[j]][1]+')"></span>':'');b.setAttribute('aria-label','Job '+(j+1)+(pick[j]?', '+SHORT[pick[j]]:', no join picked'));});
+    const J=JOBS[cur];
+    L.$('#c14c').innerHTML='<b>Job '+(cur+1)+' · '+J.t+'</b><div class="bj-why">'+J.f+'</div><div class="bj-row">'+['bc','ph','mg','rs'].map(k=>'<button class="chip'+(pick[cur]===k?' sel':'')+'" data-j="'+k+'">'+SHORT[k]+'</button>').join('')+'</div>';
+    L.$('#c14c').querySelectorAll('[data-j]').forEach(b=>b.onclick=()=>{pick[cur]=b.dataset.j;const nx=pick.findIndex(p=>!p);if(nx>=0)cur=nx;upd();});
+    const tot=JOBS.reduce((a,J,j)=>a+cost(j),0);
+    L.$('#c14b').textContent=Math.round(tot/1e6).toLocaleString('en-US')+'M of 215M records';
+    const bar=L.$('#c14bar');bar.style.width=Math.min(100,tot/BUDGET*50)+'%';bar.style.background=tot>BUDGET?'var(--no)':'var(--ok-strong)';
+  }
+  upd();
+  L.$('#c14go').onclick=()=>{
+    if(pick.some(p=>!p)){L.$('#c14r').innerHTML='<div class="bj-res">Pick a join for every job first.</div>';return;}
+    const errs=JOBS.map((J,j)=>checkJoin(pick[j],J.size,J.band,J.parts));
+    const tot=JOBS.reduce((a,J,j)=>a+cost(j),0),over=tot>BUDGET,ok=errs.every(e=>!e)&&!over;
+    jm.reveal();bring(L.$('#m14'));
+    L.$('#c14r').innerHTML='<div class="bj-res">'+JOBS.map((J,j)=>'<div>'+(errs[j]?'<span class="no-t">✗</span> ':'<span class="ok-t">✓</span> ')+'Job '+(j+1)+', '+SHORT[pick[j]]+(errs[j]?': '+errs[j]:pick[j]==='rs'?': shuffled '+fmt(cost(j))+' records':': no shuffle')+'</div>').join('')+
+      '<div>'+(over?'<span class="no-t">✗</span> ':'<span class="ok-t">✓</span> ')+'Total shuffle '+fmt(tot)+' of '+fmt(BUDGET)+'</div></div>';
+    if(first){L.award(ok);first=false;}
+    if(ok){L.c14ok=true;L.$('#c14go').disabled=true;
+      L.sheet('ok','All five ran, within budget','Only job 5 needed a full shuffle (206 million records). Small side: broadcast. Same partitioning: partitioned hash. Same partitioning and sort order: merge, whatever the size. Otherwise: reduce-side.');L.done();}
+    else L.sheet('no','Not tonight',(errs.some(e=>e)?'Some joins rest on a fact these inputs don’t have (red lines). ':'')+(over?'The shuffle is over budget: use a map-side join wherever its assumption holds. ':'')+'The regions are now shown on the map. Change your picks and run again.');};}},
 
 /* ---------- PART 3: BATCH OUTPUTS ---------- */
-{part:2,src:'Chapter 10 · The Output of Batch Workflows',run(L){
-  L.h(L.kick('learn','What batch jobs produce')+'<h1 class="q">Often not a report, but a structure other systems use</h1>'+
-   L.prose('Batch processing is neither transaction processing nor quite analytics. Like analytics it scans large parts of its input, but its output is often not a report for a manager. It is some other kind of structure.')+
-   L.lanes([['eye','Search indexes','Google first used MapReduce to build its search index, with a workflow of 5 to 10 jobs. Mappers partition the documents, each reducer builds the index for its partition, and the index files are written out. Searching is read-only, so the files never change. When documents change, either rerun the whole workflow and swap in the new files, or update incrementally.',1],
-            ['box','Key-value stores','Batch jobs build machine-learning classifiers (spam filters, image recognition) and recommendation systems (people you may know, related products). The output is a database the web application queries, say by user ID or product ID.',2]])+
-   L.note('Otterpost example: Linh’s nightly job could produce a lookup table of typical delivery windows by postcode and hour, which the tracking page queries all day.','map'));
+{part:2,src:'Chapter 10 · Building search indexes',run(L){
+  L.h(L.kick('learn','What batch jobs produce')+'<h1 class="q">Often not a report, but something other systems use</h1>'+CSS+figOut()+
+   cap('Batch scans like analytics, but its output is usually a structure. Google first used MapReduce to build its search index: 5 to 10 jobs, each reducer indexing its partition of the documents.')+
+   more('Updates, and other outputs','Index files are read-only, so they never change: rerun the whole workflow and replace them, or update incrementally. Spam filters and recommendations work alike: a database queried by user or product ID.'));
   L.done();}},
-{part:2,src:'Chapter 10 · Key-value stores as batch process output',run(L){
-  L.h(L.kick('learn','Getting results out')+'<h1 class="q">Don’t write into the live database, row by row</h1>'+
-   L.prose('The obvious move is to call the production database from inside each mapper or reducer, one record at a time. The book calls this a bad idea, for three reasons:')+
-   L.list([['Too slow','A network request per record is orders of magnitude slower than a batch task’s normal speed, even with batching.'],
-     ['It floods the database','Many parallel tasks writing at batch speed can overwhelm it, hurting the queries real users are making.'],
-     ['It leaks partial results','MapReduce normally gives all-or-nothing output. Writes to an outside system are visible side effects: results from half-done jobs, retried task attempts and speculative execution can all leak out.']],4)+
-   L.prose('<b>The better way:</b> build a brand-new database as files in the job’s output directory, then bulk-load them into servers that answer read-only queries. Voldemort, Terrapin, ElephantDB and HBase bulk loading support this. Read-only files can use simple structures, without even a write-ahead log. Voldemort keeps serving the old files while copying the new ones, then switches over in one step, and can switch back if anything goes wrong.'));
-  L.done();}},
-{part:2,src:'Chapter 10 · Key-value stores as batch process output',pts:1,
- solve:async L=>{L.$('#pa').click();L.$('#pb').click();},
+{part:2,src:'Chapter 10 · Key-value stores as batch process output',
+ solve:async L=>{L.sw.S.speed=.2;L.$('#w16go').click();await until(L,()=>L.w16done);},
  run(L){
-  const P={a:['200 tasks start writing rows straight into the live lookup database.','The database is flooded; tracking page responses slow down for recipients.','A task crashes and is retried; then the whole job fails at 60%.','Result: recipients see a mix of tonight’s and last night’s delivery windows.'],
-           b:['Tasks write a brand-new set of lookup files to HDFS. Servers keep using last night’s files.','The new files are copied to the lookup servers, which switch to them in one step.','A bad build? Switch back: last night’s files are still there, unchanged.','Result: recipients only ever see one complete version.']};
-  let seen=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Two ways to ship tonight’s delivery-window lookup table. Play both.</h1>'+
-   L.lanes([['alert','Plan A: write directly','<div id="la"></div><button class="btn" id="pa" style="margin-top:8px">'+L.ic('play')+'Run plan A</button>',4],
-            ['shield','Plan B: build files, then switch','<div id="lb"></div><button class="btn" id="pb" style="margin-top:8px">'+L.ic('play')+'Run plan B</button>',2]])+'<div id="pq"></div>');
-  const play=(k,el,btn)=>{btn.remove();P[k].forEach((t,j)=>setTimeout(()=>{const box=L.$(el);if(!box)return;box.innerHTML+='<p class="small" style="margin:6px 0">'+(j===3?'<b>'+t+'</b>':t)+'</p>';
-    if(j===3){seen++;if(seen===2){const q=L.$('#pq');q.innerHTML='<h2 class="sub">In plan A, a task was retried after writing 1,000 rows. What can recipients see that plan B keeps hidden?</h2>';
-      L.mc(q,['Older delivery windows from last night’s files','Rows from task attempts and a job that never finished','Nothing, since MapReduce discards failed output'],1,
-       'MapReduce can only throw away failed output inside its own output directory. Rows already written into an outside database stay visible.',
-       'MapReduce discards failed output only in its own output directory. Rows a task already wrote into an outside database are visible side effects, from attempts and a job that never finished.');}}},350*(j+1)));};
-  L.$('#pa').onclick=function(){play('a','#la',this);};
-  L.$('#pb').onclick=function(){play('b','#lb',this);};}},
+  L.w16done=false;
+  L.h(L.kick('ex','See it happen')+'<h1 class="q">Tobias wants tonight’s delivery-window table written straight into the live lookup store (A). Linh wants new files, then a swap (B). Run both.</h1>'+CSS+
+   '<div id="w16"></div><div class="bj-row"><button class="btn pri" id="w16go">'+L.ic('play')+'Run tonight’s job</button></div>');
+  const sw=L.sw=Swap(L,L.$('#w16'),'w16');
+  L.$('#w16go').onclick=async()=>{const r=await sw.run('ok');if(!r||L.w16done)return;L.w16done=true;
+    L.sheet('info','Same job, two ways to ship it','A makes one network request per row, orders of magnitude slower than a batch task, and floods the store, so the tracking page slows down. B builds read-only files (simple: no write-ahead log needed) while servers keep serving v1, then switches in one step. Voldemort works this way; Terrapin, ElephantDB and HBase bulk loading also build files in batch jobs.');L.done();};}},
+{part:2,src:'Chapter 10 · Key-value stores as batch process output',pts:1,
+ solve:async L=>{L.sw.S.speed=.2;L.$('#w17').children[1].click();await until(L,()=>L.$('#w17bug'));L.$('#w17bug').click();await until(L,()=>L.$('#w17ra'));L.$('#w17ra').click();L.$('#w17rb').click();await until(L,()=>L.w17done);},
+ run(L){
+  let pick=null;const rolled=new Set();L.w17done=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tonight the job dies at 70%. What will recipients see in plan A?</h1>'+CSS+
+   '<div class="bj-row" id="w17"></div><div id="w17s"></div><div class="bj-row" id="w17x"></div>');
+  const sw=L.sw=Swap(L,L.$('#w17s'),'w17v');
+  function rollDone(k){rolled.add(k);
+    if(rolled.size===2&&!L.w17done){L.w17done=true;
+      L.sheet('info','Only B could undo it','Rolling back the code doesn’t touch rows already written into a live store. B kept last night’s files, unchanged, so one switch fixed it. Being able to recover from buggy code is called '+L.g('human-fault','human fault tolerance')+'.');L.done();}}
+  ['Only last night’s windows','A mix of tonight’s and last night’s','An error page'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      bring(L.$('#w17s'));const r=await sw.run('die');if(!r)return;const ok=j===1;L.award(ok);b.classList.remove('sel');b.classList.add(ok?'ok':'no');
+      L.sheet(ok?'ok':'no',ok?'Right: a mix':'They see a mix','MapReduce throws away a failed job’s output, but only inside its own output directory. Rows already written to an outside store stay visible: half a job, plus rows from failed or speculative task attempts. In B, the half-built v2 is simply dropped.');
+      L.$('#w17x').innerHTML='<button class="btn pri" id="w17bug">'+L.ic('alert')+'Now ship a buggy job</button>';
+      L.$('#w17bug').onclick=async()=>{L.$('#w17bug').remove();const r2=await sw.run('bug');if(!r2)return;
+        L.$('#w17x').innerHTML='<button class="btn" id="w17ra">A: roll back the code</button><button class="btn" id="w17rb">B: switch back to v1</button>';
+        L.$('#w17ra').onclick=()=>{sw.rollA();L.$('#w17ra').disabled=true;rollDone('a');};
+        L.$('#w17rb').onclick=()=>{sw.rollB();L.$('#w17rb').disabled=true;rollDone('b');};};};
+    L.$('#w17').appendChild(b);});}},
 {part:2,src:'Chapter 10 · Philosophy of batch process outputs',run(L){
-  L.h(L.kick('learn','The Unix idea, at scale')+'<h1 class="q">Immutable input, replaced output, no side effects</h1>'+
-   L.prose('Like a Unix command, a well-behaved batch job leaves its input unchanged, completely replaces any previous output, and does nothing else. So you can rerun it as often as you like. The book lists what that buys:')+
-   L.list([['shield','Human fault tolerance','Ship a bug and the output is wrong? Roll back the code and rerun, or switch back to the old output kept in another directory. A database written by buggy code has no such fix: rolling back the code leaves the bad data in place.'],
-     ['trend','Faster feature work','Mistakes can be undone, so teams can move faster. The book calls this minimizing irreversibility.'],
-     ['cycle','Safe retries','A failed task is simply rerun on the same input. A real bug keeps failing and the job stops; a passing glitch is absorbed. Safe only because inputs never change and failed output is discarded.'],
-     ['eye','Many readers','The same input files can feed many jobs, including monitoring jobs that compare tonight’s output with last night’s.'],
-     ['people','Logic vs wiring','One team writes a job that does one thing well; others decide where and when it runs.']],2)+
-   '<p class="small" style="margin-top:10px">One difference from Unix: instead of parsing untyped text, Hadoop jobs often use structured formats such as Avro and Parquet, whose schemas can evolve.</p>');
+  L.h(L.kick('learn','The Unix idea, at scale')+'<h1 class="q">Immutable input, replaced output, no side effects</h1>'+CSS+figPhilo()+
+   cap('Like a Unix tool, a good batch job leaves its input unchanged, replaces its whole output and touches nothing else. Ship a bug? Roll back the code and rerun, or switch back to the old output.')+
+   more('Why this pays off','Easy undo lets features move faster (minimizing irreversibility). Retrying a failed task is safe because inputs don’t change and failed output is discarded. Many jobs can read the same files, including monitoring jobs that compare a job’s output with the previous run’s. Like Unix tools, jobs keep logic apart from wiring (which directories to read and write). Hadoop jobs often use Avro or Parquet instead of Unix’s untyped text.'));
   L.done();}},
 {part:2,src:'Chapter 10 · Philosophy of batch process outputs',pts:4,run(L){
   L.h('<div id="qk"></div>');
@@ -206,13 +668,14 @@ Course.lesson({
 
 /* ---------- PART 4: HADOOP VS MPP ---------- */
 {part:3,src:'Chapter 10 · Comparing Hadoop to Distributed Databases',run(L){
-  L.h(L.kick('learn','Hadoop vs MPP databases')+'<h1 class="q">The join algorithms weren’t new. The platform was.</h1>'+
-   L.prose('Hadoop is a bit like a distributed Unix: HDFS is the filesystem and MapReduce a quirky process that always runs a sort between map and reduce. Every parallel join in this lesson had already been built a decade earlier in '+L.g('mpp','MPP databases')+', such as Gamma, Teradata and Tandem NonStop SQL.')+
-   L.prose('The big difference: MPP databases run analytic SQL in parallel. MapReduce plus a distributed filesystem is closer to a general-purpose operating system that runs any program. That shows up first in <b>storage</b>.')+
-   L.lanes([['lock','MPP database','Needs careful up-front modeling of data and queries before import into its own storage format.',1],
-            ['box','Hadoop','Files are just bytes: records, text, images, video, sensor readings, genomes. Dump the data in first and work out how to process it later.',2]])+
+  L.h(L.kick('learn','Hadoop vs MPP databases')+'<h1 class="q">The joins weren’t new. The platform was.</h1>'+CSS+figMPP()+
+   cap('Every parallel join in this lesson ran in '+L.g('mpp','MPP databases')+' (Gamma, Teradata, Tandem NonStop SQL) over a decade before MapReduce. MPP runs analytic SQL in parallel; HDFS plus MapReduce is closer to a general-purpose operating system.')+
+   more('A useful comparison','Hadoop is a bit like distributed Unix: HDFS is the filesystem, MapReduce a quirky process that always sorts between map and reduce.'));
+  L.done();}},
+{part:3,src:'Chapter 10 · Diversity of storage',run(L){
+  L.h(L.kick('learn','Diversity of storage')+'<h1 class="q">Dump it first, model it later</h1>'+CSS+figSushi()+
    L.quote('raw data is better','the “sushi principle,” cited in chapter 10')+
-   L.prose('Making data available quickly, even in an awkward raw format, is often worth more than agreeing the perfect model first. Interpreting it becomes the consumer’s job (schema-on-read). Hadoop is often used for ETL: dump raw data, clean it with MapReduce, then load it into an MPP warehouse. Modeling still happens, just as a separate step.'));
+   cap('Making data available fast, even raw, is often worth more than agreeing the ideal model first. Interpreting it becomes each consumer’s job ('+L.g('schema-on-read','schema-on-read')+'). Modeling still happens, as a separate ETL step.'));
   L.done();}},
 {part:3,src:'Chapter 10 · Diversity of storage',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">The courier app team wants to dump raw app logs into HDFS today. Nobody has designed a schema yet. Zainab asks them to model it properly first. What would the book say?</h1>');
@@ -220,10 +683,9 @@ Course.lesson({
    'Collecting the data quickly, then letting each consumer interpret it, often beats waiting for the ideal model. Modeling still happens, later and separately.',
    'The book argues the opposite: making data available fast, even raw, is often more valuable than designing the ideal model first. The Parcel DB is the system of record for parcels, not a dumping ground for logs.');}},
 {part:3,src:'Chapter 10 · Diversity of processing models',run(L){
-  L.h(L.kick('learn','Diversity of processing models')+'<h1 class="q">Not everything is a SQL query</h1>'+
-   L.prose('MPP databases are tightly integrated: storage layout, query planning, scheduling and execution are all tuned together, so they are very fast on the queries they were designed for. And SQL lets business analysts query data without writing code, using graphical tools such as Tableau.')+
-   L.prose('But machine learning, recommendation systems, search indexes with relevance ranking and image analysis need a more general model. They mean writing <b>code</b>, not just queries. MapReduce let engineers run their own code over large datasets, and you can even build SQL on top of it, which is what Hive did.')+
-   L.note('<b>One cluster, many models.</b> Many processing styles can run on one shared cluster, reading the same files. No need to copy data into a separate specialized system for each job. HBase (a random-access OLTP database) and Impala (an MPP-style analytic engine) both store their data in HDFS without using MapReduce.','layers'));
+  L.h(L.kick('learn','Diversity of processing models')+'<h1 class="q">Not everything is a SQL query</h1>'+CSS+figEngines()+
+   cap('MPP databases are tuned end to end, so they’re very fast on the queries they were built for, and SQL suits analysts’ tools such as Tableau. But ML, search ranking and image analysis need code.')+
+   more('How Hadoop grew engines','MapReduce let engineers run their own code over huge datasets; Hive built SQL on top of it. HBase and Impala don’t use MapReduce, yet share the same HDFS files.'));
   L.done();}},
 {part:3,src:'Chapter 10 · Diversity of processing models',pts:4,run(L){
   L.h(L.kick('pr','Query or code?')+'<h1 class="q">Which approach does each task naturally call for?</h1><div id="bk"></div>');
@@ -234,28 +696,43 @@ Course.lesson({
    ['Total parcels per merchant per region last quarter',0,'Grouping and counting: a classic analytic SQL query.']],
    'SQL suits analytic queries; code suits specialized processing. Hadoop’s openness let both, and more, run over the same files.');}},
 {part:3,src:'Chapter 10 · Designing for frequent faults',run(L){
-  L.h(L.kick('learn','Designing for frequent faults')+'<h1 class="q">Why MapReduce assumes tasks will die</h1>'+
-   L.lanes([['lock','MPP database','If a node crashes, abort the whole query and run it again. Queries take seconds or minutes, so that’s fine. Keep as much as possible in memory.',1],
-            ['cycle','MapReduce','Retry just the failed map or reduce task. Write eagerly to disk, partly for recovery, partly because data is assumed too big for memory.',2]])+
-   L.prose('Hardware failures alone are rare enough that this seems like overkill. The reason lies in Google’s datacenters, where online services and batch jobs share machines. Every task has a priority, and a higher-priority task can <b>preempt</b> (kill) lower-priority ones to take their resources. Batch jobs run at low priority, using whatever is left over.')+
-   L.prose('This lets Google overcommit machines and use them better. But an hour-long MapReduce task there has about a <b>5%</b> chance of being killed, over ten times the rate of hardware failures. So the design is about the freedom to kill tasks, not about bad hardware.')+
-   L.note('Open-source schedulers such as YARN, Mesos and Kubernetes preempted far less at the time of writing. Where tasks are rarely killed, the book says these design decisions make less sense.','info'));
+  L.h(L.kick('learn','Designing for frequent faults')+'<h1 class="q">Why MapReduce expects tasks to die</h1>'+CSS+figFaults()+
+   cap('At Google, low-priority batch tasks share machines with online services and are killed ('+L.g('preempt','preempted')+') when those need resources. An hour-long task has about a 5% risk: over ten times the hardware-fault rate.')+
+   more('Why the two designs differ','Killing batch tasks lets Google overcommit machines and use them better. MPP databases keep data in memory (hash joins) and rerun short queries. MapReduce writes eagerly to disk and retries single tasks, partly because data is assumed too big for memory.'));
   L.done();}},
 {part:3,src:'Chapter 10 · Designing for frequent faults',pts:1,
- solve:async L=>{L.$('#tk').children[2].click();L.$('#tk').children[3].click();},
+ solve:async L=>{L.$('#g26n').children[2].click();await until(L,()=>!L.g26busy);L.$('#g26n').children[3].click();await until(L,()=>!L.g26busy);await until(L,()=>L.$('#g26q .opt'));},
  run(L){
-  const N=[1,10,100,1000],p=1-Math.pow(0.95,1/6);const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Each task runs 10 minutes, with Google’s rate of preemption (about 5% an hour, so under 1% per task). Pick a job size.</h1><div id="tk"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:10px 0"><div class="meterrow"><div class="lb">Chance at least one task is killed</div><div class="meter"><div id="pm" style="width:0;transition:width .6s;background:var(--no)"></div></div></div><div class="small" id="pt">Choose a number of tasks.</div></div><div id="pq"></div>');
-  N.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n+(n===1?' task':' tasks');
-    b.onclick=()=>{[...L.$('#tk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);const pr=1-Math.pow(1-p,n);
-      L.$('#pm').style.width=Math.max(2,Math.round(pr*100))+'%';
-      L.$('#pt').innerHTML='<b>'+(pr>0.995?'almost 100':pr<0.1?(pr*100).toFixed(1):Math.round(pr*100))+'%</b> chance. Restart the whole job: '+(n===1?'one task':n+' tasks')+' of work lost. Restart one task: at most 10 minutes lost.';
-      if(seen.size>=2&&!L.$('#pq').innerHTML){const q=L.$('#pq');q.innerHTML='<h2 class="sub">Kwame’s cluster almost never kills tasks. What does the book conclude about such a cluster?</h2>';
-        L.mc(q,['Task-level recovery becomes even more important','Machine failures will now stop most long jobs','Task-level recovery and heavy disk writes make less sense'],2,
-         'MapReduce pays overhead for task-level recovery because tasks get killed often. Where that rarely happens, the trade-off looks worse, which is why other engines (next lesson) choose differently.',
-         'The book says machine failures are fairly rare. MapReduce’s overheads pay off where preemption is frequent; where tasks are rarely killed, its design decisions make less sense.');}};
-    L.$('#tk').appendChild(b);});}}
+  const p=1-Math.pow(0.95,1/6),N=[1,10,100,1000],KILL=[37,12,81,55,3,68,24,93,46];
+  let n=100,mode='retry';const seen=new Set();L.g26busy=false;let token=0;
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Each task runs 10 minutes, at Google’s preemption rate (about 5% per hour). Pick a job size, and what happens when a task is killed.</h1>'+CSS+
+   '<svg class="bj-fig" id="g26s" viewBox="0 0 320 86" role="img" aria-label="Grid of tasks; killed tasks turn red"></svg>'+
+   '<div class="bj-panel" id="g26r" aria-live="polite"></div>'+
+   '<div class="bj-lbl">Job size</div><div class="bj-row" id="g26n"></div><div class="bj-lbl">When a task is killed</div><div class="bj-row" id="g26m"></div><div id="g26q"></div>');
+  const shown=()=>Math.min(n,100),kills=()=>Math.round(n*p)===0?[]:KILL.slice(0,Math.min(KILL.length,Math.round(n*p))).filter(i=>i<shown());
+  function grid(stF){let s='';for(let i=0;i<shown();i++){const c=i%20,r=Math.floor(i/20),st=stF(i);
+      const f=st===0?'fill:var(--soft);stroke:var(--line2);stroke-width:1':st===1?bx('h2'):st===2?bx('ok'):'fill:var(--no);stroke:var(--no);stroke-width:1';
+      s+=rc(5+c*15.5,4+r*15.5,13,13,3,f);}
+    L.$('#g26s').innerHTML=s;}
+  function readout(done){const pr=1-Math.pow(1-p,n),pct=pr>.995?'almost 100':pr<.1?(pr*100).toFixed(1):Math.round(pr*100);
+    const k=Math.round(n*p);
+    L.$('#g26r').innerHTML='<div class="bj-m" style="margin-top:0"><span>Chance some task is killed</span><b>'+pct+'%</b></div><div class="meter"><div style="width:'+Math.max(2,pr*100)+'%;background:var(--no)"></div></div>'+
+      '<div class="bj-why" style="margin-top:8px">'+(n>100?'Each square is 10 tasks. ':'')+(done?(k?'This run: '+k+' task'+(k>1?'s':'')+' killed. '+(mode==='retry'?'Redo: about '+(k*10)+' task-minutes.':'Redo: the whole job, up to '+(n*10).toLocaleString('en-US')+' task-minutes.'):'This run: nothing killed. With more tasks, that luck runs out.'):'Running…')+'</div>';}
+  async function run(){
+    const my=++token;L.g26busy=true;const K=kills(),T=ms=>L.sleep(ms);
+    grid(()=>1);readout(false);await T(350);if(my!==token||!L.$('#g26s'))return;
+    grid(i=>K.includes(i)?3:1);await T(450);if(my!==token||!L.$('#g26s'))return;
+    if(K.length&&mode==='restart'){grid(()=>0);await T(250);if(my!==token||!L.$('#g26s'))return;grid(()=>1);await T(450);if(my!==token||!L.$('#g26s'))return;}
+    else if(K.length){grid(i=>K.includes(i)?1:2);await T(350);if(my!==token||!L.$('#g26s'))return;}
+    grid(()=>2);readout(true);L.g26busy=false;seen.add(n);
+    if(seen.has(100)&&seen.size>=2&&!L.$('#g26q').innerHTML){const q=L.$('#g26q');
+      q.innerHTML='<h2 class="sub">Kwame’s cluster almost never kills tasks. What does the book conclude about such a cluster?</h2>';
+      L.mc(q,['Task-level recovery becomes even more important','Machine failures will now stop most long jobs','MapReduce’s task retries and disk writes make less sense'],2,
+       'MapReduce pays overhead for task-level recovery because tasks get killed often. Where that rarely happens, as with YARN, Mesos and Kubernetes at the time of writing, the trade-off looks worse. The next lesson shows engines that choose differently.',
+       'The book says machine failures are fairly rare. MapReduce’s overheads pay off where preemption is frequent; where tasks are rarely killed, its design decisions make less sense.');}}
+  N.forEach(v=>{const b=document.createElement('button');b.className='chip';b.dataset.n=v;b.textContent=v.toLocaleString('en-US')+(v===1?' task':' tasks');b.onclick=()=>{n=v;[...L.$('#g26n').children].forEach(x=>x.classList.toggle('sel',x===b));run();};L.$('#g26n').appendChild(b);});
+  [['retry','Retry that task'],['restart','Restart the whole job']].forEach(([m,t])=>{const b=document.createElement('button');b.className='chip'+(m===mode?' sel':'');b.textContent=t;b.onclick=()=>{mode=m;[...L.$('#g26m').children].forEach(x=>x.classList.toggle('sel',x===b));run();};L.$('#g26m').appendChild(b);});
+  grid(()=>0);L.$('#g26r').innerHTML='<span class="small">Pick a job size to run it.</span>';}}
   ]
 });
 </script>

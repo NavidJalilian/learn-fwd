@@ -13,15 +13,296 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0020 only. Two hands-on models used across the lesson:
+   1. Hemi – a hemicycle of voting nodes (seats). Cut seats off, pause
+             them, and see which side has a majority and may decide.
+             Also used for the two-thirds rule, a safety/liveness
+             timeline and the “amnesia” vote.
+   2. Gate – the route store’s gate with its fencing-token ledger.
+             Planners send writes; the gate accepts or rejects them.
+   ===================================================================== */
+const CSS='<style>'+
+ '.kt-hemi svg,.kt-gate svg,.kt-fig svg{width:100%;display:block;touch-action:manipulation}.kt-hemi svg text,.kt-gate svg text,.kt-fig svg text{font-family:var(--sans)}'+
+ '.kt-tally{font-size:14px;margin:2px 0 6px}'+
+ '.kt-row{display:flex;align-items:center;gap:8px;margin:5px 0;flex-wrap:wrap}'+
+ '.kt-lab{font-weight:700;font-size:13px;min-width:78px}'+
+ '.kt-cells{display:inline-flex;gap:3px;align-items:center}'+
+ '.kt-cells i{width:15px;height:15px;border-radius:5px;background:var(--soft);border:1.5px solid var(--line2);display:inline-block}'+
+ '.kt-cells i.f-h1{background:var(--h1);border-color:var(--h1)}.kt-cells i.f-h3{background:var(--h3);border-color:var(--h3)}.kt-cells i.f-ok{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.kt-cells b.mj{width:3px;height:22px;background:var(--ink);border-radius:2px;margin:0 2px}'+
+ '.kt-row .v{font-size:13.5px;color:var(--muted)}.kt-un{font-size:13px;color:var(--muted);margin-top:2px}'+
+ '.kt-ctl{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.kt-ctl .btn{min-height:42px;padding:8px 12px;margin:0}.kt-ctl .chip{margin:0;min-height:40px}'+
+ '.kt-seats{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 2px}.kt-seats .chip{margin:0;min-width:46px;min-height:38px;justify-content:center;font-weight:600}'+
+ '.kt-seats .chip.cut{background:var(--h3-bg);border-color:var(--h3);color:var(--h3)}.kt-seats .chip.pause,.kt-seats .chip.dead{background:var(--soft);color:var(--muted);border-style:dashed}.kt-seats .chip.bad{background:var(--no-bg);border-color:var(--no);color:var(--no)}.kt-seats .chip.oneway{border-style:dashed;border-color:var(--h2);color:var(--h2)}'+
+ '.kt-hint{font-size:13px;color:var(--muted);margin:8px 0 2px}'+
+ '.kt-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:46px}'+
+ '.kt-cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:68px}.kt-cap .stp{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.kt-goals{margin:10px 0 4px;padding:0;list-style:none}.kt-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.kt-goals li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.kt-goals li.done{color:var(--ok)}.kt-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.kt-goals li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.kt-led{font-size:14px;margin:4px 0}.kt-lr{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--line)}.kt-lr:last-child{border-bottom:0}'+
+ '.kt-tk{font-weight:700;font-size:12.5px;border-radius:7px;padding:2px 7px;background:var(--card);border:1.5px solid var(--line2);font-variant-numeric:tabular-nums}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}.wa-t{color:var(--h3);font-weight:700}'+
+ '.kt-dc{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}.kt-dcb{border-radius:14px;padding:8px 4px;text-align:center;border:2px solid var(--line)}'+
+ '.kt-dcb b{display:block;font-size:13px}.kt-dcb .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;margin:2px 0}.kt-dcb .pm{display:flex;gap:6px;justify-content:center}.kt-dcb .pm button{width:40px;height:38px;border-radius:10px;border:1.5px solid var(--line2);background:var(--card);color:var(--ink);font-size:20px;font-weight:700;cursor:pointer}.kt-dcb .pm button:disabled{opacity:.35;cursor:default}'+
+ '.kt-res{margin:8px 0}.kt-res div{font-size:14.5px;margin:3px 0}'+
+ '.kt-in{display:flex;flex-direction:column;gap:6px;margin:8px 0}.kt-msg{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center;border-radius:12px;padding:8px 10px;background:var(--soft);font-size:14px;line-height:1.35;border:2px solid transparent;transition:border-color .2s}'+
+ '.kt-msg.now{border-color:var(--pri)}.kt-msg .r{font-size:12.5px;font-weight:700;border-radius:99px;padding:3px 8px;white-space:nowrap}.kt-msg .r.ok{background:var(--ok-bg);color:var(--ok)}.kt-msg .r.no{background:var(--no-bg);color:var(--no)}.kt-msg .r.wait{color:var(--muted)}'+
+ '.kt-tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.kt-th{font-size:13px;font-weight:700;text-align:center}.kt-tile{border-radius:14px;padding:10px;border:2px solid var(--line);font-size:13px;line-height:1.35;color:var(--muted)}'+
+ '.kt-tile svg{width:34px;height:34px;display:block;margin-bottom:4px}.kt-tile b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}.kt-tile.y{border-color:var(--ok-line);background:var(--ok-bg)}.kt-tile.n{background:var(--soft)}'+
+ '.kt-prop{display:grid;grid-template-columns:30px 1fr auto;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);font-size:14px;line-height:1.35}.kt-prop:last-child{border-bottom:0}.kt-prop .ico svg.i{width:22px;height:22px}'+
+ '.kt-tag{font-size:11.5px;font-weight:700;border-radius:99px;padding:3px 8px;letter-spacing:.02em}.kt-tag.s{background:var(--h1-bg);color:var(--h1)}.kt-tag.l{background:var(--h2-bg);color:var(--h2)}'+
+ '.kt-rng{display:grid;grid-template-columns:54px 1fr 48px;gap:10px;align-items:center;font-size:15px;margin:6px 0}.kt-rng input{width:100%;accent-color:var(--pri);height:30px}.kt-rng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '</style>';
+
+const T=(L,ms)=>L.fast?Math.min(ms,25):ms;
+const nap=(L,ms)=>L.sleep(T(L,ms));
+function anim(L,ms,fn){return new Promise(res=>{const d=T(L,ms),t0=performance.now();(function st(){const p=Math.min(1,(performance.now()-t0)/d);if(fn(p)===false){res(false);return;}if(p<1)setTimeout(st,16);else res(true);})();});}
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+function goalsHtml(id,items){return '<ul class="kt-goals" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+function allTicked(L,id){return L.$$('#'+id+' li').every(li=>li.classList.contains('done'));}
+
+/* ---------- 1. The hemicycle ---------- */
+const SEAT={in:['var(--h1-bg)','var(--h1)',''],cut:['var(--h3-bg)','var(--h3)',''],pause:['var(--soft)','var(--line2)','5 4'],oneway:['var(--h1-bg)','var(--h2)','4 3'],dead:['var(--soft)','var(--line2)','2 3'],bad:['var(--no-bg)','var(--no)',''],good:['var(--ok-bg)','var(--ok-line)','']};
+const SUB={pause:'zz',oneway:'1-way',dead:'down'};
+function Hemi(L,host,o){
+  o=Object.assign({id:'h',n:5,leader:0,mode:'maj',tap:false,names:null,colors:null,tally:true,label:'Voting nodes as seats in a half circle',on:null},o||{});
+  const ID=o.id;
+  const S={n:o.n,st:[],leader:o.leader,term:1,believer:null,unaware:false,stepped:null,mode:o.mode,names:o.names,colors:o.colors,subs:null};
+  host.insertAdjacentHTML('beforeend','<div class="kt-hemi"><svg id="'+ID+'-s" viewBox="0 0 320 194" role="img" aria-label="'+o.label+'"></svg>'+
+    (o.tap?'<div class="kt-hint">'+(o.mode==='bft'?'Tap a seat to make it faulty or correct':'Tap a seat to cycle: connected → cut off → paused')+'</div><div class="kt-seats" id="'+ID+'-c"></div>':'')+
+    (o.tally?'<div class="kt-tally" id="'+ID+'-t" aria-live="polite"></div>':'')+'</div>');
+  const svg=host.querySelector('#'+ID+'-s'),tl=host.querySelector('#'+ID+'-t'),seats=host.querySelector('#'+ID+'-c');
+  const nm=k=>S.names?S.names[k]:'N'+(k+1);
+  const pos=(k,rad)=>{const a=Math.PI-Math.PI*(k+.5)/S.n,R=rad==null?112:rad;return [160+R*Math.cos(a),154-R*Math.sin(a)];};
+  function reset(n,leader){S.n=n;S.st=Array(n).fill('in');S.leader=leader==null?o.leader:leader;S.term=1;S.believer=null;S.unaware=false;S.stepped=null;}
+  reset(o.n);
+  function decide(){const maj=Math.floor(S.n/2)+1,A=[],B=[];S.st.forEach((s,k)=>{if(s==='in')A.push(k);else if(s==='cut')B.push(k);});
+    const G=A.length>=maj?A:(B.length>=maj?B:null);return {maj,A,B,G,side:G===null?null:G===A?'A':'B'};}
+  function apply(){const d=decide();S.stepped=null;let ev=null;
+    if(d.G&&!d.G.includes(S.leader)){S.believer=S.leader;S.leader=Math.min(...d.G);S.term++;S.unaware=false;ev='elect';}
+    else if(S.believer!==null&&d.G&&d.G.includes(S.believer)&&!S.unaware){S.stepped=S.believer;S.believer=null;}
+    return {d,ev};}
+  function specMaj(d){
+    const sp={st:S.st.slice(),crowns:[[S.leader,'solid']],rings:[],bubbles:[]};
+    if(d.G)S.st.forEach((s,k)=>{if(!d.G.includes(k))sp.rings.push(k);});
+    if(S.believer!==null){sp.crowns.push([S.believer,'ghost']);const s=S.st[S.believer];
+      sp.bubbles.push([S.believer,s==='oneway'?'I’m not dead!':s==='pause'?'zzz… (thinks it leads)':'I’m the leader!','no']);}
+    if(S.stepped!==null)sp.bubbles.push([S.stepped,'Outvoted: I step down','ok']);
+    if(!d.G)sp.bubbles.push([S.leader,S.st[S.leader]==='pause'?'zzz…':'No majority: stuck','info']);
+    if(!d.B.length)sp.c1=d.G?'A majority is connected: it decides':'No majority connected: no decisions';
+    else sp.c1=d.G?(d.side==='A'?'Blue':'Amber')+' side has a majority: it decides':'No side has a majority: no decisions';
+    sp.c2='Term '+S.term+' · leader '+nm(S.leader);
+    return sp;}
+  function cells(n,k,cls,mark){return '<span class="kt-cells">'+Array.from({length:n},(_,j)=>(j===mark?'<b class="mj"></b>':'')+'<i class="'+(j<k?cls:'')+'"></i>').join('')+(mark===n?'<b class="mj"></b>':'')+'</span>';}
+  function tallyMaj(d){
+    const row=(lab,col,list)=>'<div class="kt-row"><span class="kt-lab" style="color:var(--'+col+')">'+lab+'</span>'+cells(S.n,list.length,'f-'+col,d.maj)+'<span class="v">'+list.length+' of '+S.n+' '+(list.length>=d.maj?'<span class="ok-t">✓ decides</span>':'· waits')+'</span></div>';
+    const un=S.st.map((s,k)=>s==='pause'?nm(k)+' (paused)':s==='oneway'?nm(k)+' (replies lost)':s==='dead'?nm(k)+' (down)':null).filter(Boolean);
+    return row(d.B.length?'Blue side':'Connected','h1',d.A)+(d.B.length?row('Amber side','h3',d.B):'')+
+      '<div class="kt-un">Tall bar = majority line ('+d.maj+' of '+S.n+')'+(un.length?' · Nobody hears: '+un.join(', '):'')+'</div>';}
+  function bft(){const bad=S.st.filter(s=>s==='bad').length,good=S.n-bad,need=Math.floor(2*S.n/3)+1,ok=good>=need;
+    return {sp:{st:S.st.map(s=>s==='bad'?'bad':'good'),crowns:[],rings:[],bubbles:[],sub:S.subs,c1:ok?'Correct nodes still outvote the faulty':'Too many faulty: the vote can’t be trusted',c2:good+' of '+S.n+' correct · need '+need},ok,good,need};}
+  function paint(sp){
+    if(!svg.isConnected)return;const n=sp.st.length;S.n=n;const r=n<=5?24:20;let s='';
+    s+='<path d="M 26 154 A 134 134 0 0 1 294 154" style="fill:none;stroke:var(--line);stroke-width:1.5;stroke-dasharray:2 5"/>';
+    const bub=sp.bubbles||[];
+    bub.forEach(b=>{const [x,y]=pos(b[0]),[bx,by]=pos(b[0],54);s+='<line x1="'+x.toFixed(1)+'" y1="'+y.toFixed(1)+'" x2="'+bx.toFixed(1)+'" y2="'+by.toFixed(1)+'" style="stroke:var(--line2);stroke-width:1.5"/>';});
+    sp.st.forEach((st,k)=>{const [x,y]=pos(k),c=SEAT[st]||SEAT.in;
+      const fill=st==='in'&&S.colors?S.colors[k][0]:c[0],stroke=st==='in'&&S.colors?S.colors[k][1]:c[1];
+      s+='<g data-k="'+k+'" style="cursor:'+(o.tap?'pointer':'default')+'">';
+      if((sp.rings||[]).includes(k))s+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+(r+5)+'" style="fill:none;stroke:var(--no);stroke-width:2;stroke-dasharray:4 3"/>';
+      s+='<circle cx="'+x.toFixed(1)+'" cy="'+y.toFixed(1)+'" r="'+r+'" style="fill:'+fill+';stroke:'+stroke+';stroke-width:2.2'+(c[2]?';stroke-dasharray:'+c[2]:'')+'"/>';
+      const sub=(sp.sub&&sp.sub[k])||SUB[st]||'';
+      s+=tx(x.toFixed(1),(y+(sub?0:4.5)).toFixed(1),nm(k),'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+      if(sub)s+=tx(x.toFixed(1),(y+13).toFixed(1),sub,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+      s+='</g>';});
+    (sp.crowns||[]).forEach(cr=>{const [x,y]=pos(cr[0]),y0=y-r-3;const d='M'+(x-9)+' '+y0+'L'+(x-9)+' '+(y0-9)+'L'+(x-4.5)+' '+(y0-4)+'L'+x+' '+(y0-11)+'L'+(x+4.5)+' '+(y0-4)+'L'+(x+9)+' '+(y0-9)+'L'+(x+9)+' '+y0+'Z';
+      s+='<path d="'+d+'" style="'+(cr[1]==='solid'?'fill:var(--h4);stroke:var(--h4)':'fill:var(--card);stroke:var(--no);stroke-dasharray:2 2')+';stroke-width:1.5;stroke-linejoin:round"/>';});
+    bub.forEach(b=>{let [bx,by]=pos(b[0],54);const w=Math.round(b[1].length*6.2+18);bx=Math.max(4+w/2,Math.min(316-w/2,bx));
+      const col=b[2]==='no'?'var(--no)':b[2]==='ok'?'var(--ok-line)':'var(--line2)',tc=b[2]==='no'?'var(--no)':b[2]==='ok'?'var(--ok)':'var(--ink)';
+      s+='<rect x="'+(bx-w/2).toFixed(1)+'" y="'+(by-12).toFixed(1)+'" width="'+w+'" height="24" rx="11" style="fill:var(--card);stroke:'+col+';stroke-width:1.8"/>'+tx(bx.toFixed(1),(by+4.2).toFixed(1),b[1],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+tc);});
+    if(sp.c1)s+=tx(160,174,sp.c1,'font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+    if(sp.c2)s+=tx(160,190,sp.c2,'font-size:12px;text-anchor:middle;fill:var(--muted)');
+    svg.innerHTML=s;
+    if(seats){seats.innerHTML=S.st.map((st,k)=>'<button class="chip '+st+'" data-k="'+k+'" aria-label="'+nm(k)+': '+({in:'connected',cut:'cut off',pause:'paused',oneway:'replies lost',dead:'down',bad:'faulty'}[st]||st)+'. Tap to change">'+nm(k)+'</button>').join('');
+      seats.querySelectorAll('button').forEach(b=>{b.onclick=()=>tap(+b.dataset.k);});}
+  }
+  function draw(){let info;
+    if(S.mode==='maj'){info=apply();paint(specMaj(info.d));if(tl)tl.innerHTML=tallyMaj(info.d);}
+    else if(S.mode==='bft'){info=bft();paint(info.sp);if(tl)tl.innerHTML='<div class="kt-row"><span class="kt-lab" style="color:var(--ok)">Correct</span>'+cells(S.n,info.good,'f-ok',info.need)+'<span class="v">'+info.good+' of '+S.n+' '+(info.ok?'<span class="ok-t">✓ enough</span>':'<span class="no-t">✗ too few</span>')+'</span></div><div class="kt-un">Tall bar = more than two-thirds ('+info.need+' of '+S.n+')</div>';}
+    return info;}
+  function tap(k){if(!o.tap)return;
+    if(S.mode==='bft')S.st[k]=S.st[k]==='bad'?'in':'bad';
+    else S.st[k]=S.st[k]==='in'?'cut':S.st[k]==='cut'?'pause':'in';
+    if(S.mode==='maj'&&S.st[k]==='in'&&k===S.believer)S.unaware=false;
+    const info=draw();if(o.on)o.on(Object.assign({type:'tap',k},info));}
+  svg.addEventListener('click',e=>{const g=e.target.closest('g[data-k]');if(g)tap(+g.dataset.k);});
+  function load(n,st,leader){reset(n,leader);S.st=st.slice();return draw();}
+  return {S,draw,paint,reset,load,tap,decide,nm,tally:h=>{if(tl)tl.innerHTML=h;},alive:()=>svg.isConnected};
+}
+
+/* ---------- 2. The route store’s gate ---------- */
+function Gate(L,host,o){
+  o=Object.assign({id:'g',tokens:true,check:true,hacked:false,on:null},o||{});
+  const ID=o.id;
+  const S={};
+  function reset(){Object.assign(S,{hi:0,routes:'none',p2w:false,log:[],check:o.check,tokens:o.tokens,hacked:o.hacked,p1:o.hacked?'hacked':'frozen',lease:'p2',busy:false,last:null,self:false,t1:o.hacked?9999:33});}
+  reset();
+  host.insertAdjacentHTML('beforeend','<div class="kt-gate"><svg id="'+ID+'-s" viewBox="0 0 320 250" role="img" aria-label="Two route planners at the top send writes down through a gate into the route store"><g id="'+ID+'-b"></g><g id="'+ID+'-fx"></g></svg><div class="kt-led" id="'+ID+'-l" aria-live="polite"></div></div>');
+  const svg=host.querySelector('#'+ID+'-s'),base=host.querySelector('#'+ID+'-b'),fx=host.querySelector('#'+ID+'-fx'),led=host.querySelector('#'+ID+'-l');
+  const alive=()=>svg.isConnected;
+  const ROUTES={none:['Not written yet','','var(--muted)'],p2:['Planner 2’s plan','✓ consistent','var(--ok)'],p1old:['Planner 1’s old plan','stale for now','var(--h3)'],mixed:['Both plans mixed','✗ corrupted','var(--no)'],forged:['Attacker’s plan','✗ hijacked','var(--no)']};
+  function draw(){
+    if(!alive())return;let s='';
+    const lease=S.lease==='p1'?'Lease: Planner 1'+(S.tokens?' · token 33':''):S.lease==='p1x'?'Planner 1’s lease expired':'Lease: Planner 2'+(S.tokens?' · token 34':'');
+    s+='<rect x="4" y="4" width="312" height="38" rx="12" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.6"/>'+tx(16,28,'Lock service','font-size:13px;font-weight:700;fill:var(--h4)')+tx(306,28,lease,'font-size:12.5px;font-weight:600;text-anchor:end;fill:var(--ink)');
+    const st1=S.p1==='holds'?'holds the lease':S.p1==='frozen'?'frozen: GC pause':S.p1==='hacked'?'hacked by an attacker':S.self?'own check: valid ✓':'awake: thinks it leads';
+    const st2=S.lease==='p2'?'holds the lease':'waiting';
+    const pl=(x,name,st,tok,f,stroke,dash)=>'<rect x="'+x+'" y="54" width="152" height="60" rx="12" style="fill:'+f+';stroke:'+stroke+';stroke-width:1.8'+(dash?';stroke-dasharray:5 4':'')+'"/>'+tx(x+11,78,name,'font-size:13.5px;font-weight:700;fill:var(--ink)')+
+      (tok?'<rect x="'+(x+102)+'" y="63" width="42" height="22" rx="11" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5"/>'+tx(x+123,78.5,tok,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)'):'')+
+      tx(x+11,102,st,'font-size:12px;fill:var(--muted)');
+    s+=pl(4,'Planner 1',st1,S.tokens?String(S.t1):'',S.p1==='hacked'?'var(--no-bg)':S.p1==='frozen'?'var(--soft)':'var(--h1-bg)',S.p1==='hacked'?'var(--no)':S.p1==='frozen'?'var(--line2)':'var(--h1)',S.p1==='frozen');
+    s+=pl(164,'Planner 2',st2,S.tokens&&S.lease==='p2'?'34':'',S.lease==='p2'?'var(--h2-bg)':'var(--soft)',S.lease==='p2'?'var(--h2)':'var(--line2)',false);
+    const gc=S.last==='ok'?'var(--ok-strong)':S.last==='no'?'var(--no-strong)':'var(--line2)';
+    s+=tx(160,150,S.check?'Gate: checks tokens':'Gate: no token check','font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+(S.check?'var(--ok)':'var(--muted)'));
+    s+='<rect x="8" y="156" width="304" height="8" rx="4" style="fill:'+gc+'"/>';
+    s+='<rect x="4" y="172" width="312" height="74" rx="12" style="fill:var(--card);stroke:var(--line2);stroke-width:1.6"/>'+tx(16,190,'Route store','font-size:12.5px;font-weight:700;fill:var(--ink)');
+    if(S.tokens){s+=tx(16,207,S.check?'Highest token seen':'Tokens ignored','font-size:11.5px;fill:var(--muted)');
+      if(S.check)s+=tx(16,236,S.hi?String(S.hi):'—','font-size:24px;font-weight:700;fill:var(--ink)');}
+    const R=ROUTES[S.routes];
+    s+='<line x1="152" y1="182" x2="152" y2="238" style="stroke:var(--line);stroke-width:1.5"/>'+tx(162,190,'Westport routes','font-size:11.5px;fill:var(--muted)')+tx(162,214,R[0],'font-size:13px;font-weight:700;fill:'+R[2])+tx(162,233,R[1],'font-size:12px;font-weight:600;fill:'+R[2]);
+    base.innerHTML=s;
+    led.innerHTML=S.log.length?S.log.map(e=>'<div class="kt-lr">'+(S.tokens?'<span class="kt-tk">'+e[1]+'</span>':'')+'<span>'+(e[0]==='p1'?'Planner 1':'Planner 2')+(S.tokens?'':'’s write')+' → '+(e[2]?'<span class="ok-t">accepted</span>':'<span class="no-t">rejected</span>')+'</span></div>').join(''):'<div class="kt-lr" style="color:var(--muted)">Gate ledger: no writes yet</div>';
+  }
+  function env(x,label){const g=document.createElementNS('http://www.w3.org/2000/svg','g');
+    g.innerHTML='<rect x="'+(x-22)+'" y="113" width="44" height="22" rx="5" style="fill:var(--card);stroke:var(--pri);stroke-width:2"/>'+tx(x,128.5,label,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri)');fx.appendChild(g);return g;}
+  async function send(who){
+    if(S.busy||!alive())return null;S.busy=true;
+    const tok=who==='p1'?S.t1:34,x=who==='p1'?80:240;
+    if(who==='p1'&&(S.p1==='frozen'||S.p1==='holds'))S.p1='awake';
+    draw();
+    const g=env(x,S.tokens?String(tok):'write');
+    if(!await anim(L,450,p=>{if(!g.isConnected)return false;g.setAttribute('transform','translate(0,'+(22*p).toFixed(1)+')');})){S.busy=false;return null;}
+    const ok=!S.check||tok>=S.hi;
+    if(ok){S.last='ok';S.hi=Math.max(S.hi,tok);
+      if(who==='p2'){if(S.routes!=='mixed'&&S.routes!=='forged')S.routes='p2';S.p2w=true;}
+      else S.routes=S.hacked?'forged':S.p2w?'mixed':'p1old';
+      draw();await anim(L,380,p=>{if(!g.isConnected)return false;g.setAttribute('transform','translate(0,'+(22+64*p).toFixed(1)+')');g.style.opacity=String(1-p);});}
+    else{S.last='no';draw();
+      const xx=document.createElementNS('http://www.w3.org/2000/svg','path');xx.setAttribute('d','M'+(x-8)+' 152l16 16m0 -16l-16 16');xx.setAttribute('style','stroke:var(--no);stroke-width:3;stroke-linecap:round;fill:none');fx.appendChild(xx);
+      await anim(L,420,p=>{if(!g.isConnected)return false;g.setAttribute('transform','translate(0,'+(22-22*p).toFixed(1)+')');g.style.opacity=String(1-p*.85);});xx.remove();}
+    g.remove();
+    S.log.push([who,tok,ok]);S.busy=false;draw();
+    const res={who,tok,ok,routes:S.routes};if(o.on)o.on(res);return res;}
+  async function idle(){for(let i=0;i<200&&S.busy;i++)await L.sleep(15);}
+  draw();
+  return {S,draw,send,reset:()=>{reset();draw();},idle,alive};
+}
+
+/* ---------- static figures for Learn screens ---------- */
+function FIG_KNOW(){
+  const box=(x,t,sub)=>'<rect x="'+x+'" y="118" width="100" height="54" rx="12" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+tx(x+50,140,t,'font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+50,158,sub,'font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  return '<div class="kt-fig"><svg viewBox="0 0 320 178" role="img" aria-label="Westport node N1 asks an Eastvale node if it is alive and gets no reply. Three explanations fit: crashed, link cut, or just slow.">'+
+   '<defs><marker id="ktA" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--pri)"/></marker></defs>'+
+   '<circle cx="50" cy="52" r="26" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2.2"/>'+tx(50,57,'N1','font-size:14px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(50,94,'Westport','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+
+   '<circle cx="270" cy="52" r="26" style="fill:var(--soft);stroke:var(--line2);stroke-width:2.2;stroke-dasharray:5 4"/>'+tx(270,59,'?','font-size:20px;font-weight:700;text-anchor:middle;fill:var(--muted)')+tx(270,94,'Eastvale','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+
+   '<line x1="80" y1="42" x2="238" y2="42" style="stroke:var(--pri);stroke-width:2.2" marker-end="url(#ktA)"/>'+tx(159,34,'“Are you alive?”','font-size:12px;font-weight:600;text-anchor:middle;fill:var(--pri)')+
+   '<line x1="238" y1="64" x2="82" y2="64" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:3 5"/>'+tx(159,82,'… silence','font-size:12px;font-style:italic;text-anchor:middle;fill:var(--muted)')+
+   '<path d="M50 100 L50 116 M54 100 Q120 104 160 116 M56 100 Q220 100 266 116" style="fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:2 3"/>'+
+   box(4,'Crashed?','node is gone')+box(110,'Link cut?','messages lost')+box(216,'Just slow?','reply delayed')+'</svg></div>';}
+function FIG_LIE(){
+  const pill=(cx,y,t,c)=>{const w=t.length*6.6+16;return '<rect x="'+(cx-w/2)+'" y="'+(y-13)+'" width="'+w+'" height="20" rx="10" style="fill:var(--card);stroke:'+c+';stroke-width:1.5"/>'+tx(cx,y+1,t,'font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)');};
+  const tent=(x,c,f)=>'<path d="M'+(x-20)+' 192 L'+x+' 166 L'+(x+20)+' 192 Z" style="fill:'+f+';stroke:'+c+';stroke-width:2;stroke-linejoin:round"/>';
+  return '<div class="kt-fig"><svg viewBox="0 0 320 218" role="img" aria-label="Left: an honest but unreliable node that may be slow, silent or stale. Right: a Byzantine node that claims it stored a write and sends a fake token. Below: the Byzantine Generals, where a traitor sends different orders to two loyal generals.">'+
+   '<defs><marker id="ktB" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--no)"/></marker></defs>'+
+   '<rect x="2" y="2" width="154" height="118" rx="14" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.5"/>'+tx(79,22,'Honest, unreliable','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ok)')+
+   '<circle cx="79" cy="58" r="21" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+tx(79,63,'N2','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   pill(30,102,'slow','var(--line2)')+pill(79,102,'silent','var(--line2)')+pill(128,102,'stale','var(--line2)')+
+   '<rect x="164" y="2" width="154" height="118" rx="14" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.5"/>'+tx(241,22,'Byzantine: lies','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--no)')+
+   '<circle cx="241" cy="58" r="21" style="fill:var(--card);stroke:var(--no);stroke-width:2"/>'+tx(241,63,'N4','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   pill(241,92,'claims “stored”','var(--no)')+pill(241,113,'fake token 9999','var(--no)')+
+   '<rect x="2" y="128" width="316" height="88" rx="14" style="fill:var(--soft)"/>'+tx(160,146,'The Byzantine Generals Problem','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   tent(50,'var(--h1)','var(--h1-bg)')+tent(160,'var(--no)','var(--no-bg)')+tent(270,'var(--h1)','var(--h1-bg)')+
+   '<line x1="138" y1="180" x2="76" y2="180" style="stroke:var(--no);stroke-width:2" marker-end="url(#ktB)"/>'+tx(106,172,'“Attack!”','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--no)')+
+   '<line x1="182" y1="180" x2="244" y2="180" style="stroke:var(--no);stroke-width:2" marker-end="url(#ktB)"/>'+tx(214,172,'“Retreat!”','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--no)')+
+   tx(50,208,'loyal','font-size:11px;text-anchor:middle;fill:var(--muted)')+tx(160,208,'traitor (unknown)','font-size:11px;text-anchor:middle;fill:var(--no)')+tx(270,208,'loyal','font-size:11px;text-anchor:middle;fill:var(--muted)')+'</svg></div>';}
+function FIG_WORTH(){
+  const I={plane:'<path d="M3 14 L21 9 L19 13 L21 17 Z M10 12 L7 5 M10 14 L7 20"/>',chain:'<rect x="2" y="9" width="6" height="7" rx="1.5"/><rect x="9" y="9" width="6" height="7" rx="1.5"/><rect x="16" y="9" width="6" height="7" rx="1.5"/><path d="M8 12.5h1M15 12.5h1"/>',
+    rack:'<rect x="5" y="3" width="14" height="18" rx="2"/><path d="M5 9h14M5 15h14"/><circle cx="8" cy="6" r=".8"/><circle cx="8" cy="12" r=".8"/><circle cx="8" cy="18" r=".8"/>',browser:'<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/><circle cx="6" cy="7" r=".7"/><circle cx="8.5" cy="7" r=".7"/>'};
+  const tile=(c,ic,t,d)=>'<div class="kt-tile '+c+'"><svg viewBox="0 0 24 24" aria-hidden="true" style="fill:none;stroke:'+(c==='y'?'var(--ok)':'var(--muted)')+';stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round">'+I[ic]+'</svg><b>'+t+'</b>'+d+'</div>';
+  return '<div class="kt-tiles" role="img" aria-label="Byzantine fault tolerance is worth it for aircraft and for rival organizations; usually not for your own datacenter or for browsers">'+
+   '<div class="kt-th" style="color:var(--ok)">Worth it</div><div class="kt-th" style="color:var(--muted)">Usually not</div>'+
+   tile('y','plane','Aircraft, rockets','Radiation can corrupt memory; a failure kills people.')+tile('n','rack','Your own datacenter','You control every node; radiation is low; protocols are costly.')+
+   tile('y','chain','Rival organizations','Peer-to-peer, like Bitcoin: no central authority.')+tile('n','browser','Browsers and apps','The server is the authority and validates input.')+'</div>';}
+function FIG_MODELS(){
+  const X=[94,168,242],W=72,Y=[74,124,174],H=46;
+  let s='';
+  const bars=(x,spike)=>{let b='<line x1="'+(x+4)+'" y1="22" x2="'+(x+W-4)+'" y2="22" style="stroke:var(--no);stroke-width:1.5;stroke-dasharray:3 3"/>';
+    [10,14,8,12,9].forEach((h,j)=>{const hh=spike&&j===3?24:h;b+='<rect x="'+(x+10+j*11)+'" y="'+(38-hh)+'" width="7" height="'+hh+'" rx="1.5" style="fill:'+(spike&&j===3?'var(--h3)':'var(--h1)')+'"/>';});return b;};
+  s+=bars(X[0],false)+bars(X[1],true);
+  s+='<circle cx="'+(X[2]+35)+'" cy="24" r="13" style="fill:none;stroke:var(--muted);stroke-width:1.8"/><path d="M'+(X[2]+35)+' 24 L'+(X[2]+35)+' 16 M'+(X[2]+35)+' 24 L'+(X[2]+41)+' 27 M'+(X[2]+24)+' 35 L'+(X[2]+46)+' 13" style="stroke:var(--muted);stroke-width:1.8;stroke-linecap:round"/>';
+  [['Synchronous',''],['Partially','synchronous'],['Asynchronous','']].forEach((h,j)=>{s+=tx(X[j]+35,52,h[0],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+(h[1]?tx(X[j]+35,65,h[1],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)'):'');});
+  [['Crash-stop','gone for good'],['Crash-recovery','disk survives'],['Byzantine','does anything']].forEach((r,i)=>{s+=tx(2,Y[i]+20,r[0],'font-size:11.5px;font-weight:700;fill:var(--ink)')+tx(2,Y[i]+36,r[1],'font-size:11px;fill:var(--muted)');
+    X.forEach((x,j)=>{const star=i===1&&j===1;s+='<rect x="'+x+'" y="'+Y[i]+'" width="'+W+'" height="'+H+'" rx="9" style="fill:'+(star?'var(--pri-bg)':'var(--soft)')+';stroke:'+(star?'var(--pri)':'var(--line)')+';stroke-width:'+(star?2.5:1)+'"/>';
+      if(star)s+=tx(x+35,Y[i]+20,'★ most','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri)')+tx(x+35,Y[i]+35,'useful','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri)');});});
+  s+=tx(X[0]+35,238,'unrealistic','font-size:11px;text-anchor:middle;fill:var(--muted)')+tx(X[1]+35,238,'realistic','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ok)')+tx(X[2]+35,238,'very','font-size:11px;text-anchor:middle;fill:var(--muted)')+tx(X[2]+35,251,'restrictive','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  return '<div class="kt-fig"><svg viewBox="0 0 320 256" role="img" aria-label="Grid: timing models across (synchronous, partially synchronous, asynchronous) and failure models down (crash-stop, crash-recovery, Byzantine). Partially synchronous with crash-recovery is starred as most useful.">'+s+'</svg></div>';}
+function FIG_PROPS(L){
+  const tk=(x,n,lab)=>'<path d="M'+x+' 22 h52 v10 a5 5 0 0 0 0 10 v10 h-52 v-10 a5 5 0 0 0 0 -10 z" style="fill:var(--card);stroke:var(--h4);stroke-width:1.8"/>'+tx(x+26,42,n,'font-size:14px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+26,72,lab,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+  const row=(ic,t,d,tag)=>'<div class="kt-prop"><span class="ico" style="color:var(--'+(tag==='s'?'h1':'h2')+')">'+L.ic(ic)+'</span><span><b>'+t+'</b> '+d+'</span><span class="kt-tag '+tag+'">'+(tag==='s'?'SAFETY':'LIVENESS')+'</span></div>';
+  return '<div class="kt-fig"><svg viewBox="0 0 320 80" role="img" aria-label="A lock service hands out fencing tokens 33, 34 and 35 to three requests in order">'+
+   '<rect x="2" y="18" width="98" height="38" rx="10" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.6"/>'+tx(51,42,'Lock service','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h4)')+
+   '<path d="M102 37 H124" style="stroke:var(--h4);stroke-width:2"/>'+tk(128,'33','request A')+tk(190,'34','request B')+tk(252,'35','request C')+'</svg></div>'+
+   row('shield','Uniqueness:','no two requests get the same token.','s')+row('shield','Monotonic:','if A finished before B began, B’s token is higher.','s')+row('cycle','Availability:','a node that asks and doesn’t crash eventually gets an answer.','l');}
+function FIG_SUM(){
+  const tile=(x,t,sub,icon)=>'<rect x="'+x+'" y="4" width="100" height="84" rx="12" style="fill:var(--soft);stroke:var(--line);stroke-width:1.5"/>'+icon+tx(x+50,66,t,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+50,81,sub,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+  const net='<rect x="38" y="18" width="34" height="24" rx="3" style="fill:var(--card);stroke:var(--h1);stroke-width:1.8"/><path d="M38 19 L55 32 L72 19" style="fill:none;stroke:var(--h1);stroke-width:1.6"/><path d="M62 36l12 12m0 -12l-12 12" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>';
+  const clk='<circle cx="160" cy="31" r="15" style="fill:var(--card);stroke:var(--h3);stroke-width:1.8"/><path d="M160 31 V22 M160 31 L167 35" style="stroke:var(--h3);stroke-width:1.8;stroke-linecap:round"/><path d="M182 22 a20 20 0 0 1 0 18" style="fill:none;stroke:var(--no);stroke-width:1.8"/><path d="M178 38 l4 3 l2 -5" style="fill:none;stroke:var(--no);stroke-width:1.8"/>';
+  const pau='<rect x="255" y="16" width="8" height="30" rx="2" style="fill:var(--h2)"/><rect x="269" y="16" width="8" height="30" rx="2" style="fill:var(--h2)"/>';
+  let dots='';for(let k=0;k<5;k++){const a=Math.PI-Math.PI*(k+.5)/5;dots+='<circle cx="'+(160+30*Math.cos(a)).toFixed(1)+'" cy="'+(150-30*Math.sin(a)).toFixed(1)+'" r="7" style="fill:'+(k<3?'var(--h1)':'var(--h1-bg)')+';stroke:var(--h1);stroke-width:1.5"/>';}
+  return '<div class="kt-fig"><svg viewBox="0 0 320 320" role="img" aria-label="Networks lose messages, clocks drift and jump, processes freeze. So big decisions need a quorum. A limping node can be worse than a dead one. Femi asks whether to go back to one big machine. Use one machine if it is enough; Otterpost’s three regions need many machines for fault tolerance and low latency.">'+
+   '<defs><marker id="ktC" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--line2)"/></marker></defs>'+
+   tile(4,'Networks','lose, delay',net)+tile(110,'Clocks','drift and jump',clk)+tile(216,'Pauses','freeze anywhere',pau)+
+   '<path d="M54 90 L132 112 M160 90 L160 106 M266 90 L188 112" style="stroke:var(--line2);stroke-width:1.8" marker-end="url(#ktC)"/>'+dots+
+   tx(160,168,'So: ask a quorum','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   '<rect x="22" y="178" width="276" height="24" rx="12" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.5"/>'+tx(160,194,'A limping node can be worse than a dead one','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--no)')+
+   '<rect x="50" y="212" width="220" height="26" rx="13" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5"/><path d="M150 238 L160 248 L170 238" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5;stroke-linejoin:round"/><path d="M151 237.5 H169" style="stroke:var(--card);stroke-width:2.5"/>'+
+   tx(160,229,'Femi: “Back to one big machine?”','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   '<rect x="4" y="254" width="116" height="62" rx="12" style="fill:var(--h2-bg)"/>'+tx(62,277,'One machine','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--h2)')+tx(62,294,'if it’s enough','font-size:11.5px;text-anchor:middle;fill:var(--ink)')+
+   '<rect x="126" y="254" width="190" height="62" rx="12" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+tx(221,275,'Many machines','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--h1)')+tx(221,292,'fault tolerance, low latency','font-size:11.5px;text-anchor:middle;fill:var(--ink)')+tx(221,308,'✓ Otterpost’s 3 regions','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ok)')+'</svg></div>';}
+
+/* the Eastvale follower’s bad week */
+function weekFig(k){
+  const outC=k===3?'var(--ok-strong)':'var(--no)',fro=k===2;
+  const bub=[['I’m not dead!'],['No acks. The network','must be broken!'],['zzz… (GC pause,','one minute)'],['Hi all! Where','were we?']][k];
+  const ver=[['Verdict: E1 is dead'],['Verdict: E1 is dead'],['Waited, retried…','Verdict: E1 is dead'],['E1?! We declared','you dead!']][k];
+  let s='<defs><marker id="ktW1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--ok-strong)"/></marker>'+
+   '<marker id="ktW2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:'+outC+'"/></marker></defs>';
+  s+='<rect x="4" y="40" width="112" height="100" rx="14" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>'+tx(60,58,'Other nodes','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)');
+  s+='<circle cx="38" cy="96" r="18" style="fill:var(--card);stroke:var(--h2);stroke-width:2"/>'+tx(38,101,'W1','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+'<circle cx="84" cy="112" r="18" style="fill:var(--card);stroke:var(--h2);stroke-width:2"/>'+tx(84,117,'W2','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  s+='<circle cx="254" cy="98" r="30" style="fill:'+(fro?'var(--soft)':'var(--h1-bg)')+';stroke:'+(fro?'var(--line2)':'var(--h1)')+';stroke-width:2.4'+(fro?';stroke-dasharray:5 4':'')+'"/>'+tx(254,104,'E1','font-size:15px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(254,146,'Eastvale follower','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  s+='<line x1="120" y1="80" x2="218" y2="80" style="stroke:var(--ok-strong);stroke-width:2.2" marker-end="url(#ktW1)"/>'+tx(170,72,'requests','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  if(fro)s+='<line x1="220" y1="116" x2="122" y2="116" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:2 5"/>'+tx(170,134,'silence','font-size:11.5px;font-style:italic;text-anchor:middle;fill:var(--muted)');
+  else s+='<line x1="220" y1="116" x2="124" y2="116" style="stroke:'+outC+';stroke-width:2.2'+(k<3?';stroke-dasharray:6 4':'')+'" marker-end="url(#ktW2)"/>'+tx(170,134,'replies','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+
+    (k<3?'<path d="M162 108l16 16m0 -16l-16 16" style="stroke:var(--no);stroke-width:3;stroke-linecap:round"/>':'');
+  const bw=Math.max(...bub.map(t=>t.length))*6.4+20,bh=bub.length*15+12;
+  s+='<rect x="'+(316-bw)+'" y="'+(4)+'" width="'+bw+'" height="'+bh+'" rx="11" style="fill:var(--card);stroke:'+(k===3?'var(--line2)':'var(--no)')+';stroke-width:1.8"/>'+bub.map((t,j)=>tx(316-bw/2,20+j*15,t,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+(k===3?'var(--ink)':'var(--no)'))).join('')+
+    '<line x1="'+(254)+'" y1="'+(4+bh)+'" x2="254" y2="68" style="stroke:var(--line2);stroke-width:1.5"/>';
+  s+=ver.map((t,j)=>tx(60,166+j*16,t,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--no)')).join('');
+  return '<svg viewBox="0 0 320 200" role="img" aria-label="Eastvale follower E1 and the other nodes: day '+(k+1)+' of 4">'+s+'</svg>';
+}
+
 Course.lesson({
-  id:'0020', title:'Knowledge, truth and lies', minutes:20, icon:'scale',
+  id:'0020', title:'Knowledge, truth and lies', minutes:22, icon:'scale',
   goals:['Explain why a majority, not a node itself, decides what’s true','Use fencing tokens to stop a node that wrongly thinks it’s in charge','Name the system model and the safety and liveness properties of a design'],
-  parts:['Truth by majority','Leaders and locks','Byzantine faults','System models'],
+  parts:['Truth by majority','Leaders and locks','Lying nodes','System models'],
   read:'Read the “Knowledge, Truth, and Lies” section and the summary of chapter 8 for the full fencing and Byzantine discussion.',
   glossary:{
     'quorum':'Quorum: a minimum number of nodes that must vote for a decision. Usually a majority, more than half of all nodes.',
     'lease':'Lease: a lock that expires after a set time. The holder must renew it before it runs out, or another node can take over.',
-    'fencing':'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already seen.',
+    'fencing':'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already processed.',
     'byzantine':'Byzantine fault: a node that “lies”, sending wrong or made-up messages, by malfunction or on purpose, rather than simply being slow or silent.',
     'system-model':'System model: the list of things an algorithm is allowed to assume, such as how long delays can be and how nodes may fail.',
     'safety':'Safety property: “nothing bad happens”. Once broken, you can point to the moment it broke, and the damage can’t be undone.',
@@ -29,161 +310,263 @@ Course.lesson({
   },
   cheatsheet:[
     'A node only knows what messages tell it. It <b>can’t trust its own judgment</b>, like whether it is still alive or still the leader.',
-    'A <b>majority quorum</b> decides. There can only be one majority, so there can’t be two conflicting decisions.',
-    'A node that thinks it holds a lock may be wrong. Give out <b>fencing tokens</b> and make the resource itself reject old ones.',
+    'A <b>majority quorum</b> decides, including who is dead. Only one majority can exist, so no two conflicting decisions. 3 nodes survive 1 failure; 5 survive 2.',
+    'A node that thinks it holds a lock may be wrong. Hand out <b>fencing tokens</b> and make the resource itself reject lower ones.',
     'Nodes in this book are <b>unreliable but honest</b>. <b>Byzantine</b> (lying) nodes matter in aerospace and between untrusting organizations, rarely in your own datacenter.',
     'Still guard against <b>weak lying</b>: app-level checksums, input sanity checks, several NTP servers.',
-    'Real systems are best modelled as <b>partially synchronous</b> with <b>crash-recovery</b> faults.',
+    'Real systems are best modelled as <b>partially synchronous</b> with <b>crash-recovery</b> faults, and reality can still break the model.',
     '<b>Safety</b> (nothing bad happens) must always hold. <b>Liveness</b> (something good eventually happens) may come with conditions.',
     'If one machine will do, use one machine. But fault tolerance and low latency for far-apart users need many.'
   ],
   steps:[
 /* ---------- PART 1: TRUTH BY MAJORITY ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
+  L.fast=false;
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">You text a friend and get no reply for an hour. Can you tell whether they’re asleep, their phone died, or your text never arrived?</h1>');
   L.mc(L.card,['Yes, usually you can tell','No, all three look the same'],1,
    'From where you sit, every one of those is just silence. Nodes in a distributed system are always in your position.',
    'From your side, all three look identical: silence. You only learn more if a message gets through. Nodes in a distributed system live like this all the time.');}},
 {part:0,src:'Chapter 8 · Knowledge, Truth, and Lies',run(L){
-  L.h(L.kick('learn','What can a node know?')+'<h1 class="q">A node can only guess, based on the messages it gets, or doesn’t get</h1>'+
-   L.prose('The last two lessons showed the problems: no shared memory, an unreliable network with variable delays, partial failures, unreliable clocks and process pauses.')+
-   L.prose('So a node can’t know anything for sure. To learn another node’s state, what it has stored or whether it is working, it must exchange messages. If the other node goes quiet, there is no way to tell a network problem from a node problem.')+
-   L.note('The way out isn’t philosophy. We write down what we assume about the system (a '+L.g('system-model','system model')+') and design algorithms that are proven to work under those assumptions. Reliable behaviour is possible even when the assumptions promise very little.','compass'));
+  L.h(L.kick('learn','What can a node know?')+'<h1 class="q">A node only knows what messages tell it</h1>'+CSS+FIG_KNOW()+
+   L.prose('From N1’s seat, all three look the same: silence. No node can know anything for sure. So we write down what we assume, a '+L.g('system-model','system model')+', and prove algorithms work under it.'));
   L.done();}},
-{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',run(L){
-  L.h(L.kick('ex','Three stories')+'<h1 class="q">Eastvale’s Parcel DB follower has a bad week</h1>');
-  L.beats(L.card,[
-   ['Monday','Its network link goes one-way: it receives everything, but its replies are dropped. It is working perfectly, yet after a timeout the other nodes <b>declare it dead</b>. It protests “I’m not dead!”, but nobody hears.'],
-   ['Wednesday','Same fault, but this time it notices its messages aren’t being acknowledged and realizes the network is broken. It is still declared dead, and it can do nothing about it.'],
-   ['Friday','A stop-the-world garbage-collection pause freezes it for a full minute. The others wait, retry, and declare it dead.'],
-   ['Friday, a minute later','The pause ends and it carries on as if nothing happened, chatting to the others. From its point of view, hardly any time has passed. It has no idea it was declared dead.']],
-   'In each story the node’s own view of itself was wrong or useless. A node can’t be the judge of its own state.');}},
-{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',run(L){
-  L.h(L.kick('learn','Let the majority decide')+'<h1 class="q">Important decisions are made by vote, not by one node</h1>'+
-   L.quote('a node cannot necessarily trust its own judgment of a situation','Martin Kleppmann, chapter 8')+
-   L.prose('Relying on any single node is risky: it can fail and leave the system stuck. So many distributed algorithms use a '+L.g('quorum','quorum')+', a minimum number of votes from several nodes. That includes deciding whether a node is dead. If a quorum says a node is dead, it is dead, even if it feels fine. It must step down.')+
-   L.lanes([['people','Keeps working','With a majority quorum, 3 nodes survive 1 failure, and 5 nodes survive 2.',2],
-            ['shield','Stays safe','There can only be one majority at a time, so two groups can’t make conflicting decisions.',1]]));
-  L.done();}},
-{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',pts:1,
- solve:async L=>{L.$$('#sp .chip').forEach(b=>b.click());},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',
+ solve:async L=>{for(let i=0;i<4&&L.$('#w3n');i++){L.$('#w3n').click();await L.sleep(10);}},
  run(L){
-  const S=[[5,3],[5,4],[6,3]];const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">A network fault splits a cluster in two. Try each split and see which side may decide that the other side is dead.</h1><div id="sp"></div><div id="sv" style="min-height:120px"></div><div id="sq"></div>');
-  const dots=(n,c)=>Array.from({length:n},()=>'<span style="display:inline-block;width:20px;height:20px;border-radius:50%;margin:3px;background:'+c+'"></span>').join('');
-  const side=(k,n,c)=>{const maj=k>n/2;return '<div class="lane"><div>'+dots(k,c)+'</div><div class="res" style="color:var(--'+(maj?'ok':'no')+')">'+k+' of '+n+': '+(maj?'majority, can decide':'no majority, must wait')+'</div></div>';};
-  S.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0]+' nodes: '+s[1]+' | '+(s[0]-s[1]);
-    b.onclick=()=>{[...L.$('#sp').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#sv').innerHTML='<div class="two" style="margin-top:6px">'+side(s[1],s[0],'var(--h1)')+side(s[0]-s[1],s[0],'var(--h3)')+'</div>';
-      if(seen.size===S.length&&!L.$('#sq').innerHTML){const q=L.$('#sq');q.innerHTML='<h2 class="sub">When six nodes split 3 | 3, what happens?</h2>';
-        L.mc(q,['Each side declares the other side dead','The side holding the old leader decides','Neither side can decide anything yet'],2,
-         'A majority means <i>more than half</i>. Three of six isn’t, so both sides wait. That’s the price of never having two conflicting majorities.',
-         'Neither side has more than half, so neither may decide. If both could, you’d get two conflicting decisions, which a majority quorum exists to prevent.');}};
-    L.$('#sp').appendChild(b);});}},
-{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame runs a five-node cluster that votes on which nodes are dead. How many nodes can fail while the rest can still reach a majority?</h1>');
-  L.mc(L.card,['One','Two','Three'],1,
-   'Three of five is still more than half, so two can fail.',
-   'A majority of five is three. With two failed, three remain, which is still a majority. With three failed, only two remain, and that isn’t.');}},
+  const days=['Monday','Wednesday','Friday','Friday, one minute later'];
+  const cap=['Its link goes one-way: it hears everyone, but its replies are dropped. It works fine, yet after a timeout the others declare it dead. Nobody hears its protest.',
+   'Same fault, but now it notices its messages aren’t acknowledged, so it knows the network is broken. It’s still declared dead and can’t do a thing about it.',
+   'A stop-the-world garbage-collection pause freezes it for a full minute. The others wait, retry, grow impatient and declare it dead.',
+   'The pause ends and it carries on chatting as if nothing happened. To it, hardly any time has passed. It has no idea it was declared dead.'];
+  let k=0;
+  L.h(L.kick('ex','Step through · three bad days')+'<h1 class="q">Eastvale’s Parcel DB follower has a bad week</h1>'+CSS+'<div class="kt-fig" id="w3f"></div><div class="kt-cap" id="w3c" aria-live="polite"></div><div class="kt-ctl"><button class="btn pri" id="w3n">'+L.ic('play')+'Next day</button></div>');
+  const show=()=>{L.$('#w3f').innerHTML=weekFig(k);L.$('#w3c').innerHTML='<span class="stp">'+days[k]+' · '+(k+1)+' of 4</span>'+cap[k];};
+  show();
+  L.$('#w3n').onclick=()=>{if(k<3){k++;show();}
+    if(k===3){L.$('#w3n').remove();L.sheet('info','The node can’t judge itself','In every story, E1’s own view of itself was wrong or useless: working but “dead”, aware but powerless, or asleep and unaware. A node can’t be the judge of its own state.');L.done();}};}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',run(L){
+  L.h(L.kick('learn','Let the majority decide')+'<h1 class="q">The truth is whatever a majority votes for</h1>'+CSS+'<div id="h4"></div>');
+  const h=Hemi(L,L.$('#h4'),{id:'h4',tally:false,label:'Five seats: three connected seats form a majority and declare the two cut-off seats dead'});
+  h.load(5,['in','in','in','cut','cut'],0);
+  h.paint({st:['in','in','in','cut','cut'],crowns:[[0,'solid']],rings:[3,4],bubbles:[[3,'Declared dead','no']],c1:'Only one majority can exist: it decides',c2:'3 nodes survive 1 failure · 5 survive 2'});
+  L.card.insertAdjacentHTML('beforeend',L.quote('a node cannot necessarily trust its own judgment of a situation','Martin Kleppmann, chapter 8')+
+   L.prose('So decisions, even “that node is dead”, need a '+L.g('quorum','quorum')+': usually more than half. N4 and N5 must accept the verdict.'));
+  L.done();}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',
+ solve:async L=>{L.fast=true;const c=k=>L.$('#h5-c button[data-k="'+k+'"]').click();c(0);c(1);await L.sleep(10);c(2);await L.sleep(10);c(2);},
+ run(L){
+  L.fast=false;
+  L.h(L.kick('ex','Try it live · the hemicycle')+'<h1 class="q">Kwame’s five Parcel DB nodes vote on who leads. Cut seats off or pause them, and watch who may decide.</h1>'+CSS+
+   goalsHtml('g5',['Cut the leader off and watch the majority replace it','Leave <b>no</b> side with a majority'])+'<div class="kt-ctl" id="h5z"></div><div id="h5"></div>');
+  const h=Hemi(L,L.$('#h5'),{id:'h5',tap:true,on:e=>{
+    if(e.ev==='elect')tick(L,'g5',0);
+    if(!e.d.G)tick(L,'g5',1);
+    if(allTicked(L,'g5')&&!L.$('#h5ok')){L.$('#g5').insertAdjacentHTML('afterend','<span id="h5ok"></span>');
+      L.sheet('info','Only a majority may decide','A side with more than half the votes may declare the rest dead and elect a leader. A smaller side must wait, even if the old leader sits in it. And a replaced leader isn’t told; it may still believe it leads.');L.done();}}});
+  h.draw();
+  [3,5,7].forEach(n=>{const b=document.createElement('button');b.className='chip'+(n===5?' sel':'');b.textContent=n+' nodes';
+    b.onclick=()=>{[...L.$('#h5z').children].forEach(x=>x.classList.toggle('sel',x===b));h.reset(n,0);h.draw();};L.$('#h5z').appendChild(b);});}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',pts:1,
+ solve:async L=>{L.fast=true;L.$('#p6').children[1].click();for(let i=0;i<150&&!L.$('#p6d');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">A network fault cuts the leader N1 and N2 off from N3, N4 and N5. What happens next?</h1>'+CSS+'<div id="p6"></div><div id="h6"></div><div id="p6x"></div>');
+  const h=Hemi(L,L.$('#h6'),{id:'h6'});h.draw();
+  ['N1 keeps leading; the other three wait for it','The three declare N1, N2 dead and elect a new leader','Both sides stop until the link is repaired'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.style.margin='0 6px 6px 0';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      await nap(L,350);if(!h.alive())return;h.S.st[0]='cut';h.S.st[1]='cut';h.draw();await nap(L,300);if(!h.alive())return;
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: the majority moves on':'The majority moved on','Three of five is more than half, so that side may decide: it declares N1 and N2 dead and elects N3 for term 2. Two of five can’t outvote it. But look at N1: it still believes it leads. Nothing inside N1 tells it otherwise.');
+      L.$('#p6x').innerHTML='<span id="p6d"></span>';L.done();};
+    L.$('#p6').appendChild(b);});}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',
+ solve:async L=>{L.fast=true;for(const id of ['e7-even','e7-one','e7-gc','e7-wake'])if(L.$('#'+id)){L.$('#'+id).click();await L.sleep(10);}},
+ run(L){
+  L.fast=false;const tried=new Set();
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does majority voting stop helping? Try the presets.</h1>'+CSS+
+   '<div class="kt-ctl"><button class="chip" id="e7-even">Even split 2 | 2</button><button class="chip" id="e7-one">Replies lost</button><button class="chip" id="e7-gc">Leader pauses</button><button class="chip" id="e7-seven">7 nodes, 3 crash</button></div>'+
+   '<div class="kt-read" id="e7r">Pick a preset. You can also tap seats afterwards.</div><div id="h7"></div>');
+  const h=Hemi(L,L.$('#h7'),{id:'h7',tap:true});h.draw();
+  const say=t=>{L.$('#e7r').innerHTML=t;};
+  const mark=(id,b)=>{L.$$('.kt-ctl .chip').forEach(x=>x.classList.toggle('sel',x===b));tried.add(id);
+    if(tried.size>=3&&!L.$('#e7ok')){L.$('#e7r').insertAdjacentHTML('afterend','<span id="e7ok"></span>');
+      L.sheet('info','What a majority can and can’t do','It keeps the cluster safe: there’s never a second majority. But it can’t help a side without one (the even split stalls), and it can’t stop a node that was outvoted from <i>believing</i> it’s still in charge. Part 2 handles that.');L.done();}};
+  L.$('#e7-even').onclick=function(){h.load(4,['in','in','cut','cut'],0);mark('even',this);say('Two against two: neither side has more than half, so nobody may declare anyone dead or elect a leader. Nothing wrong happens, but nothing happens at all until the link heals.');};
+  L.$('#e7-one').onclick=function(){h.load(5,['oneway','in','in','in','in'],0);mark('one',this);say('N1 hears every message, but its replies are dropped. The others hear nothing, declare it dead and elect N2. N1 works perfectly and protests. Nobody hears it.');};
+  L.$('#e7-gc').onclick=function(){h.load(5,['pause','in','in','in','in'],0);mark('gc',this);say('N1 freezes in a one-minute GC pause. The others declare it dead and elect N2. <button class="btn" id="e7-wake" style="margin-top:8px">'+L.ic('play')+'Wake N1 up</button>');
+    L.$('#e7-wake').onclick=()=>{h.S.st[0]='in';h.S.unaware=true;h.draw();tried.add('wake');say('N1 wakes and carries on as leader: to it, no time has passed. The majority moved on to term 2. N1 must step down, but until it hears the news it may act as leader. That’s the danger in Part 2.');};};
+  L.$('#e7-seven').onclick=function(){h.load(7,['in','in','in','in','dead','dead','dead'],0);mark('seven',this);say('Seven nodes, three crash: four remain, still more than half, so decisions go on. A fourth crash would stop them. Five nodes survive two failures; seven survive three.');};}},
+{part:0,src:'Chapter 8 · The Truth Is Defined by the Majority',pts:1,
+ solve:async L=>{L.fast=true;L.$('#d8-m0').click();L.$('#d8-p2').click();await L.sleep(10);L.$('#d8go').click();for(let i=0;i<150&&!L.$('#d8ok');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;
+  const DC=[['Westport','h1'],['Eastvale','h2'],['Nordhaven','h4']];let cnt=[3,2,0],first=true,running=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame spreads the five nodes over three datacenters. Place them so that losing <i>any one</i> whole datacenter still leaves a majority.</h1>'+CSS+
+   '<div class="kt-dc" id="d8"></div><div id="h8"></div><button class="btn pri" id="d8go">'+L.ic('play')+'Test: lose each datacenter</button><div class="kt-res" id="d8r"></div>');
+  const h=Hemi(L,L.$('#h8'),{id:'h8',tally:false,label:'Five nodes coloured by datacenter'});
+  function layout(){const names=[],cols=[],dc=[];DC.forEach((d,j)=>{for(let i=0;i<cnt[j];i++){names.push((j===2?'Nh':d[0][0])+(i+1));cols.push(['var(--'+d[1]+'-bg)','var(--'+d[1]+')']);dc.push(j);}});return {names,cols,dc};}
+  function show(dead){const lay=layout();h.S.names=lay.names;h.S.colors=lay.cols;const st=lay.dc.map(j=>j===dead?'dead':'in');const left=st.filter(s=>s==='in').length;
+    h.paint({st,crowns:[],rings:[],bubbles:[],c1:dead==null?'All five up':'Lose '+DC[dead][0]+': '+left+' of 5 left',c2:dead==null?'Majority = 3 of 5':left>=3?'Still a majority ✓':'No majority ✗'});return left;}
+  function ui(){const sum=cnt[0]+cnt[1]+cnt[2];L.$('#d8').innerHTML=DC.map((d,j)=>'<div class="kt-dcb" style="border-color:var(--'+d[1]+');background:var(--'+d[1]+'-bg)"><b style="color:var(--'+d[1]+')">'+d[0]+'</b><div class="n">'+cnt[j]+'</div><div class="pm"><button id="d8-m'+j+'" aria-label="One fewer node in '+d[0]+'"'+(cnt[j]?'':' disabled')+'>−</button><button id="d8-p'+j+'" aria-label="One more node in '+d[0]+'"'+(sum<5?'':' disabled')+'>+</button></div></div>').join('');
+    DC.forEach((d,j)=>{L.$('#d8-m'+j).onclick=()=>{if(running||!cnt[j])return;cnt[j]--;ui();};L.$('#d8-p'+j).onclick=()=>{if(running||cnt[0]+cnt[1]+cnt[2]>=5)return;cnt[j]++;ui();};});
+    L.$('#d8go').disabled=sum!==5;L.$('#d8r').innerHTML=sum!==5?'<div style="color:var(--muted)">Place all five nodes ('+sum+' of 5 placed).</div>':'';show(null);}
+  ui();
+  L.$('#d8go').onclick=async()=>{if(running||cnt[0]+cnt[1]+cnt[2]!==5)return;running=true;L.$('#d8go').disabled=true;const rows=[];
+    for(let j=0;j<3;j++){const left=show(j);rows.push([DC[j][0],left]);L.$('#d8r').innerHTML=rows.map(r=>'<div>'+(r[1]>=3?'<span class="ok-t">✓</span>':'<span class="no-t">✗</span>')+' Lose '+r[0]+': '+r[1]+' of 5 left</div>').join('');await nap(L,650);if(!h.alive())return;}
+    show(null);const pass=rows.every(r=>r[1]>=3);if(first){L.award(pass);first=false;}running=false;
+    if(pass){L.$('#d8r').insertAdjacentHTML('beforeend','<span id="d8ok"></span>');L.sheet('ok','Any datacenter can go','With 2 + 2 + 1, losing any one datacenter leaves at least 3 of 5: still a majority, so the cluster keeps deciding. Put 3 in one place and losing that place leaves only 2.');L.done();}
+    else{L.$('#d8go').disabled=false;L.sheet('no','One loss stops the cluster','A majority of 5 is 3. Losing a datacenter must leave at least 3, so no datacenter may hold more than 2 nodes. Rearrange and test again.');}};}},
 
 /* ---------- PART 2: LEADERS AND LOCKS ---------- */
-{part:1,src:'Chapter 8 · The leader and the lock',run(L){
-  L.h(L.kick('learn','The leader and the lock')+'<h1 class="q">Often there must be exactly one of something</h1>'+
-   L.list([['star','One leader','Only one node may lead a database partition, to avoid split brain.'],
-           ['lock','One lock holder','Only one client may hold the lock on a resource, so it isn’t corrupted by two writers.'],
-           ['person','One owner of a name','Only one user may register a given username.']],2)+
-   L.prose('The danger: a node may <i>believe</i> it is the chosen one after the majority has already declared it dead, during a network fault or a pause. If it keeps acting in that role, others may believe it.')+
-   L.note('The book’s real example: a storage service let a client write a file only while it held a '+L.g('lease','lease')+' from a lock service. One client paused, its lease expired, a second client got the lease and wrote, then the first woke up and wrote too. The file was corrupted. HBase once had this bug. Last lesson’s paused route planner is the same story.','book'));
-  L.done();}},
-{part:1,src:'Chapter 8 · Fencing tokens',run(L){
-  L.h(L.kick('learn','Fencing tokens')+'<h1 class="q">Make the resource itself turn away the old lock holder</h1>'+
-   L.flow([['lock','Grant','Each time the lock service grants a lease, it also hands out a number that always goes up.','',1],
-           ['pencil','Send','Every write to storage must carry the writer’s current number.','',2],
-           ['shield','Check','Storage remembers the highest number it has processed and rejects anything lower.','',3]])+
-   L.prose('That number is a '+L.g('fencing','fencing token')+'. If ZooKeeper is the lock service, its transaction ID can serve as one, because it is guaranteed to keep increasing.')+
-   L.prose('The key point: the <b>resource</b> must check, not the clients. If storage can’t check tokens itself, you may work around it, for example by putting the token in the file name. Checking on the server side is good practice anyway: a service shouldn’t assume its clients always behave.'));
-  L.done();}},
-{part:1,src:'Chapter 8 · Fencing tokens',pts:1,
- solve:async L=>{L.$('#fA').click();L.$('#fB').click();},
+{part:1,src:'Chapter 8 · The leader and the lock',
+ solve:async L=>{L.fast=true;for(let i=0;i<6&&L.$('#z9n');i++){L.$('#z9n').click();for(let w=0;w<60&&L.gate.S.busy;w++)await L.sleep(15);await L.sleep(10);}},
  run(L){
-  const base=[['Planner 1 gets the Westport lease with token 41.',''],['Planner 1 freezes in a long GC pause. Its lease expires.','no'],['Planner 2 gets the lease with token 42 and writes routes, sending 42. Storage notes: highest token 42.','']];
-  const end={A:['Planner 1 wakes and writes stale routes, sending 41. Storage: 41 is lower than 42, so <b>rejected</b>. Routes stay correct.','ok'],
-             B:['Planner 1 wakes and writes stale routes, sending 41. Storage doesn’t check, so <b>accepted</b>. Couriers get a mix of both plans.','no']};const seen=new Set();
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Replay the paused-planner story with fencing tokens. Try it with and without the storage check.</h1>'+
-   '<div><button class="chip" id="fA">'+L.ic('shield')+'Storage checks tokens</button><button class="chip" id="fB">'+L.ic('x')+'Storage doesn’t check</button></div><div class="ladder" id="fl"></div><div id="fq"></div>');
-  const pick=k=>{['A','B'].forEach(x=>L.$('#f'+x).classList.toggle('sel',x===k));seen.add(k);
-    L.$('#fl').innerHTML=base.concat([end[k]]).map((e,j)=>(j?'<div class="conn"></div>':'')+'<div class="rung"'+(e[1]==='no'?' style="border-color:var(--no-line)"':e[1]==='ok'?' style="border-color:var(--ok-line)"':'')+'><small>Step '+(j+1)+'</small>'+e[0]+'</div>').join('');
-    if(seen.size===2&&!L.$('#fq').innerHTML){const q=L.$('#fq');q.innerHTML='<h2 class="sub">Tobias suggests dropping the storage check: “Each planner will check its own lease before writing.” What’s wrong with that?</h2>';
-      L.mc(q,['Planners can’t see their lease without asking storage','A paused planner wakes still believing its lease is valid','Checking in the planner is slower than checking in storage'],1,
-       'Exactly. The node’s own belief is what can’t be trusted. Only the resource, which sees the tokens arrive, can reject the stale write.',
-       'Speed and access aren’t the issue. A planner that was frozen still believes its lease is valid when it wakes, so its own check passes. Only the resource can reject the stale token.');}};
-  L.$('#fA').onclick=()=>pick('A');L.$('#fB').onclick=()=>pick('B');}},
-{part:1,src:'Chapter 8 · Fencing tokens',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The route store has already processed a write with token 57. Now a write arrives carrying token 55. What should it do?</h1>');
-  L.mc(L.card,['Reject it, because 55 is lower than 57','Accept it, since 55 was a valid token once','Ask the lock service whether 55 is valid'],0,
-   'A lower token means an older lease. Its holder has been replaced, even if it doesn’t know yet.',
-   'Once a higher token has been seen, the holder of 55 has been replaced. Storage needs no extra checks: it simply rejects anything lower than the highest it has seen.');}},
-{part:1,src:'Chapter 8 · Fencing tokens',pts:4,run(L){
+  L.fast=false;let k=0,busy=false;
+  const cap=['Only one planner may write Westport’s routes, just as only one node may lead a partition and only one user may own a username. Planner 1 holds the lease.',
+   'A long garbage-collection pause freezes Planner 1. Its lease expires while it sleeps.',
+   'The lock service gives the lease to Planner 2, which writes fresh routes.',
+   'Planner 1 wakes. To it, no time has passed, so it believes its lease is still valid, and it writes too.',
+   'The two plans clash and the routes are corrupted. Not theoretical: HBase once had this bug.'];
+  L.h(L.kick('ex','Step through · a lease alone')+'<h1 class="q">The route planner and its lease, without any protection at the store</h1>'+CSS+'<div id="z9"></div><div class="kt-cap" id="z9c" aria-live="polite"></div><div class="kt-ctl"><button class="btn pri" id="z9n">'+L.ic('play')+'Next</button></div>');
+  const g=L.gate=Gate(L,L.$('#z9'),{id:'z9',tokens:false,check:false});
+  g.S.lease='p1';g.S.p1='holds';g.draw();
+  const cp=()=>{L.$('#z9c').innerHTML='<span class="stp">Step '+(k+1)+' of 5</span>'+cap[k];};cp();
+  L.$('#z9n').onclick=async()=>{if(busy||k>=4)return;busy=true;k++;cp();
+    if(k===1){g.S.lease='p1x';g.S.p1='frozen';g.draw();}
+    if(k===2){g.S.lease='p2';g.draw();await g.send('p2');}
+    if(k===3){await g.send('p1');}
+    busy=false;
+    if(k===4&&L.$('#z9n')){L.$('#z9n').remove();L.sheet('info','Believing isn’t holding','A node may believe it’s “the chosen one” after the others have moved on. If anything acts on its messages, the system does something wrong. The fix has to live where the damage happens: the store.');L.done();}};}},
+{part:1,src:'Chapter 8 · Fencing tokens',run(L){
+  L.h(L.kick('learn','Fencing tokens')+'<h1 class="q">The store turns away the old lock holder</h1>'+CSS+'<div id="f10"></div>');
+  const g=Gate(L,L.$('#f10'),{id:'f10'});
+  Object.assign(g.S,{hi:34,routes:'p2',p2w:true,p1:'awake',last:'no',log:[['p2',34,true],['p1',33,false]]});g.draw();
+  L.card.insertAdjacentHTML('beforeend',L.prose('Each lease comes with a number that only goes up: a '+L.g('fencing','fencing token')+'. Every write carries it. The store remembers the highest it has processed and rejects anything lower. With ZooKeeper, its zxid or cversion can serve as the token.'));
+  L.done();}},
+{part:1,src:'Chapter 8 · Fencing tokens',
+ solve:async L=>{L.fast=true;const g=()=>L.gate;L.$('#g11-p2').click();await g().idle();L.$('#g11-p1').click();await g().idle();L.$('#g11-off').click();L.$('#g11-p2').click();await g().idle();L.$('#g11-p1').click();await g().idle();},
+ run(L){
+  L.fast=false;
+  L.h(L.kick('ex','Try it live · the gate')+'<h1 class="q">Frozen Planner 1 still has token 33; Planner 2 now holds 34. Send their writes in any order, with and without the check.</h1>'+CSS+
+   goalsHtml('gl11',['A zombie write is turned away','A zombie write gets in and corrupts the routes'])+
+   '<div class="kt-ctl"><button class="chip sel" id="g11-on">Store checks tokens</button><button class="chip" id="g11-off">No check</button></div>'+
+   '<div class="kt-ctl"><button class="btn" id="g11-p1">Planner 1 writes · 33</button><button class="btn" id="g11-p2">Planner 2 writes · 34</button><button class="btn" id="g11-r" aria-label="Reset">'+L.ic('cycle')+'</button></div><div id="g11"></div><div class="kt-read" id="g11x">Send a write.</div>');
+  let check=true;
+  const g=L.gate=Gate(L,L.$('#g11'),{id:'g11',check:true,on:r=>{
+    const S=g.S;let t='';
+    if(r.who==='p1'&&!r.ok){tick(L,'gl11',0);t='Rejected: 33 is lower than 34, which the store already processed. Planner 1 is still sure it holds the lease; it doesn’t matter.';}
+    else if(r.who==='p1'&&S.routes==='mixed'){tick(L,'gl11',1);t='Accepted: nothing checks tokens, so the zombie’s stale plan lands on top of Planner 2’s. Corrupted.';}
+    else if(r.who==='p1')t='33 arrived first. The store had seen nothing higher, so it accepted it. Now send Planner 2’s write.';
+    else if(S.routes==='p2'&&S.log.length>1)t='34 is higher than 33, so it’s accepted and Planner 2’s plan replaces the old one.';
+    else t='Accepted: the store’s highest token is now 34. Now let Planner 1 wake up and write.';
+    L.$('#g11x').innerHTML=t;
+    if(allTicked(L,'gl11')&&!L.$('#g11ok')){L.$('#g11x').insertAdjacentHTML('afterend','<span id="g11ok"></span>');
+      L.sheet('info','The resource must check','Only the store sees both tokens arrive, so only the store can tell which write is stale. If a storage service can’t check tokens itself, you might work around it, for example by putting the token in the file name. Some check is necessary.');L.done();}}});
+  const setCheck=v=>{if(g.S.busy)return;check=v;L.$('#g11-on').classList.toggle('sel',v);L.$('#g11-off').classList.toggle('sel',!v);g.reset();g.S.check=v;g.draw();L.$('#g11x').innerHTML=v?'The store checks tokens. Send a write.':'The store ignores tokens. Send a write.';};
+  L.$('#g11-on').onclick=()=>setCheck(true);L.$('#g11-off').onclick=()=>setCheck(false);
+  L.$('#g11-r').onclick=()=>setCheck(check);
+  L.$('#g11-p1').onclick=()=>g.send('p1');L.$('#g11-p2').onclick=()=>g.send('p2');}},
+{part:1,src:'Chapter 8 · Fencing tokens',pts:1,
+ solve:async L=>{L.fast=true;L.$('#p12').children[1].click();for(let i=0;i<150&&!L.$('#p12rp');i++)await L.sleep(20);L.$('#p12rp').click();for(let i=0;i<150&&!L.$('#p12d');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;let pick=null;
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Tobias: “Drop the store check. Each planner checks its own lease right before writing.” Planner 2 has written with token 34. Will Planner 1’s own check stop its stale write?</h1>'+CSS+'<div id="p12"></div><div id="g12"></div><div id="p12x"></div>');
+  const g=Gate(L,L.$('#g12'),{id:'g12',check:false});
+  async function play(chk){g.reset();g.S.check=chk;g.draw();await nap(L,250);if(!g.alive())return false;await g.send('p2');if(!g.alive())return false;
+    g.S.p1='awake';g.S.self=true;g.draw();await nap(L,500);if(!g.alive())return false;return await g.send('p1');}
+  ['Yes: its lease has expired, so its own check fails','No: it still believes its lease is valid'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.style.margin='0 6px 6px 0';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');const r=await play(false);if(!r)return;
+      const ok=j===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: the check passes':'Its own check passed','Planner 1 was frozen, so its idea of its lease is from before the pause: “still valid”. The self-check passes and the stale write lands. Relying on clients to check their own lock status isn’t enough.');
+      L.$('#p12x').innerHTML='<button class="btn pri" id="p12rp" style="margin-top:10px">'+L.ic('play')+'Replay with the store checking tokens</button>';
+      L.$('#p12rp').onclick=async function(){this.remove();const r2=await play(true);if(!r2)return;
+        L.$('#p12x').innerHTML='<div class="fb ok" id="p12d">Same story. Planner 1’s own check still says “valid”, but the store has seen 34, so 33 is rejected. The store doesn’t trust its clients, and that’s a good thing.</div>';L.done();};};
+    L.$('#p12').appendChild(b);});}},
+{part:1,src:'Chapter 8 · Fencing tokens',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Is the route store protected?',['Protected','Not protected'],[
-   ['The route store checks tokens. An old planner wakes and sends token 41 after token 42 was used.',0,'Storage rejects 41 because it has already seen 42.'],
-   ['The route store ignores tokens. Each planner checks its own lease just before writing.',1,'A paused planner’s own check still says “valid”. Only the resource can catch it.'],
-   ['The lock service hands out random IDs instead of increasing numbers. Storage stores the latest ID.',1,'Random IDs can’t show which lease is newer. Fencing needs numbers that always increase.'],
-   ['A planner is hacked and sends a made-up token, 9,999, with every write.',1,'Fencing catches honest mistakes, not deliberate lies. A node that fakes tokens is a different problem, coming next.']]);}},
+   ['The store checks tokens. It has processed 57, and a write with 55 arrives.',0,'55 is lower than 57: an older lease whose holder has been replaced, even if it doesn’t know yet. Rejected.'],
+   ['The store ignores tokens. Each planner checks its own lease just before writing.',1,'A paused planner’s own check still says “valid”. Only the resource can catch it.'],
+   ['The lock service hands out random IDs instead of increasing numbers.',1,'Random IDs can’t show which lease is newer. Fencing needs numbers that always go up.'],
+   ['The store checks tokens. Planner 2, holding token 34, sends two writes in a row.',0,'34 isn’t lower than the highest seen, so both are accepted. Only older tokens are turned away.'],
+   ['A hacked planner sends a made-up token, 9,999, with every write.',1,'Fencing catches honest mistakes, not deliberate lies. That’s next.']]);}},
 
-/* ---------- PART 3: BYZANTINE FAULTS ---------- */
+/* ---------- PART 3: LYING NODES ---------- */
 {part:2,src:'Chapter 8 · Byzantine Faults',run(L){
-  L.h(L.kick('learn','When nodes lie')+'<h1 class="q">Slow, silent or out of date is one thing. Lying is another.</h1>'+
-   L.prose('This book assumes nodes are <b>unreliable but honest</b>. They may be slow, never answer, or hold old state after a pause. But if a node does answer, it plays by the rules as best it knows.')+
-   L.prose('If nodes might send wrong or made-up messages, such as claiming to have received a message they never got, that’s a '+L.g('byzantine','Byzantine fault')+'. Agreeing on anything then becomes much harder.')+
-   L.note('<b>The Byzantine Generals Problem.</b> Two generals who can only send messengers, who may be delayed or lost, must agree on a plan. In the Byzantine version there are many generals, and some are traitors sending false messages. Nobody knows who.','book'));
+  L.h(L.kick('learn','When nodes lie')+'<h1 class="q">Slow, silent or stale is honest. Lying is different.</h1>'+CSS+FIG_LIE()+
+   L.prose('This book assumes nodes are <b>unreliable but honest</b>. A node that sends false messages has a '+L.g('byzantine','Byzantine fault')+', named after generals who must agree while hidden traitors send fake messages.'));
   L.done();}},
-{part:2,src:'Chapter 8 · Byzantine Faults',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these Parcel DB nodes has a Byzantine fault?</h1>');
-  L.mc(L.card,['One that crashed and stopped answering','One whose replies arrive very late','One that says it stored a write it never stored'],2,
-   'It’s sending a false message, not just failing to send one. That’s a Byzantine fault.',
-   'Crashing or being slow is an ordinary, honest fault. A Byzantine fault means sending wrong or made-up messages, like claiming to have stored a write it never stored.');}},
+{part:2,src:'Chapter 8 · Byzantine Faults',
+ solve:async L=>{L.fast=true;L.$('#g15-p1').click();await L.gate.idle();L.$('#g15-p2').click();await L.gate.idle();},
+ run(L){
+  L.fast=false;
+  L.h(L.kick('ex','Try it live · a liar at the gate')+'<h1 class="q">An attacker controls Planner 1 and knows the protocol. Send its forged token, and let honest Planner 2 write.</h1>'+CSS+
+   '<div class="kt-ctl"><button class="btn" id="g15-p1">Hacked Planner 1 writes · 9999</button><button class="btn" id="g15-p2">Planner 2 writes · 34</button></div><div id="g15"></div><div class="kt-read" id="g15x">The store checks tokens, as before.</div>');
+  const sent=new Set();
+  const g=L.gate=Gate(L,L.$('#g15'),{id:'g15',hacked:true,on:r=>{sent.add(r.who);
+    L.$('#g15x').innerHTML=r.who==='p1'?'Accepted: 9999 is higher than anything seen. Fencing did exactly its job, for the attacker.':(r.ok?'Accepted: 34 is the highest so far.':'Rejected: 34 is lower than 9999. The honest planner is now locked out.');
+    if(sent.size===2&&!L.$('#g15ok')){L.$('#g15x').insertAdjacentHTML('afterend','<span id="g15ok"></span>');
+      L.sheet('info','Fencing assumes honesty','Fencing stops a node that is wrong <i>by accident</i>, one that hasn’t noticed its lease expired. A node that lies on purpose just picks a big number. Defending against lying nodes is a much harder problem.');L.done();}}});
+  L.$('#g15-p1').onclick=()=>{if(!sent.has('p1'))g.send('p1');};L.$('#g15-p2').onclick=()=>{if(!sent.has('p2'))g.send('p2');};}},
 {part:2,src:'Chapter 8 · Byzantine Faults',run(L){
-  L.h(L.kick('learn','Where it matters, and where it doesn’t')+'<h1 class="q">A system is Byzantine fault-tolerant if it works correctly even when some nodes lie</h1>'+
-   L.lanes([['alert','Worth it','<b>Aerospace</b>: radiation can corrupt memory, and a failure could crash a plane. <b>Several organizations</b> that don’t trust each other, like peer-to-peer networks and blockchains such as Bitcoin, agreeing without a central authority.',4],
-            ['home','Usually not','In your own datacenter, you control every node and radiation is low. The protocols are complicated and costly. For browsers and other end-user clients, the <b>server is the authority</b> and validates their input.',2]])+
-   L.list([['It can’t fix your bugs','The same code runs on every node, so a bug hits them all. Most such protocols need over two-thirds of nodes working (with 4 nodes, at most 1 bad), so you’d need four separate implementations.'],
-           ['It can’t stop attackers','Whoever breaks into one node can probably break into all, since they run the same software. Authentication, access control, encryption and firewalls stay the main defence.']],3));
+  L.h(L.kick('learn','Where it matters')+'<h1 class="q">Byzantine fault tolerance pays off in only a few places</h1>'+CSS+FIG_WORTH()+
+   L.prose(L.g('byzantine','Byzantine')+' fault-tolerant: works correctly even when some nodes lie.'));
   L.done();}},
+{part:2,src:'Chapter 8 · Byzantine Faults',
+ solve:async L=>{L.fast=true;L.$('#b17-bug').click();await L.sleep(10);L.$('#b17-diff').click();await L.sleep(10);L.$('#b17-bug').click();},
+ run(L){
+  L.fast=false;let diff=false;
+  L.h(L.kick('ex','Try it live · two-thirds rule')+'<h1 class="q">Could a Byzantine protocol save Otterpost from its own bugs? Most need more than two-thirds of nodes working correctly.</h1>'+CSS+
+   goalsHtml('g17',['Fire the bug with the same code everywhere','Fire it with four separate implementations'])+
+   '<div class="kt-ctl"><button class="chip sel" id="b17-same">Same code ×4</button><button class="chip" id="b17-diff">4 codebases</button></div>'+
+   '<div class="kt-ctl"><button class="btn pri" id="b17-bug">'+L.ic('alert')+'A bug fires in code A</button><button class="btn" id="b17-r" aria-label="Reset">'+L.ic('cycle')+'</button></div><div id="h17"></div><div class="kt-read" id="b17x">Tap a seat to make that node faulty, or fire the bug.</div>');
+  const h=Hemi(L,L.$('#h17'),{id:'h17',n:4,mode:'bft',tap:true,label:'Four nodes; more than two-thirds must be correct'});
+  const subs=()=>diff?['code A','code B','code C','code D']:['code A','code A','code A','code A'];
+  const fresh=()=>{h.reset(4);h.S.subs=subs();h.draw();};fresh();
+  const setD=v=>{diff=v;L.$('#b17-same').classList.toggle('sel',!v);L.$('#b17-diff').classList.toggle('sel',v);fresh();L.$('#b17x').innerHTML=v?'Each node runs a different implementation. Fire the bug.':'All four run the same code. Fire the bug.';};
+  L.$('#b17-same').onclick=()=>setD(false);L.$('#b17-diff').onclick=()=>setD(true);L.$('#b17-r').onclick=fresh;
+  L.$('#b17-bug').onclick=()=>{h.reset(4);h.S.subs=subs();h.S.st=h.S.subs.map(s=>s==='code A'?'bad':'in');const r=h.draw();
+    if(!diff){tick(L,'g17',0);L.$('#b17x').innerHTML='All four nodes run code A, so the bug hits all four at once. Zero correct nodes: no vote can save you.';}
+    else{tick(L,'g17',1);L.$('#b17x').innerHTML='Only the node running code A misbehaves. 3 of 4 is more than two-thirds, so the honest nodes outvote it. With 4 nodes, at most 1 may be faulty.';}
+    if(allTicked(L,'g17')&&!L.$('#b17ok')){L.$('#b17x').insertAdjacentHTML('afterend','<span id="b17ok"></span>');
+      L.sheet('info','Not a cure for bugs or attackers','To use it against bugs you’d need four independent implementations and hope the bug is in only one. Attackers are similar: break into one node and you can likely break into all, since they run the same software. Authentication, access control, encryption and firewalls stay the main defence.');L.done();}};}},
 {part:2,src:'Chapter 8 · Byzantine Faults',pts:5,run(L){
   L.h(L.kick('pr','Pick the protection')+'<h1 class="q">For each system, what’s the sensible approach?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Byzantine protocol','Server decides','Trust the nodes'],[
-   ['The Parcel DB leader and its followers, all in Otterpost’s own datacenters',2,'Otterpost controls every node. The book says you can usually assume no Byzantine faults here.'],
+   ['The Parcel DB leader and its followers, all in Otterpost’s own datacenters',2,'Otterpost controls every node and radiation is low. The book says you can usually assume no Byzantine faults here.'],
    ['The merchant dashboard running in merchants’ web browsers',1,'Clients under users’ control can do anything. The server is the authority and validates every request.'],
    ['A parcel registry shared by rival delivery firms and customs agencies, with no central owner',0,'Several organizations that don’t trust each other, with no central authority: that’s where Byzantine tolerance fits.'],
    ['The courier app on couriers’ phones, sending scans to Otterpost',1,'The phones are end-user devices. Otterpost’s servers decide what is valid, not the app.'],
-   ['The flight-control computers on the cargo planes that fly parcels to Nordhaven',0,'Aerospace systems must tolerate corrupted, unpredictable nodes, because failure is catastrophic.']],
+   ['The flight computers on the cargo planes that fly parcels to Nordhaven',0,'Aerospace systems must tolerate corrupted, unpredictable nodes, because failure is catastrophic.']],
    'Byzantine protocols are for untrusting organizations and safety-critical hardware. For clients, make the server the authority. Inside your own datacenter, assume honest nodes.');}},
-{part:2,src:'Chapter 8 · Weak forms of lying',run(L){
-  L.h(L.kick('learn','Weak forms of lying')+'<h1 class="q">Honest nodes can still send nonsense by accident</h1>'+
-   L.prose('Hardware faults, bugs and misconfiguration can produce invalid messages. Simple guards help. They wouldn’t stop a determined attacker, but they are cheap, practical steps toward reliability.')+
-   L.list([['check','Checksums in your own protocol','Packets are sometimes corrupted. TCP and UDP checksums usually catch it, but not always.'],
-     ['shield','Sanity-check inputs','Public apps must check values are in a sensible range and limit string sizes, so a huge input can’t exhaust memory. Even internal services should do basic checks.'],
-     ['clock','Several NTP servers','The client asks them all, checks that most agree on a time range, and ignores an outlier that reports the wrong time.']],1));
-  L.done();}},
-{part:2,src:'Chapter 8 · Weak forms of lying',pts:4,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which simple guard catches it?',['App-level checksum','Input sanity check','Several NTP servers'],[
-   ['A corrupted packet slips past TCP’s checksum and reaches the scan-event handler.',0,'A checksum in Otterpost’s own message format catches corruption the transport layer missed.'],
-   ['A merchant’s API call sets a parcel’s weight to minus 40 kg.',1,'Check that values fall in a sensible range before accepting them.'],
-   ['One of the time servers Otterpost syncs with reports a time three hours off.',2,'With several servers, the wrong one shows up as an outlier and is ignored.'],
-   ['A buggy merchant integration sends a 50 MB recipient name.',1,'Limit string sizes so one request can’t eat the server’s memory.']]);}},
+{part:2,src:'Chapter 8 · Weak forms of lying',
+ solve:async L=>{L.fast=true;['ck','rg','sz','ntp'].forEach(k=>{const b=L.$('#w19-'+k);if(!b.classList.contains('sel'))b.click();});L.$('#w19go').click();for(let i=0;i<200&&!L.$('#w19ok');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;let running=false;
+  const G={ck:'App-level checksum',rg:'Range check',sz:'Size limit',ntp:'Several NTP servers'};
+  const M=[['A packet with flipped bits that slipped past TCP’s own checksum','ck'],['Merchant API call: parcel weight −40 kg','rg'],['A 50 MB recipient name from a buggy integration','sz'],['Time server T2 says 15:42; T1 and T3 say 12:42','ntp'],['An attacker’s message: well-formed, valid checksum, sensible values',null]];
+  const on=new Set();
+  L.h(L.kick('ex','Try it live · guard the door')+'<h1 class="q">Honest nodes still send nonsense by accident. Switch on guards until every accidental bad message is stopped.</h1>'+CSS+
+   '<div class="kt-ctl">'+Object.keys(G).map(k=>'<button class="chip" id="w19-'+k+'" aria-pressed="false">'+G[k]+'</button>').join('')+'</div>'+
+   '<div class="kt-in" id="w19in">'+M.map((m,j)=>'<div class="kt-msg" id="w19m'+j+'"><span>'+m[0]+'</span><span class="r wait" id="w19r'+j+'">…</span></div>').join('')+'</div>'+
+   '<button class="btn pri" id="w19go">'+L.ic('play')+'Run the inbox</button><div class="kt-read" id="w19x">Guards on: none.</div>');
+  Object.keys(G).forEach(k=>{L.$('#w19-'+k).onclick=function(){if(running)return;on.has(k)?on.delete(k):on.add(k);this.classList.toggle('sel',on.has(k));this.setAttribute('aria-pressed',on.has(k));L.$('#w19x').innerHTML='Guards on: '+(on.size?[...on].map(x=>G[x]).join(', '):'none')+'.';};});
+  L.$('#w19go').onclick=async()=>{if(running)return;running=true;L.$('#w19go').disabled=true;let blocked=0;
+    M.forEach((m,j)=>{const r=L.$('#w19r'+j);r.className='r wait';r.textContent='…';});
+    for(let j=0;j<M.length;j++){const row=L.$('#w19m'+j);if(!row)return;row.classList.add('now');await nap(L,280);if(!row.isConnected)return;
+      const m=M[j],r=L.$('#w19r'+j),stop=m[1]&&on.has(m[1]);
+      if(stop){blocked++;r.className='r ok';r.textContent='Stopped';}else{r.className='r no';r.textContent='Got in';}
+      row.classList.remove('now');}
+    running=false;L.$('#w19go').disabled=false;
+    if(blocked===4&&!L.$('#w19ok')){L.$('#w19x').innerHTML='All four accidents stopped. The attacker’s message still got in: no guard here is built for a determined adversary.';L.$('#w19x').insertAdjacentHTML('afterend','<span id="w19ok"></span>');
+      L.sheet('info','Cheap guards against weak lying','Checksums in your own protocol, range and size checks on inputs, and several NTP servers (an outlier gets excluded) catch most accidental nonsense. They aren’t full Byzantine tolerance, but they’re simple, pragmatic steps toward reliability.');L.done();}
+    else if(blocked<4)L.$('#w19x').innerHTML=(4-blocked)+' accidental bad message'+(4-blocked===1?'':'s')+' got in. Which guard would catch '+(4-blocked===1?'it':'them')+'?';};}},
 
 /* ---------- PART 4: SYSTEM MODELS ---------- */
 {part:3,src:'Chapter 8 · System Model and Reality',run(L){
-  L.h(L.kick('learn','System models')+'<h1 class="q">Write down what an algorithm may assume, about time and about failures</h1>'+
-   '<h2 class="sub">Timing</h2>'+L.list([['Synchronous','Delays, pauses and clock error never exceed known limits. Not zero, just bounded. Unrealistic for most real systems.'],
-     ['Partially synchronous','Usually within those limits, but sometimes not, and then delays can get arbitrarily large. Realistic for many systems.'],
-     ['Asynchronous','No timing assumptions at all, not even a clock, so no timeouts. Very restrictive.']],1)+
-   '<h2 class="sub">Node failures</h2>'+L.list([['Crash-stop','A node fails only by crashing, and never comes back.'],
-     ['Crash-recovery','A node may crash and later return. Data on disk survives; memory is lost.'],
-     ['Byzantine','A node may do anything, including trying to deceive others.']],2)+
-   L.note('For real systems, the most useful pair is usually <b>partially synchronous with crash-recovery faults</b>.','star'));
+  L.h(L.kick('learn','System models')+'<h1 class="q">Write down what an algorithm may assume</h1>'+CSS+FIG_MODELS()+
+   L.prose('Pick one timing model and one failure model. Synchronous means delays and pauses never exceed a known limit; partially synchronous means usually, not always. For real systems, the starred pair is generally the most useful.'));
   L.done();}},
 {part:3,src:'Chapter 8 · System Model and Reality',pts:5,run(L){
   L.h('<div id="qk"></div>');
@@ -194,13 +577,51 @@ Course.lesson({
    ['“This algorithm may not use any clock, so it can’t use timeouts.”',2,'No timing assumptions at all: the asynchronous model.'],
    ['“Once a node fails, we assume it never comes back.”',3,'Failing only by crashing, for good: crash-stop.']]);}},
 {part:3,src:'Chapter 8 · Correctness of an algorithm',run(L){
-  L.h(L.kick('learn','What “correct” means')+'<h1 class="q">Describe the properties an algorithm must have</h1>'+
-   L.prose('A sorted list has a property: each element is smaller than the one to its right. Likewise, an algorithm that hands out fencing tokens could promise:')+
-   L.list([['Uniqueness','No two requests ever get the same token.'],['Increasing order','If one request finished before another began, the later one gets a higher token.'],['Availability','A node that asks for a token, and doesn’t crash, eventually gets an answer.']],1)+
-   L.lanes([['shield','Safety','“Nothing bad happens.” The first two. If it’s broken, you can name the moment, and it can’t be undone.',1],
-            ['cycle','Liveness','“Something good eventually happens.” The third. It may not hold yet, but still could later.',2]])+
-   L.prose('A giveaway: liveness properties often say “eventually”. Eventual consistency is one. Algorithms must keep '+L.g('safety','safety')+' in every situation, even if all nodes crash. '+L.g('liveness','Liveness')+' may come with conditions, like “if a majority is up and the network recovers”.'));
+  L.h(L.kick('learn','What “correct” means')+'<h1 class="q">Correct = its properties always hold</h1>'+CSS+FIG_PROPS(L)+
+   L.prose('<b>'+L.g('safety','Safety')+'</b>: nothing bad happens; if broken, you can point at the moment, and it can’t be undone. <b>'+L.g('liveness','Liveness')+'</b>: something good eventually happens. Safety must always hold; liveness may come with conditions.'));
   L.done();}},
+{part:3,src:'Chapter 8 · Safety and liveness',
+ solve:async L=>{L.fast=true;const s=v=>{const e=L.$('#t23');e.value=v;e.dispatchEvent(new Event('input'));};L.$('#t23-on').click();s(6);await L.sleep(10);L.$('#t23-off').click();s(6);},
+ run(L){
+  L.fast=false;let maj=true;
+  const EV={on:['All five connected. N1 leads.','The link breaks: N1 and N2 are cut off from N3, N4, N5.','The three-node side has a majority and elects N3. N1’s side may not elect anyone.','Mrs. Okoro’s slot booking reaches N1. N1 can’t get a majority, so the booking waits.','Still split. The booking still waits, but nothing wrong has happened.','The link is repaired.','N1 hears the majority and steps down. The booking goes through N3 and gets its reply.'],
+            off:['All five connected. N1 leads.','The link breaks: N1 and N2 are cut off from N3, N4, N5.','Without the majority rule, each side picks a leader: N3 on one side, N1 keeps going on the other. Two leaders!','Mrs. Okoro’s booking reaches N1, which accepts it at once.','Meanwhile N3 sells the same last slot to another booking.','The link is repaired.','The sides compare notes: two bookings for one place. That damage can’t be undone.']};
+  L.h(L.kick('ex','Try it live · scrub the timeline')+'<h1 class="q">Scrub through a network split. Watch one safety and one liveness property, with and without the majority rule.</h1>'+CSS+
+   goalsHtml('g23',['Reach the end with the majority rule on','Reach the end with it off'])+
+   '<div class="kt-ctl"><button class="chip sel" id="t23-on">Majority rule on</button><button class="chip" id="t23-off">Majority rule off</button></div>'+
+   '<div id="h23"></div><svg id="t23s" viewBox="0 0 320 96" role="img" aria-label="Two property tracks over time" style="width:100%;display:block"></svg>'+
+   '<div class="kt-rng"><label for="t23">Time</label><input type="range" id="t23" min="0" max="6" step="1" value="0"><b id="t23v">t = 0</b></div><div class="kt-read" id="t23x"></div>');
+  const h=Hemi(L,L.$('#h23'),{id:'h23',tally:false,label:'Five seats at the chosen moment'});
+  function spec(t){const split=t>=1&&t<=4,st=split?['cut','cut','in','in','in']:['in','in','in','in','in'];
+    const sp={st,crowns:[],rings:[],bubbles:[],c1:'t = '+t,c2:''};
+    if(maj){if(t<2)sp.crowns.push([0,'solid']);else sp.crowns.push([2,'solid']);
+      if(t>=2&&t<=4){sp.rings.push(0,1);sp.c2='Leader N3 · N1, N2 outvoted';}else sp.c2=t<2?'Leader N1':'Leader N3';
+      if(t===3||t===4)sp.bubbles.push([0,'No majority: I wait','info']);if(t===6)sp.bubbles.push([0,'Outvoted: I step down','ok']);}
+    else{sp.crowns.push([0,'solid']);if(t>=2)sp.crowns.push([2,'solid']);sp.c2=t>=2?'Two leaders: N1 and N3':'Leader N1';
+      if(t===3)sp.bubbles.push([0,'Booked ✓','no']);if(t===4)sp.bubbles.push([2,'Booked ✓','no']);if(t===6)sp.bubbles.push([2,'Conflict!','no']);}
+    return sp;}
+  function tracks(t){let s='';const x0=104,cw=30.2;
+    s+=tx(2,24,'Safety','font-size:12.5px;font-weight:700;fill:var(--h1)')+tx(2,38,'never two leaders','font-size:11px;fill:var(--muted)')+tx(2,68,'Liveness','font-size:12.5px;font-weight:700;fill:var(--h2)')+tx(2,82,'gets a reply','font-size:11px;fill:var(--muted)');
+    for(let j=0;j<7;j++){const x=x0+j*cw,fut=j>t;
+      const sv=maj||j<2?'ok':'no';const lv=j<3?'none':maj?(j<6?'wait':'ok'):'ok';
+      const col=v=>v==='ok'?['var(--ok-bg)','var(--ok-line)']:v==='no'?['var(--no-bg)','var(--no)']:v==='wait'?['var(--h3-bg)','var(--h3)']:['var(--soft)','var(--line)'];
+      const a=fut?col('none'):col(sv),b=fut?col('none'):col(lv);
+      s+='<g><rect x="'+(x+1)+'" y="10" width="'+(cw-3)+'" height="30" rx="6" style="fill:'+a[0]+';stroke:'+a[1]+';stroke-width:1.4"/>'+
+        '<rect x="'+(x+1)+'" y="54" width="'+(cw-3)+'" height="30" rx="6" style="fill:'+b[0]+';stroke:'+b[1]+';stroke-width:1.4"/>';
+      if(!fut&&!maj&&j===2)s+=tx(x+cw/2-1,30,'✗','font-size:14px;font-weight:700;text-anchor:middle;fill:var(--no)');
+      if(!fut&&lv==='wait')s+=tx(x+cw/2-1,73,'…','font-size:14px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+      if(!fut&&(j===3&&lv==='ok'||j===6&&lv==='ok'&&maj))s+=tx(x+cw/2-1,74,'✓','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ok)');
+      s+='</g>';
+      if(j===t)s+='<rect x="'+(x-1)+'" y="5" width="'+(cw+1)+'" height="84" rx="8" style="fill:none;stroke:var(--pri);stroke-width:2.2"/>';}
+    L.$('#t23s').innerHTML=s;}
+  function upd(){const t=+L.$('#t23').value;L.$('#t23v').textContent='t = '+t;h.paint(spec(t));tracks(t);
+    let extra='';if(!maj&&t>=2)extra=' <span class="no-t">Safety broke at t = 2 and stays broken.</span>';if(maj&&t>=3&&t<=5)extra=' <span class="wa-t">Liveness: still waiting, still hopeful.</span>';
+    L.$('#t23x').innerHTML=EV[maj?'on':'off'][t]+extra;
+    if(t===6){tick(L,'g23',maj?0:1);
+      if(allTicked(L,'g23')&&!L.$('#t23ok')){L.$('#t23x').insertAdjacentHTML('afterend','<span id="t23ok"></span>');
+        L.sheet('info','Wait, or break forever','With the majority rule, safety never broke; the booking just waited until the network healed. That’s liveness with a condition. Without it, the reply came fast but safety broke at one moment you can point to, and no repair undoes two leaders’ decisions.');L.done();}}}
+  const setM=v=>{maj=v;L.$('#t23-on').classList.toggle('sel',v);L.$('#t23-off').classList.toggle('sel',!v);L.$('#t23').value=0;upd();};
+  L.$('#t23-on').onclick=()=>setM(true);L.$('#t23-off').onclick=()=>setM(false);L.$('#t23').oninput=upd;upd();}},
 {part:3,src:'Chapter 8 · Safety and liveness',pts:5,run(L){
   L.h(L.kick('pr','Safety or liveness?')+'<h1 class="q">Sort Otterpost’s promises.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Safety','Liveness'],[
@@ -209,27 +630,35 @@ Course.lesson({
    ['A merchant’s credit balance never goes below zero',0,'A “never” promise whose violation happens at a moment: safety.'],
    ['All replicas of the tracking data eventually agree',1,'Eventual consistency is a liveness property.'],
    ['A merchant is never billed twice for the same parcel',0,'Once a double bill happens, it can’t be undone: safety.']],
-   'Safety must hold no matter what. Liveness can wait for the network to recover or for a majority to come back.');}},
-{part:3,src:'Chapter 8 · Mapping system models to the real world',run(L){
-  L.h(L.kick('learn','Models versus reality')+'<h1 class="q">A model simplifies. Reality bites back.</h1>'+
-   L.prose('The crash-recovery model assumes data on disk survives a crash. But disks get corrupted or wiped, and a firmware bug can make a server fail to see its own drives after a reboot. Quorum algorithms rely on nodes remembering what they stored. A node with amnesia breaks them.')+
-   L.prose('So real code may need to handle things the model calls impossible, even if all it does is stop and call a human to clean up.')+
-   L.note('That doesn’t make models useless. They boil a messy system down to a set of faults you can reason about. A proof is a strong first step and can reveal problems that would hide for years. But a proven algorithm can still be implemented wrongly, so <b>theory and testing matter equally</b>.','scale'));
-  L.done();}},
+   'Safety must hold no matter what, even if every node crashes. Liveness can wait for the network to recover or for a majority to come back.');}},
+{part:3,src:'Chapter 8 · Mapping system models to the real world',
+ solve:async L=>{L.fast=true;L.$('#a25-keep').click();L.$('#a25go').click();for(let i=0;i<150&&L.$('#a25go').disabled;i++)await L.sleep(20);L.$('#a25-wipe').click();L.$('#a25go').click();for(let i=0;i<150&&!L.$('#a25ok');i++)await L.sleep(20);},
+ run(L){
+  L.fast=false;let wipe=false,running=false;
+  L.h(L.kick('pr','Model versus reality')+'<h1 class="q">The crash-recovery model says a node’s disk survives a crash. Run two elections both ways and see what a wiped disk does to a quorum.</h1>'+CSS+
+   goalsHtml('g25',['Run it with the disk surviving','Run it with the disk wiped'])+
+   '<div class="kt-ctl"><button class="chip sel" id="a25-keep">Disk survives (the model)</button><button class="chip" id="a25-wipe">Disk wiped (reality)</button></div>'+
+   '<button class="btn pri" id="a25go">'+L.ic('play')+'Run the elections</button><div id="h25"></div><div class="kt-read" id="a25x">An illustration of the book’s point: N3 will vote, crash and restart.</div>');
+  const h=Hemi(L,L.$('#h25'),{id:'h25',tally:false,label:'Five seats voting in two elections'});
+  const base=()=>({st:['in','in','in','in','in'],crowns:[],rings:[],bubbles:[],sub:['','','','',''],c1:'Two candidates: N1 and N5',c2:'Each node may vote once'});
+  h.paint(base());
+  const setW=v=>{if(running)return;wipe=v;L.$('#a25-keep').classList.toggle('sel',!v);L.$('#a25-wipe').classList.toggle('sel',v);h.paint(base());};
+  L.$('#a25-keep').onclick=()=>setW(false);L.$('#a25-wipe').onclick=()=>setW(true);
+  L.$('#a25go').onclick=async()=>{if(running)return;running=true;L.$('#a25go').disabled=true;const say=t=>{L.$('#a25x').innerHTML=t;};
+    let sp=base();h.paint(sp);
+    sp={st:['in','in','in','in','in'],crowns:[[0,'solid']],rings:[],bubbles:[],sub:['→N1','→N1','→N1','',''],c1:'Election 1: N1 gets 3 of 5',c2:'N1 leads'};h.paint(sp);say('Election 1: N1, N2 and N3 vote for N1. Three of five: N1 leads.');await nap(L,900);if(!h.alive())return;
+    sp.st=['in','in','dead','in','in'];sp.sub=['→N1','→N1','','',''];sp.c1='N3 crashes and restarts';h.paint(sp);say('N3 crashes and restarts. '+(wipe?'Its disk was wiped: its record of the vote is gone.':'Its disk survived: it still remembers voting for N1.'));await nap(L,900);if(!h.alive())return;
+    sp.st=['in','in',wipe?'bad':'in','cut','cut'];sp.sub=['→N1','→N1',wipe?'→N5!':'→N1','→N5','→N5'];
+    if(wipe){sp.crowns=[[0,'solid'],[4,'solid']];sp.bubbles=[[2,'Voted? No record. N5!','no']];sp.c1='N1: 3 votes · N5: 3 votes';sp.c2='Two “majorities”: two leaders';}
+    else{sp.bubbles=[[2,'Already voted for N1','ok']];sp.c1='N1: 3 votes · N5: 2 votes';sp.c2='Still one leader';}
+    h.paint(sp);say(wipe?'N5 calls an election. N3 has no memory of voting, so it votes again. N5 also gets three: two leaders, and the quorum’s promise is broken.':'N5 calls an election. N3 remembers its vote and refuses. N5 gets only two: still one leader.');
+    tick(L,'g25',wipe?1:0);running=false;L.$('#a25go').disabled=false;
+    if(allTicked(L,'g25')&&!L.$('#a25ok')){L.$('#a25x').insertAdjacentHTML('afterend','<span id="a25ok"></span>');
+      L.sheet('info','When “impossible” happens','Quorum algorithms rely on nodes remembering what they stored. Disks do get corrupted or wiped. So real code may need a branch for the “impossible”, even if it only stops and calls a human. Models still help: theory and testing matter equally.');L.done();}};}},
 {part:3,src:'Chapter 8 · Summary',run(L){
-  L.h(L.kick('learn','Chapter 8 in one screen')+'<h1 class="q">Everything that can go wrong, and the one rule that follows</h1>'+
-   L.tiers([['layers','Networks','Requests and replies can be lost or delayed. No reply tells you nothing.'],
-            ['clock','Clocks','They can be far out of sync, jump forward or back, and you rarely know their error.'],
-            ['pointer','Pauses','A process can freeze anywhere, be declared dead, and wake up unaware.'],
-            ['people','So: ask the quorum','No shared memory, no shared time. Big decisions need several nodes to agree.','',true,'The rule']])+
-   L.prose('Detecting faults is hard too: timeouts can’t tell a dead node from a dead link, and a “limping” node, like a network card that suddenly runs at a tiny fraction of its speed, can be worse than a dead one.')+
-   L.prose('If a single machine can do the job, keep it on one machine. But fault tolerance and low latency for users far apart can’t come from one node. Most systems choose cheap and unreliable over expensive and predictable.'));
-  L.done();}},
-{part:3,src:'Chapter 8 · Summary',pts:1,run(L){
-  L.h(L.kick('pr','Femi’s question')+'<h1 class="q">After a rough week, Femi asks: “Should we move everything back onto one big machine and escape all this?”</h1>');
-  L.mc(L.card,['Yes, one machine avoids partial failures altogether','No, one machine couldn’t handle 400,000 parcels a day','No, three regions need fault tolerance and low latency'],2,
-   'The book agrees one machine is worth it when it’s enough. But Otterpost needs to survive a lost machine and serve Westport, Eastvale and Nordhaven quickly, which no single node can do.',
-   'A single machine can do a lot nowadays, and avoiding distribution is worth it when you can. But it can’t survive its own failure or be close to users in three regions. That’s why Otterpost is distributed.');}}
+  L.h(L.kick('learn','Chapter 8 in one picture')+'<h1 class="q">Everything can go wrong, so ask a quorum</h1>'+CSS+FIG_SUM()+
+   L.prose('No shared memory or time, so no node decides alone. Femi’s answer: one machine if it’s enough, but Otterpost’s three regions need many. And every service should check requests itself (like fencing tokens), never assuming its clients behave.'));
+  L.done();}}
   ]
 });
 </script>

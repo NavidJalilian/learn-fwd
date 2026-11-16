@@ -13,6 +13,188 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0001 only. Two hands-on models used across the lesson:
+   1. Sys  – Otterpost’s app code wired to the five standard building
+             blocks (assemble it, run a scan, keep the blocks in step).
+   2. Year – a 365-square fault-year calendar of Otterpost: amber dots are
+             faults, red squares are failures users noticed. Defences turn
+             red into amber; correlated faults ignore them. Plus a server
+             rack strip that shows one day across eight servers.
+   All fleet sizes and incident dates are illustrative.
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const CSS='<style>'+
+ '.fy svg{width:100%;display:block}.fy svg text{font-family:var(--sans)}'+
+ '.fy-row{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}.fy-row .chip{margin:0;min-height:40px}.fy-row .btn{min-height:42px}'+
+ '.chip .tg{width:15px;height:15px;border-radius:5px;border:2px solid var(--line2);flex:none;display:inline-block}.chip.sel .tg{background:var(--pri);border-color:var(--pri)}'+
+ '.chip.done{border-color:var(--ok-line)}'+
+ '.fy-rng{display:grid;grid-template-columns:92px 1fr 66px;gap:8px;align-items:center;font-size:14.5px;margin:4px 0}.fy-rng input{width:100%;accent-color:var(--pri);height:32px;margin:0}.fy-rng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.fy-tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}.fy-tiles>div{background:var(--soft);border-radius:12px;padding:8px 5px;text-align:center;font-size:12.5px;color:var(--muted);line-height:1.3}.fy-tiles b{display:block;font-size:18px;color:var(--ink);font-variant-numeric:tabular-nums;margin-bottom:2px}.fy-tiles .r b{color:var(--no)}.fy-tiles .a b{color:var(--h3)}'+
+ '.fy-leg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:6px 0 2px}.fy-leg span{display:inline-flex;align-items:center;gap:5px}.fy-leg svg{width:13px;height:13px;flex:none}'+
+ '.fy-cap{background:var(--soft);border-radius:14px;padding:11px 13px;font-size:15px;line-height:1.5;margin:10px 0 4px;min-height:46px}'+
+ '.fy-goals{margin:10px 0 0;padding:0;list-style:none}.fy-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}.fy-goals .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}.fy-goals li.done{color:var(--ok)}.fy-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.fy-goals .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.fy-need{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--card);border:2px solid var(--line);border-bottom-width:3px;border-radius:14px;padding:10px 12px;margin:0 0 8px;font-size:14.5px;line-height:1.4;min-height:44px}.fy-need .got{margin-left:auto;font-size:12.5px;font-weight:700;white-space:nowrap;padding-left:6px}.fy-need.ok{border-color:var(--ok-line);background:var(--ok-bg);color:var(--ok)}'+
+ '.fy-see{margin:8px 0 0;padding:0;list-style:none}.fy-see li{font-size:14.5px;line-height:1.45;padding:6px 0;border-bottom:1px solid var(--line)}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '.fy-sub{font-size:14px;color:var(--muted);margin:4px 0 8px;line-height:1.5}'+
+ '.fy-chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}.fy-chips span{font-size:12.5px;background:var(--soft);border-radius:99px;padding:4px 10px;color:var(--muted)}'+
+ '.fy{margin-bottom:6px;--mut:var(--muted);--mut-bg:var(--soft2)}.fy .fade{transition:opacity .5s}.fy .spin{transform-origin:63px 50px;animation:fyspin 1.1s linear infinite}@keyframes fyspin{to{transform:rotate(360deg)}}'+
+ '</style>';
+
+/* ---------- small helpers ---------- */
+const rng=(id,label,min,max,val,step)=>'<div class="fy-rng"><label for="'+id+'">'+label+'</label><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'"><b id="'+id+'-v"></b></div>';
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+const goals=(id,items)=>'<ul class="fy-goals" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';
+function tick(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const allTicked=(L,id)=>L.$$('#'+id+' li').every(li=>li.classList.contains('done'));
+const tiles=(id,t)=>'<div class="fy-tiles" id="'+id+'">'+t.map((x,j)=>'<div class="'+(x[1]||'')+'"><b id="'+id+'-'+j+'">–</b>'+x[0]+'</div>').join('')+'</div>';
+function setT(L,id,j,v){const e=L.$('#'+id+'-'+j);if(e)e.innerHTML=v;}
+function tog(b,on){b.classList.toggle('sel',!!on);b.setAttribute('aria-pressed',on?'true':'false');}
+const T=(x,y,txt,st)=>'<text x="'+x+'" y="'+y+'" style="'+(st||'')+'">'+txt+'</text>';
+
+/* ---------- 1. Sys: app code + the five building blocks ---------- */
+const BL=[
+ {a:'Parcel',b:'DB',c:'h1',name:'Database',kind:'A database',what:'stores data so it, or another app, can find it again later'},
+ {a:'Cache',b:'',c:'h2',name:'Cache',kind:'A cache',what:'keeps the answer to slow work, so repeat reads are quick'},
+ {a:'Search',b:'index',c:'h3',name:'Search index',kind:'A search index',what:'lets people search by keyword or filter in many ways'},
+ {a:'Message',b:'queue',c:'h4',name:'Message queue',kind:'A message queue (stream processing)',what:'hands a message to another process to deal with later, so the sender never waits'},
+ {a:'Nightly',b:'batch',c:'mut',name:'Batch job',kind:'A batch job (batch processing)',what:'regularly crunches a large pile of collected data'}];
+const BX=[35,100,165,230,295],HX=[105,135,165,195,225];
+const STAT={new:['✓ new','ok'],old:['✗ old','no'],sent:['✓ sent','ok'],none:['✗ none','no'],later:['✓ later','ok']};
+function Sys(host,id,o){
+  const S=Object.assign({placed:[1,1,1,1,1],wire:['on','on','on','on','on'],status:['','','','',''],curtain:false},o||{});
+  host.insertAdjacentHTML('beforeend','<div class="fy"><svg id="'+id+'" viewBox="0 0 330 260" role="img" aria-label="Otterpost’s app code in the middle, wired to five building blocks: the Parcel DB, a cache, a search index, a message queue and a nightly batch job"><g class="b"></g><g class="x"></g><g class="c fade" style="pointer-events:none"></g></svg></div>');
+  const svg=host.querySelector('#'+id),gb=svg.querySelector('.b'),gx=svg.querySelector('.x'),gc=svg.querySelector('.c');
+  S.path=j=>j===4?'M35 218 C35 250 295 250 295 218':'M'+HX[j]+' 104 C'+HX[j]+' 134 '+BX[j]+' 130 '+BX[j]+' 160';
+  S.alive=()=>svg.isConnected;
+  S.draw=()=>{let s='';
+    s+='<rect x="100" y="4" width="130" height="30" rx="10" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+T(165,24,'Scans &amp; bookings','font-size:12px;font-weight:600;fill:var(--ink);text-anchor:middle');
+    s+='<path d="M165 34 V63" style="stroke:var(--line2);stroke-width:2"/><path d="M160 58 L165 65 L170 58" style="fill:none;stroke:var(--line2);stroke-width:2"/>';
+    s+='<rect x="85" y="66" width="160" height="38" rx="12" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:2"/>'+T(165,90,'Otterpost app code','font-size:13px;font-weight:700;fill:var(--pri-deep);text-anchor:middle');
+    BL.forEach((b,j)=>{let w=S.wire[j];if(!S.placed[j]||w==='off')return;if(j===4&&!S.placed[0])w='need';
+      s+='<path d="'+S.path(j)+'" style="fill:none;stroke:'+(w==='on'?'var(--'+b.c+')':'var(--line2)')+';stroke-width:'+(w==='on'?2.5:2)+(w==='on'?'':';stroke-dasharray:5 5')+'"/>';});
+    if(S.placed[4])s+=T(165,256,'the batch job reads the Parcel DB each night','font-size:12px;fill:var(--muted);text-anchor:middle;paint-order:stroke;stroke:var(--card);stroke-width:4');
+    BL.forEach((b,j)=>{const x=BX[j]-30,y=160;
+      if(!S.placed[j]){s+='<rect x="'+x+'" y="'+y+'" width="60" height="58" rx="10" style="fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:4 4"/>'+T(BX[j],y+35,'?','font-size:16px;fill:var(--faint);text-anchor:middle');return;}
+      s+='<rect x="'+x+'" y="'+y+'" width="60" height="58" rx="10" style="fill:var(--'+b.c+'-bg);stroke:var(--'+b.c+');stroke-width:2"/>';
+      const st='font-size:12px;font-weight:700;fill:var(--'+b.c+');text-anchor:middle';
+      if(b.b)s+=T(BX[j],y+19,b.a,st)+T(BX[j],y+33,b.b,st);else s+=T(BX[j],y+26,b.a,st);
+      const k=S.status[j];if(k)s+=T(BX[j],y+50,STAT[k][0],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--'+STAT[k][1]+')');});
+    gb.innerHTML=s;
+    gc.innerHTML='<rect x="2" y="56" width="326" height="202" rx="18" style="fill:var(--card);stroke:var(--pri);stroke-width:2"/>'+T(165,84,'Merchant API','font-size:16px;font-weight:700;fill:var(--pri-deep);text-anchor:middle')+T(165,102,'what merchants see','font-size:12px;fill:var(--muted);text-anchor:middle')+
+      '<rect x="40" y="114" width="250" height="30" rx="15" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+T(165,134,'Bramble &amp; Bolt: where’s parcel 4417?','font-size:12.5px;fill:var(--ink);text-anchor:middle')+
+      '<path d="M165 146 V164" style="stroke:var(--line2);stroke-width:2"/><path d="M160 159 L165 166 L170 159" style="fill:none;stroke:var(--line2);stroke-width:2"/>'+
+      '<rect x="40" y="168" width="250" height="30" rx="15" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.5"/>'+T(165,188,'“Delivered”, never an old status','font-size:12.5px;font-weight:700;fill:var(--ok);text-anchor:middle')+
+      T(165,226,'Promise kept by… what, exactly?','font-size:12.5px;font-style:italic;fill:var(--muted);text-anchor:middle')+T(165,244,'Lift the curtain to see the parts.','font-size:12px;fill:var(--muted);text-anchor:middle');
+    gc.style.opacity=S.curtain?1:0;return S;};
+  S.set=x=>{Object.assign(S,x);return S.draw();};
+  S.fly=(d,col,ms)=>new Promise(res=>{if(!svg.isConnected){res();return;}
+    const p=document.createElementNS(NS,'path');p.setAttribute('d',d);p.setAttribute('style','fill:none;stroke:none');gx.appendChild(p);
+    const len=p.getTotalLength(),c=document.createElementNS(NS,'circle');c.setAttribute('r',6);c.setAttribute('style','fill:'+col+';stroke:var(--card);stroke-width:2');gx.appendChild(c);
+    const t0=performance.now();(function st(){if(!c.isConnected){p.remove();res();return;}
+      const k=Math.min(1,(performance.now()-t0)/ms),pt=p.getPointAtLength(len*k);c.setAttribute('cx',pt.x);c.setAttribute('cy',pt.y);
+      if(k<1)setTimeout(st,16);else{c.remove();p.remove();res();}})();});
+  return S.draw();
+}
+
+/* ---------- 2. Year: the fault-year calendar ---------- */
+const MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const MD=[31,28,31,30,31,30,31,31,30,31,30,31];
+const MS=MD.reduce((a,n,i)=>(a.push(i?a[i-1]+MD[i-1]:0),a),[]);
+const dayOf=(m,d)=>MS[m-1]+d-1;              /* month 1-12; the Otterpost year starts on a Monday */
+function prng(seed){return function(){seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+const U1=(r=>Array.from({length:365},()=>r()))(prng(11)),U2=(r=>Array.from({length:365},()=>r()))(prng(29));
+function pois(l,u){if(l<=0)return 0;let k=0,p=Math.exp(-l),c=p;while(u>c&&k<40){k++;p*=l/k;c+=p;}return k;}
+const RES=0.004;                               /* illustrative: a mirrored pair loses both copies before the swap */
+const PSU=[dayOf(3,12),dayOf(8,21),dayOf(10,8)],VM=[dayOf(5,19),dayOf(9,27)];
+const LEAP=dayOf(6,30),PUSH=dayOf(11,16),CRASH=dayOf(12,4),CH0=dayOf(3,6);
+const HWY={disks:2000,mttf:27,psu:PSU,vm:VM},HWD={mirror:1,dual:1,multi:1};
+function pushHours(D){const T=(D.monitor?0.1:64)+(D.rollback?0.1:20),out=[];let left=T;
+  for(let i=0;left>1e-9&&i<9;i++){const st=i?0:16,u=Math.min(left,24-st);out.push([st,u]);left-=u;}return out;}
+function buildYear(c,D){
+  const Y=Array.from({length:365},()=>({f:0,s:0}));
+  const lam=c.disks?c.disks/(c.mttf*365):0;
+  if(lam)for(let d=0;d<365;d++){const k=pois(lam,U1[d]);if(!k)continue;Y[d].f+=k;
+    if(D.multi)continue;if(D.mirror){if(U2[d]<1-Math.pow(1-RES,k))Y[d].s=1;}else Y[d].s=1;}
+  (c.psu||[]).forEach(d=>{Y[d].f++;if(!D.dual&&!D.multi)Y[d].s=1;});
+  (c.vm||[]).forEach(d=>{Y[d].f++;if(!D.multi)Y[d].s=1;});
+  (c.sw||[]).forEach(d=>{Y[d].f++;Y[d].s=1;});
+  if(c.push!=null)pushHours(D).forEach((h,i)=>{const d=c.push+i;if(d>364)return;if(!i)Y[d].f++;Y[d].s=Math.max(Y[d].s,D.canary?.05:1);});
+  if(c.chaos){if(D.chaos){for(let d=CH0;d<=dayOf(11,30);d+=7){Y[d].f++;Y[d].cm=1;}Y[CH0].s=Math.max(Y[CH0].s,.05);Y[CRASH].f++;}
+    else{Y[CRASH].f++;Y[CRASH].s=1;}}
+  if(c.black!=null)for(let d=c.black;d<365;d++)Y[d].black=1;
+  return Y;}
+function yStats(Y){let f=0,r=0,p=0;Y.forEach(c=>{f+=c.f;if(c.black||c.s>=.5)r++;else if(c.s>0)p++;});return {f,r,p};}
+const ypos=k=>{let m=0;while(m<11&&k>=MS[m+1])m++;return {x:28+(k-MS[m])*9.7,y:2+m*14};};
+function drawYear(Y,upto,focus){let s='';
+  for(let m=0;m<12;m++){const y=2+m*14;s+=T(0,y+10.5,MON[m],'font-size:12.5px;fill:var(--muted)');
+    for(let dd=0;dd<MD[m];dd++){const k=MS[m]+dd,c=Y[k],x=+(28+dd*9.7).toFixed(1),on=k<upto;
+      let fill='var(--soft)';if(on){if(c.black)fill='none;stroke:var(--line2);stroke-width:.9;stroke-dasharray:2 1.5';else if(c.s>=.5)fill='var(--no-strong)';else if(c.s>0)fill='var(--no-bg)';}
+      s+='<rect x="'+x+'" y="'+y+'" width="8.4" height="11.4" rx="1.8" style="fill:'+fill+'"/>';
+      if(!on||c.black||c.s>=.5)continue;
+      const cx=(x+4.2).toFixed(1);
+      if(c.s>0)s+='<rect x="'+x+'" y="'+(y+8.6)+'" width="8.4" height="2.8" style="fill:var(--no-strong)"/>';
+      const hf=c.f-(c.cm?1:0);
+      if(hf>0)s+='<circle cx="'+cx+'" cy="'+(y+5.2)+'" r="'+(hf>1?3.3:2.5)+'" style="fill:var(--h3)"/>';
+      else if(c.cm)s+='<circle cx="'+cx+'" cy="'+(y+5)+'" r="2.7" style="fill:none;stroke:var(--h1);stroke-width:1.5"/>';}}
+  if(focus!=null&&focus<upto){const p=ypos(focus);s+='<rect x="'+(p.x-1.7).toFixed(1)+'" y="'+(p.y-1.7)+'" width="11.8" height="14.8" rx="3" style="fill:none;stroke:var(--ink);stroke-width:1.7"/>';}
+  return s;}
+function Year(host,id,cfg,D){
+  host.insertAdjacentHTML('beforeend','<div class="fy"><svg id="'+id+'" viewBox="0 0 330 170" role="img" aria-label="One Otterpost year as a calendar: a row per month, a square per day"></svg></div>');
+  const svg=host.querySelector('#'+id);
+  const Y={cfg:Object.assign({},cfg),D:Object.assign({},D||{}),upto:365,focus:null};
+  Y.calc=()=>{Y.Y=buildYear(Y.cfg,Y.D);return Y;};
+  Y.draw=()=>{if(svg.isConnected)svg.innerHTML=drawYear(Y.Y,Y.upto,Y.focus);return Y;};
+  Y.set=c=>{Object.assign(Y.cfg,c);return Y.calc().draw();};
+  Y.def=d=>{Object.assign(Y.D,d);return Y.calc().draw();};
+  Y.stats=()=>yStats(Y.Y);
+  Y.alive=()=>svg.isConnected;
+  Y.play=(from,to,ms)=>new Promise(res=>{const t0=performance.now();(function st(){if(!svg.isConnected){res(false);return;}
+    const k=Math.min(1,(performance.now()-t0)/ms);Y.upto=Math.round(from+(to-from)*k);Y.draw();if(k<1)setTimeout(st,35);else res(true);})();});
+  return Y.calc().draw();
+}
+const LEGM={f:['<rect width="12" height="12" rx="2.5" style="fill:var(--soft)"/><circle cx="6" cy="6" r="3" style="fill:var(--h3)"/>','fault: a part broke'],
+  r:['<rect width="12" height="12" rx="2.5" style="fill:var(--no-strong)"/>','failure: users noticed'],
+  p:['<rect width="12" height="12" rx="2.5" style="fill:var(--no-bg)"/><rect y="9" width="12" height="3" style="fill:var(--no-strong)"/>','failure for a few users'],
+  c:['<rect width="12" height="12" rx="2.5" style="fill:var(--soft)"/><circle cx="6" cy="6" r="3.2" style="fill:none;stroke:var(--h1);stroke-width:1.6"/>','fault made on purpose']};
+const legend=keys=>'<div class="fy-leg">'+keys.split('').map(k=>'<span><svg viewBox="0 0 12 12" aria-hidden="true">'+LEGM[k][0]+'</svg>'+LEGM[k][1]+'</span>').join('')+'</div>';
+
+/* ---------- the server rack strip: one day across eight servers ---------- */
+const RK={ok:['var(--ok-bg)','var(--ok-line)','var(--ok)','✓'],amber:['var(--h3-bg)','var(--h3)','var(--h3)','!'],red:['var(--no-bg)','var(--no)','var(--no)','✗'],
+  wait:['var(--h3-bg)','var(--h3)','var(--h3)','…'],gone:['none','var(--line2)','var(--faint)','–']};
+function Rack(host,id,bar){
+  host.insertAdjacentHTML('beforeend','<div class="fy"><svg id="'+id+'" viewBox="0 0 330 '+(bar?70:48)+'" role="img" aria-label="Eight tracking-page servers, S1 to S8"></svg></div>');
+  const svg=host.querySelector('#'+id),R={st:Array(8).fill('ok'),bar:bar?.3:null};
+  R.draw=()=>{if(!svg.isConnected)return R;let s='';const y0=bar?24:4;
+    if(bar){s+=T(6,14,'Shared disk','font-size:12px;fill:var(--muted)')+'<rect x="84" y="5" width="240" height="11" rx="5.5" style="fill:var(--soft2)"/><rect x="84" y="5" width="'+(240*R.bar).toFixed(1)+'" height="11" rx="5.5" style="fill:'+(R.bar>.9?'var(--no-strong)':'var(--h3)')+'"/>';}
+    R.st.forEach((k,j)=>{const x=6+j*40,c=RK[k];
+      s+='<rect x="'+x+'" y="'+y0+'" width="36" height="40" rx="7" style="fill:'+c[0]+';stroke:'+c[1]+';stroke-width:2'+(k==='wait'||k==='gone'?';stroke-dasharray:4 3':'')+'"/>'+
+        T(x+18,y0+17,'S'+(j+1),'font-size:12px;font-weight:700;text-anchor:middle;fill:'+c[2])+T(x+18,y0+33,c[3],'font-size:12.5px;font-weight:700;text-anchor:middle;fill:'+c[2]);});
+    svg.innerHTML=s;return R;};
+  R.one=(j,k)=>{R.st[j]=k;return R.draw();};
+  R.all=k=>{R.st=R.st.map(()=>k);return R.draw();};
+  R.setBar=v=>{R.bar=v;return R.draw();};
+  R.alive=()=>svg.isConnected;
+  return R.draw();
+}
+
+/* ---------- the zoomed fortnight for the Friday config push ---------- */
+function fmtH(h){return h<1?Math.round(h*60)+' min':h<48?Math.round(h)+' hours':(h/24).toFixed(1)+' days';}
+function drawFort(D){let s='';const W=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'],cw=43,ch=50;
+  W.forEach((w,c)=>{s+=T(3+c*46.6+cw/2,13,w,'font-size:12px;font-weight:600;fill:var(--muted);text-anchor:middle');});
+  const seg={};pushHours(D).forEach((h,i)=>seg[4+i]=h);
+  for(let k=0;k<14;k++){const r=Math.floor(k/7),c=k%7,x=3+c*46.6,y=20+r*58;
+    s+='<rect x="'+x.toFixed(1)+'" y="'+y+'" width="'+cw+'" height="'+ch+'" rx="7" style="fill:var(--soft)"/>'+T(x+4,y+14,(12+k)+'','font-size:12px;fill:var(--muted)');
+    const g=seg[k];if(!g)continue;
+    const px=x+cw*g[0]/24,pw=Math.max(2.5,cw*g[1]/24),ph=Math.max(3,ch*(D.canary?.05:1));
+    s+='<rect x="'+px.toFixed(1)+'" y="'+(y+ch-ph).toFixed(1)+'" width="'+pw.toFixed(1)+'" height="'+ph.toFixed(1)+'" rx="2" style="fill:var(--no-strong)"/>';
+    s+=T(x+cw/2,y+34,g[1]<1?Math.round(g[1]*60)+'m':Math.round(g[1])+'h','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--no);paint-order:stroke;stroke:var(--card);stroke-width:3.5');}
+  const fx=3+4*46.6+cw*16/24;s+='<path d="M'+fx.toFixed(1)+' 17 V40" style="stroke:var(--ink);stroke-width:1.6;stroke-dasharray:3 2"/>';
+  s+=T(3+3*46.6+cw,140,'▲ dashed line: the push goes live, Friday 4 p.m.','font-size:12px;fill:var(--muted);text-anchor:middle');
+  return s;}
+
+/* ---------- Course.lesson ---------- */
 Course.lesson({
   id:'0001', title:'Data systems and reliability', minutes:20, icon:'shield',
   goals:['See an app as a data system stitched together from standard building blocks','Tell a fault from a failure, and say why we tolerate faults instead of hoping to prevent them','Match hardware, software and human faults to the defences that fit each one'],
@@ -22,81 +204,129 @@ Course.lesson({
     'data-intensive':'Data-intensive application: an app whose main challenge is its data (how much there is, how complex it is, how fast it changes) rather than raw processing power.',
     'fault-tolerant':'Fault-tolerant (or resilient): a system that expects certain kinds of faults and keeps serving users when they happen.',
     'mttf':'Mean time to failure (MTTF): how long a part lasts on average before it breaks.',
+    'raid':'RAID: a way of setting up several disks so the data survives when one disk dies, for example two mirrored disks holding the same data.',
     'rolling-upgrade':'Rolling upgrade: updating a system one machine at a time, so the whole system never has to go down.',
     'cascading':'Cascading failure: a small fault in one part causes a fault in another, which causes more, like falling dominoes.',
     'telemetry':'Telemetry: detailed measurements, such as error rates and response times, sent continuously from a running system so people can see what it is doing.'
   },
   cheatsheet:[
     '<b>Data-intensive</b> = the hard part is the data (volume, complexity, speed of change), not CPU power.',
-    'Apps are built from standard blocks: <b>database, cache, search index, stream processing, batch processing</b>. Glue them together and you are a data-system designer.',
+    'Apps are built from standard blocks: <b>database, cache, search index, stream processing, batch processing</b>. Glue them together with your own code and you are a data-system designer.',
     'The book’s three concerns: <b>reliability, scalability, maintainability</b>.',
-    'A <b>fault</b> is one part going wrong. A <b>failure</b> is the whole system letting users down. Design so faults don’t become failures.',
-    'Inject faults on purpose to test your recovery code. But for security, prevention beats cure.',
-    '<b>Hardware faults</b> are random and independent: add redundancy, and tolerate losing whole machines. <b>Software errors</b> are correlated: test, isolate, restart, monitor, self-check.',
-    '<b>Human errors</b>: good interfaces, sandboxes, tests, fast rollback and gradual rollout, recompute tools, clear monitoring.',
+    'A <b>fault</b> is one part going wrong. A <b>failure</b> is the whole system letting users down. Design so faults don’t become failures. Faults made on purpose test that design; for security, prevention beats cure.',
+    '<b>Hardware faults</b> are random and independent: redundancy works, and with many machines, tolerate losing a whole one (which also allows rolling upgrades).',
+    '<b>Software errors</b> are correlated: every copy fails together, so redundancy doesn’t help. Test, isolate, restart, monitor, self-check.',
+    '<b>Human errors</b> cause most outages: good interfaces, sandboxes, tests, gradual rollout, fast rollback, recompute tools, clear monitoring.',
     'Cutting reliability corners can be fine (a prototype, a thin margin), but only on purpose.'
   ],
   steps:[
 /* ---------- PART 1: DATA SYSTEMS ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">On Peak Week mornings, Otterpost’s tracking page crawls. Kwame checks the servers: their processors are mostly idle. Where would you look first?</h1>');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">On Peak Week mornings, Otterpost’s tracking page crawls. Yet the servers’ processors are mostly idle. Where would you look first?</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 96" role="img" aria-label="The tracking page is still loading, while the servers’ processors are only 12 percent busy, on a 1.2-million-parcel day">'+
+   '<rect x="8" y="4" width="110" height="88" rx="14" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+T(63,24,'Tracking page','font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle')+
+   '<circle cx="63" cy="50" r="13" style="fill:none;stroke:var(--line2);stroke-width:4"/><path class="spin" d="M63 37 A13 13 0 0 1 76 50" style="fill:none;stroke:var(--pri);stroke-width:4;stroke-linecap:round"/>'+T(63,82,'Loading…','font-size:12px;fill:var(--muted);text-anchor:middle')+
+   T(140,22,'Servers’ processors','font-size:12px;font-weight:700;fill:var(--ink)')+
+   '<rect x="140" y="32" width="182" height="16" rx="8" style="fill:var(--soft2)"/><rect x="140" y="32" width="22" height="16" rx="8" style="fill:var(--ok-strong)"/>'+T(140,66,'12% busy','font-size:13px;font-weight:700;fill:var(--ok)')+
+   T(140,86,'1.2 million parcels a day','font-size:12px;fill:var(--muted)')+'</svg></div><p class="fy-sub">Numbers are illustrative.</p>');
   L.mc(L.card,['At how the data is stored, found and moved','At buying servers with faster processors'],0,
    'If the processors are idle, raw computing power isn’t the bottleneck. The trouble is somewhere in the data: how much of it there is, how it’s laid out, how it moves. That’s what this whole course is about.',
    'Idle processors mean computing power isn’t the limit. Faster chips would sit idle too. The trouble is in how the data is stored, found and moved.');}},
+
 {part:0,src:'Preface',run(L){
-  L.h(L.kick('learn','What “data-intensive” means')+'<h1 class="q">Many apps are limited by data, not by computing power</h1>'+
-   L.prose('The book calls an application '+L.g('data-intensive','data-intensive')+' when data is its main challenge. Three things make data hard:')+
-   L.flow([['layers','Quantity','How much data there is'],['tree','Complexity','How tangled and connected it is'],['cycle','Speed of change','How fast it keeps changing']],false)+
-   L.prose('The opposite is <b>compute-intensive</b>, where processor time is the bottleneck. For many apps today, the book says, raw processor power is rarely the limit.')+
-   L.prose('The tools change fast and come wrapped in buzzwords. Behind them sit lasting principles. Learn those, and you can judge where each tool fits and how it can let you down.')+
-   '<p class="small">The course follows the book’s three parts. Part I: ideas that apply to every data system, even on one machine. Part II: data spread across many machines. Part III: systems that derive some datasets from others.</p>');
+  const bars=(y0,title,col,vals)=>T(4,y0,title,'font-size:13px;font-weight:700;fill:var(--'+col+')')+
+    ['Processor','Amount of data','Complexity','Speed of change'].map((t,j)=>{const y=y0+10+j*20;return T(4,y+11,t,'font-size:12px;fill:var(--ink)')+
+      '<rect x="116" y="'+y+'" width="206" height="13" rx="6.5" style="fill:var(--soft2)"/><rect x="116" y="'+y+'" width="'+(206*vals[j])+'" height="13" rx="6.5" style="fill:var(--'+col+')"/>';}).join('');
+  L.h(L.kick('learn','What “data-intensive” means')+'<h1 class="q">Many apps are limited by data, not by computing power</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 200" role="img" aria-label="Compute-intensive app: processor bar full, data bars short. Data-intensive app: processor bar short, data amount, complexity and speed of change bars long.">'+
+   bars(14,'Compute-intensive','h4',[.95,.22,.2,.15])+bars(116,'Data-intensive','h2',[.15,.9,.8,.86])+'</svg></div>'+
+   L.prose('An app is '+L.g('data-intensive','data-intensive')+' when its hard part is the data (how much, how tangled, how fast it changes), not the processor.'));
   L.done();}},
-{part:0,src:'Chapter 1 · Reliable, Scalable, and Maintainable Applications',run(L){
-  L.h(L.kick('learn','The building blocks')+'<h1 class="q">Five standard blocks most apps are made of</h1>'+
-   L.prose('Hardly anyone writes a storage engine from scratch. Instead, apps combine ready-made blocks. Here they are, with the Otterpost system that plays each role:')+
-   L.list([['box','Database','Store data so it can be found again later. <i>Otterpost: the Parcel DB.</i>'],
-     ['layers','Cache','Remember the result of an expensive operation to speed up reads. <i>The cache in front of the tracking page.</i>'],
-     ['eye','Search index','Let people search by keyword or filter in many ways. <i>Support search.</i>'],
-     ['chat','Stream processing','Send a message to another process, to be handled later. <i>The notification queue.</i>'],
-     ['cal','Batch processing','Regularly crunch a large pile of collected data. <i>Linh’s nightly jobs.</i>']],1)+
-   '<p class="small" style="margin-top:10px">These blocks feel obvious only because they work so well that we use them without thinking.</p>');
+
+{part:0,src:'Part I · Foundations of Data Systems',run(L){
+  const BZ=[['NoSQL!',14,20,-6],['Big Data!',104,16,4],['Web-scale!',216,24,-3],['Sharding!',30,58,5],['ACID!',128,56,-4],['CAP theorem!',196,66,3],['MapReduce!',60,92,-2],['Real-time!',190,98,4]];
+  const pill=b=>{const w=b[0].length*7.2+18;return '<g transform="rotate('+b[3]+' '+(b[1]+w/2)+' '+b[2]+')"><rect x="'+b[1]+'" y="'+(b[2]-14)+'" width="'+w+'" height="22" rx="11" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.2"/>'+T(b[1]+w/2,b[2]+1,b[0],'font-size:12px;font-weight:600;fill:var(--pri-deep);text-anchor:middle')+'</g>';};
+  const P=[['Part I','Ideas for any','data system','h1'],['Part II','Data across','many machines','h2'],['Part III','Data derived','from other data','h3']];
+  L.h(L.kick('learn','Beyond the buzzwords')+'<h1 class="q">Tools change fast. The principles under them last.</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 214" role="img" aria-label="Buzzwords float above three foundation blocks: Part I, ideas for any data system; Part II, data across many machines; Part III, data derived from other data">'+
+   '<g class="fade" id="s3bz">'+BZ.map(pill).join('')+'</g>'+'<g class="fade" id="s3pr" style="opacity:0">'+T(165,80,'lasting principles','font-size:15px;font-style:italic;fill:var(--muted);text-anchor:middle')+'<path d="M165 90 V122" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:3 3"/></g>'+
+   P.map((p,j)=>{const x=4+j*109;return '<rect x="'+x+'" y="128" width="104" height="80" rx="12" style="fill:var(--'+p[3]+'-bg);stroke:var(--'+p[3]+');stroke-width:1.5"/>'+
+     T(x+52,150,p[0],'font-size:13.5px;font-weight:700;fill:var(--'+p[3]+');text-anchor:middle')+T(x+52,172,p[1],'font-size:12px;fill:var(--ink);text-anchor:middle')+T(x+52,188,p[2],'font-size:12px;fill:var(--ink);text-anchor:middle');}).join('')+
+   '</svg></div><div class="fy-row"><button class="btn" id="s3b">'+L.ic('eye')+'Look past the buzzwords</button></div>'+
+   L.prose('Learn the lasting principles and you can judge where each tool fits and how it can let you down. The course follows the book’s three parts; Part I applies to every data system, on one machine or many.'));
+  L.$('#s3b').onclick=function(){const on=L.$('#s3bz').style.opacity!=='0';L.$('#s3bz').style.opacity=on?0:1;L.$('#s3pr').style.opacity=on?1:0;this.lastChild.textContent=on?'Bring the buzzwords back':'Look past the buzzwords';};
   L.done();}},
-{part:0,src:'Chapter 1 · Reliable, Scalable, and Maintainable Applications',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Signe’s support team must find a parcel from part of a phone number or a misspelled name. Which building block does that job?</h1>');
-  L.mc(L.card,['A cache of recent results','A batch job run every night','A search index'],2,
-   'Finding records by keyword or loose filters is exactly what a search index is for.',
-   'A cache only speeds up reads you have already done, and a nightly batch job is far too slow for a live phone call. Searching by keyword or filter is a search index’s job.');}},
-{part:0,src:'Chapter 1 · Thinking About Data Systems',run(L){
-  L.h(L.kick('ex','Otterpost, years ago')+'<h1 class="q">How Femi became a data-system designer without noticing</h1>');
-  L.beats(L.card,[
-   ['Day one','Femi writes the first Otterpost as one app on one database. Simple.'],
-   ['A cache','The tracking page gets slow, so Femi adds a cache in front of it. Now the app must clear the cached page whenever a parcel’s status changes.'],
-   ['A search index','Signe’s team needs fuzzy search, so a separate search server is added. The app must also send every change there.'],
-   ['A queue','Recipients want texts, so a message queue goes in. The app drops a message on it for every status change.'],
-   ['The realisation','Merchants only see one clean API. Behind it sit four tools, glued together by Otterpost’s own code. That code now promises things, such as “the tracking page never shows an old status.”']],
-   'Combine several tools behind one API and you have built a new, special-purpose data system. You are no longer only an app developer. You are a data-system designer.');}},
-{part:0,src:'Chapter 1 · Thinking About Data Systems',pts:1,
- solve:async L=>{L.$('#run').click();},
+
+{part:0,src:'Chapter 1 · Reliable, Scalable, and Maintainable Applications',
+ solve:async L=>{const N=[2,0,3,1,4];for(let n=0;n<5;n++){L.$('#s4b-'+N[n]).click();L.$('#s4n-'+n).click();await L.sleep(20);}},
  run(L){
-  const C=[['box','Parcel DB','Delivered','The new status is saved.',true],['layers','Tracking page cache','Out for delivery','Mrs. Okoro still sees the parcel “on its way” after it is on the doorstep.',false],
-           ['eye','Support search','Out for delivery','Signe’s team tells a caller the parcel hasn’t arrived.',false],['chat','Notification queue','(nothing sent)','No “delivered” text ever goes out.',false]];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias ships a quick change: when a courier scans “delivered”, the app saves it to the Parcel DB. Nothing else. Run it and see what everyone sees.</h1>'+
-   '<div id="sys">'+C.map((c,j)=>'<div class="lane" style="margin-bottom:8px"><div class="lh">'+L.ic(c[0])+c[1]+'</div><div class="small" id="s'+j+'">Waiting…</div></div>').join('')+'</div>'+
-   '<button class="btn pri" id="run" style="margin-top:6px">'+L.ic('play')+'Courier scans “delivered”</button><div id="sq"></div>');
-  L.$('#run').onclick=function(){this.remove();
-    C.forEach((c,j)=>{L.$('#s'+j).innerHTML='<b style="color:var('+(c[4]?'--ok':'--no')+')">'+c[2]+'</b> · '+c[3];});
-    const q=L.$('#sq');q.innerHTML='<h2 class="sub">Whose job was it to update the cache, the search index and the queue?</h2>';
-    L.mc(q,['The Parcel DB, automatically','Otterpost’s own application code','Each tool, by watching the others'],1,
-     'When you glue tools together yourself, keeping the cache and the index in step with the main database is normally your application code’s job. Here, nobody did it.',
-     'These tools don’t know about each other. When you combine them yourself, your application code has to keep the cache and the index in step with the database.');};}},
+  const NEEDS=[[2,'Signe finds a parcel from part of a phone number'],[0,'Every parcel is saved so it can be found again later'],[3,'Mrs. Okoro gets a text when their parcel arrives, without slowing the scan'],
+    [1,'The tracking page stays fast while recipients refresh it again and again'],[4,'A month of deliveries becomes Femi’s on-time report']];
+  L.h(L.kick('ex','Build it')+'<h1 class="q">Build Otterpost’s data system. Tap a block, then the need it meets.</h1><p class="fy-sub">The book’s five standard blocks: database, cache, search index, <b>stream processing</b> (a message queue) and <b>batch processing</b>.</p><div id="s4"></div>'+
+   '<div class="fy-row" id="s4t"></div><div id="s4n"></div><div class="fy-cap" id="s4c">Tools your code glues together: <b>0</b> of 5.</div>'+CSS);
+  const sys=Sys(L.$('#s4'),'s4svg',{placed:[0,0,0,0,0]});
+  let pick=null,n=0;const placed=[0,0,0,0,0];
+  BL.forEach((b,j)=>{const c=document.createElement('button');c.className='chip';c.id='s4b-'+j;c.textContent=b.name;
+    c.onclick=()=>{if(placed[j])return;pick=j;L.$$('#s4t .chip').forEach(x=>x.classList.toggle('sel',x===c));};L.$('#s4t').appendChild(c);});
+  NEEDS.forEach((nd,k)=>{const r=document.createElement('button');r.className='fy-need';r.id='s4n-'+k;r.innerHTML='<span>'+nd[1]+'</span><span class="got"></span>';
+    r.onclick=()=>{if(r.classList.contains('ok'))return;
+      if(pick===null){L.$('#s4c').innerHTML='Tap a block first, then this need.';L.shake(r);return;}
+      if(pick!==nd[0]){L.shake(r);L.$('#s4c').innerHTML='Not this one. <b>'+BL[pick].kind+'</b> '+BL[pick].what+'. Try another need.';return;}
+      const j=pick;placed[j]=1;n++;pick=null;r.classList.add('ok');r.querySelector('.got').textContent='✓ '+BL[j].name;
+      const c=L.$('#s4b-'+j);c.classList.remove('sel');c.classList.add('static','ok');c.disabled=true;
+      sys.set({placed:placed.slice()});
+      L.$('#s4c').innerHTML='<b>'+BL[j].kind+'</b> '+BL[j].what+'. Tools your code glues together: <b>'+n+'</b> of 5.';
+      if(n===5){L.sheet('info','You’re a data-system designer','Each block is general-purpose and well understood. Otterpost’s own code stitches them into one system, and keeping them in step is now its job. The categories blur too: some datastores double as message queues, and some queues keep data as safely as a database.');L.done();}};
+    L.$('#s4n').appendChild(r);});}},
+
+{part:0,src:'Chapter 1 · Thinking About Data Systems',pts:1,
+ solve:async L=>{L.$('#s5p').children[1].click();await L.fyBusy;['1','2','3'].forEach(k=>L.$('#s5w-'+k).click());L.$('#s5go').click();await L.fyBusy;},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias ships a quick change: on a “delivered” scan, the app writes to the Parcel DB. Nothing else. What will Mrs. Okoro’s tracking page show?</h1>'+
+   '<div id="s5"></div><div class="fy-row" id="s5p"></div><div id="s5see"></div><div id="s5x"></div>'+CSS);
+  const sys=Sys(L.$('#s5'),'s5svg',{wire:['on','need','need','need','on']});
+  const W=[1,0,0,0];let done=false,busy=false;
+  const see=()=>'<ul class="fy-see">'+
+    '<li>Mrs. Okoro’s tracking page (served from the cache): '+(W[1]?'<span class="ok-t">Delivered</span>':'<span class="no-t">Out for delivery</span>')+'</li>'+
+    '<li>Signe’s support search: '+(W[2]?'<span class="ok-t">Delivered</span>':'<span class="no-t">Out for delivery</span>')+'</li>'+
+    '<li>“Delivered” text to Mrs. Okoro: '+(W[3]?'<span class="ok-t">sent</span>':'<span class="no-t">never sent</span>')+'</li>'+
+    '<li>Femi’s monthly report: <span class="ok-t">counted</span> (the batch job reads the Parcel DB tonight)</li></ul>';
+  async function scan(){busy=true;sys.set({status:['','','','',''],wire:['on'].concat(W.slice(1).map(w=>w?'on':'need'),['on'])});L.$('#s5see').innerHTML='';
+    await sys.fly('M165 34 V66','var(--pri)',380);if(!sys.alive())return null;
+    await Promise.all(W.map((w,j)=>w?sys.fly(sys.path(j),'var(--'+BL[j].c+')',480):null));if(!sys.alive())return null;
+    sys.set({status:['new',W[1]?'new':'old',W[2]?'new':'old',W[3]?'sent':'none','later']});L.$('#s5see').innerHTML=see();busy=false;return W.every(Boolean);}
+  ['“Delivered”','“Out for delivery”','An error page'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(L.$('#s5p').dataset.p)return;L.$('#s5p').dataset.p=1;b.classList.add('sel');
+      L.fyBusy=(async()=>{const r=await scan();if(r===null)return;const ok=j===1;L.award(ok);
+        L.sheet(ok?'ok':'no',ok?'Right: the old status':'It showed “Out for delivery”','The cache still holds the page it saved before the scan, and nothing told it the status changed. When you glue tools together yourself, keeping caches and indexes in step with the main database is normally <b>your application code’s</b> job. Fix it below.');
+        L.$('#s5x').innerHTML='<p class="fy-sub">Wire each tool your code must keep in step, then scan again.</p><div class="fy-row" id="s5w"></div><button class="btn pri" id="s5go">'+L.ic('play')+'Scan “delivered” again</button>';
+        [[1,'Update the cache'],[2,'Update the search index'],[3,'Send to the queue']].forEach(([k,t])=>{const c=document.createElement('button');c.className='chip';c.id='s5w-'+k;c.innerHTML='<span class="tg"></span>'+t;
+          c.onclick=()=>{if(busy)return;W[k]=W[k]?0:1;tog(c,W[k]);sys.set({wire:['on'].concat(W.slice(1).map(w=>w?'on':'need'),['on'])});};L.$('#s5w').appendChild(c);});
+        L.$('#s5go').onclick=()=>{if(busy)return;L.fyBusy=(async()=>{const all=await scan();if(all===null)return;
+          if(all&&!done){done=true;L.sheet('ok','All in step','Now the app code writes to the Parcel DB, refreshes the cache, updates the search index and queues the text. That’s the hidden work of a system built from parts: the code that glues them promises that everyone sees the same, current status.');L.done();}
+          else if(!all)L.sheet('no','Still out of step','Any tool you didn’t wire still shows the old status. Wire all three, then scan again.');})();};})();};
+    L.$('#s5p').appendChild(b);});}},
+
 {part:0,src:'Chapter 1 · Thinking About Data Systems',run(L){
-  L.h(L.kick('learn','Three concerns')+'<h1 class="q">The three words this book keeps coming back to</h1>'+
-   L.prose('Many things shape a data system: the team’s skills, old systems you depend on, deadlines, how much risk the company accepts, regulations. The book focuses on three concerns that matter in almost every system:')+
-   L.tiers([['shield','Reliability','The system keeps working correctly, even when hardware, software or people make mistakes.','Otterpost: a dead disk doesn’t lose anyone’s parcel'],
-            ['trend','Scalability','As data, traffic or complexity grows, there are reasonable ways to cope.','Otterpost: Peak Week triples the parcels'],
-            ['people','Maintainability','Over time, many different people can work on the system productively.','Otterpost: a new engineer can safely change billing']])+
-   '<p class="small" style="margin-top:10px">This lesson covers reliability. The next covers scalability and maintainability.</p>');
+  L.h(L.kick('learn','A new data system')+'<h1 class="q">Behind one clean API sits a data system you designed</h1><div id="s6"></div>'+
+   '<div class="fy-row"><button class="btn" id="s6b">'+L.ic('eye')+'<span>Lift the curtain</span></button></div>'+
+   L.prose('Merchants see one interface and one promise. Behind it, Otterpost’s code stitches general-purpose tools into a new data system that keeps it. Whoever builds that is a <b>data-system designer</b>.')+CSS);
+  const sys=Sys(L.$('#s6'),'s6svg',{curtain:true});
+  L.$('#s6b').onclick=function(){sys.set({curtain:!sys.curtain});this.lastChild.textContent=sys.curtain?'Lift the curtain':'Lower the curtain';};
   L.done();}},
+
+{part:0,src:'Chapter 1 · Thinking About Data Systems',run(L){
+  const PL=[['Reliable','A dead disk','loses no','parcel','h1'],['Scalable','Peak Week','triples the','parcels','h2'],['Maintainable','A new hire','changes billing','safely','h4']];
+  L.h(L.kick('learn','Three concerns')+'<h1 class="q">The three words this book keeps coming back to</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 204" role="img" aria-label="Otterpost’s data system as a roof on three pillars: reliable, scalable, maintainable">'+
+   '<path d="M165 4 L324 46 H6 Z" style="fill:var(--soft2);stroke:var(--line2);stroke-width:1.5"/>'+T(165,38,'Otterpost’s data system','font-size:13px;font-weight:700;fill:var(--ink);text-anchor:middle')+
+   PL.map((p,j)=>{const x=10+j*107;return '<rect x="'+x+'" y="52" width="96" height="104" rx="8" style="fill:var(--'+p[4]+'-bg);stroke:var(--'+p[4]+');stroke-width:1.5"/>'+
+     T(x+48,74,p[0],'font-size:12.5px;font-weight:700;fill:var(--'+p[4]+');text-anchor:middle')+[p[1],p[2],p[3]].map((t,k)=>T(x+48,100+k*16,t,'font-size:12px;fill:var(--ink);text-anchor:middle')).join('');}).join('')+
+   '<rect x="4" y="158" width="322" height="10" rx="3" style="fill:var(--line2)"/>'+
+   T(165,186,'Also shaping design: skills, old systems, deadlines,','font-size:12px;fill:var(--muted);text-anchor:middle')+T(165,201,'tolerance for risk, regulation','font-size:12px;fill:var(--muted);text-anchor:middle')+'</svg></div>'+
+   L.prose('<b>Reliability</b>: keeps working correctly when hardware, software or people go wrong. <b>Scalability</b>: reasonable ways to cope as data, traffic or complexity grow. <b>Maintainability</b>: many people can work on it productively over time. This lesson: reliability.'));
+  L.done();}},
+
 {part:0,src:'Chapter 1 · Thinking About Data Systems',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which concern is at stake?',['Reliability','Scalability','Maintainability'],[
@@ -108,26 +338,41 @@ Course.lesson({
 
 /* ---------- PART 2: FAULTS AND FAILURES ---------- */
 {part:1,src:'Chapter 1 · Reliability',run(L){
-  L.h(L.kick('learn','Fault versus failure')+'<h1 class="q">Things will go wrong. The goal is that users don’t notice.</h1>'+
-   L.quote('continuing to work correctly, even when things go wrong','Martin Kleppmann, on what reliability roughly means')+
-   L.prose('“Working correctly” means the app does what users expect, copes with users’ mistakes, is fast enough for its load, and keeps out intruders.')+
-   L.flow([['alert','Fault','One part goes wrong: a disk, a process, a cable','',4],['shield','Tolerance','Redundancy, retries, a backup copy takes over','',2],['check','No failure','Users keep getting the service','',1]])+
-   L.prose('A '+L.g('fault','fault')+' is one component straying from its spec. A <b>failure</b> is the whole system no longer serving users. You can’t push the chance of faults to zero, so you design so that faults don’t turn into failures. A system that does this is '+L.g('fault-tolerant','fault-tolerant')+', but only for <i>certain kinds</i> of fault. Nothing survives everything.'));
+  const lbl='font-size:12px;fill:var(--muted);text-anchor:middle;paint-order:stroke;stroke:var(--card);stroke-width:4';
+  L.h(L.kick('learn','Fault versus failure')+'<h1 class="q">Things will go wrong. The goal is that users don’t notice.</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 232" role="img" aria-label="A fault, a disk dying, leads to no failure when a mirror takes over, and to a failure when nothing takes over. Working correctly means doing what users expect, coping with their mistakes, being fast enough and keeping out abuse.">'+
+   '<path d="M96 75 C140 75 160 34 206 34" style="fill:none;stroke:var(--ok-line);stroke-width:2.5"/><path d="M96 75 C140 75 160 118 206 118" style="fill:none;stroke:var(--no-line);stroke-width:2.5"/>'+
+   '<rect x="4" y="48" width="92" height="54" rx="12" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+T(50,70,'Fault','font-size:13.5px;font-weight:700;fill:var(--h3);text-anchor:middle')+T(50,89,'a disk dies','font-size:12px;fill:var(--ink);text-anchor:middle')+
+   T(150,50,'a mirror takes over',lbl)+T(150,108,'nothing takes over',lbl)+
+   '<rect x="206" y="10" width="120" height="48" rx="12" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:2"/>'+T(266,30,'No failure','font-size:13.5px;font-weight:700;fill:var(--ok);text-anchor:middle')+T(266,48,'users still served','font-size:12px;fill:var(--ink);text-anchor:middle')+
+   '<rect x="206" y="94" width="120" height="48" rx="12" style="fill:var(--no-bg);stroke:var(--no);stroke-width:2"/>'+T(266,114,'Failure','font-size:13.5px;font-weight:700;fill:var(--no);text-anchor:middle')+T(266,132,'users let down','font-size:12px;fill:var(--ink);text-anchor:middle')+
+   T(4,172,'“Working correctly” for users means it:','font-size:12px;font-weight:600;fill:var(--muted)')+
+   [['does what they expect',4,180],['copes with their mistakes',167,180],['is fast enough',4,206],['keeps out abuse',167,206]].map(c=>'<rect x="'+c[1]+'" y="'+c[2]+'" width="159" height="22" rx="11" style="fill:var(--soft);stroke:var(--line2);stroke-width:1"/>'+T(c[1]+79.5,c[2]+15,c[0],'font-size:12px;fill:var(--ink);text-anchor:middle')).join('')+'</svg></div>'+
+   L.prose('A '+L.g('fault','fault')+' is one part going wrong; a <b>failure</b> is users no longer served. Faults never reach zero, so a '+L.g('fault-tolerant','fault-tolerant')+' system stops them becoming failures.')+
+   L.quote('continuing to work correctly, even when things go wrong','Martin Kleppmann, on what reliability roughly means'));
   L.done();}},
-{part:1,src:'Chapter 1 · Reliability',run(L){
-  L.h(L.kick('ex','Breaking things on purpose')+'<h1 class="q">Kwame’s quiet Tuesday experiment</h1>');
-  L.beats(L.card,[
-   ['The claim','Otterpost runs two notification workers. If one dies, the other takes over. Everyone believes it.'],
-   ['The test','On a quiet Tuesday morning, Kwame kills one worker at random, without warning anyone.'],
-   ['The surprise','The second worker does take over, but its error-handling code skips the messages that were half sent. About 200 recipients never get their “out for delivery” text.'],
-   ['The fix','Tobias fixes the error handling that afternoon. Kwame keeps killing a random worker every week.'],
-   ['Why it works','The book notes many serious bugs come from poor error handling. Triggering faults on purpose keeps the recovery code exercised, so it works when a real fault strikes. Netflix’s Chaos Monkey is the famous example.']],
-   'It sounds backwards, but raising the rate of faults on purpose can make a fault-tolerant system more reliable.');}},
-{part:1,src:'Chapter 1 · Reliability',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">One of the Parcel DB server’s two mirrored disks dies at 3 a.m. The other disk carries on, and no merchant or recipient notices. What happened?</h1>');
-  L.mc(L.card,['A failure, but no fault','A fault and a failure','A fault, but no failure'],2,
-   'A part broke (a fault), but the system kept serving users, so there was no failure. That’s fault tolerance doing its job.',
-   'A broken disk is a fault. A failure would mean users stopped getting the service, and nobody noticed anything. So: a fault, but no failure.');}},
+
+{part:1,src:'Chapter 1 · Hardware Faults',
+ solve:async L=>{setRange(L,'s10d',8);setRange(L,'s10m',20);L.$('#s10mir').click();},
+ run(L){
+  const DK=[10,30,100,300,1000,2000,3000,5000,10000];let mir=false,fin=false;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">One year of the Parcel DB’s disks. Grow the fleet until a disk dies about every day.</h1><div id="s10"></div>'+legend('fr')+
+   tiles('s10t',[['faults this year','a'],['red days','r'],['days between disk deaths']])+
+   rng('s10d','Disks',0,8,3)+rng('s10m','Disk lifetime',10,50,30)+
+   '<p class="fy-sub">Each disk lasts 10 to 50 years on average (its '+L.g('mttf','MTTF')+', the book’s figure). Fleet sizes are illustrative.</p>'+
+   '<div class="fy-row"><button class="chip" id="s10mir" aria-pressed="false"><span class="tg"></span>Mirrored disks (RAID)</button></div>'+
+   goals('s10g',['Get disk deaths to about <b>one a day</b>','At that size, switch on <b>mirrored disks</b>'])+CSS);
+  const y=Year(L.$('#s10'),'s10y',{disks:300,mttf:30},{});
+  function upd(){const n=DK[+L.$('#s10d').value],m=+L.$('#s10m').value,lam=n/(m*365),gap=1/lam;
+    L.$('#s10d-v').textContent=n.toLocaleString('en-US');L.$('#s10m-v').textContent=m+' yrs';
+    y.set({disks:n,mttf:m});y.def({mirror:mir});const st=y.stats();
+    setT(L,'s10t',0,st.f);setT(L,'s10t',1,st.r);setT(L,'s10t',2,gap<10?gap.toFixed(1):Math.round(gap));
+    if(lam>=.9)tick(L,'s10g',0);if(lam>=.9&&mir)tick(L,'s10g',1);
+    if(!fin&&allTicked(L,'s10g')){fin=true;
+      L.sheet('info','Each disk is reliable. The fleet is not.','Disks that last decades still die about once a day when you have 10,000 of them. With mirrored disks ('+L.g('raid','RAID')+'), a dead disk is a <b>fault</b>, not a <b>failure</b>: its twin carries on while it’s swapped. A few red days remain (both copies lost before the swap, illustrative): redundancy can’t prevent every failure.');L.done();}}
+  L.$('#s10d').oninput=upd;L.$('#s10m').oninput=upd;
+  L.$('#s10mir').onclick=function(){mir=!mir;tog(this,mir);upd();};upd();}},
+
 {part:1,src:'Chapter 1 · Reliability',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Fault only, or a failure too?',['Fault only','Failure too'],[
@@ -135,6 +380,22 @@ Course.lesson({
    ['The tracking page shows an error to every recipient for 20 minutes.',1,'The system as a whole stopped serving users. That’s a failure.'],
    ['A network cable to one search server is unplugged. The other search server answers all of Signe’s searches.',0,'One part failed, the system carried on.'],
    ['A bad deploy makes the merchant API reject every new booking for an hour.',1,'Merchants couldn’t get the service at all. A failure.']]);}},
+
+{part:1,src:'Chapter 1 · Reliability',
+ solve:async L=>{L.$('#s12c').click();},
+ run(L){
+  let on=false,fin=false;
+  const CAP=['<b>Off.</b> Otterpost runs two notification workers; if one dies, the other takes over. Everyone believes it. On 4 December, in Peak Week, a worker crashes for real. The backup’s untested error handling stalls, and no texts go out.',
+    '<b>On.</b> From March, Kwame kills a worker every Tuesday morning. The first test exposes the broken error handling: about 200 recipients miss a text, and Tobias fixes it that afternoon. On 4 December the backup takes over cleanly.'];
+  L.h(L.kick('ex','Break things on purpose')+'<h1 class="q">Kwame wants to kill Otterpost’s workers on purpose. Switch it on and compare the year.</h1><div id="s12"></div>'+legend('frpc')+
+   tiles('s12t',[['faults','a'],['red days','r'],['days a few users noticed']])+
+   '<div class="fy-row"><button class="chip" id="s12c" aria-pressed="false"><span class="tg"></span>Kill a worker every Tuesday</button></div><div class="fy-cap" id="s12x"></div><p class="fy-sub">The incident dates and numbers are illustrative.</p>'+CSS);
+  const y=Year(L.$('#s12'),'s12y',{chaos:true},{});y.focus=CRASH;
+  function upd(){y.def({chaos:on});const st=y.stats();setT(L,'s12t',0,st.f);setT(L,'s12t',1,st.r);setT(L,'s12t',2,st.p);L.$('#s12x').innerHTML=CAP[on?1:0];}
+  L.$('#s12c').onclick=function(){on=!on;tog(this,on);upd();
+    if(on&&!fin){fin=true;L.sheet('info','More faults, fewer failures','Many critical bugs live in poor error handling. Triggering faults on purpose keeps the fault-tolerance machinery exercised and tested, so you can trust it when a real fault strikes. Netflix’s Chaos Monkey works this way.');L.done();}};
+  upd();}},
+
 {part:1,src:'Chapter 1 · Reliability',pts:1,run(L){
   L.h(L.kick('pr','Tolerate or prevent?')+'<h1 class="q">Tobias says: “We tolerate faults instead of preventing them. So if someone breaks in and copies recipients’ home addresses, we’ll just recover.” What’s wrong with that?</h1>');
   L.mc(L.card,['Recovery would be too slow for a break-in','A stolen copy of data can’t be undone','Break-ins are hardware faults, not software ones'],1,
@@ -142,50 +403,88 @@ Course.lesson({
    'Speed and fault type aren’t the issue. Once an attacker has copied the addresses, nothing can undo it. When there’s no cure, prevention is better.');}},
 
 /* ---------- PART 3: HARDWARE AND SOFTWARE ---------- */
-{part:2,src:'Chapter 1 · Hardware Faults',run(L){
-  L.h(L.kick('learn','Hardware faults')+'<h1 class="q">With enough machines, something is always breaking</h1>'+
-   L.prose('Disks crash, memory goes bad, the power grid blacks out, someone unplugs the wrong cable. The book reports hard disks have a '+L.g('mttf','mean time to failure')+' of about 10 to 50 years. Sounds safe, until you have many disks: with 10,000 of them, expect about <b>one to die every day</b>.')+
-   L.lanes([['box','The old answer','Redundant parts inside each machine: mirrored disks (RAID), two power supplies, batteries and diesel generators. If a machine still dies, restore a backup onto a new one.',3],
-            ['layers','The newer answer','Software that tolerates losing a <b>whole machine</b>. Needed as apps use more machines, and as cloud machines can vanish without warning.',2]])+
-   L.prose('Bonus: a system that survives losing a machine can be patched one '+L.g('node','node')+' at a time, a '+L.g('rolling-upgrade','rolling upgrade')+', instead of taking planned downtime.'));
-  L.done();}},
-{part:2,src:'Chapter 1 · Hardware Faults',pts:1,
- solve:async L=>{[...L.$('#dk').children].forEach(b=>b.click());},
+{part:2,src:'Chapter 1 · Hardware Faults',
+ solve:async L=>{L.$('#s14p').click();await L.fyBusy;L.$('#s14v').click();await L.fyBusy;},
  run(L){
-  const S=[[100,'about every 100 days'],[1000,'about every 10 days'],[10000,'about every day']];const seen=new Set();
-  L.h(L.kick('try','See the numbers')+'<h1 class="q">Say each disk lasts about 10,000 days on average (some 27 years, inside the book’s range). Tap each fleet size.</h1><div id="dk"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:70px"><div class="small">One disk dies…</div><div class="week" id="dr">pick a size</div></div><div id="dq"></div>');
-  S.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0].toLocaleString('en-US')+' disks';
-    b.onclick=()=>{[...L.$('#dk').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#dr').textContent=s[1];seen.add(j);
-      if(seen.size===3&&!L.$('#dq').innerHTML){const q=L.$('#dq');q.innerHTML='<h2 class="sub">Otterpost grows to 2,000 disks across all its servers. Roughly how often should Kwame expect one to die?</h2>';
-        L.mc(q,['About once a year','About every 5 days','About every 27 years'],1,
-         '10,000 days ÷ 2,000 disks = one death about every 5 days. Each disk is reliable; the fleet is not.',
-         'Divide the lifetime by the number of disks: 10,000 ÷ 2,000 = about 5 days. The more disks, the more often one dies.');}};
-    L.$('#dk').appendChild(b);});}},
+  const NS_={ok:['✓ serving','ok'],patch:['patching…','h3'],patched:['✓ patched','ok'],gone:['✗ vanished','no'],fresh:['✓ replaced','ok']};
+  const st=['ok','ok','ok'],did=new Set();let busy=false;
+  function draw(){if(!L.$('#s14'))return;let s='';
+    s+=T(4,13,'Inside one machine: spare parts','font-size:12.5px;font-weight:700;fill:var(--muted)')+'<rect x="4" y="20" width="322" height="66" rx="12" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>';
+    [['Disk','✗ died','h3'],['Mirror','✓ serving','ok'],['Power','✓ on','ok'],['Power 2','✓ standby','ok']].forEach((p,j)=>{const x=12+j*78,c=p[2];
+      s+='<rect x="'+x+'" y="30" width="72" height="46" rx="9" style="fill:var(--'+c+'-bg);stroke:var(--'+(c==='ok'?'ok-line':c)+');stroke-width:1.5"/>'+T(x+36,49,p[0],'font-size:12px;font-weight:700;fill:var(--ink);text-anchor:middle')+T(x+36,66,p[1],'font-size:12px;font-weight:600;fill:var(--'+c+');text-anchor:middle');});
+    s+=T(4,110,'Across machines: lose a whole node','font-size:12.5px;font-weight:700;fill:var(--muted)');
+    st.forEach((k,j)=>{const x=4+j*110,c=NS_[k][1];
+      s+='<rect x="'+x+'" y="118" width="102" height="54" rx="12" style="fill:var(--'+c+'-bg);stroke:var(--'+(c==='ok'?'ok-line':c)+');stroke-width:2'+(k==='gone'?';stroke-dasharray:5 4':'')+'"/>'+
+        T(x+51,140,'Node '+(j+1),'font-size:13px;font-weight:700;fill:var(--ink);text-anchor:middle')+T(x+51,159,NS_[k][0],'font-size:12px;font-weight:600;fill:var(--'+c+');text-anchor:middle');});
+    const up=st.filter(k=>k!=='patch'&&k!=='gone').length;
+    s+=T(165,196,'Site up: '+up+' of 3 nodes serving','font-size:13px;font-weight:700;fill:var(--ok);text-anchor:middle');
+    L.$('#s14').innerHTML='<svg viewBox="0 0 330 204" role="img" aria-label="Top: one machine with a dead disk, its mirror, and two power supplies. Bottom: three nodes; the site stays up while one is patched or lost">'+s+'</svg>';}
+  L.h(L.kick('learn','Hardware faults')+'<h1 class="q">Spare parts inside a machine, or spare machines?</h1><div class="fy" id="s14"></div>'+
+   '<div class="fy-row"><button class="btn" id="s14p">'+L.ic('cycle')+'Patch one node at a time</button><button class="btn" id="s14v">'+L.ic('alert')+'A cloud machine vanishes</button></div>'+
+   '<div class="fy-cap" id="s14c">Try both buttons.</div>'+
+   L.prose('Spare parts (mirrors, dual power, generators) keep one machine going; a backup restores it if it dies. But more machines mean more faults, and cloud machines can vanish, so systems now survive losing a whole '+L.g('node','node')+'.')+CSS);
+  draw();
+  const fin=()=>{if(did.size===2)L.done();};
+  L.$('#s14p').onclick=()=>{if(busy)return;busy=true;L.fyBusy=(async()=>{for(let j=0;j<3;j++){st[j]='patch';draw();await L.sleep(420);if(!L.$('#s14'))return;st[j]='patched';draw();}
+    L.$('#s14c').innerHTML='A '+L.g('rolling-upgrade','rolling upgrade')+': the others carry the load while one is patched. A single server would need planned downtime.';
+    await L.sleep(300);st.fill('ok');draw();busy=false;did.add('p');fin();})();};
+  L.$('#s14v').onclick=()=>{if(busy)return;busy=true;L.fyBusy=(async()=>{st[1]='gone';draw();await L.sleep(800);if(!L.$('#s14'))return;st[1]='fresh';draw();
+    L.$('#s14c').innerHTML='Cloud machines can vanish without warning. Software that survives losing a whole machine keeps serving; its spare parts couldn’t help.';
+    await L.sleep(300);st[1]='ok';draw();busy=false;did.add('v');fin();})();};}},
+
 {part:2,src:'Chapter 1 · Software Errors',run(L){
-  L.h(L.kick('learn','Software errors')+'<h1 class="q">Bugs don’t strike one machine at a time. They strike all of them.</h1>'+
-   L.prose('Hardware faults are mostly <b>random and independent</b>: one dying disk says little about the next. Software errors are <b>systematic</b>. Every machine runs the same code, so they fail together, and they cause many more outages. The book’s examples:')+
-   L.list([['A bad input crashes every copy','A leap second on 30 June 2012 made many apps hang at once, because of a bug in the Linux kernel.'],
-     ['A runaway process','It eats a shared resource: processor time, memory, disk space or network.'],
-     ['A dependency misbehaves','A service you rely on slows down, stops answering, or returns corrupted replies.'],
-     ['A '+L.g('cascading','cascading failure'),'A small fault in one part sets off faults in the next, and the next.']],4)+
-   L.prose('Such bugs often sleep for years. The code assumed something about its world that was usually true, until one day it wasn’t.'));
+  const grid=(x0,amber,redCol)=>{let s='';for(let r=0;r<8;r++)for(let c=0;c<14;c++){const red=c===redCol,am=amber.some(a=>a[0]===r&&a[1]===c);
+    s+='<rect x="'+(x0+c*11)+'" y="'+(22+r*11)+'" width="9" height="9" rx="1.8" style="fill:'+(red?'var(--no-strong)':am?'var(--h3)':'var(--soft)')+'"/>';}return s;};
+  L.h(L.kick('learn','Software errors')+'<h1 class="q">Bugs don’t strike one machine at a time. They strike all of them.</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 132" role="img" aria-label="Two grids of 8 servers by 14 days. Hardware faults are scattered single squares. A software error fills a whole column: every server on the same day.">'+
+   T(4,13,'Hardware: random','font-size:12.5px;font-weight:700;fill:var(--h3)')+T(170,13,'Software: all at once','font-size:12.5px;font-weight:700;fill:var(--no)')+
+   grid(4,[[1,2],[5,6],[3,11],[6,9],[0,13]],-1)+grid(170,[[2,3],[6,11]],7)+
+   T(4,126,'rows: 8 servers · columns: 14 days','font-size:12px;fill:var(--muted)')+'</svg></div>'+
+   L.prose('Hardware faults are mostly random and independent: one dead disk says little about the next. Software errors are <b>systematic</b>: every server runs the same code, so they fail together, and they cause many more outages.')+
+   '<p class="fy-sub">Weak links exist (a hot server rack), but many hardware parts failing at once is unlikely.</p>');
   L.done();}},
+
 {part:2,src:'Chapter 1 · Software Errors',pts:1,
- solve:async L=>{L.$('#hw').click();L.$('#sw').click();},
+ solve:async L=>{L.$('#s16p').children[1].click();await L.fyBusy;},
  run(L){
-  const N=8,seen=new Set();
-  const draw=dead=>L.$('#grid').innerHTML=Array.from({length:N},(_,j)=>'<span class="chip static '+(dead(j)?'no':'ok')+'" style="min-width:64px;justify-content:center">'+L.ic(dead(j)?'x':'check')+'S'+(j+1)+'</span>').join('');
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">The tracking page runs on 8 identical servers. Try both kinds of trouble.</h1>'+
-   '<div id="grid"></div><div class="small" id="st" style="margin:4px 0 10px">All 8 servers healthy.</div>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="hw">'+L.ic('alert')+'A disk dies</button><button class="btn" id="sw">'+L.ic('alert')+'A strange address arrives</button></div><div id="gq"></div>');
-  draw(()=>false);
-  const ask=()=>{if(seen.size<2||L.$('#gq').innerHTML)return;const q=L.$('#gq');q.innerHTML='<h2 class="sub">Femi asks: “Would 8 more servers have saved us the second time?” What do you answer?</h2>';
-    L.mc(q,['Yes, extra servers share the load','No, every server runs the same code','Yes, if they sit in another datacenter'],1,
-     'Right. Extra copies help against random hardware faults, but a bug that crashes one copy crashes them all, wherever they are.',
-     'More copies help with random hardware faults. But each new server runs the same code, so the same address would crash it too, in any datacenter.');};
-  L.$('#hw').onclick=()=>{draw(j=>j===4);L.$('#st').innerHTML='<b style="color:var(--ok)">Site still up.</b> One server is down; the other 7 carry the load.';seen.add(0);ask();};
-  L.$('#sw').onclick=()=>{draw(()=>true);L.$('#st').innerHTML='<b style="color:var(--no)">Site down.</b> A parcel address with a character the code never expected crashes every server that tries to show it.';seen.add(1);ask();};}},
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Every hardware defence is on: mirrored disks, dual power, spare machines. On 30 June a leap second arrives. Does that day stay free of failures?</h1>'+
+   '<div id="s16"></div>'+legend('fr')+'<p class="fy-sub" style="margin-top:8px">Otterpost’s 8 tracking-page servers that day:</p><div id="s16r"></div><div class="fy-row" id="s16p"></div>'+CSS);
+  const y=Year(L.$('#s16'),'s16y',HWY,HWD),rk=Rack(L.$('#s16r'),'s16rk');
+  ['Yes: spares take over','No: every server hangs','About half the servers hang'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(L.$('#s16p').dataset.p)return;L.$('#s16p').dataset.p=1;b.classList.add('sel');
+      L.fyBusy=(async()=>{y.set({sw:[LEAP]});y.focus=LEAP;if(!await y.play(0,LEAP+1,1000))return;
+        for(let k=0;k<8;k++){rk.one(k,'red');await L.sleep(35);}if(!await y.play(LEAP+1,365,500))return;
+        const ok=j===1;L.award(ok);
+        L.sheet(ok?'ok':'no',ok?'Right: all at once':'Every server hung','On 30 June 2012 a leap second made many applications hang at the same moment, because of a bug in the Linux kernel. Every copy ran the same code, so every copy failed together. Spare disks, power and machines guard against random, independent faults; this fault was neither.');L.done();})();};
+    L.$('#s16p').appendChild(b);});}},
+
+{part:2,src:'Chapter 1 · Software Errors',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#s17b-'+j).click();await L.fyBusy;}},
+ run(L){
+  const PRE=[
+   ['Runaway process',dayOf(2,20),'A runaway report job fills the shared disk. Every server that writes to it stalls. Copies that share a resource share its fault.'],
+   ['Slow dependency',dayOf(4,9),'The address-lookup service Otterpost depends on slows down, then returns garbled postcodes. Every server waits on it, so all of them slow together.'],
+   ['Cascading failure',dayOf(9,15),'One overloaded server drops out. Its traffic moves to the rest, which overload too, one after another: a '+L.g('cascading','cascading failure')+'.'],
+   ['Asleep for years',dayOf(3,25),'Route code assumed every day has 24 hours. It worked for years, until the night the clocks changed. Dormant bugs wake when an assumption about their world stops being true.'],
+   ['Black hole',dayOf(10,20),'Earth is swallowed by a black hole. Tolerating that would need hosting in space. No system tolerates every fault; we only plan for certain kinds.']];
+  let tok=0,fin=false;const tried=new Set();
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where redundancy stops protecting you. Run each case.</h1>'+
+   '<div id="s17"></div><div id="s17r" style="margin-top:8px"></div><div class="fy-row" id="s17p"></div><div class="fy-cap" id="s17c">Every hardware defence is on. Pick a case.</div>'+CSS);
+  const y=Year(L.$('#s17'),'s17y',HWY,HWD),rk=Rack(L.$('#s17r'),'s17rk',true);
+  async function anim(j,my){const ok=()=>my===tok&&rk.alive();
+    if(j===0){for(let v=.3;v<=1.001;v+=.1){rk.setBar(Math.min(1,v));await L.sleep(70);if(!ok())return;}rk.all('red');}
+    else if(j===1){rk.all('wait');await L.sleep(600);if(!ok())return;rk.all('red');}
+    else if(j===2){for(let k=0;k<8;k++){rk.one(k,'red');await L.sleep(130);if(!ok())return;}}
+    else if(j===3){await L.sleep(250);if(!ok())return;rk.all('red');}
+    else{rk.all('gone');rk.setBar(0);}}
+  PRE.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='s17b-'+j;b.textContent=p[0];
+    b.onclick=()=>{const my=++tok;L.$$('#s17p .chip').forEach(x=>x.classList.toggle('sel',x===b));
+      y.set(j===4?{sw:[],black:p[1]}:{sw:[p[1]],black:null});y.focus=j===4?null:p[1];y.draw();rk.all('ok');rk.setBar(.3);
+      L.$('#s17c').innerHTML='<b>'+p[0]+'.</b> '+p[2];
+      L.fyBusy=(async()=>{await anim(j,my);if(my!==tok)return;tried.add(j);b.classList.add('done');
+        if(tried.size===5&&!fin){fin=true;L.sheet('info','No quick fix','Redundancy didn’t help in any case: the fault hit every copy, or the shared world around them. What helps is many small things: think hard about assumptions and interactions, test thoroughly, isolate processes, let them crash and restart, and measure and monitor in production.');L.done();}})();};
+    L.$('#s17p').appendChild(b);});}},
+
 {part:2,src:'Chapter 1 · Software Errors',pts:5,run(L){
   L.h(L.kick('pr','Random or systematic?')+'<h1 class="q">Sort each Otterpost incident by the kind of fault behind it.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Hardware fault','Software error'],[
@@ -195,6 +494,7 @@ Course.lesson({
    ['A runaway log file fills the disk on every app server.',1,'A runaway process eating a shared resource, on every copy of the code.'],
    ['One server’s memory chip starts flipping bits.',0,'Faulty memory in one machine is a hardware fault.']],
    'Hardware faults hit one part at random. Software errors are built into the code, so they hit every copy together.');}},
+
 {part:2,src:'Chapter 1 · Software Errors',pts:1,run(L){
   L.h(L.kick('pr','Catch it early')+'<h1 class="q">There’s no quick fix for software errors, but small habits help. Linh wants the notification system to catch its own bugs while running. Which idea fits the book best?</h1>');
   L.mc(L.card,['Check that messages in equal messages out, and alert if not','Rewrite it in a newer programming language','Turn off error logs so the dashboards stay quiet'],0,
@@ -203,30 +503,37 @@ Course.lesson({
 
 /* ---------- PART 4: HUMANS AND STAKES ---------- */
 {part:3,src:'Chapter 1 · Human Errors',run(L){
-  L.h(L.kick('learn','Human errors')+'<h1 class="q">People cause more outages than hardware</h1>'+
-   L.prose('One study of large internet services found that operators’ <b>configuration mistakes</b> were the leading cause of outages. Hardware played a part in only 10–25% of them. People mean well, but they slip. The best systems combine several defences:')+
-   L.list([['pencil','Make mistakes hard','Good interfaces make the right thing easy. But lock them down too far and people work around them.'],
-     ['flask','Give people a sandbox','A full non-production copy, with real data, to experiment without touching real users.'],
-     ['check','Test at every level','From small unit tests up to whole-system and manual tests.'],
-     ['cycle','Recover quickly','Fast config rollback, new code rolled out gradually, tools to recompute data.'],
-     ['eye','Monitor clearly','Performance and error-rate '+L.g('telemetry','telemetry')+' gives early warnings and helps diagnose.']],3)+
-   '<p class="small" style="margin-top:10px">Good management and training matter too, but the book leaves them out of scope.</p>');
+  const pillL=['Good interfaces','Sandbox, real data','Tests at all levels'],pillR=['Gradual rollout','Monitoring','Fast rollback','Recompute data'];
+  const pill=(x,y,t,c,h)=>'<rect x="'+x+'" y="'+y+'" width="'+(t.length*6.9+18).toFixed(0)+'" height="'+h+'" rx="'+(h/2)+'" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.2"/>'+T(x+9,y+h/2+4.3,t,'font-size:12px;font-weight:600;fill:var(--'+c+')');
+  L.h(L.kick('learn','Human errors')+'<h1 class="q">People cause more outages than hardware does</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 240" role="img" aria-label="In one study, operators’ configuration errors were the leading cause of outages; hardware played a role in only 10 to 25 percent. Defences before a change goes live: good interfaces, a sandbox, tests. After: gradual rollout, monitoring, fast rollback, recompute data.">'+
+   '<rect x="4" y="4" width="322" height="28" rx="10" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.5"/>'+T(165,23,'Leading cause: operators’ configuration errors','font-size:12.5px;font-weight:700;fill:var(--no);text-anchor:middle')+
+   T(4,52,'Hardware played a role in','font-size:12px;fill:var(--muted)')+'<rect x="4" y="60" width="322" height="12" rx="6" style="fill:var(--soft2)"/><rect x="'+(4+322*.10)+'" y="60" width="'+(322*.15)+'" height="12" rx="3" style="fill:var(--h3)"/>'+
+   T(4+322*.175,90,'10–25%','font-size:12.5px;font-weight:700;fill:var(--h3);text-anchor:middle')+T(4,90,'0','font-size:12px;fill:var(--muted)')+T(326,90,'100% of outages','font-size:12px;fill:var(--muted);text-anchor:end')+
+   '<path d="M152 122 V236" style="stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3"/>'+T(152,114,'▼ change goes live','font-size:12px;fill:var(--ink);text-anchor:middle;paint-order:stroke;stroke:var(--card);stroke-width:4')+
+   T(4,140,'Before: stop it','font-size:12.5px;font-weight:700;fill:var(--h2)')+T(162,140,'After: shrink it','font-size:12.5px;font-weight:700;fill:var(--h4)')+
+   pillL.map((t,j)=>pill(4,148+j*22,t,'h2',18)).join('')+pillR.map((t,j)=>pill(162,148+j*22,t,'h4',18)).join('')+'</svg></div>'+
+   L.prose('People mean well but slip. The best systems combine defences: some stop a mistake before it goes live, others shrink it after. Clear '+L.g('telemetry','telemetry')+' gives early warning.'));
   L.done();}},
-{part:3,src:'Chapter 1 · Human Errors',run(L){
-  L.h(L.kick('ex','A Friday config change')+'<h1 class="q">How Kwame’s defences shrank one mistake</h1>');
-  L.beats(L.card,[
-   ['The slip','On a Friday, an operator changes the notification config. A typo points the text messages at the wrong template.'],
-   ['Gradual rollout','The change goes to 5% of recipients first, so only a small slice gets the odd text.'],
-   ['Monitoring','Within minutes, a dashboard shows replies of “what is this?” jumping. An alert pages Kwame.'],
-   ['Fast rollback','Kwame rolls the config back with one command. Ten minutes of trouble, not a weekend.'],
-   ['Recompute','A small tool re-sends the correct texts to everyone who got the wrong one.'],
-   ['After','The team adds the change to the sandbox test checklist, so next time it is caught before it ships.']],
-   'No single defence stopped the mistake. Together they kept it small, short and fixable.');}},
-{part:3,src:'Chapter 1 · Human Errors',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In Kwame’s story, which defence kept the number of recipients hit by the bad config small?</h1>');
-  L.mc(L.card,['The fast rollback','Rolling it out to 5% first','The tool that re-sent texts'],1,
-   'Releasing to a small slice first means a bad change only reaches a few users before anyone notices.',
-   'Rollback shortened the outage and the re-send tool repaired the damage. Limiting <i>how many</i> people were hit was the gradual rollout to 5%.');}},
+
+{part:3,src:'Chapter 1 · Human Errors',
+ solve:async L=>{['canary','monitor','rollback'].forEach(k=>L.$('#s21-'+k).click());},
+ run(L){
+  const D={};let fin=false;
+  const TG=[['canary','Gradual rollout (5% first)','Gradual rollout: the change reaches 1 in 20 recipients first, so the patch is a thin sliver instead of a full block.'],
+    ['monitor','Monitoring & alerts','Monitoring: the error-rate alert pages Kwame within minutes, instead of someone noticing on Monday morning.'],
+    ['rollback','One-command rollback','Fast rollback: Kwame undoes the config in one command instead of hand-fixing and redeploying for most of a day.'],
+    ['recompute','Recompute tool','Recompute tool: re-sends the right text to everyone who got the wrong one. It repairs the data, not the time.']];
+  L.h(L.kick('ex','Shrink the blast')+'<h1 class="q">Friday, 4 p.m.: an operator’s config typo points “out for delivery” texts at the wrong template. Shrink the red patch.</h1>'+
+   '<div class="fy" id="s21"></div>'+tiles('s21t',[['who was hit','r'],['for how long','r'],['wrong texts']])+'<div class="fy-row" id="s21b"></div><div class="fy-cap" id="s21c">Red area = who was hit (height) × how long (width). Toggle the defences.</div>'+CSS);
+  function upd(){const hrs=pushHours(D).reduce((a,h)=>a+h[1],0);
+    L.$('#s21').innerHTML='<svg viewBox="0 0 330 146" role="img" aria-label="Two weeks of November. A red patch starts on Friday the 16th; its height is the share of recipients hit and its width how long it lasted">'+drawFort(D)+'</svg>';
+    setT(L,'s21t',0,D.canary?'1 in 20':'Everyone');setT(L,'s21t',1,fmtH(hrs));setT(L,'s21t',2,D.recompute?'<span class="ok-t">re-sent</span>':'unfixed');
+    if(D.canary&&D.monitor&&D.rollback&&!fin){fin=true;L.sheet('info','Small, short and fixable','No single defence stopped the typo. Gradual rollout shrank who was hit; monitoring and fast rollback shrank how long; a recompute tool repairs the damage. A sandbox and tests could have caught it before it went live. Good management and training matter too.');L.done();}}
+  TG.forEach(([k,t,c])=>{const b=document.createElement('button');b.className='chip';b.id='s21-'+k;b.innerHTML='<span class="tg"></span>'+t;
+    b.onclick=()=>{D[k]=!D[k];tog(b,D[k]);L.$('#s21c').innerHTML=(D[k]?'':'<b>Off.</b> ')+c;upd();};L.$('#s21b').appendChild(b);});
+  upd();}},
+
 {part:3,src:'Chapter 1 · Human Errors',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which defence fits?',['Better interface','Sandbox','Fast recovery','Monitoring'],[
@@ -235,12 +542,41 @@ Course.lesson({
    ['A pricing bug overcharged merchants for a week. Linh needs to work out what each should have paid.',2,'Tools to recompute data let you recover from an earlier wrong computation.'],
    ['Nobody noticed that delivery-confirmation errors had been creeping up for days.',3,'Clear error-rate metrics give early warning signals.'],
    ['The admin tool is so locked down that operators edit the database by hand to get anything done.',0,'Too-restrictive interfaces get worked around. The interface needs rebalancing.']]);}},
+
+{part:3,src:'Chapter 1 · Human Errors',pts:1,
+ solve:async L=>{['multi','canary','monitor'].forEach(k=>L.$('#s23-'+k).click());L.$('#s23go').click();await L.fyBusy;},
+ run(L){
+  const OPT=[['mirror','Mirrored disks'],['dual','Dual power'],['multi','Spare machines'],['canary','Gradual rollout'],['monitor','Monitoring'],['rollback','Fast rollback']];
+  const D={};let first=true,busy=false,won=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame’s budget covers three defences for next year. Pick three and keep the year to <b>at most 1 red day</b>.</h1>'+
+   '<div id="s23"></div>'+legend('frp')+tiles('s23t',[['faults','a'],['red days','r'],['days a few users noticed']])+
+   '<p class="fy-sub">Next year (illustrative): 2,000 disks, 3 power supplies burn out, 2 cloud machines vanish, and a config typo goes live on a Friday in November.</p>'+
+   '<div class="fy-row" id="s23b"></div><button class="btn pri" id="s23go" disabled>'+L.ic('play')+'Play the year</button><div id="s23m" class="fy-sub" style="margin-top:8px">Pick 3 defences.</div>'+CSS);
+  const cfg=Object.assign({push:PUSH},HWY),y=Year(L.$('#s23'),'s23y',cfg,{});
+  const show=()=>{const st=y.stats();setT(L,'s23t',0,st.f);setT(L,'s23t',1,st.r);setT(L,'s23t',2,st.p);};show();
+  const cnt=()=>OPT.filter(o=>D[o[0]]).length;
+  OPT.forEach(([k,t])=>{const b=document.createElement('button');b.className='chip';b.id='s23-'+k;b.innerHTML='<span class="tg"></span>'+t;
+    b.onclick=()=>{if(busy||won)return;if(!D[k]&&cnt()>=3){L.shake(b);L.$('#s23m').textContent='Only three fit the budget. Drop one first.';return;}
+      D[k]=!D[k];tog(b,D[k]);const n=cnt();L.$('#s23go').disabled=n!==3;L.$('#s23m').textContent=n===3?'Ready: play the year.':'Pick '+(3-n)+' more.';};
+    L.$('#s23b').appendChild(b);});
+  L.$('#s23go').onclick=()=>{if(busy||cnt()!==3)return;busy=true;L.$('#s23go').disabled=true;
+    L.fyBusy=(async()=>{OPT.forEach(o=>y.D[o[0]]=!!D[o[0]]);y.calc();if(!await y.play(0,365,1200))return;show();busy=false;
+      const st=y.stats(),pass=st.r<=1;if(first){L.award(pass);first=false;}
+      if(pass){won=true;L.sheet('ok','A quiet year','Spare machines cover every random hardware fault here: a dead disk, a burnt-out power supply or a vanished cloud machine just takes one node out. The config typo needs its own human-error defences: a gradual rollout limits who is hit; monitoring plus fast rollback limits how long.');L.done();}
+      else{L.$('#s23go').disabled=false;
+        const hwRed=!D.multi;L.sheet('no',st.r+' red days','Count where the red comes from. '+(hwRed?'Vanished cloud machines turn red unless the system survives losing a whole machine, and that same defence also covers dead disks and power supplies. ':'')+((!D.canary&&!(D.monitor&&D.rollback))?'The Friday typo still turns days red: limit who is hit, or both notice it and undo it fast.':'')+' Change your picks and play again.');}})();};}},
+
 {part:3,src:'Chapter 1 · How Important Is Reliability?',run(L){
-  L.h(L.kick('learn','How much reliability is enough?')+'<h1 class="q">Not only for power stations and air traffic control</h1>'+
-   L.prose('Ordinary apps need reliability too. Bugs in business software cost lost work, and legal risk if reported figures are wrong. An online shop that goes down loses sales and reputation.')+
-   L.prose('Even “unimportant” apps carry responsibility. The book imagines a parent who keeps every photo of their children in your photo app. How would they feel if it were corrupted? Would they know how to restore a backup?')+
-   L.note('Sometimes you may <b>choose</b> less reliability to save money: a prototype for an unproven market, or a service with a very thin profit margin. That’s allowed, as long as you know exactly where you are cutting corners.','scale'));
+  const R=[['Nuclear plants, air traffic control','The obvious cases'],['Online shops, business apps','Lost sales and reputation; lost work, legal risk'],['A parent’s photo app','Their only copy of their children’s photos'],['A prototype, a thin-margin service','May cut corners, but knowingly']];
+  L.h(L.kick('learn','How much is enough?')+'<h1 class="q">Reliability isn’t only for power stations</h1>'+CSS+
+   '<div class="fy"><svg viewBox="0 0 330 202" role="img" aria-label="A scale of how much reliability matters, from power stations at the top down to prototypes, where cutting corners on purpose can be fine">'+
+   '<defs><linearGradient id="s24g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--no-strong)"/><stop offset="1" style="stop-color:var(--h3)"/></linearGradient></defs>'+
+   '<rect x="8" y="10" width="10" height="182" rx="5" style="fill:url(#s24g)"/>'+
+   R.map((r,j)=>{const y=26+j*48;return '<circle cx="13" cy="'+(y-4)+'" r="7" style="fill:var(--card);stroke:var(--ink);stroke-width:2"/>'+T(30,y,r[0],'font-size:13px;font-weight:700;fill:var(--ink)')+T(30,y+17,r[1],'font-size:12px;fill:var(--muted)');}).join('')+
+   '<rect x="226" y="175" width="96" height="21" rx="10.5" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.2"/>'+T(274,189.5,'written down','font-size:12px;font-weight:700;fill:var(--h2);text-anchor:middle')+'</svg></div>'+
+   L.prose('Everyday apps owe users reliability too: would that parent know how to restore a backup? Cutting it to save cost can be fine, if you know where you cut.'));
   L.done();}},
+
 {part:3,src:'Chapter 1 · How Important Is Reliability?',pts:1,run(L){
   L.h(L.kick('pr','Femi’s call')+'<h1 class="q">Otterpost wants to test parcel lockers at three Westport stations for six weeks. Tobias suggests skipping the backup copy of the locker data for the trial. What should Femi do?</h1>');
   L.mc(L.card,['Refuse: every system must be as reliable as the Parcel DB','Accept, as nobody would care if a trial lost data','Accept for the trial, written down as a known shortcut'],2,

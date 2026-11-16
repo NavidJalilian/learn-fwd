@@ -13,122 +13,569 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0027 only. Two hands-on models used across the lesson:
+   1. Flow  – stage progress curves for Linh’s workflow, with a task grid
+              underneath: MapReduce (wait + write replicated files between jobs) versus a
+              dataflow engine (records stream between operators), stragglers,
+              sorts, a crashed machine and a random vs seeded sample.
+   2. Steps – the Pregel superstep table on Otterpost’s hub network: travel
+              minutes from Westport Central, round by round, with checkpoints,
+              a crash, a plain-MapReduce-loop comparison and machine placement.
+   All minutes are illustrative.
+   ===================================================================== */
+const CSS='<style>'+
+ '.bx-fig>svg,.bx-flow>svg,.bx-steps>svg{width:100%;display:block;touch-action:manipulation}.bx-fig svg text,.bx-flow svg text,.bx-steps svg text{font-family:var(--sans)}'+
+ '.bx-cap{font-size:15.5px;line-height:1.5;margin:10px 0 4px}'+
+ '.bx-foot{font-size:13px;color:var(--muted);line-height:1.45;margin:6px 0 0}'+
+ '.bx-ctl{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 8px}.bx-ctl .chip,.bx-ctl .btn{margin:0;min-height:40px}.bx-ctl .btn{padding:8px 12px}'+
+ '.bx-hint{font-size:13px;color:var(--muted);margin:8px 0 4px;font-weight:600}'+
+ '.bx-rng{display:grid;grid-template-columns:auto 1fr 52px;gap:10px;align-items:center;font-size:14px;margin:8px 0 2px}.bx-rng input{width:100%;accent-color:var(--pri);height:32px}.bx-rng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.bx-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.55;margin:8px 0;min-height:46px}'+
+ '.bx-read .sm{font-size:12.5px;color:var(--muted)}'+
+ '.bx-tally{display:inline-flex;flex-wrap:wrap;gap:3px;vertical-align:middle;margin-left:4px}.bx-tally i{width:9px;height:12px;border-radius:3px;background:var(--h4);display:inline-block}'+
+ '.bx-ok{color:var(--ok);font-weight:700}.bx-no{color:var(--no);font-weight:700}'+
+ '.bx-pick{display:flex;flex-direction:column;gap:8px;margin:8px 0}.bx-pick .chip{margin:0;text-align:left;justify-content:flex-start;min-height:44px}'+
+ '.bx-ops{display:grid;grid-template-columns:1fr;gap:6px;margin:8px 0}.bx-op{display:flex;align-items:center;gap:8px;justify-content:space-between;border:2px solid var(--line);border-radius:12px;padding:6px 8px 6px 11px;background:var(--card);font-size:14px}'+
+ '.bx-op b{font-weight:600}.bx-op .chip{margin:0;min-height:38px;padding:6px 10px;font-size:13.5px;flex:none}'+
+ '.bx-op .chip.wait{border-color:var(--h3);background:var(--h3-bg);color:var(--ink)}.bx-op .chip.strm{border-color:var(--h2);background:var(--h2-bg);color:var(--ink)}'+
+ '.bx-tap{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}.bx-tap .chip{margin:0;min-width:44px;min-height:40px;justify-content:center;font-weight:700}'+
+ '.bx-tap .chip.seen{border-color:var(--ok-line);background:var(--ok-bg);color:var(--ok)}'+
+ '.bx-mk{cursor:pointer}.bx-ctl .btn:disabled,.bx-ctl .chip:disabled:not(.sel){opacity:.5;cursor:default}'+
+ '.bx-pick.two{display:grid;grid-template-columns:1fr 1fr}.bx-pick.two .chip{font-size:13.5px;line-height:1.3;padding:7px 10px}'+
+ '.bx-more{margin:6px 0 0}.bx-more summary{list-style:none;cursor:pointer;display:inline-flex;align-items:center;gap:6px;min-height:38px;padding:6px 13px;border:1.5px solid var(--line2);border-radius:999px;font-size:13.5px;font-weight:600;color:var(--pri-deep);background:var(--card)}'+
+ '.bx-more summary::-webkit-details-marker{display:none}.bx-more summary::before{content:"+";font-weight:700;width:12px;text-align:center}.bx-more[open] summary::before{content:"\\2212"}'+
+ '.bx-more>div{background:var(--soft);border-radius:12px;padding:9px 12px;margin-top:8px;font-size:13.5px;line-height:1.5}'+
+ '</style>';
+/* tap-to-reveal for the extra facts on a Learn screen */
+const MORE=(label,html)=>'<details class="bx-more"><summary>'+label+'</summary><div>'+html+'</div></details>';
+
+const COL=['var(--h1)','var(--h2)','var(--h3)','var(--h4)','var(--ok-strong)'];
+const COLB=['var(--h1-bg)','var(--h2-bg)','var(--h3-bg)','var(--h4-bg)'];
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+const rr=(x,y,w,h,f,s,r,extra)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(r==null?8:r)+'" style="fill:'+f+';stroke:'+s+';stroke-width:1.6'+(extra||'')+'"/>';
+const AR=id=>'<defs><marker id="'+id+'" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>';
+const line=(d,st,mk)=>'<path d="'+d+'" style="fill:none;'+(st||'stroke:var(--muted);stroke-width:1.8')+'"'+(mk?' marker-end="url(#'+mk+')"':'')+'/>';
+/* a distributed-filesystem file: a stack of copies on several machines (the book gives no number) */
+function dfs(x,y,lab){
+  let s='';for(let k=2;k>=0;k--)s+=rr(x+k*4,y-k*4,30,24,'var(--h4-bg)','var(--h4)',5);
+  for(let k=0;k<3;k++)s+='<rect x="'+(x+7)+'" y="'+(y+6+k*4.5)+'" width="16" height="2" rx="1" style="fill:var(--h4)"/>';
+  return s+(lab?tx(x+19,y+40,lab,'font-size:11px;text-anchor:middle;fill:var(--muted)'):'');}
+const X11='font-size:11px;fill:var(--muted)',B12='font-size:12px;font-weight:700;fill:var(--ink)',HD='font-size:11px;font-weight:700;fill:var(--muted)';
+
+/* ---------- 1. Flow: stage progress curves + task grid ---------- */
+const WF=[{n:'Clean',k:'s',d:10},{n:'Convert',k:'s',d:8},{n:'Sort & count',k:'b',d:6}];
+function simFlow(stages,eng,strag,crash,det){
+  const dt=.25,P=4,LG=4,M=4,S=stages.length,nT=s=>stages[s].one?1:P;
+  const x=stages.map((_,s)=>new Array(nT(s)).fill(0)),H=stages.map((_,s)=>[...Array(nT(s))].map(()=>[]));
+  const mean=stages.map(()=>[]),doneAt=new Array(S).fill(null),startAt=new Array(S).fill(null);
+  const ci=crash?Math.round(crash.t/dt):-1;let fin=null,lost=0;
+  const up=(s,p,j)=>j<0?0:H[s][p][Math.min(j,H[s][p].length-1)];
+  for(let i=0;i<2400;i++){
+    const t=i*dt;
+    if(i===ci){crash.stages.forEach(s=>{x[s][crash.p]=0;doneAt[s]=null;});
+      if(!det&&crash.kill!=null){x[crash.kill].forEach((v,p)=>{lost=Math.max(lost,v);x[crash.kill][p]=0;});doneAt[crash.kill]=null;}}
+    for(let s=0;s<S;s++){let m=0;for(let p=0;p<nT(s);p++){H[s][p].push(x[s][p]);m+=x[s][p];}mean[s].push(m/nT(s));}
+    if(x[S-1].every(v=>v>=1)){fin=t;break;}
+    for(let s=0;s<S;s++)for(let p=0;p<nT(s);p++){
+      let av;
+      if(s===0)av=1;
+      else if(eng==='mr')av=(doneAt[s-1]!=null&&t>=doneAt[s-1]+M-1e-9)?1:0;
+      else{const pn=nT(s-1);
+        if(stages[s].k==='b')av=[...Array(pn)].every((_,q)=>up(s-1,q,i-LG)>=1)?1:0;
+        else if(pn!==nT(s))av=[...Array(pn)].reduce((a,_,q)=>a+up(s-1,q,i-LG),0)/pn;
+        else av=up(s-1,p,i-LG);}
+      const d=(s===0&&p===P-1&&strag)?Math.max(stages[0].d,strag):stages[s].d;
+      let v=Math.max(x[s][p],Math.min(1,x[s][p]+dt/d,av));if(v>.9999)v=1;x[s][p]=v;}
+    for(let s=0;s<S;s++){if(doneAt[s]==null&&x[s].every(v=>v>=1))doneAt[s]=t+dt;if(startAt[s]==null&&x[s].some(v=>v>0))startAt[s]=t;}
+  }
+  return {mean,H,doneAt,startAt,fin,dt,M,lost,S};
+}
+function Flow(L,host,o){
+  o=Object.assign({id:'f',stages:WF,eng:'mr',strag:10,engCtl:false,stragCtl:false,playCtl:true,crash:null,det:true,xMax:null,read:null,on:()=>{}},o||{});
+  const st={eng:o.eng,strag:o.strag,stages:o.stages,crash:o.crash,det:o.det,xMax:o.xMax,crashOn:false,tag:0};
+  const ID=o.id;
+  host.insertAdjacentHTML('beforeend','<div class="bx-flow">'+
+    (o.engCtl?'<div class="bx-ctl" id="'+ID+'-eng" role="group" aria-label="Engine"><button class="chip" data-e="mr">MapReduce</button><button class="chip" data-e="df">Dataflow engine</button></div>':'')+
+    (o.stragCtl?'<div class="bx-rng"><label for="'+ID+'-s">Slowest Clean task</label><input type="range" id="'+ID+'-s" min="10" max="40" step="2" value="'+st.strag+'"><b id="'+ID+'-sv"></b></div>':'')+
+    '<div class="bx-read" id="'+ID+'-rd" aria-live="polite"></div>'+
+    '<svg id="'+ID+'-svg" viewBox="0 0 320 226" role="img" aria-label="Top: a chart of each stage’s progress over time. Bottom: a grid of tasks, one row per part of the input, one column per stage."></svg>'+
+    (o.playCtl?'<div class="bx-ctl"><button class="btn" id="'+ID+'-pl">'+L.ic('play')+'Play it over time</button></div>':'')+
+    '</div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  let res,R,xMax,cur=null;
+  function compute(){
+    const c=st.crashOn?st.crash:null;
+    res={mr:simFlow(st.stages,'mr',st.strag,null,st.det),df:simFlow(st.stages,'df',st.strag,c,st.det)};
+    if(c)res.dfPlain=simFlow(st.stages,'df',st.strag,null,st.det);
+    R=res[st.eng];
+    xMax=st.xMax||Math.ceil(Math.max(res.mr.fin,res.df.fin)*1.06/10)*10;
+  }
+  function draw(tC){
+    if(!svg.isConnected)return;
+    const r=R,S=r.S,T=tC==null?r.fin:tC,iC=Math.min(Math.round(T/r.dt),r.mean[0].length-1);
+    const X=t=>36+t/xMax*276,Y=v=>12+(1-v)*100;
+    let s='';
+    const step=xMax>70?20:10;
+    for(let t=0;t<=xMax+1e-9;t+=step)s+='<line x1="'+X(t)+'" y1="12" x2="'+X(t)+'" y2="112" style="stroke:var(--line);stroke-width:1"/>'+tx(X(t),125,String(t),'font-size:11px;fill:var(--muted);text-anchor:middle');
+    [0,.5,1].forEach(v=>{s+='<line x1="36" y1="'+Y(v)+'" x2="312" y2="'+Y(v)+'" style="stroke:var(--line);stroke-width:1"/>';});
+    s+=tx(32,16,'100%','font-size:11px;fill:var(--muted);text-anchor:end')+tx(30,125,'min','font-size:11px;fill:var(--muted);text-anchor:end');
+    if(st.eng==='mr')for(let k=0;k<S-1;k++){const d=r.doneAt[k];if(d!=null&&d<=T){const w=X(Math.min(d+r.M,T))-X(d);
+      s+='<rect x="'+X(d)+'" y="12" width="'+Math.max(w,0)+'" height="100" style="fill:var(--h4-bg);stroke:none"/>';}}
+    if(st.crashOn&&st.eng==='df'&&T>=st.crash.t){const cx=X(st.crash.t);
+      s+='<line x1="'+cx+'" y1="12" x2="'+cx+'" y2="112" style="stroke:var(--no);stroke-width:1.6;stroke-dasharray:3 3"/><path d="M'+(cx-5)+' 3l10 10m0 -10l-10 10" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>';}
+    for(let k=0;k<S;k++){const m=r.mean[k];let d='';for(let j=0;j<=iC;j+=2)d+=(d?'L':'M')+X(j*r.dt).toFixed(1)+' '+Y(m[j]).toFixed(1);
+      d+='L'+X(iC*r.dt).toFixed(1)+' '+Y(m[iC]).toFixed(1);
+      s+='<path d="'+d+'" style="fill:none;stroke:'+COL[k%COL.length]+';stroke-width:'+(S>6?1.8:2.8)+';stroke-linejoin:round;stroke-linecap:round"/>';}
+    if(tC!=null&&tC<r.fin)s+='<line x1="'+X(T)+'" y1="12" x2="'+X(T)+'" y2="112" style="stroke:var(--pri);stroke-width:1.6"/>';
+    /* task grid */
+    const y0=138,gx=40,gap=S>6?3:8,cw=(274-(S-1)*gap)/S,rh=15,rg=3;
+    s+=tx(4,y0+10,'input','font-size:11px;font-weight:700;fill:var(--muted)');
+    for(let k=0;k<S;k++){const cx=gx+k*(cw+gap);
+      s+=tx(cx+cw/2,y0+10,S>6?String(k+1):(S>3&&st.stages[k].sh)||st.stages[k].n,'font-size:11px;font-weight:700;text-anchor:middle;fill:'+COL[k%COL.length]);}
+    const lin=st.crashOn&&st.eng==='df'&&T>=st.crash.t;
+    for(let p=0;p<4;p++){const y=y0+16+p*(rh+rg),hot=lin&&p===st.crash.p;
+      s+=rr(4,y,30,rh,'var(--h4-bg)',hot?'var(--pri)':'var(--h4)',4,hot?';stroke-width:2.4':'')+tx(19,y+11.5,'B'+(p+1),'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h4)');}
+    for(let k=0;k<S;k++){const cx=gx+k*(cw+gap),one=st.stages[k].one;
+      for(let p=0;p<(one?1:4);p++){const y=y0+16+p*(rh+rg),h=one?4*rh+3*rg:rh,v=r.H[k][p][Math.min(iC,r.H[k][p].length-1)];
+        let stroke='var(--line2)',ex='';
+        if(lin&&st.crash.stages.includes(k)&&p===st.crash.p){stroke='var(--pri)';ex=';stroke-width:2.4;stroke-dasharray:4 2';}
+        if(lin&&!st.det&&k===st.crash.kill){stroke='var(--no)';ex=';stroke-width:2.4';}
+        s+=rr(cx,y,cw,h,'var(--soft)',stroke,4,ex)+'<rect x="'+cx+'" y="'+y+'" width="'+(cw*v).toFixed(1)+'" height="'+h+'" rx="4" style="fill:'+COL[k%COL.length]+';opacity:.85"/>';
+        if(one&&cw>40)s+=tx(cx+cw/2,y+h/2+4,Math.round(v*100)+'%','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)');}}
+    svg.innerHTML=s;
+    const rd=$('#'+ID+'-rd');
+    if(o.read)rd.innerHTML=o.read(res,st,T,R);
+    else{const fin=Math.round(R.fin),cs=Math.round(R.startAt[1]),cp=st.eng==='mr'?S:1;
+      rd.innerHTML='<b>'+(st.eng==='mr'?'MapReduce':'Dataflow engine')+': done at min '+fin+'</b> · '+st.stages[1].n+' starts at min '+cs+
+       '<br><span class="sm">Files copied to several machines on the distributed filesystem: '+cp+'</span><span class="bx-tally">'+'<i></i>'.repeat(cp)+'</span>'+
+       (o.engCtl?'<br><span class="sm">'+(st.eng==='mr'?'Dataflow engine':'MapReduce')+' would finish at min '+Math.round(res[st.eng==='mr'?'df':'mr'].fin)+'. Times are illustrative.</span>':'<br><span class="sm">Times are illustrative.</span>');}
+    if(o.engCtl)host.querySelectorAll('#'+ID+'-eng .chip').forEach(b=>b.classList.toggle('sel',b.dataset.e===st.eng));
+    if(o.stragCtl)$('#'+ID+'-sv').textContent=st.strag+' min';
+  }
+  function play(ms){
+    ms=ms||1700;const tag=++st.tag,end=R.fin,t0=performance.now();
+    return new Promise(res=>{(function f(){
+      if(!svg.isConnected||tag!==st.tag){res();return;}
+      const p=Math.min(1,(performance.now()-t0)/ms);cur=p*end;draw(p<1?cur:null);
+      if(p<1)setTimeout(f,30);else res();})();});
+  }
+  function set(p,anim){Object.assign(st,p);st.tag++;compute();if(anim)return play();draw();return Promise.resolve();}
+  if(o.playCtl)$('#'+ID+'-pl').onclick=()=>{st.tag++;play();};
+  if(o.engCtl)host.querySelectorAll('#'+ID+'-eng .chip').forEach(b=>{b.onclick=()=>{set({eng:b.dataset.e});o.on({type:'eng',eng:st.eng});};});
+  if(o.stragCtl){const sl=$('#'+ID+'-s');sl.addEventListener('input',()=>{set({strag:+sl.value});o.on({type:'strag',v:+sl.value});});}
+  compute();draw();
+  return {st,set,play,res:()=>res,R:()=>R};
+}
+
+/* ---------- 2. Steps: Pregel superstep table on the hub network ---------- */
+const GV=[['WC','Westport Central',24,62],['WN','Westport North',92,22],['WS','Westport South',92,102],['W1','Zone W1',150,54],
+          ['W2','Zone W2',160,102],['W3','Zone W3',234,108],['ED','Eastvale Depot',262,34],['E1','Zone E1',298,92]];
+const GE=[[0,1,12],[0,2,9],[1,3,6],[2,4,7],[3,5,5,.72],[4,5,4],[1,6,40],[2,6,30],[4,6,18],[6,7,8]];
+const NB=GV.map((_,v)=>GE.filter(e=>e[0]===v||e[1]===v).map(e=>[e[0]===v?e[1]:e[0],e[2]]));
+const ROUNDS=(()=>{const R=[];const val=GV.map(()=>Infinity);val[0]=0;
+  let msgs=NB[0].map(([u,w])=>[0,u,w]);R.push({val:val.slice(),recv:[0],imp:[0],msgs});
+  for(let g=0;g<20&&msgs.length;g++){const inbox={};msgs.forEach(([f,u,m])=>{inbox[u]=Math.min(inbox[u]==null?Infinity:inbox[u],m);});
+    const recv=Object.keys(inbox).map(Number).sort((a,b)=>a-b),imp=recv.filter(u=>inbox[u]<val[u]);imp.forEach(u=>{val[u]=inbox[u];});
+    msgs=[];imp.forEach(v=>NB[v].forEach(([u,w])=>msgs.push([v,u,val[v]+w])));R.push({val:val.slice(),recv,imp,msgs});}
+  return R;})();
+function netSVG(o){
+  o=o||{};const val=o.val,recv=o.recv||[],imp=o.imp||[],msgs=o.msgs||[],showW=o.showW!==false;
+  let s='';
+  GE.forEach(e=>{const [a,b,w]=e,A=GV[a],B=GV[b],hot=msgs.some(m=>(m[0]===a&&m[1]===b)||(m[0]===b&&m[1]===a));
+    s+='<line x1="'+A[2]+'" y1="'+A[3]+'" x2="'+B[2]+'" y2="'+B[3]+'" style="stroke:'+(hot?'var(--pri)':'var(--line2)')+';stroke-width:'+(hot?2.6:1.6)+'"/>';
+    if(showW){const f=e[3]||.5,mx=A[2]+(B[2]-A[2])*f,my=A[3]+(B[3]-A[3])*f;s+='<text x="'+mx+'" y="'+(my+4)+'" style="font-size:11px;font-weight:600;text-anchor:middle;fill:var(--muted);paint-order:stroke;stroke:var(--card);stroke-width:4px">'+w+'</text>';}});
+  msgs.forEach(([f,u])=>{const A=GV[f],B=GV[u],x=A[2]+(B[2]-A[2])*.68,y=A[3]+(B[3]-A[3])*.68;s+='<circle cx="'+x+'" cy="'+y+'" r="4" style="fill:var(--pri)"/>';});
+  GV.forEach((v,k)=>{let f='var(--card)',st='var(--line2)',d='';
+    if(val){if(imp.includes(k)){f='var(--ok-bg)';st='var(--ok-line)';}else if(recv.includes(k)){f='var(--h3-bg)';st='var(--h3)';}else if(val[k]===Infinity){d=';stroke-dasharray:3 3';}else{f='var(--soft)';}}
+    if(o.mach){f=o.mach[k];}
+    s+='<circle cx="'+v[2]+'" cy="'+v[3]+'" r="14" style="fill:'+f+';stroke:'+st+';stroke-width:2'+d+'"/>'+tx(v[2],v[3]+4,v[0],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+    const lo=(k===7||k===0)?[-16,-12,'end']:k===4?[-17,-12,'end']:[16,-12,'start'];
+    if(val&&val[k]!==Infinity)s+='<text x="'+(v[2]+lo[0])+'" y="'+(v[3]+lo[1])+'" style="font-size:11.5px;font-weight:700;text-anchor:'+lo[2]+';fill:var(--pri-deep);paint-order:stroke;stroke:var(--card);stroke-width:4px">'+val[k]+'</text>';});
+  return s;
+}
+function Steps(L,host,o){
+  o=Object.assign({id:'g',ctl:true,top:false,on:()=>{}},o||{});
+  const ID=o.id,st={cur:0,ck:1,armed:false,lost:new Set(),crashAt:null,redone:0,ckw:1,mode:'pregel',place:'2',busy:false};
+  const RD='<div class="bx-read" id="'+ID+'-rd" aria-live="polite"></div>';
+  host.insertAdjacentHTML('beforeend','<div class="bx-steps">'+(o.top?RD:'')+'<svg id="'+ID+'-svg" viewBox="0 0 320 334" role="img" aria-label="Top: Otterpost’s hub network with travel minutes on each road. Bottom: a table, one row per hub or zone, one column per round, showing each one’s best travel minutes from Westport Central."></svg>'+
+    '<div class="bx-ctl" id="'+ID+'-c"><button class="btn pri" id="'+ID+'-nx">'+L.ic('play')+'Next round</button><button class="btn" id="'+ID+'-rs">'+L.ic('cycle')+'Reset</button></div>'+
+    (o.top?'':RD)+'</div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg'),last=ROUNDS.length-1;
+  const mach=v=>st.place==='1'?0:st.place==='many'?v:v%2;
+  function counts(){let pw=0,mw=0,msg=0,cross=0;for(let k=0;k<=st.cur;k++){pw+=ROUNDS[k].recv.length;mw+=GV.length;}
+    const m=ROUNDS[st.cur].msgs;msg=m.length;cross=m.filter(([f,u])=>mach(f)!==mach(u)).length;
+    let tm=0,tc=0;for(let k=0;k<=st.cur;k++){ROUNDS[k].msgs.forEach(([f,u])=>{tm++;if(mach(f)!==mach(u))tc++;});}
+    return {pw,mw,msg,cross,tm,tc};}
+  function draw(){
+    if(!svg.isConnected)return;
+    const r=ROUNDS[st.cur];
+    let s='<g>'+netSVG({val:r.val,recv:st.mode==='mr'?GV.map((_,k)=>k):r.recv,imp:r.imp,msgs:st.cur<last?r.msgs:[]})+'</g>';
+    const y0=134,nx=102,cw=(316-nx)/ROUNDS.length,rh=19;
+    s+=tx(4,y0+12,'Round','font-size:11px;font-weight:700;fill:var(--muted)');
+    ROUNDS.forEach((_,k)=>{const cx=nx+k*cw+cw/2,ck=k%st.ck===0;
+      s+=tx(cx,y0+12,String(k),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+(k===st.cur?'var(--pri-deep)':'var(--muted)'));
+      if(ck)s+='<rect x="'+(cx-9)+'" y="'+(y0+16)+'" width="18" height="4" rx="2" style="fill:var(--h4)"/>';
+      if(st.crashAt===k)s+='<path d="M'+(cx+8)+' '+(y0+1)+'l9 9m0 -9l-9 9" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>';});
+    GV.forEach((v,j)=>{const y=y0+24+j*rh;
+      s+=tx(4,y+13,v[1],'font-size:11px;font-weight:600;fill:var(--ink)');
+      ROUNDS.forEach((R,k)=>{const x=nx+k*cw+1.5,w=cw-3;
+        if(k<=st.cur){const imp=R.imp.includes(j),got=st.mode==='mr'||R.recv.includes(j),vv=R.val[j];
+          const f=imp?'var(--ok-bg)':got?'var(--h3-bg)':'var(--soft)',sc=imp?'var(--ok-line)':got?'var(--h3)':'var(--line)';
+          s+=rr(x,y+1,w,rh-3,f,sc,5)+tx(x+w/2,y+13,vv===Infinity?'–':vv,'font-size:11.5px;font-weight:'+(imp?700:500)+';text-anchor:middle;fill:'+(got||imp?'var(--ink)':'var(--faint)'));}
+        else if(st.lost.has(k)){s+=rr(x,y+1,w,rh-3,'var(--no-bg)','var(--no-line)',5,';stroke-dasharray:3 2');}
+        else s+=rr(x,y+1,w,rh-3,'none','var(--line)',5,';stroke-dasharray:2 3');});});
+    /* legend, inside the picture */
+    const ly=y0+24+GV.length*rh+14;let lx=4;
+    [['var(--ok-bg)','var(--ok-line)','improved'],['var(--h3-bg)','var(--h3)','got messages'],['var(--soft)','var(--line)','no work']].forEach(([f,sc,t])=>{
+      s+=rr(lx,ly-9,12,11,f,sc,3)+tx(lx+16,ly,t,'font-size:11px;fill:var(--muted)');lx+=16+t.length*5.8+10;});
+    s+='<rect x="'+lx+'" y="'+(ly-6)+'" width="14" height="4" rx="2" style="fill:var(--h4)"/>'+tx(lx+18,ly,'checkpoint','font-size:11px;fill:var(--muted)');
+    svg.innerHTML=s;
+    const c=counts();
+    $('#'+ID+'-rd').innerHTML='<b>Round '+st.cur+(st.cur===last?' · nothing changed: done':'')+'</b> · messages sent: '+c.msg+
+      '<br><span class="sm">Vertex work so far: '+(st.mode==='mr'?'<b>plain loop '+c.mw+'</b> (Pregel: '+c.pw+')':'<b>Pregel '+c.pw+'</b> (plain loop: '+c.mw+')')+
+      '<br>Messages crossing machines: '+c.tc+' of '+c.tm+(st.place==='1'?' (one machine)':st.place==='many'?' (one machine per vertex)':' (2 machines, split by ID)')+
+      '<br>Checkpoint every '+(st.ck===1?'round':st.ck+' rounds')+' · rounds redone: <b>'+st.redone+'</b> · minutes are illustrative</span>';
+    $('#'+ID+'-nx').disabled=st.cur>=last||st.busy;
+  }
+  function next(){
+    if(st.cur>=last)return null;const r=st.cur+1;
+    if(st.armed){st.armed=false;st.crashAt=r;let c=st.cur;while(c%st.ck!==0)c--;for(let k=c+1;k<=r;k++)st.lost.add(k);st.redone+=r-c;st.cur=c;draw();o.on({type:'crash',from:r,to:c});return 'crash';}
+    st.cur=r;st.lost.delete(r);if(r%st.ck===0)st.ckw++;draw();o.on({type:'next',cur:r});return 'next';}
+  function reset(p){Object.assign(st,{cur:0,armed:false,lost:new Set(),crashAt:null,redone:0,ckw:1},p||{});draw();}
+  $('#'+ID+'-nx').onclick=()=>next();
+  $('#'+ID+'-rs').onclick=()=>{reset();o.on({type:'reset'});};
+  if(!o.ctl)$('#'+ID+'-c').style.display='none';
+  draw();
+  return {st,next,reset,draw,last};
+}
+
+/* ---------- static figures for the Learn screens ---------- */
+function FIG_LAYERS(){
+  const pill=(x,w,t)=>rr(x,20,w,28,'var(--h2-bg)','var(--h2)',14)+tx(x+w/2,38,t,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 176" role="img" aria-label="Pig, Hive, Cascading and Crunch sit on top of the raw MapReduce API, which sits on the MapReduce execution model. The slow parts live in the execution model.">'+AR('bxA0')+
+   tx(4,12,'Built on top: much easier to write','font-size:11px;font-weight:700;fill:var(--h2)')+pill(4,62,'Pig')+pill(72,62,'Hive')+pill(140,92,'Cascading')+pill(238,78,'Crunch')+
+   line('M160 50 L160 62','stroke:var(--muted);stroke-width:1.8','bxA0')+
+   rr(4,66,312,36,'var(--soft)','var(--line2)',10)+tx(16,88,'Raw MapReduce API','font-size:12.5px;font-weight:700;fill:var(--ink)')+tx(306,88,'you write every join by hand','font-size:11px;text-anchor:end;fill:var(--muted)')+
+   line('M160 104 L160 116','stroke:var(--muted);stroke-width:1.8','bxA0')+
+   rr(4,120,312,52,'var(--no-bg)','var(--no-line)',10,';stroke-width:2.2')+tx(16,141,'MapReduce execution model','font-size:12.5px;font-weight:700;fill:var(--ink)')+
+   tx(16,160,'The slow parts live here. No layer on top can fix them.','font-size:11.5px;fill:var(--no)')+'</svg></div>';}
+
+function FIG_MAT(){
+  const job=(x,y,t,c)=>rr(x,y,62,30,COLB[c],COL[c],8)+tx(x+31,y+19,t,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 214" role="img" aria-label="Three rows. A published dataset is written to the filesystem, copied to several machines, and read by three teams. Intermediate state is copied the same way but read once, by the next job. A Unix pipe streams through a small buffer.">'+AR('bxA1')+
+   tx(4,12,'Published dataset: many jobs read it by name','font-size:11px;font-weight:700;fill:var(--ok)')+
+   job(4,22,'Job 1',0)+line('M68 37 L104 37','','bxA1')+dfs(110,26)+tx(129,66,'copied to several machines','font-size:11px;text-anchor:middle;fill:var(--h4)')+line('M148 30 L200 21','','bxA1')+line('M148 37 L200 37','','bxA1')+line('M148 44 L200 53','','bxA1')+
+   tx(214,25,'Team A','font-size:11px;fill:var(--ink)')+tx(214,41,'Team B','font-size:11px;fill:var(--ink)')+tx(214,57,'Team C','font-size:11px;fill:var(--ink)')+
+   tx(4,84,'Intermediate state: read once, by the next job','font-size:11px;font-weight:700;fill:var(--no)')+
+   job(4,94,'Job 1',0)+line('M68 109 L104 109','','bxA1')+dfs(110,98)+line('M148 109 L172 109','','bxA1')+job(176,94,'Job 2',1)+
+   tx(244,106,'starts after','font-size:11px;fill:var(--muted)')+tx(244,120,'Job 1 ends','font-size:11px;fill:var(--muted)')+
+   tx(4,156,'Unix pipe: streams through a small buffer','font-size:11px;font-weight:700;fill:var(--h2)')+
+   job(4,166,'grep',2)+line('M68 181 L98 181','','bxA1')+rr(102,175,40,12,'var(--h2-bg)','var(--h2)',6)+line('M144 181 L172 181','','bxA1')+job(176,166,'sort',3)+
+   tx(244,178,'both run','font-size:11px;fill:var(--muted)')+tx(244,192,'at once','font-size:11px;fill:var(--muted)')+
+   tx(122,206,'buffer','font-size:11px;text-anchor:middle;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_DOWN(){
+  const bar=(x,y,w,c,t)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="9" rx="3" style="fill:'+c+'"/>';
+  let a='';[40,40,44,112].forEach((w,k)=>{a+=bar(40,22+k*12,w,'var(--h1)');});
+  [0,1,2,3].forEach(k=>{a+=bar(166,22+k*12,44,'var(--h2)');});
+  a+='<rect x="86" y="20" width="66" height="35" rx="4" style="fill:var(--no-bg)"/>'+tx(119,41,'others idle','font-size:11px;text-anchor:middle;fill:var(--no)');
+  a+='<line x1="156" y1="16" x2="156" y2="66" style="stroke:var(--no);stroke-width:1.8;stroke-dasharray:4 3"/>'+tx(152,80,'slowest task done','font-size:11px;text-anchor:end;fill:var(--muted)')+tx(166,80,'job 2 starts','font-size:11px;fill:var(--muted)')+
+    tx(4,30,'job 1','font-size:11px;fill:var(--muted)')+tx(216,30,'job 2','font-size:11px;fill:var(--muted)');
+  const box=(x,y,w,t,f,s,d)=>rr(x,y,w,26,f,s,7,d||'')+tx(x+w/2,y+17,t,'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  const b='<g transform="translate(0,108)">'+box(4,10,58,'Reduce','var(--h1-bg)','var(--h1)')+line('M64 23 L74 23','','bxA2')+dfs(78,11)+line('M114 23 L124 23','','bxA2')+
+    box(128,10,58,'Map','var(--soft)','var(--no)',';stroke-dasharray:4 3')+line('M188 23 L198 23','','bxA2')+box(202,10,46,'Sort','var(--soft)','var(--line2)')+line('M250 23 L258 23','','bxA2')+box(262,10,54,'Reduce','var(--h2-bg)','var(--h2)')+
+    tx(157,52,'only reads the file back','font-size:11px;text-anchor:middle;fill:var(--no)')+'</g>';
+  let c='<g transform="translate(0,176)">'+rr(4,14,70,28,'var(--soft)','var(--line2)',7)+tx(39,32,'temp file','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  ['machine','machine','more…'].forEach((t,k)=>{const x=94+k*76;c+=line('M'+(k?x-12:76)+' 28 L'+(x-4)+' 28','stroke:var(--muted);stroke-width:1.4','bxA2')+rr(x,16,62,24,'var(--h4-bg)','var(--h4)',6,k===2?';stroke-dasharray:4 3':'')+tx(x+31,32,t,'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h4)');});
+  c+='</g>';
+  return '<div class="bx-fig"><svg viewBox="0 0 320 222" role="img" aria-label="Three problems. One: job 2 waits until job 1’s slowest task is done, while the other tasks sit idle. Two: a mapper only reads back a reducer’s file before the next sort. Three: a temporary file is copied to several machines.">'+AR('bxA2')+
+   tx(4,10,'1 · Wait for the slowest task','font-size:11px;font-weight:700;fill:var(--no)')+a+
+   tx(4,104,'2 · A mapper that only passes data on','font-size:11px;font-weight:700;fill:var(--no)')+b+
+   tx(4,184,'3 · Temporary files copied to several machines','font-size:11px;font-weight:700;fill:var(--no)')+c+'</svg></div>';}
+
+function FIG_DAG(){
+  const t3=(x,y,c)=>{let s='';['M','S','R'].forEach((l,k)=>{s+=rr(x+k*20,y,18,24,COLB[c],COL[c],5)+tx(x+k*20+9,y+16,l,'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)');});return s;};
+  const op=(x,y,w,t,c)=>rr(x,y,w,28,COLB[c],COL[c],14)+tx(x+w/2,y+18,t,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  const mini=(x,kind)=>{let s='';const L=[0,1,2,3].map(k=>[x+10,148+k*14]),Rt=[0,1,2,3].map(k=>[x+78,148+k*14]);
+    if(kind==='b'){Rt.forEach(([a,b])=>{s+='<line x1="'+(x+10)+'" y1="169" x2="'+a+'" y2="'+b+'" style="stroke:var(--h3);stroke-width:1.6"/>';});s+='<circle cx="'+(x+10)+'" cy="169" r="5" style="fill:var(--h3)"/>';}
+    else{L.forEach(([a,b],i)=>Rt.forEach(([c,d],j)=>{if((i+j)%2===0)s+='<line x1="'+a+'" y1="'+b+'" x2="'+c+'" y2="'+d+'" style="stroke:'+(kind==='s'?'var(--h1)':'var(--h2)')+';stroke-width:1.3"/>';}));L.forEach(([a,b])=>{s+='<circle cx="'+a+'" cy="'+b+'" r="4" style="fill:var(--muted)"/>';});}
+    Rt.forEach(([a,b],k)=>{s+='<circle cx="'+a+'" cy="'+b+'" r="4" style="fill:var(--muted)"/>';if(kind==='s')s+=tx(a+8,b+4,String(k+1),'font-size:11px;font-weight:700;fill:var(--h1)');});
+    return s;};
+  return '<div class="bx-fig"><svg viewBox="0 0 320 236" role="img" aria-label="Top: MapReduce runs three separate jobs, each map, sort, reduce, with a replicated file on the filesystem between them. Middle: a dataflow engine runs one job of operators. Bottom: three ways to connect operators: repartition and sort, partition only, broadcast.">'+AR('bxA3')+
+   tx(4,12,'MapReduce: separate jobs, files in between','font-size:11px;font-weight:700;fill:var(--muted)')+
+   t3(4,28,0)+line('M64 40 L72 40','','bxA3')+dfs(76,29)+line('M114 40 L122 40','','bxA3')+t3(126,28,1)+line('M186 40 L194 40','','bxA3')+dfs(198,29)+line('M236 40 L244 40','','bxA3')+t3(248,28,2)+
+   tx(4,74,'Dataflow engine: one job of operators','font-size:11px;font-weight:700;fill:var(--muted)')+
+   rr(2,80,316,44,'none','var(--line2)',12,';stroke-dasharray:4 3')+op(10,88,76,'Clean',0)+line('M88 102 L104 102','','bxA3')+op(108,88,84,'Convert',1)+line('M194 102 L210 102','','bxA3')+op(214,88,96,'Sort & count',2)+
+   tx(4,138,'Three ways to wire one operator to the next','font-size:11px;font-weight:700;fill:var(--muted)')+
+   mini(8,'s')+mini(118,'p')+mini(222,'b')+
+   tx(52,212,'repartition + sort','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h1)')+tx(52,226,'sort-merge joins','font-size:11px;text-anchor:middle;fill:var(--muted)')+
+   tx(160,212,'partition, no sort','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h2)')+tx(160,226,'partitioned hash','font-size:11px;text-anchor:middle;fill:var(--muted)')+
+   tx(266,212,'broadcast','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h3)')+tx(266,226,'broadcast hash','font-size:11px;text-anchor:middle;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_LINEAGE(){
+  const box=(x,y,w,t1,t2,f,s,d)=>rr(x,y,w,40,f,s,9,d||'')+tx(x+w/2,y+17,t1,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+w/2,y+32,t2,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 196" role="img" aria-label="Machine 3 dies and loses Read part 3 and Sample part 3. The engine recomputes them from input block 3, which is safe on the filesystem, copied to several machines.">'+AR('bxA4')+
+   rr(84,8,160,70,'var(--no-bg)','var(--no-line)',12,';stroke-dasharray:5 3')+tx(164,22,'machine 3 dies','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--no)')+
+   dfs(6,34,'')+tx(25,18,'block 3','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h4)')+
+   box(92,30,68,'Read','part 3','var(--card)','var(--pri)',';stroke-dasharray:4 2;stroke-width:2.2')+box(170,30,68,'Sample','part 3','var(--card)','var(--pri)',';stroke-dasharray:4 2;stroke-width:2.2')+
+   box(252,30,64,'Average','per zone','var(--h3-bg)','var(--h3)')+
+   line('M44 50 L88 50','stroke:var(--pri);stroke-width:2.2','bxA4')+line('M162 50 L166 50','stroke:var(--pri);stroke-width:2.2','bxA4')+line('M240 50 L248 50','','bxA4')+
+   tx(4,98,'Recompute = rerun the lost parts from data still there','font-size:11px;font-weight:700;fill:var(--pri-deep)')+
+   rr(4,108,152,40,'var(--soft)','var(--line2)',9)+tx(14,125,'Spark (RDDs)','font-size:11.5px;font-weight:700;fill:var(--ink)')+tx(14,140,'tracks how parts were made','font-size:11px;fill:var(--muted)')+
+   rr(164,108,152,40,'var(--soft)','var(--line2)',9)+tx(174,125,'Flink','font-size:11.5px;font-weight:700;fill:var(--ink)')+tx(174,140,'checkpoints its state','font-size:11px;fill:var(--muted)')+
+   tx(4,170,'Where from? An earlier stage if it still has the data,','font-size:11px;fill:var(--muted)')+tx(4,185,'otherwise the original input on the filesystem.','font-size:11px;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_SORT(){
+  const rec=(x,y,k,c)=>rr(x,y,26,20,c||'var(--card)','var(--line2)',6)+tx(x+13,y+14,k,'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 222" role="img" aria-label="A filter passes each record on at once. A sort must hold every record, because the last one to arrive, key 3, has to come out first. Both sit between an input and an output on the distributed filesystem.">'+AR('bxA5')+
+   tx(4,12,'Filter: each record goes straight through','font-size:11px;font-weight:700;fill:var(--h2)')+
+   rec(4,24,'41')+rec(34,24,'17')+line('M64 34 L98 34','','bxA5')+rr(102,20,80,28,'var(--h2-bg)','var(--h2)',14)+tx(142,38,'Filter','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+line('M184 34 L216 34','','bxA5')+rec(220,24,'88')+rec(250,24,'26')+tx(282,38,'out','font-size:11px;fill:var(--muted)')+
+   tx(4,76,'Sort: must hold every record first','font-size:11px;font-weight:700;fill:var(--h3)')+
+   rec(4,96,'3','var(--h3-bg)')+tx(17,132,'last in','font-size:11px;text-anchor:middle;fill:var(--muted)')+line('M34 106 L98 106','','bxA5')+
+   rr(102,84,112,48,'var(--h3-bg)','var(--h3)',12)+tx(158,98,'Sort · holding','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+rec(108,104,'41')+rec(138,104,'17')+rec(168,104,'88')+
+   line('M216 106 L236 106','stroke:var(--line2);stroke-width:1.8;stroke-dasharray:3 3','bxA5')+tx(242,103,'nothing out','font-size:11px;fill:var(--muted)')+tx(242,117,'until the end','font-size:11px;fill:var(--muted)')+
+   tx(158,148,'3 arrives last but must come out first','font-size:11px;text-anchor:middle;fill:var(--h3)')+
+   tx(4,174,'Still on the filesystem: the job’s input and final output','font-size:11px;font-weight:700;fill:var(--muted)')+
+   dfs(6,190)+tx(48,206,'input (never changed)','font-size:11px;fill:var(--muted)')+line('M178 202 L196 202','','bxA5')+dfs(200,190)+tx(242,206,'output','font-size:11px;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_GRAPHLOOP(){
+  const box=(x,y,w,t1,t2,c)=>rr(x,y,w,40,COLB[c],COL[c],10)+tx(x+w/2,y+17,t1,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+w/2,y+32,t2,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 236" role="img" aria-label="Otterpost’s hub network with travel minutes on each road. Below, the loop: a scheduler runs one batch step that reads the whole graph and writes a whole new copy, checks if it is done, and if not runs another round.">'+AR('bxA6')+
+   '<g>'+netSVG({showW:true})+'</g>'+
+   tx(4,140,'Plain MapReduce: repeat until done','font-size:11px;font-weight:700;fill:var(--muted)')+
+   box(4,150,140,'Run one round','reads the whole graph','0')+line('M146 170 L170 170','','bxA6')+box(174,150,70,'Done?','check','2')+line('M246 170 L262 170','','bxA6')+tx(266,174,'yes: stop','font-size:11px;font-weight:700;fill:var(--ok)')+
+   line('M209 192 L209 214 L74 214 L74 194','stroke:var(--no);stroke-width:1.8','bxA6')+tx(142,230,'no: run again, rewrite everything','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--no)')+'</svg></div>';}
+
+function FIG_VERTEX(){
+  return '<div class="bx-fig"><svg viewBox="0 0 320 228" role="img" aria-label="Westport South keeps its best time, 9 minutes, in memory. It received a message from Westport Central and sends its time plus each road’s length to its neighbours. Below, rounds 1 to 3 with a wait line between rounds where all messages are delivered.">'+AR('bxA7')+
+   rr(4,40,74,32,'var(--soft)','var(--line2)',9)+tx(41,60,'Westport C.','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   line('M80 58 L106 70','stroke:var(--pri);stroke-width:2','bxA7')+rr(80,36,30,18,'var(--pri-bg)','var(--pri)',4)+tx(95,49,'9','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+
+   '<circle cx="152" cy="80" r="42" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:2.4"/>'+tx(152,70,'Westport','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(152,84,'South','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(152,101,'keeps: 9 min','font-size:11px;text-anchor:middle;fill:var(--ok)')+
+   line('M194 64 L238 34','stroke:var(--pri);stroke-width:2','bxA7')+line('M194 96 L238 120','stroke:var(--pri);stroke-width:2','bxA7')+
+   rr(242,20,74,28,'var(--soft)','var(--line2)',9)+tx(279,38,'Zone W2: 16','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   rr(242,108,74,28,'var(--soft)','var(--line2)',9)+tx(279,126,'Eastvale: 39','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   tx(222,80,'9 + road','font-size:11px;text-anchor:middle;fill:var(--pri-deep)')+
+   tx(4,160,'Fixed rounds: messages from one round arrive in the next','font-size:11px;font-weight:700;fill:var(--muted)')+
+   [0,1,2].map(k=>rr(4+k*106,170,96,26,COLB[k],COL[k],8)+tx(52+k*106,187,'round '+(k+1),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')).join('')+
+   [1,2].map(k=>'<line x1="'+(k*106)+'" y1="166" x2="'+(k*106)+'" y2="200" style="stroke:var(--ink);stroke-width:2"/>').join('')+
+   tx(160,220,'bars: wait until all messages are delivered','font-size:11px;text-anchor:middle;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_SIZE(){
+  const m=['var(--h1-bg)','var(--h2-bg)','var(--h3-bg)'];
+  const step=(y,w,t1,t2,c)=>rr(4,y,w,34,COLB[c],COL[c],9)+tx(12,y+15,t1,'font-size:11.5px;font-weight:700;fill:var(--ink)')+tx(12,y+28,t2,'font-size:11px;fill:var(--muted)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 262" role="img" aria-label="The hub network with its vertices colored by three machines, assigned by vertex ID, so many roads cross between machines. Below, a ladder: fits in one machine’s memory, use one machine; fits on one machine’s disks, use a single-machine tool such as GraphChi; too big for one machine, use a distributed approach such as Pregel.">'+
+   '<g>'+netSVG({showW:false,mach:GV.map((_,k)=>m[k%3])})+'</g>'+
+   tx(4,138,'3 machines (colors), split by ID: most roads cross','font-size:11px;font-weight:700;fill:var(--no)')+
+   step(148,312,'Fits in one machine’s memory','one machine (even one thread) likely wins',1)+
+   step(186,312,'Fits on one machine’s disks','a single-machine tool such as GraphChi',2)+
+   step(224,312,'Too big for one machine','a distributed approach such as Pregel',0)+'</svg></div>';}
+
+function FIG_DECL(){
+  let code='';[120,96,134,80,112,128,90].forEach((w,k)=>{code+='<rect x="'+(12+(k%3===1?10:0))+'" y="'+(30+k*11)+'" width="'+w*0.8+'" height="6" rx="3" style="fill:var(--line2)"/>';});
+  let cols='';for(let k=0;k<20;k++){const on=k===3||k===11;cols+='<rect x="'+(8+k*15.2)+'" y="186" width="12" height="30" rx="3" style="fill:'+(on?'var(--h2)':'var(--soft2)')+'"/>';}
+  return '<div class="bx-fig"><svg viewBox="0 0 320 246" role="img" aria-label="Left: a join written by hand as many lines of code. Right: a declared join that an optimizer turns into a broadcast hash join. Bottom: of 20 columns on disk, only the 2 needed are read.">'+AR('bxA8')+
+   rr(4,8,148,112,'var(--soft)','var(--line2)',10)+tx(12,22,'By hand','font-size:11px;font-weight:700;fill:var(--muted)')+code+tx(78,114,'you pick the algorithm','font-size:11px;text-anchor:middle;fill:var(--muted)')+
+   rr(168,8,148,30,'var(--h1-bg)','var(--h1)',10)+tx(242,27,'join scans, couriers','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   line('M242 40 L242 52','','bxA8')+rr(184,54,116,28,'var(--pri-bg)','var(--pri)',14)+tx(242,72,'optimizer','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)')+
+   line('M242 84 L242 94','','bxA8')+rr(168,96,148,24,'var(--ok-bg)','var(--ok-line)',8)+tx(242,112,'picks broadcast hash join','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ok)')+
+   tx(4,150,'Declared filters and field picks:','font-size:11px;font-weight:700;fill:var(--muted)')+tx(4,166,'read only the columns needed, in a tight loop','font-size:11px;fill:var(--muted)')+
+   cols+tx(160,236,'2 of 20 columns read from column storage','font-size:11px;text-anchor:middle;fill:var(--h2)')+'</svg></div>';}
+
+function FIG_CONVERGE(){
+  const chip=(x,y,w,t1,t2,c)=>rr(x,y,w,40,COLB[c],COL[c],10)+tx(x+w/2,y+17,t1,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+w/2,y+32,t2,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 244" role="img" aria-label="Batch engines gain declarative operators while MPP databases become more programmable, so the two meet in the middle. Below, reusable building blocks: machine learning, spatial search and genome matching.">'+AR('bxA9')+
+   chip(4,8,140,'Batch engines','+ declarative parts',0)+chip(176,8,140,'MPP databases','+ more programmable',1)+
+   line('M74 50 L136 82','','bxA9')+line('M246 50 L184 82','','bxA9')+
+   rr(54,84,212,30,'var(--soft)','var(--line2)',15)+tx(160,103,'systems that store and process data','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   tx(4,140,'Reusable building blocks','font-size:11px;font-weight:700;fill:var(--muted)')+
+   [['Machine learning','Mahout, MADlib',2],['Spatial search','k-nearest neighbours',3],['Genome analysis','similar, not identical strings',0]].map(([a,b,c],k)=>rr(4,148+k*32,312,28,COLB[c],COL[c],9)+tx(14,166+k*32,a,'font-size:11.5px;font-weight:700;fill:var(--ink)')+tx(306,166+k*32,b,'font-size:11px;text-anchor:end;fill:var(--muted)')).join('')+'</svg></div>';}
+
+function FIG_SUM(){
+  const row=(y,t,a,b)=>tx(4,y,t,'font-size:11.5px;font-weight:700;fill:var(--ink)')+rr(4,y+6,152,54,'var(--h1-bg)','var(--h1)',9)+rr(164,y+6,152,54,'var(--h2-bg)','var(--h2)',9)+
+     tx(12,y+22,'MapReduce','font-size:11px;font-weight:700;fill:var(--h1)')+tx(12,y+37,a[0],'font-size:11px;fill:var(--ink)')+tx(12,y+50,a[1],'font-size:11px;fill:var(--ink)')+
+     tx(172,y+22,'Dataflow engines','font-size:11px;font-weight:700;fill:var(--h2)')+tx(172,y+37,b[0],'font-size:11px;fill:var(--ink)')+tx(172,y+50,b[1],'font-size:11px;fill:var(--ink)');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 206" role="img" aria-label="Two problems every batch engine solves. Partitioning: MapReduce always sorts; dataflow engines sort only when needed. Fault tolerance: MapReduce writes to disk often and reruns one task; dataflow engines keep more in memory and recompute more.">'+
+   row(14,'1 · Partitioning: bring related records together',['sorts between every','map and reduce'],['sorts only where','a step needs it'])+
+   row(96,'2 · Fault tolerance',['writes to disk often:','rerun just one task'],['keeps more in memory:','recomputes more'])+
+   tx(4,184,'Either way, the framework retries failed tasks, so the','font-size:11px;fill:var(--muted)')+tx(4,198,'output is the same as if nothing had failed.','font-size:11px;fill:var(--muted)')+'</svg></div>';}
+
+function FIG_BOUND(){
+  let a='';for(let k=0;k<6;k++)a+=rr(10+k*20,30,16,22,'var(--h1-bg)','var(--h1)',4);
+  let b='';for(let k=0;k<9;k++)b+=rr(176+k*16,30,12,22,'var(--h2-bg)','var(--h2)',4,k>6?';opacity:'+(k===7?.55:.25):'');
+  return '<div class="bx-fig"><svg viewBox="0 0 320 84" role="img" aria-label="Left: a batch job reads a fixed set of files with an end, so it finishes. Right: a stream of scans keeps arriving with no end.">'+
+   tx(4,16,'Batch: a fixed set of files','font-size:11px;font-weight:700;fill:var(--h1)')+a+'<line x1="134" y1="26" x2="134" y2="56" style="stroke:var(--ink);stroke-width:2.4"/>'+tx(4,74,'it knows when it’s read it all','font-size:11px;fill:var(--muted)')+
+   tx(176,16,'Stream: never ends','font-size:11px;font-weight:700;fill:var(--h2)')+b+tx(176,74,'there may always be more','font-size:11px;fill:var(--muted)')+'</svg></div>';}
+
+/* the six MapReduce costs a dataflow engine removes (tap-the-pipeline screen) */
+const SIX=[
+ ['Sort only where needed','MapReduce sorts between every map and reduce, by default.','A dataflow engine sorts only in the places a step actually needs it.'],
+ ['No pointless map tasks','Job 2’s mapper only reads the file back and passes it on.','A mapper doesn’t change the partitioning, so its work folds into the reduce step before it.'],
+ ['Smarter placement','Data is copied over the network to wherever the next job runs.','The scheduler sees every dependency, so it can put the consumer on the producer’s machine and pass data through a shared memory buffer.'],
+ ['Lighter in-between data','Every in-between file is written to the distributed filesystem and copied to several machines.','In-between data stays in memory or on a local disk. Less writing.'],
+ ['No waiting for whole stages','Job 2 waits until every task of job 1 is done.','An operator starts as soon as its input is ready.'],
+ ['Reused processes','Each task starts a fresh Java process (a JVM), which takes time.','Running processes are reused for new operators, cutting startup time.']];
+function FIG_PIPE(){
+  const box=(x,y,w,t,c)=>rr(x,y,w,28,COLB[c],COL[c],7)+tx(x+w/2,y+18,t,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  const mk=(k,x,y)=>'<g class="bx-mk" data-k="'+k+'" role="button" aria-label="Spot '+(k+1)+'"><circle cx="'+x+'" cy="'+y+'" r="12" style="fill:var(--pri);stroke:var(--card);stroke-width:2"/>'+tx(x,y+4.5,String(k+1),'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--card)')+'</g>';
+  return '<svg viewBox="0 0 320 200" role="img" aria-label="Two MapReduce jobs. Job 1 maps, sorts and reduces, then writes a file that is copied to several machines. A scheduler waits for all of job 1, then job 2 maps, sorts and reduces, starting a new Java process per task. Six numbered spots mark the costs.">'+AR('bxAP')+
+   tx(4,12,'Job 1','font-size:11px;font-weight:700;fill:var(--muted)')+rr(2,16,206,44,'none','var(--line2)',10,';stroke-dasharray:4 3')+
+   box(10,24,56,'Map',0)+line('M68 38 L76 38','','bxAP')+box(78,24,56,'Sort',0)+line('M136 38 L144 38','','bxAP')+box(146,24,56,'Reduce',0)+
+   line('M204 38 L240 38','stroke:var(--muted);stroke-width:1.8;stroke-dasharray:4 3','bxAP')+dfs(246,27)+tx(265,74,'filesystem','font-size:11px;text-anchor:middle;fill:var(--muted)')+
+   line('M265 80 L265 92 L44 92 L44 122','','bxAP')+
+   '<line x1="2" y1="104" x2="318" y2="104" style="stroke:var(--no);stroke-width:1.8;stroke-dasharray:5 4"/>'+tx(316,118,'wait for all of job 1','font-size:11px;text-anchor:end;fill:var(--no)')+
+   tx(4,140,'Job 2','font-size:11px;font-weight:700;fill:var(--muted)')+rr(2,126+18,316,44,'none','var(--line2)',10,';stroke-dasharray:4 3')+
+   box(10,152,72,'Map',1)+line('M84 166 L96 166','','bxAP')+box(98,152,72,'Sort',1)+line('M172 166 L184 166','','bxAP')+box(186,152,72,'Reduce',1)+
+   rr(264,154,48,24,'var(--soft)','var(--line2)',12)+tx(288,170,'JVM','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--muted)')+
+   mk(0,164,148)+mk(1,76,148)+mk(2,222,26)+mk(3,300,20)+mk(4,140,104)+mk(5,300,188)+'</svg>';}
+
 Course.lesson({
   id:'0027', title:'Beyond MapReduce', minutes:20, icon:'cycle',
-  goals:['Explain what writing every intermediate result to disk costs, and how dataflow engines avoid it','Make a batch job safe to recompute by keeping its operators deterministic','Choose between a Pregel-style graph job and a single machine'],
+  goals:['See why waiting for whole stages and writing every in-between result slows MapReduce workflows, and how dataflow engines avoid it','Keep a batch job safe to recompute by making its operators deterministic','Choose between a Pregel-style graph job and a single machine'],
   parts:['Intermediate state','Dataflow engines','Graphs','High-level APIs'],
   read:'Read “Beyond MapReduce” and the summary at the end of chapter 10 for the full comparison of execution engines.',
   glossary:{
     materialize:'Materialization: computing a result eagerly and writing it out (for example to files), instead of computing it on demand or streaming it straight to the next step.',
     dataflow:'Dataflow engine: a batch engine such as Spark, Tez or Flink that runs a whole workflow as one job, passing data between flexible processing steps called operators.',
     deterministic:'Deterministic: given the same input, it always produces exactly the same output. Random numbers, clocks and outside lookups break this.',
-    pregel:'Pregel model (bulk synchronous parallel): a way to process a whole graph in rounds. In each round every vertex reads the messages sent to it, updates its own state and sends messages to other vertices.'
+    pregel:'Pregel model (bulk synchronous parallel): a way to process a whole graph in rounds. In each round every vertex reads the messages sent to it, updates its own state and sends messages to other vertices.',
+    straggler:'Straggler: a task that takes much longer than the others in its stage, for example because of skew or a busy machine.'
   },
   cheatsheet:[
-    'MapReduce <b>materializes</b> every intermediate result to the distributed filesystem: each job waits for all of the previous one, extra map steps repeat work, and temporary files get replicated.',
-    'Keep outputs that many teams reuse on the filesystem. Data that only passes from one step to the next is <b>intermediate state</b>.',
-    '<b>Dataflow engines</b> (Spark, Tez, Flink) run a whole workflow as one job of operators, connected by repartition-and-sort, partition-only or broadcast, and sort only where needed.',
-    'They recover by <b>recomputing</b> lost data from earlier stages, so make operators <b>deterministic</b>: no unseeded randomness, clock reads, outside lookups or hash-table ordering.',
-    'Sorting must see its whole input; most other steps can be <b>pipelined</b>. Inputs and final outputs still live on the distributed filesystem.',
-    '<b>Pregel</b>: each vertex keeps its state and exchanges messages in fixed rounds; checkpoints make it fault-tolerant. If the graph fits on one machine, one machine is likely faster.',
-    'High-level APIs add <b>declarative</b> joins and filters, so optimizers choose join algorithms and read only the needed columns, while still allowing arbitrary code.',
+    'MapReduce <b>materializes</b> every in-between result on the distributed filesystem: each job waits for the slowest task of the one before, extra map steps repeat work, and temporary files get copied to several machines.',
+    'Publish outputs that many teams reuse by name. Data that only passes from one step to the next is <b>intermediate state</b>.',
+    '<b>Dataflow engines</b> (Spark, Tez, Flink) run a whole workflow as one job of operators, wired by repartition-and-sort, partition-only or broadcast, and sort only where needed.',
+    'They recover by <b>recomputing</b> lost parts from earlier data, so make operators <b>deterministic</b>: no unseeded randomness, clock reads, outside lookups or hash-table ordering.',
+    'A sort must see its whole input before it outputs anything; most other steps can be <b>pipelined</b>. Inputs and final outputs still live on the distributed filesystem.',
+    '<b>Pregel</b>: each vertex keeps its state and swaps messages in fixed rounds; checkpoints at round ends make it fault-tolerant. If the graph fits on one machine, one machine is likely faster.',
+    'High-level APIs add <b>declarative</b> joins and filters, so optimizers pick join algorithms and read only the needed columns, while still allowing arbitrary code.',
     'Batch input is <b>bounded</b>, so a job finishes. Streams (next chapter) never do.'
   ],
   steps:[
 /* ---------- PART 1: INTERMEDIATE STATE ---------- */
-{part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Linh’s nightly workflow chains 12 MapReduce jobs. Most in-between results are read once, by the next job, and never again. Is it worth storing each one as three copies on the distributed filesystem?</h1>');
-  L.mc(L.card,['Yes, every result deserves full protection','Probably not: they are only passing through'],1,
-   'Data that only passes from one step to the next hardly needs three durable copies. This lesson is about engines that skip that cost.',
-   'Three durable copies make sense for data people rely on. For results that only pass from one step to the next, it’s mostly overhead, and this lesson shows engines that skip it.');}},
 {part:0,src:'Chapter 10 · Beyond MapReduce',run(L){
-  L.h(L.kick('learn','Beyond MapReduce')+'<h1 class="q">Easy to understand, hard to use, sometimes slow</h1>'+
-   L.prose('MapReduce is just one of many ways to program distributed systems. The book spends time on it because it is a clear, simple abstraction on top of a distributed filesystem. Simple to <i>understand</i>, that is, not simple to <i>use</i>: with the raw API you would write every join algorithm yourself.')+
-   L.prose('Higher-level tools such as Pig, Hive, Cascading and Crunch were built on top to make common batch tasks much easier. But some problems sit in the MapReduce <b>execution model itself</b>, and another layer of abstraction can’t fix them.')+
-   L.lanes([['shield','Its strength','Very robust: it can process almost any amount of data on an unreliable, shared cluster where tasks are often killed, and still finish.',2],
-            ['clock','Its cost','Other tools are sometimes <b>orders of magnitude</b> faster for some kinds of processing.',4]])+
-   '<p class="small" style="margin-top:10px">Chapter 11’s stream processing can be seen as one more way to speed batch processing up.</p>');
+  L.h(L.kick('learn','Beyond MapReduce')+'<h1 class="q">Easy to understand, hard to use, sometimes slow</h1>'+CSS+FIG_LAYERS()+
+   '<p class="bx-cap">Hive and Pig made MapReduce easier to write, but some slowness lives in how it <b>runs</b> jobs. It is very robust, yet for some work other engines are much faster.</p>'+
+   '<p class="bx-foot">Follow Linh’s nightly Otterpost pipeline as it moves off MapReduce.</p>');
   L.done();}},
 {part:0,src:'Chapter 10 · Materialization of Intermediate State',run(L){
-  L.h(L.kick('learn','Materialization of intermediate state')+'<h1 class="q">Every MapReduce job writes everything out</h1>'+
-   L.prose('MapReduce jobs only meet through directories: job 2 reads the directory job 1 wrote, once a scheduler sees job 1 is done. That suits a dataset you want to <b>publish</b> for many teams to reuse by name. But often an output is only ever read by one next job of the same team. Then those files are just <b>intermediate state</b>.')+
-   L.prose('Writing intermediate state out to files is called '+L.g('materialize','materialization')+'. Unix pipes don’t do this: they stream output to the next command through a small memory buffer. Fully materializing has three downsides:')+
-   L.list([['clock','Waiting for stragglers','A job can only start when <b>every</b> task of the job before it is done. Skew or busy machines leave a few slow tasks that hold everything up.'],
-     ['cycle','Redundant mappers','Mappers often just read back the file a reducer wrote and prepare it for the next sort. That work could have been part of the reducer.'],
-     ['layers','Over-protected temp files','Files on the distributed filesystem are replicated to several machines, which is overkill for temporary data.']],4));
+  L.h(L.kick('learn','Materialization of intermediate state')+'<h1 class="q">Jobs only meet through files</h1>'+CSS+FIG_MAT()+
+   '<p class="bx-cap">Writing results out to files is '+L.g('materialize','materialization')+': worth it for data many teams reuse. A file read once, by the next job, is just <b>intermediate state</b>. Unix pipes stream instead.</p>'+
+   MORE('How much of it?','Big workflows, such as recommendation systems built from 50 to 100 MapReduce jobs, create a lot of intermediate state.'));
   L.done();}},
-{part:0,src:'Chapter 10 · Materialization of Intermediate State',pts:1,
- solve:async L=>{const c=L.$('#md').children;c[0].click();c[1].click();},
+{part:0,src:'Chapter 10 · Materialization of Intermediate State',run(L){
+  L.h(L.kick('learn','Three costs of writing everything out')+'<h1 class="q">Waiting, repeating, copying</h1>'+CSS+FIG_DOWN()+
+   '<p class="bx-cap">One '+L.g('straggler','straggler')+' holds up the next job. Mappers often just read a file back. And temporary files get copied to several machines: overkill.</p>');
+  L.done();}},
+{part:0,src:'Chapter 10 · Materialization of Intermediate State',
+ solve:async L=>{const s=L.$('#f4-s');s.value=34;s.dispatchEvent(new Event('input'));},
  run(L){
-  const M=[['Write to files between jobs',[[0,3],[0,3],[0,3],[0,7]],[[7,3],[7,3],[7,3],[7,3]],'Step 2 can’t start until the straggler finishes: <b>10 time units</b>.'],
-           ['Pipe between operators',[[0,3],[0,3],[0,3],[0,7]],[[1,3],[1,3],[1,3],[1,7]],'Step 2 consumes output as it appears: <b>8 time units</b>.']];
-  const seen=new Set();
-  const bar=(s,w,c,t)=>'<div style="position:relative;height:20px;margin:3px 0;background:var(--soft2);border-radius:6px"><div style="position:absolute;left:'+s*10+'%;width:'+w*10+'%;top:0;bottom:0;background:'+c+';border-radius:6px;font-size:11px;color:#fff;padding-left:6px;line-height:20px;overflow:hidden;white-space:nowrap">'+t+'</div></div>';
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Step 1 cleans scans in four tasks, and one is a straggler. Step 2 converts the cleaned scans. Try both ways of connecting them.</h1><div id="md"></div><div id="tl" style="margin:10px 0"></div><p class="small" id="tt">Pick a way to connect the steps.</p><div id="mq"></div>');
-  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=m[0];
-    b.onclick=()=>{[...L.$('#md').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#tl').innerHTML='<div class="small"><b>Step 1</b></div>'+m[1].map((x,k)=>bar(x[0],x[1],'var(--h2)',k===3?'straggler':'task '+(k+1))).join('')+'<div class="small" style="margin-top:6px"><b>Step 2</b></div>'+m[2].map((x,k)=>bar(x[0],x[1],'var(--h3)','task '+(k+1))).join('');
-      L.$('#tt').innerHTML=m[3];
-      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Even with a faster engine, which of Linh’s results should still be written to the distributed filesystem?</h2>';
-        L.mc(q,['The sorted pairs passed from job 4 to job 5 only','The cleaned scans that three teams read each morning','Every result, so that nothing is ever recomputed'],1,
-         'A dataset other teams read by name is worth publishing to a well-known place. Results that only pass between two steps are intermediate state.',
-         'Writing everything out is exactly the cost we want to avoid, and results passed only between two steps are intermediate state. The cleaned scans are read by three teams, so publish them.');}};
-    L.$('#md').appendChild(b);});}},
+  L.h(L.kick('ex','Explore · one slow task')+'<h1 class="q">Linh runs three MapReduce jobs. Drag the slowest Clean task to 30 min or more. When can Convert start?</h1>'+CSS+'<div id="f4"></div>');
+  let fired=false;
+  const F=Flow(L,L.$('#f4'),{id:'f4',eng:'mr',stragCtl:true,xMax:70,
+    read:(res,st)=>{const r=res.mr;return '<b>Convert starts at min '+Math.round(r.startAt[1])+'</b> · whole workflow done at min '+Math.round(r.fin)+
+      '<br><span class="sm">Three Clean tasks finish at min 10, then wait. Shaded bands: copying the file to several machines, then starting the next job. Times are illustrative.</span>';},
+    on:e=>{if(e.type==='strag'&&e.v>=30&&!fired){fired=true;
+      L.sheet('info','One task held up the whole workflow','Three of the four Clean tasks were done at minute 10. Convert still had to wait for the '+L.g('straggler','straggler')+', and Sort & count waited for all of Convert. Skew or a busy machine is enough to cause this.');L.done();}}});
+  }},
+{part:0,src:'Chapter 10 · Materialization of Intermediate State',pts:4,run(L){
+  L.h(L.kick('try','Publish or pass along?')+'<h1 class="q">Which of Linh’s results deserve a durable, well-known place on the distributed filesystem?</h1><div id="bk"></div>');
+  L.buckets(L.$('#bk'),['Publish it','Intermediate state'],[
+   ['Cleaned scans that three teams read each morning',0,'Other teams read it by name, so publish it to a well-known place.'],
+   ['Sorted pairs that job 4 hands only to job 5',1,'Read once, by the next job of the same team: intermediate state.'],
+   ['The on-time report managers open every day',0,'People rely on it and find it by name: publish it.'],
+   ['Per-courier totals that only Linh’s next job reads',1,'They only pass from one step to the next: intermediate state.']],
+   'Publish what others reuse by name. The rest is intermediate state, and that is what dataflow engines stop writing out.');}},
 
 /* ---------- PART 2: DATAFLOW ENGINES ---------- */
 {part:1,src:'Chapter 10 · Dataflow engines',run(L){
-  L.h(L.kick('learn','Dataflow engines')+'<h1 class="q">One job for the whole workflow</h1>'+
-   L.prose('Spark, Tez and Flink are the best-known engines built to fix these problems. They differ in design, but share one idea: they treat an <b>entire workflow as one job</b> instead of a chain of separate jobs. Because they model the flow of data through the stages, they are called '+L.g('dataflow','dataflow engines')+'.')+
-   L.prose('Like MapReduce, they call your function on one record at a time, split work by partitioning the input and copy output over the network. Unlike MapReduce, the functions, called <b>operators</b>, don’t have to alternate map and reduce. You can connect one operator to the next in three ways:')+
-   L.flow([['list','Repartition and sort','By key, like MapReduce’s shuffle. For sort-merge joins and grouping.','',1],['layers','Partition, no sort','Saves work for partitioned hash joins, where order doesn’t matter.','',2],['box','Broadcast','Send the same output to every partition. For broadcast hash joins.','',3]],false));
+  L.h(L.kick('learn','Dataflow engines')+'<h1 class="q">One job for the whole workflow</h1>'+CSS+FIG_DAG()+
+   '<p class="bx-cap">'+L.g('dataflow','Dataflow engines')+' (Spark, Tez, Flink) run the <b>whole workflow as one job</b>. Operators needn’t alternate map and reduce; they wire up in three ways, one per join type.</p>'+
+   MORE('Why “dataflow”?','They model the flow of data through the stages. Like MapReduce, they still call your function one record at a time and split work by partitioning. Each wiring suits a join from the last lesson.'));
   L.done();}},
-{part:1,src:'Chapter 10 · Dataflow engines',run(L){
-  L.h(L.kick('learn','What dataflow engines gain')+'<h1 class="q">Six advantages over MapReduce. Tap each one.</h1>');
-  L.flips(L.card,[
-   ['Sort only where needed','Expensive sorting happens only where a step needs it, not between every map and reduce by default.'],
-   ['No pointless map tasks','A mapper’s work can often be folded into the reduce operator before it, since a mapper doesn’t change the partitioning.'],
-   ['Smarter placement','The scheduler sees every join and dependency, so it can put a consumer on the same machine as its producer and pass data through memory.'],
-   ['Lighter intermediate state','Data between operators can stay in memory or on local disk, not written and replicated on the distributed filesystem.'],
-   ['No waiting for whole stages','An operator can start as soon as its input is ready.'],
-   ['Reused processes','Existing Java processes can run new operators, avoiding MapReduce’s startup cost of a new process per task.']],
-   'The same computations usually run much faster. Workflows written in Pig, Hive or Cascading can switch from MapReduce to Tez or Spark with a configuration change, no code changes.');}},
-{part:1,src:'Chapter 10 · Dataflow engines',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In Linh’s new workflow, one operator joins every scan with Otterpost’s small table of hubs. How should the engine deliver the hub table to that operator?</h1>');
-  L.mc(L.card,['Repartition and sort it by hub name','Send the same copy to every partition','Partition it by hub name, without sorting'],1,
-   'That is a broadcast hash join: every partition of the scans gets the whole small hub table and builds a hash table from it.',
-   'The hub table is tiny, so there is no need to split or sort it. Broadcasting the same copy to every partition of the scans gives a broadcast hash join.');}},
-{part:1,src:'Chapter 10 · Dataflow engines',pts:4,run(L){
+{part:1,src:'Chapter 10 · Dataflow engines',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'How should these operators be connected?',['Repartition and sort','Partition, no sort','Broadcast'],[
+   ['Join every scan with Otterpost’s small table of hubs.',2,'The hub table is tiny: send the same copy to every partition of the scans. That is a broadcast hash join.'],
    ['Group each courier’s scans, in time order, to rebuild their route.',0,'Grouping with an order inside each group needs records repartitioned by key and sorted.'],
-   ['A partitioned hash join of parcels and delivery attempts by parcel ID.',1,'Partitioning matters, but the hash table scrambles the order anyway, so sorting would be wasted.'],
+   ['A partitioned hash join of parcels and delivery attempts by parcel ID.',1,'Partitioning matters, but building the hash table scrambles the order anyway, so sorting would be wasted.'],
    ['Join every GPS ping with the small table of delivery zones.',2,'A small table sent whole to every partition: a broadcast hash join.'],
-   ['A sort-merge join of parcels with merchant records.',0,'Sort-merge joins need both sides partitioned and sorted by the key, as in MapReduce’s shuffle.']]);}},
-{part:1,src:'Chapter 10 · Fault tolerance',run(L){
-  L.h(L.kick('learn','Fault tolerance')+'<h1 class="q">No durable copy, so recompute instead</h1>'+
-   L.prose('MapReduce’s materialized files make recovery easy: a failed task restarts elsewhere and reads the same input again. Spark, Flink and Tez don’t write intermediate state to the distributed filesystem. If a machine dies and its intermediate data is lost, they <b>recompute</b> it from what is still available: an earlier stage if possible, otherwise the original input.')+
-   L.prose('To do that, the framework tracks how each piece of data was computed: which input partitions and which operators. Spark tracks this ancestry with its resilient distributed dataset (RDD) abstraction; Flink checkpoints operator state.')+
-   L.note('<b>Determinism matters.</b> If lost data has already been sent downstream and the recomputed version comes out different, the downstream operators face contradictions. The usual fix is to kill and rerun them too. Better to make operators '+L.g('deterministic','deterministic')+'.','alert')+
-   L.prose('Nondeterminism creeps in easily: iterating over a hash table in no guaranteed order, using random numbers (use a fixed seed instead), reading the system clock, or calling outside data sources. And recomputing isn’t always best: if the intermediate data is much smaller than the source, or very CPU-heavy to compute, writing it out is cheaper.'));
-  L.done();}},
-{part:1,src:'Chapter 10 · Fault tolerance',pts:1,
- solve:async L=>{const c=L.$('#sd').children;c[0].click();L.$('#cr').click();c[1].click();L.$('#cr').click();},
+   ['A sort-merge join of parcels with merchant records.',0,'Sort-merge joins need both sides partitioned and sorted by the key, like MapReduce’s shuffle.']]);}},
+{part:1,src:'Chapter 10 · Dataflow engines',
+ solve:async L=>{for(let k=0;k<6;k++)L.$('#tp'+k).click();},
  run(L){
-  let mode=null;const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh’s job samples 1% of GPS pings, then averages speed per zone. Zone W4’s average, 14.2 km/h, has already gone downstream. Then a machine dies. Try it both ways.</h1>'+
-   '<div style="display:flex;flex-wrap:wrap;align-items:center;gap:4px"><span class="chip static" style="margin:0">Read pings</span>'+L.ic('arrow')+'<span class="chip static" style="margin:0">Sample 1% at random</span>'+L.ic('arrow')+'<span class="chip static" style="margin:0">Average speed per zone</span></div>'+
-   '<div id="sd" style="margin-top:12px"></div><button class="btn pri" id="cr" style="margin-top:10px">'+L.ic('alert')+'Machine 3 dies</button><div id="cres"></div><div id="cq"></div>');
-  ['Random sample, no fixed seed','Random sample, fixed seed'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
-    b.onclick=()=>{[...L.$('#sd').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');mode=j;L.$('#cres').innerHTML='';};L.$('#sd').appendChild(b);});
-  L.$('#cr').onclick=()=>{const r=L.$('#cres');r.innerHTML='';
-    if(mode===null){L.fb(r,'Pick a sampling setting first.','info');return;}
-    seen.add(mode);
-    if(mode===0)L.fb(r,'<b>Recomputed Zone W4: 13.6 km/h.</b> A different random sample was drawn. Downstream already used 14.2, so it can’t reconcile the two: the downstream operators must be killed and rerun too.','no');
-    else L.fb(r,'<b>Recomputed Zone W4: 14.2 km/h.</b> The same seed drew the same sample. Only the lost partition was recomputed; nothing downstream had to change.','ok');
-    if(seen.size===2&&!L.$('#cq').innerHTML){const q=L.$('#cq');q.innerHTML='<h2 class="sub">Why was recovery cheap with the fixed seed?</h2>';
-      L.mc(q,['The machine no longer lost its state','The sample no longer needed recomputing','The recomputed data matched what was sent'],2,
-       'Deterministic operators recompute exactly the same data, so the rest of the job can carry on untouched.',
-       'The machine still died and the sample was still recomputed. What changed is that the recomputed data came out identical, so downstream didn’t need to be rerun.');}};}},
+  L.h(L.kick('ex','Tap the costs')+'<h1 class="q">Six spots in this MapReduce pipeline waste time. Tap each number to see what a dataflow engine does instead.</h1>'+CSS+'<div class="bx-fig" id="pp">'+FIG_PIPE()+'</div>'+
+   '<div class="bx-tap" id="tps">'+SIX.map((_,k)=>'<button class="chip" id="tp'+k+'" aria-label="Spot '+(k+1)+'">'+(k+1)+'</button>').join('')+'</div><div class="bx-read" id="tpr">Tap a number on the picture or below.</div>');
+  const seen=new Set();
+  const show=k=>{seen.add(k);L.$('#tp'+k).classList.add('seen');
+    const c=L.$('#pp').querySelector('g[data-k="'+k+'"] circle');if(c)c.style.fill='var(--ok-strong)';
+    L.$('#tpr').innerHTML='<b>'+(k+1)+' · '+SIX[k][0]+'</b><br><span class="bx-no">MapReduce:</span> '+SIX[k][1]+'<br><span class="bx-ok">Dataflow:</span> '+SIX[k][2]+'<br><span class="sm">'+seen.size+' of 6 found</span>';
+    if(seen.size===6){L.sheet('info','Same work, usually much faster','Operators generalize map and reduce, so the same code runs on either engine: workflows in Pig, Hive or Cascading can switch between MapReduce, Tez and Spark by changing settings. Tez is a thin library; Spark and Flink are big frameworks with their own network layer and scheduler.');L.done();}};
+  SIX.forEach((_,k)=>{L.$('#tp'+k).onclick=()=>show(k);});
+  L.$('#pp').querySelectorAll('g[data-k]').forEach(g=>{g.addEventListener('click',()=>show(+g.dataset.k));});
+  }},
+{part:1,src:'Chapter 10 · Dataflow engines',pts:1,
+ solve:async L=>{L.$('#pk0').click();},
+ run(L){
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The slowest Clean task takes 30 minutes. On a dataflow engine, when does Convert start?</h1>'+CSS+
+   '<div class="bx-pick" id="pk"><button class="chip" id="pk0">About minute 1, on the first cleaned records</button><button class="chip" id="pk1">Minute 34, after the slow task and the file write</button><button class="chip" id="pk2">Minute 30, the moment the slow task ends</button></div><div id="f9"></div>');
+  let F=null,done=false;
+  [0,1,2].forEach(j=>{L.$('#pk'+j).onclick=async()=>{if(done)return;done=true;
+    L.$('#pk'+j).classList.add('sel');[0,1,2].forEach(q=>{L.$('#pk'+q).disabled=true;});
+    L.award(j===0);L.$('#pk0').classList.add('ok');if(j)L.$('#pk'+j).classList.add('no');
+    F=Flow(L,L.$('#f9'),{id:'f9',eng:'mr',strag:30,engCtl:true,xMax:60});
+    L.done();
+    await F.play(900);if(!L.$('#f9'))return;await F.set({eng:'df'},true);if(!L.$('#f9'))return;
+    const r=F.res();
+    L.sheet(j===0?'ok':'no',j===0?'Right: records flow as soon as they exist':'Not on a dataflow engine',
+      'MapReduce (first run): Convert waits for the straggler <b>and</b> the write, starting at min '+Math.round(r.mr.startAt[1])+'. Dataflow (now showing): Convert starts at min '+Math.round(r.df.startAt[1])+', and only the part behind the slow task lags. Done at min '+Math.round(r.df.fin)+' instead of '+Math.round(r.mr.fin)+'. Flip the engines to compare.');};});
+  }},
+{part:1,src:'Chapter 10 · Dataflow engines',
+ solve:async L=>{for(const k of [0,1,2])L.$('#ep'+k).click();},
+ run(L){
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does the dataflow engine’s advantage grow, and where does it shrink? Try each case on both engines.</h1>'+CSS+
+   '<div class="bx-ctl" id="eps"><button class="chip" id="ep0">One straggler</button><button class="chip" id="ep1">A sort mid-way</button><button class="chip" id="ep2">12 jobs</button></div><div id="f10"></div>');
+  const P=[{stages:WF,strag:40,xMax:null},
+    {stages:[{n:'Clean',k:'s',d:10},{n:'Sort',k:'b',d:8},{n:'Routes',k:'s',d:6}],strag:16,xMax:null},
+    {stages:[...Array(12)].map((_,k)=>({n:String(k+1),k:(k===5||k===11)?'b':'s',d:3})),strag:0,xMax:null}];
+  const C=[
+    ['A slow Clean task (40 min)','<b>MapReduce:</b> everything downstream waits for it. <b>Dataflow:</b> only the one part behind it lags, and the last step, a sort, waits for that part. The gap is big.'],
+    ['Convert is now a sort','A sort must read <b>all</b> its input before it outputs anything, so even the dataflow engine waits for the slow Clean task here. What it still saves: no replicated file written between steps.'],
+    ['12 jobs in a row','Every MapReduce boundary adds a write and a new job, so long chains pay again and again. The dataflow engine pipelines all 12 and only pauses at its two sorts.']];
+  const tried=new Set();let cur=-1;
+  const F=Flow(L,L.$('#f10'),{id:'f10',eng:'mr',engCtl:true,
+    read:res=>(cur<0?'<b>Baseline</b> · ':'<b>'+C[cur][0]+'</b> · ')+'MapReduce '+Math.round(res.mr.fin)+' min, dataflow '+Math.round(res.df.fin)+' min'+
+      '<br>'+(cur<0?'Pick a case above, then flip the engine.':C[cur][1])+'<br><span class="sm">Times are illustrative.</span>'});
+  [0,1,2].forEach(k=>{L.$('#ep'+k).onclick=()=>{cur=k;tried.add(k);[0,1,2].forEach(q=>L.$('#ep'+q).classList.toggle('sel',q===k));
+    F.set(P[k]);
+    if(tried.size===3){L.sheet('info','The limits of the speed-up','Pipelining helps most where many steps can stream. Sorts are hard stops. And none of this changes the input and final output: those are still files on the distributed filesystem.');L.done();}};});
+  }},
+{part:1,src:'Chapter 10 · Fault tolerance',run(L){
+  L.h(L.kick('learn','Fault tolerance')+'<h1 class="q">No durable copy, so recompute</h1>'+CSS+FIG_LINEAGE()+
+   '<p class="bx-cap">In-between data isn’t on the filesystem, so when a machine dies the engine <b>recomputes</b> what it held. It must know how each part was made.</p>'+
+   MORE('When writing it out wins','MapReduce simply reruns a failed task from its files. For a dataflow engine, recomputing isn’t always best: if the in-between data is much smaller than the source, or very CPU-heavy to compute, writing it to files is likely cheaper.'));
+  L.done();}},
+{part:1,src:'Chapter 10 · Fault tolerance',
+ solve:async L=>{L.$('#sd0').click();L.$('#cr').click();await L.sleep(50);L.$('#sd1').click();await L.$('#cr').onclick();},
+ run(L){
+  L.h(L.kick('ex','Break it · a lost machine')+'<h1 class="q">Linh’s job samples 1% of GPS pings, then averages speed per zone. Crash machine 3 with each kind of sample.</h1>'+CSS+
+   '<div class="bx-ctl" id="sd"><button class="chip" id="sd0">Random each run</button><button class="chip" id="sd1">Fixed seed</button></div>'+
+   '<div class="bx-ctl"><button class="btn pri" id="cr">'+L.ic('alert')+'Machine 3 dies at min 6</button></div><div id="f12"></div>');
+  const STG=[{n:'Read',k:'s',d:6},{n:'Sample 1%',k:'s',d:8},{n:'Average per zone',k:'s',d:12,one:true}];
+  const CR={t:6,p:2,stages:[0,1],kill:2};
+  let det=null,ran=false;const seen=new Set();
+  const F=Flow(L,L.$('#f12'),{id:'f12',eng:'df',stages:STG,crash:CR,xMax:24,playCtl:false,
+    read:(res,st,T)=>{
+      if(!st.crashOn)return '<b>No crash yet.</b> Done at min '+Math.round(res.df.fin)+'.<br><span class="sm">Part 3 of Read and Sample runs on machine 3. Average per zone runs elsewhere and already receives sampled rows as they come. Times and speeds are illustrative.</span>';
+      if(T<CR.t)return '<b>Running…</b>';
+      return st.det?'<span class="bx-ok">Fixed seed:</span> the recomputed sample is the <b>same rows</b> the average already received. No contradiction: zone W4 stays 14.2 km/h. Only part 3 of Read and Sample reran (dashed purple, back to input block B3).<br><b>Done at min '+Math.round(res.df.fin)+'</b> (no crash: '+Math.round(res.dfPlain.fin)+')'
+        :'<span class="bx-no">Random sample:</span> the rerun draws <b>different rows</b>. The average already holds some of the old ones: the old rows put zone W4 at 14.2 km/h, the new rows at 13.6. It can’t mix them, so it is killed and rerun: '+Math.round(res.df.lost*100)+'% of its work thrown away.<br><b>Done at min '+Math.round(res.df.fin)+'</b> (no crash: '+Math.round(res.dfPlain.fin)+')';}});
+  const pick=j=>{det=j===1;[0,1].forEach(q=>L.$('#sd'+q).classList.toggle('sel',q===j));F.set({det,crashOn:false});};
+  [0,1].forEach(j=>{L.$('#sd'+j).onclick=()=>pick(j);});
+  L.$('#cr').onclick=async()=>{if(det===null){L.$('#f12-rd').innerHTML='Pick a kind of sample first.';return;}
+    seen.add(det);const both=seen.size===2&&!ran;if(both)ran=true;await F.set({crashOn:true},true);
+    if(both&&L.$('#f12')){L.sheet('info','Determinism makes recovery cheap','If recomputed data can differ from what was already sent downstream, the downstream operators must be killed and rerun too. A '+L.g('deterministic','deterministic')+' operator (same input, same output) avoids that cascade. A fixed seed makes “random” repeatable.');L.done();}};
+  }},
 {part:1,src:'Chapter 10 · Fault tolerance',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Safe to recompute?',['Deterministic','Not deterministic'],[
@@ -138,87 +585,94 @@ Course.lesson({
    ['An operator picks a random 1% sample using a fixed seed.',0,'A fixed seed produces the same pseudorandom numbers each run.'],
    ['An operator loops over a hash table and outputs the first entry it finds.',1,'Many languages don’t guarantee the order of a hash table, so the “first” entry can differ.']]);}},
 {part:1,src:'Chapter 10 · Discussion of materialization',run(L){
-  L.h(L.kick('learn','Pipes, not temp files')+'<h1 class="q">Back to the Unix analogy</h1>'+
-   L.lanes([['box','MapReduce','Like writing each command’s output to a temporary file before the next command starts.',1],
-            ['arrow','Dataflow engines','Much more like Unix pipes. Flink especially is built around <b>pipelined execution</b>: passing output on bit by bit, without waiting for the input to be complete.',2]])+
-   L.note('<b>Sorting is the exception.</b> A sort must read its entire input before it can output anything: the very last record might have the lowest key and need to come out first. Any operator that sorts must hold state for a while. Most other steps can be pipelined.','list')+
-   L.prose('When the job finishes, its output still has to go somewhere durable, usually the distributed filesystem again. So inputs and final outputs are still materialized files, inputs stay immutable and outputs are replaced. What you save is writing all the intermediate state.'));
+  L.h(L.kick('learn','Pipes, not temp files')+'<h1 class="q">Most steps stream. A sort can’t.</h1>'+CSS+FIG_SORT()+
+   '<p class="bx-cap">Dataflow engines pass records on like Unix pipes: <b>pipelined execution</b>. A sort can’t, because the last record in might belong first.</p>'+
+   MORE('What you save, and what stays','MapReduce is like writing each command’s output to a temp file; Flink especially is built around pipelining. You save writing the intermediate state. Inputs stay unchanged, and the final output still replaces a whole dataset on the filesystem.'));
   L.done();}},
-{part:1,src:'Chapter 10 · Discussion of materialization',pts:1,run(L){
-  L.h(L.kick('pr','Spot the blocker')+'<h1 class="q">Which of these operators must read its entire input before it can produce its first output?</h1>');
-  L.mc(L.card,['Drop scans that have no hub name','Convert each timestamp to local time','Sort all scans by tracking code'],2,
-   'The last scan read might have the smallest tracking code, so the sort can’t emit anything until it has seen everything.',
-   'Dropping or converting records works one record at a time, so it can pass results on immediately. Only the sort has to wait for the whole input.');}},
+{part:1,src:'Chapter 10 · Discussion of materialization',pts:1,
+ solve:async L=>{[1,2,4].forEach(k=>L.$('#op'+k).click());L.$('#ck').click();},
+ run(L){
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Linh’s route job starts with every step waiting for all its input. Let each step stream if it can, for the earliest correct finish.</h1>'+CSS+
+   '<div class="bx-ops" id="ops"></div><div id="f15"></div><button class="btn pri" id="ck">'+L.ic('check')+'Check</button>');
+  const OPS=[{n:'Read scans',sh:'Read',k:'s',d:6},{n:'Drop bad scans',sh:'Drop',k:'b',d:4},{n:'Add hub names',sh:'Hubs',k:'b',d:4},{n:'Sort by courier and time',sh:'Sort',k:'b',d:6},{n:'Build routes',sh:'Routes',k:'b',d:5}];
+  const best=simFlow(OPS.map((o,k)=>Object.assign({},o,{k:k===3?'b':'s'})),'df',0,null,true).fin;
+  const F=Flow(L,L.$('#f15'),{id:'f15',eng:'df',stages:OPS.map(o=>Object.assign({},o)),xMax:40,
+    read:(res,st)=>'<b>Done at min '+Math.round(res.df.fin)+'</b><br><span class="sm">Each step: amber = waits for all input, teal = streams. Times are illustrative.</span>'});
+  const box=L.$('#ops');
+  OPS.forEach((o,k)=>{if(!k)return;box.insertAdjacentHTML('beforeend','<div class="bx-op"><b>'+o.n+'</b><button class="chip wait" id="op'+k+'" aria-pressed="false">waits for all</button></div>');
+    L.$('#op'+k).onclick=function(){o.k=o.k==='b'?'s':'b';this.className='chip '+(o.k==='b'?'wait':'strm');this.textContent=o.k==='b'?'waits for all':'streams';this.setAttribute('aria-pressed',o.k==='s');
+      F.set({stages:OPS.map(x=>Object.assign({},x))});};});
+  let answered=false;
+  L.$('#ck').onclick=()=>{if(answered)return;answered=true;
+    const sortStreams=OPS[3].k==='s',extra=[1,2,4].filter(k=>OPS[k].k==='b').length,ok=!sortStreams&&extra===0;
+    L.award(ok);
+    if(ok)L.sheet('ok','Earliest correct finish: min '+Math.round(best),'Dropping, adding hub names (a broadcast join with a small table) and building routes from sorted records all work one record at a time, so they stream. Only the sort must wait.');
+    else if(sortStreams)L.sheet('no','A sort can’t stream','The last scan read might belong first in the order, so the sort must hold everything before it outputs. The best plan streams the other three steps and keeps the sort waiting: done at min '+Math.round(best)+'.');
+    else L.sheet('no','Correct, but slower than needed',extra+' step'+(extra>1?'s':'')+' still wait'+(extra>1?'':'s')+' for all input although '+(extra>1?'they work':'it works')+' one record at a time. Streaming them too, with only the sort waiting, finishes at min '+Math.round(best)+'.');
+    L.done();};
+  }},
 
 /* ---------- PART 3: GRAPHS ---------- */
 {part:2,src:'Chapter 10 · Graphs and Iterative Processing',run(L){
-  L.h(L.kick('learn','Graphs in batch jobs')+'<h1 class="q">Processing a whole graph, round after round</h1>'+
-   L.prose('Chapter 2 used graphs for quick queries that find a few matching vertices. Batch jobs instead analyse an <b>entire</b> graph, often for recommendations or ranking. The famous example is PageRank, which estimates a web page’s popularity from the pages that link to it.')+
-   L.note('Naming trap: dataflow engines arrange their <i>operators</i> as a directed acyclic graph (DAG). That is not graph processing. In graph processing, the <i>data itself</i> is a graph.','alert')+
-   L.prose('Many graph algorithms follow one edge at a time, passing information from a vertex to its neighbours, and repeat until done: no edges left to follow, or the numbers stop changing. Plain MapReduce makes just one pass, so this is run as a loop: a scheduler runs one batch step, checks whether the algorithm has finished, and if not, runs another.')+
-   L.prose('That works, but it is very inefficient: every round reads the whole graph and writes a whole new copy, even if only a small part changed. Otterpost’s case: Linh wants the travel time from Westport Central hub to every other hub in the hub network.'));
+  L.h(L.kick('learn','Graphs in batch jobs')+'<h1 class="q">Process the whole graph, round after round</h1>'+CSS+FIG_GRAPHLOOP()+
+   '<p class="bx-cap">Linh wants travel times from Westport Central to every hub. Like PageRank, this passes news along the roads, round after round. Plain MapReduce rereads the <b>whole</b> graph each round.</p>'+
+   MORE('Naming trap: two kinds of “graph”','Dataflow engines arrange their operators as a graph too (a DAG, a directed acyclic graph). That isn’t graph processing: here the <i>data itself</i> is the graph.'));
   L.done();}},
 {part:2,src:'Chapter 10 · The Pregel processing model',run(L){
-  L.h(L.kick('learn','The Pregel model')+'<h1 class="q">Vertices that send each other messages</h1>'+
-   L.prose('A popular optimization is the <b>bulk synchronous parallel</b> (BSP) model, also called the '+L.g('pregel','Pregel model')+' after the Google paper that made it known. Apache Giraph, Spark’s GraphX and Flink’s Gelly implement it.')+
-   L.list([['chat','Messages along edges','Recall that MapReduce mappers in effect send messages to a reducer. In Pregel, one vertex sends a message to another, usually along an edge of the graph.'],
-     ['cycle','One call per vertex per round','In each round, a function is called for every vertex with all the messages sent to it, much like a call to the reducer.'],
-     ['layers','State stays put','Unlike MapReduce, a vertex keeps its state in memory from one round to the next, so it only handles new messages. Where no messages arrive, no work is done.']],2)+
-   '<p class="small" style="margin-top:10px">It resembles the actor model, with each vertex as an actor. But vertex state and messages are fault-tolerant and durable, and communication happens in fixed rounds: each round delivers every message sent in the round before.</p>');
+  L.h(L.kick('learn','The Pregel model')+'<h1 class="q">Think like a vertex</h1>'+CSS+FIG_VERTEX()+
+   '<p class="bx-cap">In the '+L.g('pregel','Pregel model')+', each vertex <b>keeps its state</b> and handles only new messages. No messages, no work.</p>'+
+   MORE('Other names and relatives','Also called bulk synchronous parallel. Apache Giraph, Spark’s GraphX and Flink’s Gelly use it. A vertex gets every message sent to it, the way a reducer call gets every value for a key. It is like an actor, but vertex state and messages survive faults, and rounds are fixed.'));
   L.done();}},
 {part:2,src:'Chapter 10 · The Pregel processing model',pts:1,
- solve:async L=>{for(let k=0;k<6;k++){const b=L.$('#rn');if(b)b.click();}},
+ solve:async L=>{L.$('#rq1').click();for(let k=0;k<8;k++){const b=L.$('#g18-nx');if(b&&!b.disabled)b.click();await L.sleep(10);}},
  run(L){
-  const V=['Westport Central','North hub','South hub','Harbour hub','Docks hub','Eastvale gateway'];
-  const R=[[[0,null,null,null,null,null],[0],[0],'Start: Westport Central is 0 minutes from itself. It sends “10 min” to North and “15 min” to South.'],
-           [[0,10,15,null,null,null],[1,2],[1,2],'Round 1: North and South get their first messages and update. They pass on their time plus each road’s length.'],
-           [[0,10,15,19,24,null],[0,3,4],[3,4],'Round 2: Harbour hears 22 and 19 and keeps 19; Docks takes 24. Westport Central gets messages too, but nothing shorter, so it sends nothing.'],
-           [[0,10,15,19,24,32],[1,2,5],[5],'Round 3: Eastvale gateway hears 39 and 32 and keeps 32. North and South hear nothing shorter.'],
-           [[0,10,15,19,24,32],[3,4],[],'Round 4: Harbour and Docks hear nothing shorter. Nobody improved, so no new messages are sent.'],
-           [[0,10,15,19,24,32],[],[],'Round 5: no messages at all. The computation is finished.']];
-  let k=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh computes travel minutes from Westport Central to every hub, Pregel-style. Step through the rounds.</h1><div id="gv" style="display:flex;flex-wrap:wrap;gap:6px;margin:10px 0"></div><p class="small" id="gt"></p><button class="btn pri" id="rn">'+L.ic('play')+'Next round</button><div id="gq"></div>');
-  const draw=()=>{const r=R[k];L.$('#gv').innerHTML=V.map((v,j)=>{const got=r[1].includes(j),up=r[2].includes(j);
-      return '<span class="chip static'+(up?' ok':'')+'" style="margin:0;'+(got?'':'opacity:.45')+'">'+(got?L.ic('chat'):'')+v+': <b style="margin-left:4px">'+(r[0][j]===null?'∞':r[0][j]+' min')+'</b></span>';}).join('');
-    L.$('#gt').innerHTML=r[3]+'<br><span style="opacity:.8">Faded = no messages this round, so no work.</span>';};
-  draw();
-  L.$('#rn').onclick=function(){if(k>=R.length-1)return;k++;draw();
-    if(k===R.length-1){this.remove();const q=L.$('#gq');q.innerHTML='<h2 class="sub">In round 3, Westport Central received no messages. How much work did it do that round?</h2>';
-      L.mc(q,['It re-read all its roads to check for changes','None at all: no messages means no work','It recomputed its travel time from scratch'],1,
-       'Each vertex keeps its state between rounds and only reacts to new messages. Unlike rerunning MapReduce each round, quiet parts of the graph cost nothing.',
-       'In the Pregel model a vertex remembers its state and only processes incoming messages. No messages, no work. That is exactly what plain MapReduce rounds can’t do.');}};}},
-{part:2,src:'Chapter 10 · Fault tolerance',run(L){
-  L.h(L.kick('learn','Faults and machines')+'<h1 class="q">How Pregel survives crashes, and where it struggles</h1>'+
-   L.lanes([['shield','Fault tolerance','Vertices only talk through messages, so messages can be batched. The only waiting is between rounds. Even though the network may drop, duplicate or delay messages, Pregel guarantees each one is processed exactly once in the next round. At the end of a round it can <b>checkpoint</b> every vertex’s state to durable storage. After a crash, roll the whole graph back to the last checkpoint, or, if the algorithm is deterministic and messages are logged, recover only the lost partition.',2],
-            ['layers','Parallel execution','A vertex sends messages to a vertex ID; the framework decides which machine holds which vertex. Because you write code from one vertex’s point of view, “thinking like a vertex,” the graph can be split any way. In practice it is often split by arbitrary vertex ID, so lots of messages cross machines, and they can outgrow the graph itself.',3]])+
-   L.note('<b>The rule of thumb:</b> if the graph fits in one computer’s memory, a single-machine (even single-threaded) program will quite likely beat a distributed one. If it fits on one machine’s disks, tools such as GraphChi work. Only beyond that is a distributed approach like Pregel unavoidable.','info'));
+  L.h(L.kick('try','Predict, then watch')+'<h1 class="q">Eastvale Depot first hears a time in round 2. In which round does it settle on its final time?</h1>'+CSS+
+   '<div class="bx-ctl" id="rq"><button class="chip" id="rq0">Round 2</button><button class="chip" id="rq1">Round 3</button><button class="chip" id="rq2">Round 4</button></div><div id="g18"></div>');
+  let pick=null,fin=false;
+  const G=Steps(L,L.$('#g18'),{id:'g18',on:e=>{
+    if(e.type==='next'&&e.cur===G.last&&!fin){fin=true;const ok=pick===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Round 3: a longer route won':'It settled in round 3',
+        'Round 2: Eastvale hears 39 min via Westport South (9 + 30). Round 3: a message arrives via Zone W2 (16 + 18 = 34), which is shorter, so it updates. Nothing shorter comes after. Grey cells did no work: Pregel only touches vertices that get messages.');L.done();}}});
+  L.$('#g18-nx').disabled=true;
+  const nx=L.$('#g18-nx');const orig=nx.onclick;nx.onclick=()=>{if(pick===null)return;orig();};
+  [0,1,2].forEach(j=>{L.$('#rq'+j).onclick=()=>{if(pick!==null)return;pick=j;L.$('#rq'+j).classList.add('sel');[0,1,2].forEach(q=>{L.$('#rq'+q).disabled=true;});G.draw();};});
+  }},
+{part:2,src:'Chapter 10 · Fault tolerance',
+ solve:async L=>{for(const k of [0,1,2,3])L.$('#gp'+k).click();},
+ run(L){
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Crash a machine in round 3, run a plain MapReduce loop, spread vertices out. Try every case.</h1>'+CSS+
+   '<div class="bx-pick two" id="gps"><button class="chip" id="gp0">Crash · checkpoint every 3 rounds</button><button class="chip" id="gp1">Crash · checkpoint every round</button><button class="chip" id="gp2">Plain MapReduce loop</button><button class="chip" id="gp3">Each vertex on its own machine</button></div>'+
+   '<div class="bx-read" id="gpc">Pick a case, then use Next round to carry on.</div><div id="g19"></div>');
+  const G=Steps(L,L.$('#g19'),{id:'g19',top:true});
+  const C=[
+   ['Rolled back to round 0','The last checkpoint was after round 0, so rounds 1 to 3 are lost (red) and must be redone. Fewer checkpoints means less writing, but more to redo.'],
+   ['Rolled back to round 2','A checkpoint after every round means only round 3 is redone. The price: writing every vertex’s full state to durable storage each round.'],
+   ['Plain MapReduce: every cell works','Each round reads all 8 vertices and writes a whole new copy, even when only a few changed. Compare the vertex work: Pregel skips the grey, quiet vertices.'],
+   ['Messages all cross the network','The framework places vertices by ID with no attempt to group neighbours, so messages cross machines and can outgrow the graph itself. For a small graph, that overhead dominates.']];
+  const tried=new Set();
+  const run=async k=>{tried.add(k);[0,1,2,3].forEach(q=>L.$('#gp'+q).classList.toggle('sel',q===k));
+    if(k<2){G.reset({ck:k===0?3:1,mode:'pregel',place:'2'});G.next();G.next();G.st.armed=true;G.next();}
+    else{G.reset({ck:1,mode:k===2?'mr':'pregel',place:k===3?'many':'2'});for(let j=0;j<G.last;j++)G.next();}
+    L.$('#gpc').innerHTML='<b>'+C[k][0]+'</b><br>'+C[k][1];
+    if(tried.size===4){L.sheet('info','How Pregel survives, and what it costs','At the end of a round every vertex’s state can be checkpointed. After a crash, the simple fix rolls the whole graph back to the last checkpoint. If the algorithm is deterministic and messages are logged, only the lost partition needs recovering.');L.done();}};
+  [0,1,2,3].forEach(k=>{L.$('#gp'+k).onclick=()=>run(k);});
+  }},
+{part:2,src:'Chapter 10 · Parallel execution',run(L){
+  L.h(L.kick('learn','Parallel execution')+'<h1 class="q">Often, one machine wins</h1>'+CSS+FIG_SIZE()+
+   '<p class="bx-cap">The framework places vertices by ID, not next to their neighbours, so messages flood the network. If the graph fits on one machine, use one.</p>'+
+   MORE('What Pregel does promise','However the network loses, repeats or holds up messages, each vertex handles every message once and only once, in the round after it was sent.'));
   L.done();}},
 {part:2,src:'Chapter 10 · Parallel execution',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias proposes a 40-machine Pregel cluster to compute travel times across Otterpost’s hub network: a few hundred hubs and zones. What should Linh say?</h1>');
+  L.h(L.kick('pr','Make the call')+'<h1 class="q">Tobias proposes a 40-machine Pregel cluster to compute travel times across Otterpost’s hub network: a few hundred hubs and zones. What should Linh say?</h1>');
   L.mc(L.card,['Use plain MapReduce, which suits repeated rounds','Add more machines, since graphs need lots of messages','Run it on one machine: the graph easily fits in memory'],2,
    'A graph this small fits in one machine’s memory, where a simple program avoids all the cross-machine messaging.',
    'Plain MapReduce rereads the whole graph every round, and more machines mean more messages crossing the network. A few hundred vertices fit in one machine’s memory, where a single-machine program is likely faster.');}},
-{part:2,src:'Chapter 10 · Fault tolerance',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap the pieces until the sentence describes how a Pregel job recovers from a crash.</h1>');
-  L.sentence(L.card,[['At the end of each round,','After every single message,','Once the whole job is done,'],['Pregel saves every vertex’s state,','Pregel saves only the messages,','Pregel saves the input graph again,'],['so after a crash it rolls back to that checkpoint.','so after a crash it restarts from the raw input.','so after a crash it skips the lost vertices.']],[0,0,0],
-   [['Checkpoints are taken at the end of a round, when every vertex’s state is settled, not after each message.','A checkpoint taken only at the end can’t help a crash in the middle of the job.'],
-    ['Messages alone don’t capture each vertex’s accumulated state.','The input graph is already stored; it doesn’t hold the progress made so far.'],
-    ['Restarting from the raw input would throw away every finished round. That is what checkpoints avoid.','Skipping vertices would give wrong answers. Pregel recovers them instead.']],
-   'Checkpoints at round boundaries mean a crash costs at most the rounds since the last checkpoint. With a deterministic algorithm and logged messages, even just the lost partition can be recovered.');}},
 
 /* ---------- PART 4: HIGH-LEVEL APIS ---------- */
-{part:3,src:'Chapter 10 · High-Level APIs and Languages',run(L){
-  L.h(L.kick('learn','High-level APIs')+'<h1 class="q">Less code for humans, faster jobs for machines</h1>'+
-   L.prose('Batch infrastructure has matured: it can store and process many petabytes on clusters of over 10,000 machines. With that roughly solved, attention moved to the programming model, efficiency, and the range of problems these tools can tackle.')+
-   L.prose('Hive, Pig, Cascading and Crunch caught on because writing MapReduce by hand is laborious, and when Tez arrived they could move to it without rewriting job code. Spark and Flink have their own high-level dataflow APIs, often inspired by FlumeJava.')+
-   L.flow([['layers','Join','Datasets on a shared field'],['list','Group','Tuples by key'],['eye','Filter','By some condition'],['check','Aggregate','Count, sum and more']],false)+
-   L.prose('These relational-style building blocks run on the join and grouping algorithms from this chapter. They also allow <b>interactive</b> use: write analysis code bit by bit in a shell and run it often to see what it does, much in the spirit of the Unix philosophy.'));
-  L.done();}},
 {part:3,src:'Chapter 10 · The move toward declarative query languages',run(L){
-  L.h(L.kick('learn','The move toward declarative')+'<h1 class="q">Say what you want, and still run any code you like</h1>'+
-   L.lanes([['target','Declarative operators','State <i>which</i> joins you need, and a cost-based optimizer (Hive, Spark and Flink have one) picks the join algorithm and even the join order. Simple filters and field selections, declared rather than coded, let the engine read only the needed columns from column storage and use fast vectorized loops. Spark generates JVM bytecode; Impala generates native code with LLVM.',2],
-            ['pencil','Arbitrary code','MapReduce’s heritage is the callback: your function can call any library for parsing, language or image analysis, or statistics. Databases offer user-defined functions, but they are often clumsy and don’t fit package managers like Maven, npm or Rubygems.',3]])+
-   L.note('Mixing the two, batch frameworks start to look like MPP databases, with comparable performance, while keeping the freedom to run any code over data in any format.','scale'));
+  L.h(L.kick('learn','High-level APIs')+'<h1 class="q">Say what you want; let the engine choose how</h1>'+CSS+FIG_DECL()+
+   '<p class="bx-cap">Declare a join, and an optimizer picks the algorithm and even the join order. Declare a filter, and only the needed columns are read.</p>'+
+   MORE('Who offers it, and how it stays fast','Hive, Pig, Spark and Flink offer join, group, filter and aggregate; Hive, Spark and Flink have cost-based optimizers. It means less code and suits an interactive shell. Spark generates JVM bytecode and Impala uses LLVM for fast inner loops. You can still call any library from your own code.'));
   L.done();}},
 {part:3,src:'Chapter 10 · The move toward declarative query languages',pts:4,run(L){
   L.h(L.kick('pr','Which side helps?')+'<h1 class="q">For each need in Linh’s jobs, which helps more: a declarative operator or arbitrary code?</h1><div id="bk"></div>');
@@ -226,21 +680,21 @@ Course.lesson({
    ['Choose between a broadcast and a sort-merge join for scans and couriers',0,'State the join; the optimizer looks at the inputs and picks the algorithm.'],
    ['Parse odd courier-app log lines with an existing open-source library',1,'Callbacks can call any library from the language’s ecosystem.'],
    ['Keep only Eastvale scans, reading just 2 of 40 columns',0,'A declared filter and field selection lets the engine read only those columns.'],
-   ['Run an image-analysis library over proof-of-delivery photos',1,'Image analysis needs real code, not a query.']],
+   ['Run an image-analysis library over proof-of-delivery photos',1,'Image analysis needs real code, not a query. Database user-defined functions are often clumsy for this.']],
    'Declarative pieces give the optimizer room to work; callbacks keep the door open to any code. Modern engines offer both.');}},
 {part:3,src:'Chapter 10 · Specialization for different domains',run(L){
-  L.h(L.kick('learn','Specialization, then the summary')+'<h1 class="q">Where batch processing ends up</h1>'+
-   L.prose('Some patterns recur so often that reusable building blocks pay off: machine-learning algorithms (Mahout runs on MapReduce, Spark and Flink; MADlib runs inside an MPP database), spatial algorithms such as k-nearest neighbours, and approximate string matching for genome analysis. As batch engines gain declarative operators and MPP databases become more programmable, the two look more alike.')+
-   L.tiers([['layers','Partitioning','Bring related data, such as all records with one key, to the same place. MapReduce partitions by input block, then repartitions, sorts and merges for reducers. Dataflow engines avoid sorting unless needed.'],
-            ['shield','Fault tolerance','MapReduce writes to disk often: easy recovery from a failed task, but slower when nothing fails. Dataflow engines keep more in memory and recompute more after a failure; deterministic operators reduce that.'],
-            ['check','A restricted model','Callbacks are assumed stateless, with no side effects beyond their output. So the framework can retry tasks and discard failed output, and the final output is the same as if no faults had happened.',true,'The payoff']])+
-   '<p class="small" style="margin-top:10px">Finally, batch input is <b>bounded</b>: a fixed set of files or a snapshot. So a job knows when it has read everything, and it finishes. Chapter 11 takes away that boundary.</p>');
+  L.h(L.kick('learn','Specialization')+'<h1 class="q">Batch engines and MPP databases grow alike</h1>'+CSS+FIG_CONVERGE()+
+   '<p class="bx-cap">Patterns that keep coming back get reusable building blocks. In the end, both kinds of system just store and process data.</p>');
+  L.done();}},
+{part:3,src:'Chapter 10 · Summary',run(L){
+  L.h(L.kick('learn','Chapter 10 in one picture')+'<h1 class="q">Two problems, two styles of answer</h1>'+CSS+FIG_SUM()+
+   '<p class="bx-cap">Every batch engine must bring related records together and survive faults. That works because your callbacks have no side effects beyond their output, so the framework can retry tasks and discard failed output safely.</p>');
   L.done();}},
 {part:3,src:'Chapter 10 · Summary',pts:1,run(L){
-  L.h(L.kick('pr','Looking ahead')+'<h1 class="q">Linh’s nightly job always knows when it is done. Next month Linh starts processing the scan stream as it arrives. What changes?</h1>');
+  L.h(L.kick('pr','Looking ahead')+'<h1 class="q">Linh’s nightly job always knows when it is done. Next month Linh starts processing the scan stream as it arrives. What changes?</h1>'+CSS+FIG_BOUND());
   L.mc(L.card,['Nothing: it still finishes once all scans are read','It must keep every result in memory to stay fast','Its input never ends, so the job never completes'],2,
    'Batch input is bounded, so a batch job finishes. A stream is unbounded: there may always be more scans coming, so the job never completes. That is chapter 11.',
-   'A batch job finishes because its input is a fixed size. A stream of scans never ends, so a stream job is never complete. Memory isn’t the defining difference.');}}
+   'A batch job finishes because its input has a fixed size. A stream of scans never ends, so a stream job is never complete. Memory isn’t the defining difference.');}}
   ]
 });
 </script>

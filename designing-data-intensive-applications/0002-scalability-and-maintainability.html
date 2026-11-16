@@ -13,9 +13,294 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0002 only. Two hands-on models used across the lesson:
+   1. Strip  – 200 response times sorted fastest to slowest, with percentile
+               flags, a mean line, a draggable flag, slow-call and calls-per-page
+               knobs, and queue presets (head-of-line blocking, polite tester,
+               averaging two servers’ p99s).
+   2. Ladder – Otterpost’s load ladder (1×, 3× Peak Week, 10×, 100×) with
+               stress bars for web servers, the Parcel DB and delay notices,
+               and the moves: scale up, scale out, fan-out on read/write/hybrid.
+   Plus this lesson’s own pictures: Twitter fan-out, request anatomy,
+   up vs out, pellets vs boulders, ops console, ball of mud.
+   ===================================================================== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card [hidden]{display:none!important}
+.sc-svg{width:100%;display:block;margin:6px 0 2px;user-select:none;-webkit-user-select:none}
+.sc-svg text{font-family:var(--sans)}
+.sc-svg.drag{touch-action:none;cursor:ew-resize}
+.sc-ro{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px;color:var(--muted);margin:2px 0 6px}
+.sc-ro span{display:inline-flex;align-items:center;gap:5px}
+.sc-ro i{width:10px;height:10px;border-radius:3px;display:inline-block;flex:none}
+.sc-ro b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+.sc-rng{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:14.5px;margin:6px 0}
+.sc-rng input{width:100%;accent-color:var(--pri);height:32px;margin:0}
+.sc-rng b{font-variant-numeric:tabular-nums;min-width:46px;text-align:right}
+.sc-cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0 4px}
+.sc-cap .t{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px;letter-spacing:.2px}
+.sc-row{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}
+.sc-row .chip,.sc-row .btn{margin:0;min-height:40px}
+.sc-row .chip[disabled]{opacity:.5;cursor:not-allowed}
+.sc-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 2px}
+.sc-ill{font-size:12.5px;color:var(--faint);margin:4px 0 0}
+.sc-tasks{margin:6px 0 0;padding:0;list-style:none}.sc-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0;color:var(--muted)}
+.sc-tasks li i{width:18px;height:18px;border-radius:6px;border:2px solid var(--line2);flex:none}
+.sc-tasks li.done{color:var(--ok)}.sc-tasks li.done i{background:var(--ok-strong);border-color:var(--ok-strong)}
+.sc-facts{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 2px}
+.sc-facts>span{background:var(--soft);border-radius:10px;padding:6px 9px;font-size:13px;line-height:1.3}
+.sc-facts b{font-weight:700}
+.lp{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0 4px}
+.lp div{background:var(--soft);border-radius:14px;padding:10px 11px;min-width:0}
+.lp div.w{grid-column:1/3;background:var(--h3-bg)}
+.lp b{display:block;font-size:22px;font-variant-numeric:tabular-nums;line-height:1.15}
+.lp span{display:block;font-size:13px;line-height:1.3}
+.lp small{display:flex;align-items:center;gap:4px;font-size:11.5px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.3px;margin-bottom:3px}
+.lp small svg.i{width:13px;height:13px}
+.lp em{display:inline-block;font-style:normal;font-size:11.5px;font-weight:700;color:var(--h3);background:var(--card);border-radius:6px;padding:1px 6px;margin-top:4px;white-space:nowrap}
+.tw-m{display:grid;grid-template-columns:auto 1fr;gap:5px 8px;align-items:center;font-size:13px;margin:4px 0}
+.tw-m .tr{position:relative;height:12px;border-radius:6px;background:var(--soft2)}
+.tw-m .tr i{position:absolute;left:0;top:0;bottom:0;border-radius:6px;transition:width .35s}
+.tw-m small{grid-column:2;color:var(--muted);font-size:12.5px;margin-top:-3px}
+.ld-top{display:grid;grid-template-columns:88px 1fr;gap:12px;align-items:stretch;margin-top:6px}
+.ld-lad{position:relative;display:flex;flex-direction:column;gap:7px;padding:2px 9px}
+.ld-lad::before,.ld-lad::after{content:'';position:absolute;top:-4px;bottom:-4px;width:4px;border-radius:2px;background:var(--line2)}
+.ld-lad::before{left:2px}.ld-lad::after{right:2px}
+.ld-r{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:46px;border-radius:10px;border:2px solid var(--line);border-bottom-width:3px;background:var(--card);font:700 14px var(--sans);color:var(--ink);padding:3px 4px;line-height:1.1;text-align:center}
+.ld-r small{font-size:11px;font-weight:600;color:var(--muted)}
+.ld-r.cur{border-color:var(--pri);background:var(--pri-bg)}
+.ld-r i{position:absolute;top:4px;right:4px;width:9px;height:9px;border-radius:50%}
+.ld-r[disabled]{opacity:.35;cursor:default}
+.g-ok{background:var(--ok-strong)}.g-am{background:var(--h3)}.g-no{background:var(--no-strong)}
+.ld-bars{display:flex;flex-direction:column;gap:12px;justify-content:center;min-width:0}
+.ld-b .n{display:flex;justify-content:space-between;align-items:baseline;font-size:13px;gap:6px}
+.ld-b .n b{font-weight:600}.ld-b .n span{color:var(--muted);font-variant-numeric:tabular-nums;text-align:right;font-size:12.5px}
+.ld-tr{position:relative;height:14px;border-radius:7px;background:var(--soft2);margin-top:4px}
+.ld-tr .f{position:absolute;left:0;top:0;bottom:0;border-radius:7px;transition:width .35s,background .35s}
+.ld-tr .f.ok{background:var(--ok-strong)}.ld-tr .f.am{background:var(--h3)}.ld-tr .f.no{background:var(--no-strong)}
+.ld-tr .cp{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--ink);left:66.67%}
+.ld-tr .hd{position:absolute;top:0;bottom:0;width:0;border-left:2px dotted var(--card);left:46.67%}
+.ld-leg{font-size:12px;color:var(--muted);margin:6px 0 0}
+.ld-ctl{margin-top:8px}
+.ld-ctl .sc-row .chip{font-size:13.5px;padding:6px 11px}
+.ld-say{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.45;margin:8px 0 2px}
+.ld-say .warn{display:block;margin-top:5px;color:var(--h3);font-weight:600}
+.ld-res{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.6;margin-top:8px}
+.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}
+.mud-k{display:flex;flex-direction:column;gap:6px;margin:8px 0}
+.mud-k .chip{margin:0;justify-content:flex-start;text-align:left;width:100%;min-height:42px}
+.mud-k .chip.cut{text-decoration:line-through;border-color:var(--no-line);background:var(--no-bg);color:var(--no)}
+@keyframes sc-flow{from{transform:translateX(0)}to{transform:translateX(28px)}}
+.sc-mv{animation:sc-flow 1.4s linear infinite}
+@keyframes sc-flowb{from{transform:translateX(0)}to{transform:translateX(186px)}}
+.sc-mvb{animation:sc-flowb 6s linear infinite}
+`;document.head.appendChild(st);})();
+
+/* ---------- small helpers ---------- */
+function scRng(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+function scGauss(r){let u=0;while(!u)u=r();const v=r();return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);}
+function scFmt(v){return v<1000?Math.round(v)+' ms':(Math.round(v/100)/10)+' s';}
+function scRange(id,label,min,max,val,step){return '<label class="sc-rng" for="'+id+'"><span>'+label+'</span><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'"><b id="'+id+'-v"></b></label>';}
+function scSet(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+function scTx(x,y,s,st){return '<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';}
+const SC_HALO='paint-order:stroke;stroke:var(--card);stroke-width:3.5px;stroke-linejoin:round;';
+function scTasks(id,items){return '<ul class="sc-tasks" id="'+id+'">'+items.map((t,j)=>'<li data-k="'+j+'"><i></i><span>'+t+'</span></li>').join('')+'</ul>';}
+function scTick(L,id,k){const li=L.$('#'+id+' li[data-k="'+k+'"]');if(li)li.classList.add('done');return [...L.$$('#'+id+' li')].every(x=>x.classList.contains('done'));}
+async function scWait(L,sel,n){for(let i=0;i<(n||120)&&!L.$(sel);i++)await L.sleep(25);}
+
+/* ---------- the data behind the dot strip (fixed seeds: every learner sees the same requests) ---------- */
+const SCD=(()=>{
+  const R=scRng(7),N=200;
+  const U=[...Array(N)].map((_,i)=>(i+.5)/N);for(let i=N-1;i>0;i--){const j=Math.floor(R()*(i+1));[U[i],U[j]]=[U[j],U[i]];}
+  const F=[...Array(N)].map(()=>[...Array(20)].map(()=>Math.round(70*Math.exp(.32*scGauss(R)))));
+  const S=[...Array(N)].map(()=>Math.round(600+R()*2200));
+  /* s = share of backend calls that are slow, k = calls per page; a page is as slow as its slowest call */
+  function pages(s,k){const ph=1-Math.pow(1-s,k);return F.map((f,i)=>{let v=Math.max(...f.slice(0,k));const hit=U[i]<ph;if(hit)v=Math.max(v,S[i]);return {v,c:hit?'s':'f',hit};});}
+  /* one server with 2 workers, requests arriving on their own schedule; two heavy merchant reports */
+  function queue(){const r=scRng(4),heavy=new Set([80,81]),free=[0,0],svc=[],cli=[];let t=0;
+    for(let i=0;i<N;i++){const h=heavy.has(i),d=h?1200+Math.round(r()*300):Math.round(38*Math.exp(.3*scGauss(r)));
+      t+=-Math.log(1-r())*32;const w=free[0]<=free[1]?0:1,start=Math.max(t,free[w]);free[w]=start+d;
+      svc.push({v:d,c:h?'s':'f'});cli.push({v:Math.round(start+d-t),c:h?'s':(start-t>100?'q':'f')});}
+    return {svc,cli};}
+  /* two web servers: A is quiet and fast, B is overloaded */
+  function two(){const r=scRng(21),a=[...Array(180)].map(()=>({v:Math.round(60*Math.exp(.3*scGauss(r))),c:'a'})),b=[...Array(20)].map(()=>({v:Math.round(650*Math.exp(.45*scGauss(r))),c:'b'}));return {a,b};}
+  return {pages,queue,two};
+})();
+function scP(vals,p){const v=vals.map(x=>x.v).sort((a,b)=>a-b);return v[Math.ceil(p/100*v.length)-1];}
+function scMean(vals){return vals.reduce((a,x)=>a+x.v,0)/vals.length;}
+
+/* ---------- 1. the dot strip ---------- */
+const SC_COL={f:'var(--h1)',s:'var(--no-strong)',q:'var(--h3)',a:'var(--h1)',b:'var(--h2)'};
+const SC_FLAG={50:'var(--h2)',95:'var(--h3)',99:'var(--ink)'};
+function Strip(L,host,o){
+  o=Object.assign({id:'st',H:200,flags:[],mean:false,user:0,hl:[],ro:['mean','p50','p95','p99'],legend:''},o||{});
+  const ID=o.id,H=o.H,X0=48,X1=312,T=28,B=H-24,lo=20,hi=4000;
+  host.insertAdjacentHTML('beforeend','<svg class="sc-svg'+(o.user?' drag':'')+'" id="'+ID+'" viewBox="0 0 320 '+H+'" role="img" aria-label="Response times as dots, sorted from fastest on the left to slowest on the right. Higher means slower."></svg>'+
+    (o.user?scRange(ID+'-u','Your flag',1,200,o.user):'')+'<div class="sc-ro" id="'+ID+'-ro" aria-live="polite"></div>');
+  const svg=host.querySelector('#'+ID),ro=host.querySelector('#'+ID+'-ro');
+  const S={vals:[],flags:o.flags.slice(),mean:o.mean,hl:o.hl.slice(),user:o.user,ro:o.ro.slice()};
+  const X=i=>X0+(i+.5)/S.vals.length*(X1-X0);
+  const Y=v=>T+(1-(Math.log(Math.max(lo,Math.min(hi,v)))-Math.log(lo))/(Math.log(hi)-Math.log(lo)))*(B-T);
+  const rk=p=>Math.ceil(p/100*S.vals.length);
+  function pname(r){const n=S.vals.length,p=Math.round(r/n*1000)/10;return r===n/2?'p50 (median)':'p'+p;}
+  function draw(){
+    if(!svg.isConnected)return;
+    const v=S.vals;let s='';
+    [50,100,300,1000,3000].forEach(t=>{const y=Y(t);s+='<line x1="'+X0+'" x2="'+X1+'" y1="'+y+'" y2="'+y+'" style="stroke:var(--line);stroke-width:1"/>'+scTx(X0-5,y+4,t===50?'50 ms':t<1000?t:(t/1000)+' s','font-size:12px;fill:var(--muted);text-anchor:end');});
+    s+=scTx(X0,H-5,'← fastest','font-size:12px;fill:var(--muted)')+scTx((X0+X1)/2,H-5,'one dot per request','font-size:12px;fill:var(--muted);text-anchor:middle')+scTx(X1,H-5,'slowest →','font-size:12px;fill:var(--muted);text-anchor:end');
+    v.forEach((d,i)=>{s+='<circle cx="'+X(i).toFixed(1)+'" cy="'+Y(d.v).toFixed(1)+'" r="2.3" style="fill:'+SC_COL[d.c]+'"/>';});
+    const hls=S.hl.slice();if(S.mean)hls.push({v:scMean(v),label:'mean '+scFmt(scMean(v)),col:'var(--h4)',right:true});
+    hls.forEach(h=>{const y=Y(h.v);s+='<line x1="'+X0+'" x2="'+X1+'" y1="'+y+'" y2="'+y+'" style="stroke:'+h.col+';stroke-width:2;stroke-dasharray:5 4"/>'+
+      scTx(h.right?X1-2:X0+4,y-5,h.label,SC_HALO+'font-size:12px;font-weight:700;fill:'+h.col+(h.right?';text-anchor:end':''));});
+    const fl=S.flags.map(p=>({x:X(rk(p)-1),y:Y(v[rk(p)-1].v),t:'p'+p,col:SC_FLAG[p]||'var(--ink)',w:2}));
+    if(S.user){const r=S.user;fl.push({x:X(r-1),y:Y(v[r-1].v),t:'your flag',col:'var(--pri)',w:3,u:true});}
+    fl.sort((a,b)=>a.x-b.x);let lastX=-99,row=0;
+    fl.forEach(f=>{row=(f.x-lastX<34)?1-row:0;lastX=f.x;const ly=row?24:11,cx=Math.max(X0+14,Math.min(318-(f.u?28:12),f.x));
+      s+='<line x1="'+f.x+'" x2="'+f.x+'" y1="'+(ly+3)+'" y2="'+B+'" style="stroke:'+f.col+';stroke-width:'+f.w+'"/>'+
+        '<circle cx="'+f.x+'" cy="'+f.y+'" r="5" style="fill:none;stroke:'+f.col+';stroke-width:2.2"/>'+
+        scTx(cx,ly,f.t,SC_HALO+'font-size:12px;font-weight:700;text-anchor:middle;fill:'+f.col)+
+        (f.u?'<circle cx="'+f.x+'" cy="'+B+'" r="7" style="fill:var(--pri);stroke:var(--card);stroke-width:2"/>':'');});
+    svg.innerHTML=s;
+    const st=k=>{const c={mean:['var(--h4)','Mean'],p50:['var(--h2)','Median (p50)'],p95:['var(--h3)','p95'],p99:['var(--ink)','p99']}[k];
+      const val=k==='mean'?scMean(v):scP(v,{p50:50,p95:95,p99:99}[k]);return '<span><i style="background:'+c[0]+'"></i>'+c[1]+' <b>'+scFmt(val)+'</b></span>';};
+    let h=S.ro.filter(k=>k!=='hits'&&k!=='user').map(st).join('');
+    if(S.ro.includes('hits')){const n=v.filter(d=>d.hit).length;h+='<span><i style="background:var(--no-strong)"></i>Pages hit by a slow call <b>'+n+' of '+v.length+' ('+(Math.round(n/v.length*1000)/10)+'%)</b></span>';}
+    if(S.user){h='<span><i style="background:var(--pri)"></i>Your flag: <b>'+pname(S.user)+' = '+scFmt(v[S.user-1].v)+'</b></span><span>'+S.user+' of '+v.length+' requests take this long or less</span>';
+      const lab=host.querySelector('#'+ID+'-u-v');if(lab)lab.textContent=S.user;}
+    ro.innerHTML=h;
+  }
+  if(o.user){const inp=host.querySelector('#'+ID+'-u');
+    inp.addEventListener('input',()=>{S.user=+inp.value;draw();if(o.onUser)o.onUser(S.user);});
+    let drag=false;const at=e=>{const r=svg.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*320;
+      const i=Math.round((x-X0)/(X1-X0)*S.vals.length-.5);inp.value=Math.max(1,Math.min(S.vals.length,i+1));inp.dispatchEvent(new Event('input',{bubbles:true}));};
+    svg.addEventListener('pointerdown',e=>{drag=true;try{svg.setPointerCapture(e.pointerId);}catch(_){}at(e);});
+    svg.addEventListener('pointermove',e=>{if(drag)at(e);});
+    ['pointerup','pointercancel'].forEach(t=>svg.addEventListener(t,()=>{drag=false;}));}
+  function set(vals){S.vals=vals.slice().sort((a,b)=>a.v-b.v);draw();}
+  return {S,set,draw,alive:()=>svg.isConnected,get vals(){return S.vals;}};
+}
+
+/* ---------- 2. the load ladder ---------- */
+const LD_M=[1,3,10,100],LD_ML=[['1×','today'],['3×','Peak Week'],['10×',''],['100×','']];
+const LD_ROWS={
+  web:['Web servers (keep no data)',[['as','As is'],['up','Scale up'],['out','Scale out']]],
+  db:['Parcel DB (holds the data)',[['as','As is'],['up','Scale up'],['split','Split it']]],
+  nt:['Delay notices',[['read','Look up on view'],['push','Push to pages'],['hyb','Hybrid']]],
+  big:['Which notice to measure',[[1,'Biggest: Bramble & Bolt, 60,000 parcels'],[0,'Average: 150 parcels']]]};
+function ldCalc(st,m){
+  const V=1000*m,servers=st.web==='out'?Math.max(4,Math.ceil(V/300)):4,webCap=st.web==='up'?8000:servers*500;
+  const dbLoad=({read:1250,push:300,hyb:340})[st.nt]*m;
+  const dbN=st.db==='split'?Math.max(1,Math.ceil(dbLoad/1000)):1,dbCap=st.db==='up'?16000:st.db==='split'?dbN*2000:2000;
+  const parcels=(st.big?60000:150)*m,secs=st.nt==='push'||(st.nt==='hyb'&&!st.big)?Math.max(.1,parcels/1000):1;
+  return {web:V/webCap,servers,db:dbLoad/dbCap,dbN,notice:secs/30,secs};
+}
+const ldLvl=p=>p<.7?'ok':p<=1?'am':'no';
+function Ladder(L,host,o){
+  o=Object.assign({id:'ld',rungs:[0,1,2,3],bars:['web','db','nt'],rows:['web','db','nt'],at:0,state:{},lockSplit:false,on:()=>{}},o||{});
+  const ID=o.id,st=Object.assign({web:'as',db:'as',nt:'read',big:1},o.state);let at=o.at;
+  host.insertAdjacentHTML('beforeend','<div class="ld"><div class="ld-top"><div class="ld-lad" id="'+ID+'-lad" role="group" aria-label="Load level"></div><div class="ld-bars" id="'+ID+'-bars"></div></div>'+
+    '<p class="ld-leg">Solid tick = full capacity. Dotted tick = 70%: Kwame wants 30% headroom. Green = under 70%.</p>'+
+    '<div class="ld-ctl" id="'+ID+'-ctl"></div><div class="ld-say" id="'+ID+'-say" aria-live="polite"></div></div>');
+  const $=s=>host.querySelector(s),alive=()=>!!$('#'+ID+'-say')&&$('#'+ID+'-say').isConnected;
+  [3,2,1,0].forEach(k=>{const b=document.createElement('button');b.className='ld-r';b.id=ID+'-r'+k;b.innerHTML='<i></i>'+LD_ML[k][0]+(LD_ML[k][1]?'<small>'+LD_ML[k][1]+'</small>':'');
+    if(!o.rungs.includes(k))b.disabled=true;b.onclick=()=>{if(!o.rungs.includes(k))return;at=k;draw();o.on({type:'rung',k});};$('#'+ID+'-lad').appendChild(b);});
+  o.rows.forEach(r=>{const R=LD_ROWS[r];$('#'+ID+'-ctl').insertAdjacentHTML('beforeend','<div class="sc-lbl">'+R[0]+'</div><div class="sc-row" id="'+ID+'-'+r+'"></div>');
+    R[1].forEach(([v,t])=>{const b=document.createElement('button');b.className='chip';b.id=ID+'-'+r+'-'+v;b.textContent=t;
+      if(o.lockSplit&&r==='db'&&v==='split'){b.disabled=true;b.title='Femi: the Parcel DB stays on one machine this year';b.textContent='Split: not this year';}
+      b.onclick=()=>{if(b.disabled)return;st[r]=v;draw();o.on({type:'set',r,v});};$('#'+ID+'-'+r).appendChild(b);});});
+  const moves=()=>(st.web!=='as')+(st.db!=='as')+(st.nt!=='read');
+  const worst=m=>{const c=ldCalc(st,m);return Math.max(...o.bars.map(b=>b==='nt'?c.notice:c[b]));};
+  function draw(){
+    if(!alive())return;const m=LD_M[at],c=ldCalc(st,m);
+    o.rungs.forEach(k=>{const b=$('#'+ID+'-r'+k);b.classList.toggle('cur',k===at);b.querySelector('i').className='g-'+ldLvl(worst(LD_M[k]));b.setAttribute('aria-pressed',k===at);});
+    const B={web:['Web servers',c.web,Math.round(c.web*100)+'% · '+c.servers+' server'+(c.servers>1?'s':'')+(st.web==='up'?' (bigger)':'')],
+      db:['Parcel DB',c.db,Math.round(c.db*100)+'% · '+(st.db==='split'?c.dbN+' machines':st.db==='up'?'1 big machine':'1 machine')],
+      nt:['Notice reaches all pages',c.notice,(c.secs<1?'under 1 s':Math.round(c.secs)+' s')+' · goal 30 s']};
+    $('#'+ID+'-bars').innerHTML=o.bars.map(k=>{const b=B[k],w=Math.min(b[1],1.5)/1.5*100;
+      return '<div class="ld-b"><div class="n"><b>'+b[0]+'</b><span>'+b[2]+'</span></div><div class="ld-tr" role="img" aria-label="'+b[0]+': '+b[2]+'"><div class="f '+ldLvl(b[1])+'" style="width:'+Math.max(2,w)+'%"></div><div class="hd"></div><div class="cp"></div></div></div>';}).join('');
+    o.rows.forEach(r=>LD_ROWS[r][1].forEach(([v])=>{const b=$('#'+ID+'-'+r+'-'+v);b.classList.toggle('sel',st[r]==v);b.setAttribute('aria-pressed',st[r]==v);}));
+    const red=o.bars.filter(k=>B[k][1]>1),amb=o.bars.filter(k=>B[k][1]>=.7&&B[k][1]<=1);
+    let h='<b>At '+LD_ML[at][0]+(LD_ML[at][1]?' ('+LD_ML[at][1]+')':'')+':</b> ';
+    if(red.length)h+=red.map(k=>B[k][0]+' over the limit').join('; ')+'. <span class="no-t">Rethink this part.</span>';
+    else if(amb.length)h+=amb.map(k=>B[k][0]).join(' and ')+' near the limit: no room for a spike.';
+    else h+='<span class="ok-t">every bar green.</span>';
+    if(o.rows.includes('web')||o.rows.includes('db'))h+=' Moves made: '+moves()+'.';
+    if(st.db==='split')h+='<span class="warn">'+L.ic('alert')+' The Parcel DB holds state. Splitting it brings replication, partitioning and transactions across machines: Part II of the book.</span>';
+    $('#'+ID+'-say').innerHTML=h;
+  }
+  draw();
+  return {st,draw,alive,moves,worst,get at(){return at;},set at(k){at=k;draw();},set(s){Object.assign(st,s);draw();}};
+}
+
+/* ---------- Twitter fan-out picture ---------- */
+function Tw(L,host,id,on){
+  host.insertAdjacentHTML('beforeend','<div class="sc-row" id="'+id+'-t"></div><svg class="sc-svg" id="'+id+'-s" viewBox="0 0 320 196" role="img" aria-label="Where Twitter does the work: a user posting, the table of all tweets, followers’ timeline caches, and you reading your timeline"></svg>'+
+    '<div class="tw-m" id="'+id+'-m"></div><div class="sc-cap" id="'+id+'-c" aria-live="polite"></div>');
+  const $=s=>host.querySelector(s);
+  const M=[
+   ['Approach 1','Look up on read',[6,'1 write'],[92,'look up everyone you follow, merge, at 300k reads/s'],'Posting just stores the tweet. Every timeline read looks up everyone you follow and merges their tweets by time. Twitter started here, and the timeline reads couldn’t keep up.'],
+   ['Approach 2','Copy on write',[72,'≈ 75 copies: 4.6k posts/s become 345k writes/s'],[8,'read one ready-made timeline'],'Posting copies the tweet into each follower’s timeline cache, like a mailbox. Reads get cheap. But a user with over 30 million followers turns one tweet into 30 million writes.'],
+   ['Hybrid','Both',[40,'≈ 75 copies; celebrities: 1 write'],[24,'your timeline + merge a few celebrities'],'Most tweets are still copied on write. Celebrities’ tweets skip the copying and are merged in when you read. Twitter aims to deliver tweets within five seconds; the mix keeps performance consistently good.']];
+  let cur=-1;const seen=new Set();
+  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.id=id+'-b'+j;b.textContent=m[0];b.onclick=()=>show(j);$('#'+id+'-t').appendChild(b);});
+  const ar=(x1,y1,x2,y2,col,mk,dash)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:'+col+';stroke-width:2.2'+(dash?';stroke-dasharray:4 3':'')+'" marker-end="url(#'+id+'-'+mk+')"/>';
+  function svg(j){
+    const W='var(--h1)',R='var(--h2)',X='var(--no-strong)';
+    let s='<defs>'+[['w',W],['r',R],['x',X]].map(([k,c])=>'<marker id="'+id+'-'+k+'" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8z" style="fill:'+c+'"/></marker>').join('')+'</defs>';
+    const fade=on=>on?'':'opacity:.3;';
+    const mbOn=j>0,tbRead=j!==1;
+    // writers
+    s+='<circle cx="28" cy="44" r="17" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+scTx(28,48,'post','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+scTx(28,76,'a user','font-size:12px;text-anchor:middle;fill:var(--muted)');
+    s+='<circle cx="28" cy="146" r="17" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+scTx(28,152,'★','font-size:16px;text-anchor:middle;fill:var(--h3)')+scTx(2,178,'celebrity','font-size:12px;fill:var(--muted)')+scTx(2,192,'30M followers','font-size:12px;fill:var(--muted)');
+    // table of all tweets
+    s+='<g style="'+fade(true)+'"><rect x="100" y="12" width="104" height="54" rx="9" style="fill:var(--card);stroke:var(--line2);stroke-width:1.8"/>'+scTx(152,30,'All tweets','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+      [40,48,56].map(y=>'<line x1="112" x2="192" y1="'+y+'" y2="'+y+'" style="stroke:var(--line2);stroke-width:3;stroke-linecap:round"/>').join('')+'</g>';
+    // timeline caches
+    s+='<g style="'+fade(mbOn)+'">'+[0,1,2,3].map(k=>'<rect x="'+(98+k*36)+'" y="124" width="30" height="26" rx="5" style="fill:'+(k===3?'var(--h2-bg)':'var(--soft)')+';stroke:'+(k===3?'var(--h2)':'var(--line2)')+';stroke-width:'+(k===3?2.2:1.5)+'"/>').join('')+
+      scTx(165,168,'followers’ timeline caches','font-size:12px;text-anchor:middle;fill:var(--muted)')+scTx(219,141,'you','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h2)')+'</g>';
+    // reader
+    s+='<circle cx="290" cy="92" r="20" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:2"/>'+scTx(290,96,'read','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)')+scTx(316,128,'you open','font-size:12px;text-anchor:end;fill:var(--muted)')+scTx(316,142,'your timeline','font-size:12px;text-anchor:end;fill:var(--muted)');
+    // arrows
+    s+=ar(46,40,97,36,W,'w');
+    if(j>0)[0,1,2,3].forEach(k=>{s+=ar(42,56,111+k*36,121,W,'w');});
+    if(j===1){s+=ar(46,140,94,137,X,'x');s+=scTx(70,124,'30M','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--no)');}
+    else s+=ar(40,131,118,69,W,'w');
+    if(tbRead)[30,40,50].forEach(y=>{s+=ar(206,y,270,82,R,'r');});
+    if(tbRead)s+=scTx(240,44,'merge',SC_HALO+'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)');
+    if(mbOn)s+=ar(236,130,271,104,R,'r');
+    return s;
+  }
+  function show(j){cur=j;seen.add(j);M.forEach((_,k)=>$('#'+id+'-b'+k).classList.toggle('sel',k===j));
+    $('#'+id+'-s').innerHTML=svg(j);const m=M[j];
+    const bar=(lab,v,col)=>'<span>'+lab+'</span><div class="tr"><i style="width:'+v[0]+'%;background:'+col+'"></i></div><small>'+v[1]+'</small>';
+    $('#'+id+'-m').innerHTML=bar('Work per post',m[2],'var(--h1)')+bar('Work per read',m[3],'var(--h2)');
+    $('#'+id+'-c').innerHTML='<span class="t">'+m[0]+' · '+m[1]+'</span>'+m[4];on(seen.size);}
+  show(0);
+}
+
+/* ---------- ball of mud: Zainab’s parcel code ---------- */
+const MUD_M=[['Booking',56,30],['Tracking',160,30],['Billing',264,30],['Dispatch',56,162],['Notices',160,162],['Merchant API',264,162]];
+const MUD_E=[[0,1],[0,2],[0,3],[0,4],[0,5],[1,2],[1,3],[1,4],[1,5],[2,3],[2,4],[2,5],[3,4],[3,5],[4,5]];
+function mudSvg(o){
+  o=Object.assign({clean:false,hlM:[],hlE:[],touch:[],tags:false},o);
+  let s='';
+  const box=(x,y,w,t,hl,touch,sub)=>'<rect x="'+(x-w/2)+'" y="'+(y-15)+'" width="'+w+'" height="30" rx="8" style="fill:'+(touch?'var(--h3-bg)':hl?'var(--no-bg)':'var(--card)')+';stroke:'+(touch?'var(--h3)':hl?'var(--no-strong)':'var(--line2)')+';stroke-width:'+(hl||touch?2.4:1.6)+'"/>'+
+    scTx(x,y+4.5,t,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+(sub?scTx(x,y+(y<100?-20:29),sub,'font-size:11px;font-weight:600;text-anchor:middle;fill:var(--muted)'):'');
+  if(!o.clean){MUD_E.forEach(([a,b],k)=>{const A=MUD_M[a],B=MUD_M[b],mx=(A[1]+B[1])/2+((k%3)-1)*34,my=(A[2]+B[2])/2+((k%2)?26:-26);const hl=o.hlE.includes(k);
+      s+='<path d="M'+A[1]+' '+A[2]+' Q'+mx+' '+my+' '+B[1]+' '+B[2]+'" style="fill:none;stroke:'+(hl?'var(--no-strong)':'var(--line2)')+';stroke-width:'+(hl?2.4:1.4)+'"/>';});}
+  else{MUD_M.forEach(m=>{s+='<line x1="'+m[1]+'" y1="'+m[2]+'" x2="160" y2="96" style="stroke:var(--h2);stroke-width:1.8"/>';});
+    s+='<rect x="98" y="80" width="124" height="34" rx="10" style="fill:'+(o.touch.includes(6)?'var(--h3-bg)':'var(--h2-bg)')+';stroke:'+(o.touch.includes(6)?'var(--h3)':'var(--h2)')+';stroke-width:2.2"/>'+
+      scTx(160,95,'Parcel API','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+scTx(160,108,'IDs, addresses, prices','font-size:11px;text-anchor:middle;fill:var(--muted)');}
+  MUD_M.forEach((m,k)=>{const sub=o.tags&&o.clean?(k===2?'pricing rules':k===3?'redelivery rules':''):'';s+=box(m[1],m[2],k===5?96:84,m[0],o.hlM.includes(k),o.touch.includes(k),sub);});
+  return s;
+}
+
+/* =====================================================================
+   The lesson
+   ===================================================================== */
 Course.lesson({
-  id:'0002', title:'Scalability and maintainability', minutes:20, icon:'trend',
-  goals:['Describe load with the right load parameters and decide where to do the work','Measure performance with percentiles instead of averages','Judge scaling and maintainability choices: up or out, operability, simplicity, evolvability'],
+  id:'0002', title:'Scalability and maintainability', minutes:22, icon:'trend',
+  goals:['Describe load with the right load parameters and decide where to do the work','Measure performance with percentiles instead of averages, and spot where the tail hides','Judge scaling and maintainability choices: up or out, operability, simplicity, evolvability'],
   parts:['Describing load','Measuring performance','Coping with load','Maintainability'],
   read:'Read chapter 1 of the book from “Scalability” to the end for the Twitter case, percentiles and the three maintainability principles.',
   glossary:{
@@ -37,8 +322,9 @@ Course.lesson({
     'Describe load with <b>load parameters</b>. For Twitter, the follower distribution (fan-out) mattered more than tweets per second.',
     'Reads far outnumber writes? Do more work <b>at write time</b>. Exempt the huge cases (Twitter’s celebrities) and merge them <b>at read time</b>.',
     'Measure <b>response time</b> as a distribution. Use the median for typical, <b>p95/p99/p999</b> for the tail; the mean hides how many users suffered.',
-    'Queues make the tail: measure at the client, load-test without waiting for answers, and <b>add histograms</b>, never average percentiles.',
-    '<b>Scale up</b> (bigger machine) or <b>scale out</b> (more machines, shared-nothing). Stateless is easy to spread; stateful is hard. No magic scaling sauce.',
+    'Queues make the tail: measure at the client, load-test without waiting for answers, and <b>add histograms</b>, never average percentiles. One slow backend call makes the whole page slow.',
+    '<b>Scale up</b> (bigger machine) or <b>scale out</b> (more machines, shared-nothing). Stateless is easy to spread; stateful is hard. Rethink at every 10× jump.',
+    '<b>No magic scaling sauce:</b> a design rests on guesses about which operations are common. For an early or unproven product, iterating fast on features usually matters more than scaling for imagined load.',
     'Most software cost is maintenance. Design for <b>operability</b>, <b>simplicity</b> (remove accidental complexity with good abstractions) and <b>evolvability</b>.'
   ],
   steps:[
@@ -48,116 +334,172 @@ Course.lesson({
   L.mc(L.card,['“Yes, it handles today’s traffic fine.”','“Scalable to which kind of growth?”'],1,
    'Handling today fine says nothing about tomorrow. Growth comes in different shapes (more bookings, more page views, bigger merchants), and each can break a different part.',
    'Coping today doesn’t mean coping with three times the parcels. The useful question is which kind of growth, and what you could do about it.');}},
-{part:0,src:'Chapter 1 · Scalability',run(L){
-  L.h(L.kick('learn','Scalability and load')+'<h1 class="q">“Scalable” is not a label you can stick on a system</h1>'+
-   L.prose('<b>Scalability</b> is a system’s ability to cope with more load. Saying “X is scalable” or “Y doesn’t scale” is meaningless on its own. The real questions are: <i>if the system grows in this particular way, what are our options?</i> And <i>how can we add computing resources to handle it?</i>')+
-   L.prose('First, describe today’s load with a few numbers, called '+L.g('load-parameter','load parameters')+'. Which ones fit depends on your design:')+
-   L.list([['pointer','Requests per second','e.g. tracking-page views per second'],
-     ['scale','Ratio of reads to writes','e.g. how often a parcel is viewed versus changed'],
-     ['people','Active users at once','e.g. couriers on shift sending GPS pings'],
-     ['layers','Cache hit rate','e.g. how often the tracking-page cache already has the answer']],1)+
-   '<p class="small" style="margin-top:10px">Sometimes the average case matters. Sometimes a few extreme cases dominate.</p>');
-  L.done();}},
-{part:0,src:'Chapter 1 · Describing Load',run(L){
-  L.h(L.kick('ex','The book’s case: Twitter in 2012')+'<h1 class="q">Where should the work happen: when you write, or when you read?</h1>');
-  L.beats(L.card,[
-   ['The load','Two main operations. <b>Post tweet</b>: about 4.6k per second on average, over 12k at peak. <b>Home timeline</b> (see tweets from people you follow): about 300k reads per second.'],
-   ['Approach 1','Posting just stores the tweet. Reading a timeline looks up everyone you follow, finds their tweets and merges them by time. Twitter started here, and the timeline reads couldn’t keep up.'],
-   ['Approach 2','Keep a ready-made timeline per user, like a mailbox. Posting a tweet copies it into every follower’s mailbox. Reading becomes cheap. Twitter switched to this.'],
-   ['The cost','A tweet reaches about 75 followers on average, so 4.6k tweets a second become 345k mailbox writes. But some users have over 30 million followers: one tweet, 30 million writes, and Twitter aims to deliver within five seconds.'],
-   ['The hybrid','So Twitter moved to a mix: most tweets are copied on write, but celebrities’ tweets are skipped and merged in when a follower reads, as in approach 1.']],
-   'The key '+L.g('load-parameter','load parameter')+' was not tweets per second but how followers are spread across users, because that sets the '+L.g('fan-out','fan-out')+'.');}},
+{part:0,src:'Chapter 1 · Describing Load',
+ solve:async L=>{L.$('#d2-t1').click();},
+ run(L){
+  const box=(x,y,w,h,a,b,col,bg)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="8" style="fill:'+bg+';stroke:'+col+';stroke-width:1.8"/>'+
+    scTx(x+w/2,y+h/2-2,a,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+scTx(x+w/2,y+h/2+13,b,'font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  const arr=(x1,y1,x2,y2,w,col,m)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:'+col+';stroke-width:'+w+'" marker-end="url(#d2-'+(m||'a')+')"/>';
+  L.h(L.kick('learn','Describing load')+'<h1 class="q">Pin today’s load down with a few numbers</h1>'+
+   '<div class="sc-row" role="group" aria-label="Load level"><button class="chip sel" id="d2-t0" aria-pressed="true">Today</button><button class="chip" id="d2-t1" aria-pressed="false">Peak Week</button></div>'+
+   '<svg class="sc-svg" id="d2s" viewBox="0 0 320 232" role="img" aria-label="Otterpost’s load: recipients view tracking pages at 1,000 a second (three times that in Peak Week), a cache answers 90%, 3,000 couriers send GPS pings, the Parcel DB sees 35 reads for every write, and one merchant sends 15% of all parcels."></svg>'+
+   '<div class="sc-cap">“X is scalable” means nothing alone. Describe today’s load with a few '+L.g('load-parameter','load parameters')+' that fit your design. Then ask: if <i>this</i> one grows, what are our options?</div>'+
+   '<p class="sc-ill">Otterpost’s numbers are illustrative. The kinds of number are the book’s examples.</p>');
+  const draw=pk=>{
+    let s='<defs><marker id="d2-a" viewBox="0 0 8 8" refX="7" refY="4" markerUnits="userSpaceOnUse" markerWidth="10" markerHeight="10" orient="auto"><path d="M0,0 L8,4 L0,8z" style="fill:var(--line2)"/></marker><marker id="d2-b" viewBox="0 0 8 8" refX="6" refY="4" markerUnits="userSpaceOnUse" markerWidth="20" markerHeight="20" orient="auto"><path d="M0,0 L8,4 L0,8z" style="fill:var(--h3)"/></marker></defs>';
+    s+=arr(96,44,pk?182:190,44,pk?9:3.5,pk?'var(--h3)':'var(--h1)',pk?'b':'a')+scTx(142,32,pk?'3,000 views/s':'1,000 views/s',SC_HALO+'font-size:12px;font-weight:700;text-anchor:middle;fill:'+(pk?'var(--h3)':'var(--h1)'));
+    if(pk)s+=scTx(140,80,'×3: this one grows','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+    s+=arr(254,66,254,98,pk?3.5:2,'var(--h1)')+scTx(248,88,'10% miss','font-size:11.5px;text-anchor:end;fill:var(--muted)');
+    s+=arr(96,116,184,124,2,'var(--h2)')+scTx(102,108,'GPS pings','font-size:11.5px;fill:var(--h2)');
+    s+=arr(96,188,184,154,2,'var(--h2)')+scTx(104,202,'bookings','font-size:11.5px;fill:var(--h2)');
+    s+=box(4,24,92,40,'Recipients','tracking pages','var(--h1)','var(--h1-bg)')+box(194,24,120,40,'Cache','90% hit rate','var(--line2)','var(--soft)')+
+       box(4,96,92,40,'Couriers','3,000 on shift','var(--h2)','var(--h2-bg)')+box(4,168,92,40,'Merchants','book parcels','var(--h2)','var(--h2-bg)')+
+       box(188,102,128,60,'Parcel DB','35 reads : 1 write','var(--h4)','var(--h4-bg)');
+    s+='<rect x="4" y="214" width="92" height="12" rx="4" style="fill:var(--soft2)"/><rect x="4" y="214" width="14" height="12" rx="4" style="fill:var(--h3)"/>'+
+       scTx(102,224,'Bramble &amp; Bolt = 15% of parcels','font-size:12px;font-weight:700;fill:var(--h3)');
+    L.$('#d2s').innerHTML=s;
+    [0,1].forEach(k=>{const b=L.$('#d2-t'+k);b.classList.toggle('sel',k===pk);b.setAttribute('aria-pressed',k===pk);});};
+  [0,1].forEach(k=>{L.$('#d2-t'+k).onclick=()=>draw(k);});
+  draw(0);L.done();}},
+{part:0,src:'Chapter 1 · Describing Load',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#tw-b'+j).click();await L.sleep(20);}},
+ run(L){
+  L.h(L.kick('ex','The book’s case: Twitter, 2012')+'<h1 class="q">Do the work when a tweet is posted, or when a timeline is read? Tap each design.</h1><div id="tw"></div>');
+  Tw(L,L.$('#tw'),'tw',n=>{if(n===3&&!L.$('#tw-ok')){L.$('#tw').insertAdjacentHTML('beforeend','<span id="tw-ok"></span>');
+    L.sheet('info','The load parameter that mattered','Twitter had 4.6k posts a second on average (over 12k at peak) and 300k timeline reads. Handling 12k posts a second would be fairly easy. The hard part was '+L.g('fan-out','fan-out')+': how followers are spread across users, perhaps weighted by how often they tweet.');L.done();}});}},
 {part:0,src:'Chapter 1 · Describing Load',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why did Twitter do better with approach 2, copying tweets into mailboxes when they are posted?</h1>');
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Why did Twitter do better with approach 2, copying tweets into timeline caches when they are posted?</h1>');
   L.mc(L.card,['Posting a tweet became cheaper to do','Timeline reads far outnumbered new tweets','The table of followers became much smaller'],1,
    'Tweets were posted almost a hundred times less often than timelines were read. Doing extra work on the rare operation made the common one cheap.',
    'Posting actually got <i>more</i> expensive, and the follower data didn’t shrink. It paid off because reads outnumbered posts by almost a hundred to one.');}},
 {part:0,src:'Chapter 1 · Describing Load',pts:1,
- solve:async L=>{[...L.$('#ev').children].forEach(b=>b.click());},
+ solve:async L=>{L.$('#n5-r1').click();L.$('#n5-nt-push').click();L.$('#n5-nt-hyb').click();L.$('#n5-big-0').click();await scWait(L,'#n5-q button');L.$$('#n5-q button')[2].click();},
  run(L){
-  const D=[['Look it up on every view',['1 write. But every tracking-page view must also check for notices: extra lookups on ~1,000 views a second, all day.','1 write. The same extra lookups on every view, all day.'],[0,0]],
-           ['Push to each parcel’s page',['150 page updates, done in a second. Views stay cheap.','40,000 page updates at once. Recipients wait many minutes before the notice shows up.'],[1,-1]],
-           ['Hybrid: push small, merge big',['150 page updates, as in the push design.','1 write. Each page merges in its hub’s notice when viewed: one small lookup.'],[1,1]]];
-  const E=['A van breaks down · 150 parcels','A hub shuts for snow · 40,000 parcels'];const seen=new Set();
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Otterpost’s version. Each tracking page shows a parcel’s status plus any delay notice. Notices come in two sizes. Pick one.</h1><div id="ev"></div>'+
-   D.map((d,j)=>'<div class="lane" style="margin-bottom:8px"><div class="lh">'+L.ic(['eye','arrow','scale'][j])+d[0]+'</div><div class="small" id="d'+j+'">Pick a notice above.</div></div>').join('')+'<div id="eq"></div>');
-  E.forEach((e,k)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('alert')+e;
-    b.onclick=()=>{[...L.$('#ev').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(k);
-      D.forEach((d,j)=>{const c=d[2][k];L.$('#d'+j).innerHTML='<span style="color:var('+(c>0?'--ok':c<0?'--no':'--ink')+')">'+d[1][k]+'</span>';});
-      if(seen.size===2&&!L.$('#eq').innerHTML){const q=L.$('#eq');q.innerHTML='<h2 class="sub">Tracking-page views far outnumber delay notices. Which design fits best?</h2>';
-        L.mc(q,['Look it up on every view','Push to each parcel’s page','Hybrid: push small, merge big'],2,
-         'Just like Twitter’s celebrities: push the common small notices so reads stay cheap, but skip the rare giant ones and merge them in at read time.',
-         'Looking up on every view piles work onto the operation that happens most. Pushing everything chokes on the rare giant notice. The hybrid avoids both, like Twitter’s celebrity exception.');}};
-    L.$('#ev').appendChild(b);});}},
-{part:0,src:'Chapter 1 · Describing Load',pts:1,run(L){
-  L.h(L.kick('pr','Watch the average')+'<h1 class="q">Tobias measures that a delay notice touches 150 parcels on average, and wants to drop the hybrid and push everything. What does the Twitter case warn?</h1>');
-  L.mc(L.card,['Push designs only fail when reads are rare','Averages are fine if taken over a whole year','The average hides the rare huge notices that hurt'],2,
-   'Twitter’s average was only 75 followers, yet a few users with millions of followers set the real cost. The spread of notice sizes is the load parameter, not the average.',
-   'Twitter’s average of 75 followers hid users with 30 million. A longer average hides them just as well. What matters is the spread, including the rare giant cases.');}},
+  let tried=new Set(),picked=false;
+  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Every tracking page shows any delay notice for its parcel. Where should that work happen in Peak Week?</h1>'+
+   scTasks('n5t',['Try two designs at <b>3× Peak Week</b>','Switch to the <b>average</b> notice'])+'<div id="n5"></div><div id="n5-q"></div>'+
+   '<p class="sc-ill">Loads and capacities are illustrative.</p>');
+  const ld=Ladder(L,L.$('#n5'),{id:'n5',rungs:[0,1],bars:['db','nt'],rows:['nt','big'],on:e=>{
+    if(e.type==='set'&&e.r==='nt'&&ld.at===1)tried.add(e.v);if(e.type==='rung'&&e.k===1)tried.add(ld.st.nt);
+    if(tried.size>=2)scTick(L,'n5t',0);if(e.type==='set'&&e.r==='big')scTick(L,'n5t',1);
+    if(L.$$('#n5t li.done').length===2&&!L.$('#n5-q').innerHTML)ask();}});
+  function ask(){const q=L.$('#n5-q');q.innerHTML='<div class="sc-lbl">Your call for Peak Week</div><div class="sc-row"></div>';
+    ['Look up on every view','Push to every page','Hybrid: push small, merge big'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+      b.onclick=()=>{if(picked)return;picked=true;const ok=j===2;b.classList.add(ok?'ok':'no');L.award(ok);
+        L.sheet(ok?'ok':'no',ok?'Right: the hybrid':'Not that one','Views far outnumber notices, so looking up on every view piles work on the Parcel DB. Pushing everything chokes on Bramble & Bolt’s 60,000-parcel notice. The hybrid pushes small notices and stores the giant one once, like Twitter’s celebrities. And the <b>average</b> notice (150 parcels) made pushing look fine: the average hides the case that hurts.');L.done();};
+      q.querySelector('.sc-row').appendChild(b);});}}},
 
 /* ---------- PART 2: MEASURING PERFORMANCE ---------- */
 {part:1,src:'Chapter 1 · Describing Performance',run(L){
-  L.h(L.kick('learn','Describing performance')+'<h1 class="q">Two questions, and what to measure for each</h1>'+
-   L.lanes([['trend','Same machines, more load','How does performance change?',1],['layers','Same performance, more load','How many more resources do you need?',2]])+
-   L.prose('Batch jobs care most about '+L.g('throughput','throughput')+': records processed per second, or how long a job takes. Online systems, like the tracking page, care about '+L.g('response-time','response time')+'.')+
-   L.flow([['arrow','Network','travel to and from'],['clock','Queue','waiting to be handled'],['box','Service','the actual work']])+
-   L.prose('Response time is the whole trip the client sees. '+L.g('latency','Latency')+' is only the waiting part: the time a request is “latent”, waiting for service. People often mix the two up.'));
+  const seg=(x,w,fill,stroke,t)=>'<rect x="'+x+'" y="62" width="'+w+'" height="30" rx="6" style="fill:'+fill+';stroke:'+stroke+';stroke-width:1.6"/>'+scTx(x+w/2,81,t,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  const br=(x1,x2,y,up,col,t)=>'<path d="M'+x1+' '+(y+(up?6:-6))+' V'+y+' H'+x2+' V'+(y+(up?6:-6))+'" style="fill:none;stroke:'+col+';stroke-width:2"/>'+scTx((x1+x2)/2,y+(up?-6:16),t,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:'+col);
+  L.h(L.kick('learn','Describing performance')+'<h1 class="q">What a recipient waits for when the tracking page loads</h1>'+
+   '<svg class="sc-svg" viewBox="0 0 320 200" role="img" aria-label="A request’s life: network, waiting in the queue, the actual work, network back. Response time covers all of it; latency is only the waiting.">'+
+   br(8,312,40,true,'var(--h1)','response time: what the client sees')+
+   seg(8,44,'var(--soft2)','var(--line2)','net')+seg(54,104,'var(--h3-bg)','var(--h3)','waiting in queue')+seg(160,104,'var(--h1-bg)','var(--h1)','service: the work')+seg(266,46,'var(--soft2)','var(--line2)','net')+
+   br(54,158,104,false,'var(--h3)','latency: waiting to be handled')+
+   '<line x1="8" x2="312" y1="150" y2="150" style="stroke:var(--line);stroke-width:1"/>'+
+   scTx(8,172,'Linh’s nightly batch job asks a different question:','font-size:12.5px;fill:var(--muted)')+
+   '<g>'+[0,1,2,3,4,5,6,7].map(k=>'<rect class="sc-mv" x="'+(8+k*26)+'" y="180" width="18" height="12" rx="3" style="fill:var(--h2-bg);stroke:var(--h2)"/>').join('')+'</g>'+
+   scTx(312,190,'records / s','font-size:12.5px;font-weight:700;text-anchor:end;fill:var(--h2);'+SC_HALO)+'</svg>'+
+   '<div class="sc-cap">Online systems like the tracking page care about '+L.g('response-time','response time')+'; batch jobs care about '+L.g('throughput','throughput')+'. People often say '+L.g('latency','latency')+' for response time, but latency is only the waiting part.</div>');
   L.done();}},
-{part:1,src:'Chapter 1 · Describing Performance',run(L){
-  L.h(L.kick('learn','Percentiles, not averages')+'<h1 class="q">Response time is a spread of values, not one number</h1>'+
-   L.prose('Send the same request again and again and each one takes a slightly different time. Causes include a background process grabbing the processor, a lost network packet that must be resent, a garbage-collection pause, a read from disk, even vibrations in the server rack.')+
-   L.prose('The <b>mean</b> (add up, divide by the count) is often reported, but it doesn’t tell you how many users actually waited that long. Use '+L.g('percentile','percentiles')+' instead: sort the times from fastest to slowest.')+
-   L.tiers([['person','Median (p50)','Half the requests are faster, half slower. Your typical wait.'],
-            ['alert','p95, p99, p999','The time that 95%, 99% or 99.9% of requests beat. If p95 is 1.5 s, 5 in 100 requests take 1.5 s or longer.']])+
-   '<p class="small" style="margin-top:10px">Careful: the median is about one request. A user who makes several requests is far more than 50% likely to hit at least one slower than the median.</p>');
-  L.done();}},
-{part:1,src:'Chapter 1 · Describing Performance',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The tracking page’s p99 response time is 800 ms. What does that tell Kwame?</h1>');
-  L.mc(L.card,['99 in 100 views are faster than 800 ms','The average view takes about 800 ms','Almost every view takes 800 ms exactly'],0,
-   'p99 is the threshold that 99% of requests beat. The slowest 1 in 100 take 800 ms or more.',
-   'A percentile isn’t an average or a typical value. p99 = 800 ms means 99 in 100 views finish faster than 800 ms, and 1 in 100 takes that long or longer.');}},
-{part:1,src:'Chapter 1 · Describing Performance',pts:1,
- solve:async L=>{L.$('#so').click();L.$('#me').click();L.$('#md').click();},
+{part:1,src:'Chapter 1 · Describing Performance',
+ solve:async L=>{scSet(L,'s7',6);},
  run(L){
-  const V=[110,95,2400,130,100,85,160,120,90,300,105,140,80,110,900,120,150,100,200,90],H=v=>Math.round(Math.sqrt(v/2400)*140);let cur=V.slice();const shown=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Twenty tracking-page requests, in the order they arrived. Sort them, then show the mean and the median.</h1>'+
-   '<div id="ch" style="position:relative;height:150px;display:flex;align-items:flex-end;gap:3px;border-bottom:2px solid var(--line);margin:6px 0 4px"></div>'+
-   '<div class="small" id="cl" style="margin-bottom:10px">Bar heights are squashed so the small ones stay visible.</div>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="so">Sort fastest to slowest</button><button class="btn" id="me">Show mean</button><button class="btn" id="md">Show median</button></div><div id="cq"></div>');
-  const line=(id,v,col,txt,side)=>'<div id="'+id+'" style="position:absolute;left:0;right:0;bottom:'+H(v)+'px;border-top:2px dashed '+col+'"><span style="position:absolute;'+side+':0;top:-20px;background:var(--card);padding:0 3px;font-size:12px;font-weight:600;color:'+col+'">'+txt+'</span></div>';
-  const draw=()=>{L.$('#ch').innerHTML=cur.map(v=>'<div title="'+v+' ms" style="flex:1;height:'+H(v)+'px;background:'+(v>279?'var(--no-line)':'var(--line2)')+';border-radius:3px 3px 0 0"></div>').join('')+
-    (shown.has('me')?line('lm',279,'var(--no)','mean 279 ms','right'):'')+(shown.has('md')?line('ld',115,'var(--ok)','median 115 ms','left'):'');};draw();
-  const ask=()=>{if(!(shown.has('me')&&shown.has('md'))||L.$('#cq').innerHTML)return;const q=L.$('#cq');q.innerHTML='<h2 class="sub">How many of the 20 requests were slower than the mean?</h2>';
-    L.mc(q,['17 of them','10 of them','3 of them'],2,
-     'Only 3 (300 ms, 900 ms and 2.4 s). Two outliers pulled the mean up to 279 ms, more than double the typical wait. The median, 115 ms, is much closer to a typical recipient’s wait.',
-     'Count the red bars: only 3 are slower than the mean. A couple of huge outliers drag the mean up, so it describes almost nobody’s real wait. The median does.');};
-  L.$('#so').onclick=()=>{cur=V.slice().sort((a,b)=>a-b);draw();};
-  L.$('#me').onclick=()=>{shown.add('me');draw();ask();};
-  L.$('#md').onclick=()=>{shown.add('md');draw();ask();};}},
+  L.h(L.kick('ex','Explore the dot strip')+'<h1 class="q">200 tracking-page requests, sorted. Slide until the mean is double the median.</h1><div id="s7h"></div>'+
+   scRange('s7','Slow requests',0,10,0,.5)+
+   '<p class="small" style="margin:0">Slow = a garbage-collection pause, a lost network packet that must be resent, a read from disk, a background process grabbing the CPU, even vibrations in the server rack…</p><p class="sc-ill">Response times are illustrative.</p>');
+  const sp=Strip(L,L.$('#s7h'),{id:'s7s',mean:true,flags:[50],ro:['mean','p50']});
+  const upd=()=>{const s=+L.$('#s7').value;L.$('#s7-v').textContent=s+'%';const v=SCD.pages(s/100,1);sp.set(v);
+    const mean=scMean(v),med=scP(v,50);
+    if(mean>=2*med&&!L.$('#s7ok')){L.$('#s7h').insertAdjacentHTML('beforeend','<span id="s7ok"></span>');const above=v.filter(d=>d.v>mean).length;
+      L.sheet('info','The mean drifted away from almost everyone','The mean is now '+scFmt(mean)+', but the median is still '+scFmt(med)+': half the requests are faster than that, as before. Only '+above+' of 200 requests are slower than the mean. The mean (add up, divide by the count) doesn’t show how many real users waited that long.');L.done();}};
+  L.$('#s7').oninput=upd;upd();}},
+{part:1,src:'Chapter 1 · Describing Performance',
+ solve:async L=>{['#s8-50','#s8-95','#s8-99'].forEach(s=>L.$(s).click());},
+ run(L){
+  L.h(L.kick('learn','Percentiles')+'<h1 class="q">Sort the requests, then plant a flag. Tap each one.</h1>'+
+   '<div class="sc-row"><button class="btn" id="s8-50">Plant p50</button><button class="btn" id="s8-95">Plant p95</button><button class="btn" id="s8-99">Plant p99</button></div><div id="s8h"></div>'+
+   '<div class="sc-cap" id="s8c" aria-live="polite"><span class="t">Percentiles</span>A percentile is a spot in the sorted list. Plant a flag to see what it tells you.</div>');
+  const sp=Strip(L,L.$('#s8h'),{id:'s8s',ro:[]});const v=SCD.pages(.05,1);sp.set(v);
+  const T={50:'<b>p50, the median:</b> half the requests are faster than '+scFmt(scP(v,50))+', half slower. It’s the typical wait.',
+    95:'<b>p95:</b> 95 in 100 requests are faster than '+scFmt(scP(v,95))+'; 5 in 100 take that long or longer.',
+    99:'<b>p99:</b> 99 in 100 are faster than '+scFmt(scP(v,99))+'. The slowest 1 in 100 wait longer. p999 is the same idea for 1 in 1,000, so it needs at least 1,000 requests.'};
+  [50,95,99].forEach(p=>{L.$('#s8-'+p).onclick=()=>{if(!sp.S.flags.includes(p))sp.S.flags.push(p);sp.S.ro=sp.S.flags.map(x=>'p'+x);sp.draw();L.$('#s8-'+p).classList.add('pri');
+    L.$('#s8c').innerHTML='<span class="t">'+sp.S.flags.length+' of 3 flags</span>'+T[p];
+    if(sp.S.flags.length===3&&!L.$('#s8ok')){L.$('#s8h').insertAdjacentHTML('beforeend','<span id="s8ok"></span>');
+      L.sheet('info','Percentiles say how many people waited','p95 and p99 are '+L.g('percentile','percentiles')+'. One catch about the median: it describes one request. A recipient whose page needs several requests is far more than 50% likely to hit at least one slower than the median.');L.done();}};});}},
+{part:1,src:'Chapter 1 · Describing Performance',pts:1,
+ solve:async L=>{scSet(L,'s9s-u',198);L.$('#s9go').click();},
+ run(L){
+  let first=true;
+  L.h(L.kick('try','Find the percentile')+'<h1 class="q">These are merchant-dashboard pages. Kwame needs their p99. Drag your flag to it, then lock it in.</h1><div id="s9h"></div>'+
+   '<button class="btn pri" id="s9go">'+L.ic('check')+'Lock in my flag</button>');
+  const sp=Strip(L,L.$('#s9h'),{id:'s9s',user:100,ro:['user']});sp.set(SCD.pages(.01,5));
+  L.$('#s9go').onclick=()=>{const r=sp.S.user,ok=r===198,val=scFmt(sp.vals[197].v);
+    if(first){L.award(ok);first=false;}
+    if(ok){L.$('#s9go').disabled=true;L.sheet('ok','That’s p99','198 of 200 pages take '+val+' or less: 99 in 100. Only the slowest 2, the 1%, take longer. Notice how far the p99 sits from the median.');L.done();}
+    else L.sheet('no','Not p99 yet','p99 is the spot where 99% of the requests are at or below the flag: 99% of 200 is 198. Your flag is at '+r+'. Move it until the readout says p99.');};}},
 {part:1,src:'Chapter 1 · Describing Performance',run(L){
-  L.h(L.kick('learn','Why the tail matters')+'<h1 class="q">The slowest requests often belong to your best customers</h1>'+
-   L.prose('High percentiles are called '+L.g('tail-latency','tail latencies')+'. The book’s example: Amazon sets response-time targets for internal services at p999, even though that affects only 1 request in 1,000. The slowest requests often come from customers with the most data on their accounts, who have bought the most: the most valuable customers.')+
-   L.prose('Amazon also saw that 100 ms of extra response time cut sales by 1%. But it judged p9999 (1 in 10,000) too costly to optimize: random events beyond your control dominate there, and the gains shrink.')+
-   L.note('Percentiles often appear in an '+L.g('sla','SLA')+'. Example: the service counts as “up” if the median is under 200 ms and p99 under 1 s, and it must be up at least 99.9% of the time. Miss it, and customers can ask for a refund.','shield')+
-   '<p class="small" style="margin-top:12px">At Otterpost, Bramble & Bolt has by far the most parcels, so its dashboard pages are likely the slowest. That’s the tail worth watching.</p>');
+  L.h(L.kick('learn','Why the tail matters')+'<h1 class="q">The slowest requests often belong to your best customers</h1><div id="s10h"></div>'+
+   '<div class="sc-cap">High percentiles are the '+L.g('tail-latency','tail')+'. At Amazon, the slowest requests often come from the biggest buyers, who have the most data. The dashed lines are an '+L.g('sla','SLA')+'.</div>');
+  const sp=Strip(L,L.$('#s10h'),{id:'s10s',flags:[50,99],ro:['p50','p99'],hl:[{v:200,label:'SLA: median < 200 ms ✓',col:'var(--ok)'},{v:1000,label:'SLA: p99 < 1 s missed → refund',col:'var(--no)'}]});
+  sp.set(SCD.pages(.05,1));
+  L.$('#s10h').insertAdjacentHTML('beforeend','<p class="sc-ill" style="margin:0">The book’s example SLA, which also asks for 99.9% uptime. Times are illustrative.</p>');
+  L.card.insertAdjacentHTML('beforeend','<div class="sc-facts"><span><b>Amazon</b> targets <b>p999</b></span><span><b>p9999</b>: too costly</span><span><b>+100 ms</b> → 1% fewer sales</span><span><b>+1 s</b> → 16% lower satisfaction score</span></div>');
   L.done();}},
-{part:1,src:'Chapter 1 · Describing Performance',run(L){
-  L.h(L.kick('ex','Peak Week, day one')+'<h1 class="q">The server says 40 ms. Recipients say 3 seconds. Who’s right?</h1>');
-  L.beats(L.card,[
-   ['The puzzle','Server logs say tracking requests take about 40 ms. Recipients complain that the page takes 3 seconds.'],
-   ['The queue','Each server works on only a few requests at once, limited by its processor cores. A few heavy requests, such as huge merchant reports, hold up the quick ones waiting behind them. This is '+L.g('head-of-line','head-of-line blocking')+'.'],
-   ['The blind spot','The server’s timer starts only when it picks a request up. The time spent waiting in the queue never shows. So Kwame starts measuring response time on the <b>client</b> side.'],
-   ['The test that lied','Last month’s load test said all was fine. But its test client waited for each answer before sending the next request, so queues never built up the way they do with real recipients.'],
-   ['The fix','Kwame reruns the test with a client that keeps sending requests on schedule, whatever the response times. Now the 3-second tail shows up before real users find it.']],
-   'Queueing delays make up much of the time at high percentiles. Measure where the user is, and test with load that doesn’t politely wait.');}},
+{part:1,src:'Chapter 1 · Describing Performance',
+ solve:async L=>{for(let p=0;p<3;p++){L.$('#e11-p'+p).click();await L.sleep(10);L.$('#e11-v1').click();await L.sleep(10);}},
+ run(L){
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Peak Week, day one: the server says 40 ms, recipients say seconds. Open each case, then flip its view.</h1>'+
+   '<div class="sc-row" id="e11"></div><div class="sc-row" id="e11v"></div><div id="e11h"></div><div class="sc-cap" id="e11c" aria-live="polite"></div>');
+  const sp=Strip(L,L.$('#e11h'),{id:'e11s',ro:['p50','p95','p99']});
+  const q=SCD.queue(),tw=SCD.two(),all=tw.a.concat(tw.b),pa=scP(tw.a,99),pb=scP(tw.b,99),avg=(pa+pb)/2,real=scP(all,99);
+  const P=[
+   ['Queue',[['Server’s timer',()=>{sp.S.hl=[];sp.S.flags=[50,95,99];sp.S.ro=['p50','p95','p99'];sp.set(q.svc);},'The server starts its timer when it picks a request up. Two heavy merchant reports (red) took over a second, but almost everything else looks fast.'],
+     ['Client’s timer',()=>{sp.S.hl=[];sp.S.flags=[50,95,99];sp.S.ro=['p50','p95','p99'];sp.set(q.cli);},'Same requests, timed by the client. The server works on two at a time, so the fast requests behind those reports waited in the queue (amber). This is '+L.g('head-of-line','head-of-line blocking')+'. Measure response time at the client.']]],
+   ['Load test',[['Tester waits',()=>{sp.S.hl=[];sp.S.flags=[50,95,99];sp.S.ro=['p50','p95','p99'];sp.set(q.svc.map(d=>({v:d.v,c:d.c})));},'Last month’s load test sent the next request only after the last one returned. No queue ever built up, so the tail barely showed and the test looked fine.'],
+     ['Real users',()=>{sp.S.hl=[];sp.S.flags=[50,95,99];sp.S.ro=['p50','p95','p99'];sp.set(q.cli);},'Real recipients keep arriving whatever the response times. A load tester must do the same, or its queues stay unrealistically short and the measurements are skewed.']]],
+   ['Two servers',[['Average p99s',()=>{sp.S.flags=[];sp.S.ro=[];sp.S.hl=[{v:avg,label:'average of the p99s: '+scFmt(avg),col:'var(--h4)'}];sp.set(all);},'Web-1 (blue) has p99 '+scFmt(pa)+'; the overloaded web-2 (green) has p99 '+scFmt(pb)+'. Kwame averages them: '+scFmt(avg)+'. That number means nothing.'],
+     ['Add the histograms',()=>{sp.S.hl=[];sp.S.flags=[99];sp.S.ro=['p99'];sp.set(all);},'Pool all 200 requests (add the two histograms), then read the p99: '+scFmt(real)+'. Averaging percentiles, across machines or time windows, is mathematically meaningless. Algorithms such as t-digest or HdrHistogram approximate percentiles cheaply.']]]];
+  const seen=P.map(()=>new Set());let cur=-1;
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e11-p'+j;b.textContent=p[0];b.onclick=()=>open(j);L.$('#e11').appendChild(b);});
+  function open(j){cur=j;[...L.$('#e11').children].forEach((x,k)=>x.classList.toggle('sel',k===j));
+    L.$('#e11v').innerHTML=P[j][1].map((v,k)=>'<button class="btn" id="e11-v'+k+'">'+(k?L.ic('arrow'):'')+v[0]+'</button>').join('');
+    P[j][1].forEach((v,k)=>{L.$('#e11-v'+k).onclick=()=>view(j,k);});view(j,0);}
+  function view(j,k){[0,1].forEach(x=>L.$('#e11-v'+x).classList.toggle('pri',x===k));P[j][1][k][1]();seen[j].add(k);
+    if(seen[j].size===2)L.$('#e11-p'+j).classList.add('ok');
+    L.$('#e11c').innerHTML='<span class="t">'+P[j][0]+' · '+P[j][1][k][0]+'</span>'+P[j][1][k][2];
+    if(seen.every(s=>s.size===2)&&!L.$('#e11ok')){L.$('#e11h').insertAdjacentHTML('beforeend','<span id="e11ok"></span>');
+      L.sheet('info','Queues make the tail','Waiting in line often makes up much of the slowest responses, and only the client sees that wait. Watch percentiles over a rolling window (say, the last 10 minutes, recomputed every minute), and combine servers by adding histograms.');L.done();}}
+  L.$('#e11c').innerHTML='<span class="t">Pick a case</span>Each one changes what the strip shows. Amber dots waited in a queue.';
+  sp.S.flags=[50,95,99];sp.set(q.svc);}},
 {part:1,src:'Chapter 1 · Percentiles in Practice',run(L){
+  const lane=(y,t,len,slow)=>scTx(104,y-5,t,'font-size:12px;fill:var(--muted)')+(slow?'':'<line x1="'+(108+len)+'" x2="278" y1="'+(y+7)+'" y2="'+(y+7)+'" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:2 4"/>')+'<rect x="104" y="'+y+'" width="'+len+'" height="14" rx="5" style="fill:'+(slow?'var(--no-strong)':'var(--h1)')+'"/>'+'<line x1="88" y1="95" x2="102" y2="'+(y+7)+'" style="stroke:var(--line2);stroke-width:1.5"/>';
   L.h(L.kick('learn','Percentiles in practice')+'<h1 class="q">One slow call makes the whole page slow</h1>'+
-   L.prose('Many pages need several backend calls. Even if they run in parallel, the page waits for the <b>slowest</b> one.')+
-   L.flow([['pointer','Tracking page','asks 4 services at once'],['layers','4 backend calls','3 fast, 1 slow','',4],['clock','Page is slow','it waits for the slowest','',4]])+
-   L.prose('So even if only a small share of backend calls are slow, a larger share of pages end up slow. The book calls this <b>tail latency amplification</b>.')+
-   L.list([['Track a rolling window','e.g. the last 10 minutes of response times, with percentiles recomputed every minute. Sorting the whole list works; approximation algorithms such as t-digest or HdrHistogram are cheaper.'],
-     ['Never average percentiles','Averaging p99s across machines or time periods is meaningless. Add up the histograms (counts per time bucket) instead.']],2));
+   '<svg class="sc-svg" viewBox="0 0 320 196" role="img" aria-label="The tracking page calls four services in parallel. Three answer fast, one is slow, and the page is ready only when the slowest one answers.">'+
+   '<rect x="6" y="72" width="82" height="46" rx="10" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:2"/>'+scTx(47,92,'Tracking','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+scTx(47,107,'page','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+
+   lane(30,'Parcel DB',52)+lane(70,'ETA model',64)+lane(110,'Notices',176,1)+lane(150,'Merchant info',44)+
+   '<line x1="280" x2="280" y1="20" y2="172" style="stroke:var(--no);stroke-width:2;stroke-dasharray:5 4"/>'+scTx(316,14,'page ready','font-size:12.5px;font-weight:700;text-anchor:end;fill:var(--no)')+
+   scTx(104,190,'dotted = waiting for the slow call','font-size:12px;fill:var(--muted)')+'</svg>'+
+   '<div class="sc-cap">Even when the calls run in parallel, the page waits for the slowest. So even if only a few backend calls are slow, many more pages hit one. The book calls this <b>tail latency amplification</b>.</div>');
   L.done();}},
+{part:1,src:'Chapter 1 · Percentiles in Practice',pts:1,
+ solve:async L=>{L.$('#p13').children[1].click();await scWait(L,'#p13ok',200);},
+ run(L){
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">1% of backend calls are slow. Each tracking page now makes 10 calls in parallel. What share of pages will be slow?</h1>'+
+   '<div class="sc-row" id="p13"></div><div id="p13h"></div><div id="p13k"></div>');
+  const sp=Strip(L,L.$('#p13h'),{id:'p13s',flags:[50,99],ro:['p50','p99','hits']});sp.set(SCD.pages(.01,1));
+  ['About 1%','About 10%','About half'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      for(let k=2;k<=10;k++){await L.sleep(130);if(!sp.alive())return;sp.set(SCD.pages(.01,k));}
+      const ok=j===1;b.classList.remove('sel');b.classList.add(ok?'ok':'no');L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'Right: about 10%':'It’s about 10%','Each call has a 99% chance to be fast, so all 10 are fast only 0.99<sup>10</sup> ≈ 90% of the time. About 1 page in 10 hits a slow call, ten times the rate of single calls. The page’s p99 jumped too.');
+      L.$('#p13k').innerHTML=scRange('p13c','Calls per page',1,20,10)+'<span id="p13ok"></span>';
+      const upd=()=>{const k=+L.$('#p13c').value;L.$('#p13c-v').textContent=k;sp.set(SCD.pages(.01,k));};L.$('#p13c').oninput=upd;upd();L.done();};
+    L.$('#p13').appendChild(b);});}},
 {part:1,src:'Chapter 1 · Percentiles in Practice',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Sound practice or mistake?',['Sound practice','Mistake'],[
@@ -169,75 +511,153 @@ Course.lesson({
 
 /* ---------- PART 3: COPING WITH LOAD ---------- */
 {part:2,src:'Chapter 1 · Approaches for Coping with Load',run(L){
-  L.h(L.kick('learn','Scaling up or scaling out')+'<h1 class="q">Expect to rethink your design at every tenfold jump in load</h1>'+
-   L.prose('A design that fits one level of load is unlikely to cope with ten times that. A fast-growing service may need to rethink its architecture at every order of magnitude, or even more often.')+
-   L.lanes([['box','Scaling up (vertical)','Move to a more powerful machine. Simpler to run, but high-end machines get very expensive.',1],
-            ['layers','Scaling out (horizontal)','Spread the load over several smaller machines, a '+L.g('shared-nothing','shared-nothing')+' design. Hard to avoid for very heavy work.',2]])+
-   L.prose('Real systems mix both. A few fairly powerful machines can be simpler and cheaper than many tiny ones.')+
-   L.note('Some systems are '+L.g('elastic','elastic')+' and add machines by themselves when load rises. Useful when load is very unpredictable. Scaling by hand is simpler and brings fewer surprises.','cycle'));
+  const srv=(x,y,w,h,col,bg)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="5" style="fill:'+bg+';stroke:'+col+';stroke-width:1.8"/>'+[1,2,3].filter(k=>k*9<h-4).map(k=>'<line x1="'+(x+5)+'" x2="'+(x+w-5)+'" y1="'+(y+k*9)+'" y2="'+(y+k*9)+'" style="stroke:'+col+';stroke-width:1.5;opacity:.6"/>').join('');
+  L.h(L.kick('learn','Scaling up or scaling out')+'<h1 class="q">Two ways to add capacity</h1>'+
+   '<svg class="sc-svg" viewBox="0 0 320 262" role="img" aria-label="Left: one small machine replaced by one much bigger machine; simpler to run, but high-end machines get very expensive. Right: six small machines, each with its own CPU, memory and disks, linked by a network. Below: machines can be added by hand, which is simpler with fewer surprises, or by an elastic system that adds them itself.">'+
+   scTx(76,16,'Scale up','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h1)')+scTx(76,30,'vertical','font-size:12px;text-anchor:middle;fill:var(--muted)')+
+   srv(14,118,30,30,'var(--line2)','var(--soft)')+'<path d="M50 133 h20" style="stroke:var(--h1);stroke-width:2.2" marker-end="url(#up-a)"/>'+srv(80,46,64,102,'var(--h1)','var(--h1-bg)')+
+   scTx(76,168,'one bigger machine','font-size:12px;text-anchor:middle;fill:var(--ink)')+
+   '<line x1="160" x2="160" y1="10" y2="168" style="stroke:var(--line);stroke-width:1.5"/>'+
+   scTx(242,16,'Scale out','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h2)')+scTx(242,30,'horizontal · shared-nothing','font-size:12px;text-anchor:middle;fill:var(--muted)')+
+   [0,1,2].map(c=>[0,1].map(r=>srv(186+c*38,72+r*42,30,30,'var(--h2)','var(--h2-bg)')).join('')).join('')+
+   '<path d="M190 60 Q242 40 294 60" style="fill:none;stroke:var(--h2);stroke-width:1.5;stroke-dasharray:3 3"/>'+scTx(242,52,'network','font-size:11.5px;text-anchor:middle;fill:var(--h2)')+
+   scTx(242,168,'more, smaller machines','font-size:12px;text-anchor:middle;fill:var(--ink)')+
+   scTx(76,186,'+ simpler to run','font-size:11.5px;text-anchor:middle;fill:var(--ok)')+scTx(76,201,'− high end gets very costly','font-size:11.5px;text-anchor:middle;fill:var(--no)')+
+   scTx(242,186,'each has its own CPU,','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+scTx(242,201,'memory and disks','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+
+   '<line x1="4" x2="316" y1="212" y2="212" style="stroke:var(--line);stroke-width:1.5"/>'+
+   scTx(160,228,'Who adds the machines?','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--muted)')+
+   '<circle cx="18" cy="245" r="6" style="fill:none;stroke:var(--h1);stroke-width:2"/>'+scTx(30,242,'By hand','font-size:12px;font-weight:700;fill:var(--ink)')+scTx(30,256,'simpler, fewer surprises','font-size:11px;fill:var(--muted)')+
+   '<path d="M173 245 a6 6 0 1 1 3 5" style="fill:none;stroke:var(--h2);stroke-width:2"/><path d="M172 252 l4 -2 l-1 4z" style="fill:var(--h2)"/>'+scTx(186,242,'Elastic','font-size:12px;font-weight:700;fill:var(--ink)')+scTx(186,256,'adds them by itself','font-size:11px;fill:var(--muted)')+
+   '<defs><marker id="up-a" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L8,4 L0,8z" style="fill:var(--h1)"/></marker></defs></svg>'+
+   '<div class="sc-cap">Out is '+L.g('shared-nothing','shared-nothing')+'. Real designs mix both: a few fairly powerful machines can beat many tiny ones. '+L.g('elastic','Elastic')+' suits very unpredictable load.</div>');
   L.done();}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',
+ solve:async L=>{L.$('#l16-web-out').click();L.$('#l16-nt-hyb').click();L.$('#l16-r1').click();},
+ run(L){
+  L.h(L.kick('pr','Explore the load ladder')+'<h1 class="q">Climb to 3× Peak Week and get every bar green. Tap a rung, then make moves.</h1><div id="l16"></div><p class="sc-ill">Loads and capacities are illustrative.</p>');
+  const ld=Ladder(L,L.$('#l16'),{id:'l16',on:()=>check()});
+  function check(){if(ld.worst(3)<.7&&!L.$('#l16ok')){L.$('#l16').insertAdjacentHTML('beforeend','<span id="l16ok"></span>');
+    L.sheet('info','You just asked both of the book’s questions','First: keep the machines and raise the load; what happens to performance? (The bars go red.) Second: keep performance; how much must you add? (Your moves.) The web servers keep no data, so adding more of them is easy. Look at the 10× rung next.');L.done();}}
+  check();}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',
+ solve:async L=>{for(let p=0;p<3;p++){L.$('#e17-p'+p).click();await L.sleep(10);}},
+ run(L){
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Where do the easy moves stop working? Try each case.</h1><div class="sc-row" id="e17"></div><div class="sc-cap" id="e17c" aria-live="polite"></div><div id="e17h"></div>');
+  const ld=Ladder(L,L.$('#e17h'),{id:'e17',state:{web:'out',db:'up',nt:'hyb'},at:1});
+  const P=[['Bigger web machines at 10×',{web:'up',db:'up',nt:'hyb'},2,'One bigger machine has a ceiling, and high-end machines get very expensive. Web servers keep no data between requests (stateless), so spreading them over more machines is the easy fix.'],
+    ['100× load',{web:'out',db:'up',nt:'hyb'},3,'Even the biggest Parcel DB machine Otterpost can buy runs out. A design that fits one level of load rarely copes with ten times that: expect to rethink at every order of magnitude.'],
+    ['Split the Parcel DB',{web:'out',db:'split',nt:'hyb'},3,'Green again, but read the warning. Spreading a stateful database over machines adds a lot of complexity. The common wisdom: scale the database up until cost or availability forces a split. Better tools may change that.']];
+  const seen=new Set();
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e17-p'+j;b.textContent=p[0];
+    b.onclick=()=>{ld.set(p[1]);ld.at=p[2];seen.add(j);[...L.$('#e17').children].forEach((x,k)=>x.classList.toggle('sel',k===j));b.classList.add('ok');
+      L.$('#e17c').innerHTML='<span class="t">'+p[0]+'</span>'+p[3];
+      if(seen.size===3&&!L.$('#e17ok')){L.$('#e17h').insertAdjacentHTML('beforeend','<span id="e17ok"></span>');L.done();}};L.$('#e17').appendChild(b);});
+  L.$('#e17c').innerHTML='<span class="t">Pick a case</span>The ladder starts with a design that passes 3×. Each case jumps to a limit.';}},
 {part:2,src:'Chapter 1 · Approaches for Coping with Load',run(L){
-  L.h(L.kick('learn','No magic scaling sauce')+'<h1 class="q">Every scalable design is built for its own load</h1>'+
-   L.prose('Spreading <b>stateless</b> services (ones that keep no data between requests, like web servers) over many machines is fairly easy. Spreading a <b>stateful</b> data system adds a lot of complexity. So the common wisdom has been: keep your database on one '+L.g('node','node')+' and scale it up, until cost or availability needs force you to distribute it.')+
+  const dots=[...Array(52)].map((_,k)=>'<circle cx="'+(-18+k*5.6)+'" cy="'+(46+((k*7)%5)*3)+'" r="2" style="fill:var(--h1)"/>').join('');
+  L.h(L.kick('learn','No magic scaling sauce')+'<h1 class="q">Same bytes per second, very different systems</h1>'+
+   '<svg class="sc-svg" viewBox="0 0 320 170" role="img" aria-label="Top pipe: a stream of tiny requests. Bottom pipe: a couple of huge requests. Both carry about 100 megabytes a second.">'+
+   scTx(8,18,'100,000 requests/s × 1 kB','font-size:12.5px;font-weight:700;fill:var(--h1)')+
+   '<defs><clipPath id="pp1"><rect x="6" y="31" width="252" height="36" rx="18"/></clipPath><clipPath id="pp2"><rect x="6" y="117" width="252" height="36" rx="18"/></clipPath></defs><rect x="4" y="30" width="256" height="38" rx="19" style="fill:var(--soft);stroke:var(--line2)"/><g clip-path="url(#pp1)"><g class="sc-mv">'+dots+'</g></g>'+
+   scTx(8,104,'3 requests/min × 2 GB','font-size:12.5px;font-weight:700;fill:var(--h3)')+
+   '<rect x="4" y="116" width="256" height="38" rx="19" style="fill:var(--soft);stroke:var(--line2)"/><g clip-path="url(#pp2)"><g class="sc-mvb"><rect x="14" y="121" width="58" height="28" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/></g></g>'+
+   [49,135].map(y=>'<rect x="264" y="'+(y-14)+'" width="54" height="28" rx="8" style="fill:var(--card);stroke:var(--line2)"/>'+scTx(291,y+5,'100 MB/s','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')).join('')+
+   '</svg>'+
    L.quote('there is no such thing as a generic, one-size-fits-all scalable architecture','Martin Kleppmann, chapter 1')+
-   L.prose('The problem might be read volume, write volume, data size, data complexity, response-time needs or access patterns, usually a mix. A design that scales is built on assumptions about which operations are common and which are rare. Get those wrong and the scaling work is wasted, or even harmful.')+
-   '<p class="small">For an early-stage product, the book says, moving fast on features usually matters more than scaling for some imagined future load.</p>');
+   '<div class="sc-cap">Every scalable design rests on guesses about which operations are common: its load parameters. Guess wrong, and the scaling work is wasted or even harmful.</div>');
   L.done();}},
 {part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias compares two systems from a blog post. One handles 100,000 requests a second, each 1 kB. The other handles 3 requests a minute, each 2 GB. “Same data per second, so same design,” they say. Are they right?</h1>');
-  L.mc(L.card,['Yes, data per second is what drives the design','Yes, as long as both use the same database','No, the shapes of the load are very different'],2,
-   'Both move about 100 MB a second, but tiny frequent requests and huge rare files need very different systems. That’s the book’s own example.',
-   'Equal throughput doesn’t mean equal design, and sharing a database doesn’t fix it. Many tiny requests and a few huge files stress completely different things.');}},
-{part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:5,run(L){
-  L.h(L.kick('pr','Name the move')+'<h1 class="q">Otterpost prepares for Peak Week. Sort each change.</h1><div id="bk"></div>');
-  L.buckets(L.$('#bk'),['Scale up','Scale out by hand','Elastic'],[
-   ['Move the Parcel DB to a server with four times the memory.',0,'One more powerful machine is scaling up.'],
-   ['Kwame adds four more tracking-page web servers before the rush.',1,'More machines, added by a person: scaling out by hand.'],
-   ['The web tier adds servers by itself when Bramble & Bolt’s flash sale starts.',2,'Adding resources automatically when load rises is elastic.'],
-   ['Run Linh’s nightly batch on one 64-core machine instead of an 8-core one.',0,'A bigger single machine: scaling up.'],
-   ['Spread GPS pings over six machines, each storing some of the couriers.',1,'Splitting the work across several machines is scaling out.']],
-   'Up = a bigger machine. Out = more machines. Elastic = more machines, added automatically.');}},
-{part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:1,run(L){
-  L.h(L.kick('pr','Femi’s plan')+'<h1 class="q">Peak Week will triple traffic. The tracking-page web servers keep no data; the Parcel DB holds it all. Which plan follows the common wisdom the book describes?</h1>');
-  L.mc(L.card,['Scale up the web servers; leave the Parcel DB','Split the Parcel DB across many small machines now','Scale out the web servers; scale up the Parcel DB'],2,
-   'Stateless web servers are easy to spread out. The stateful database is the hard part, so the common wisdom keeps it on one bigger machine until cost or availability forces a split.',
-   'Stateless web servers are the easy part to spread across machines. Splitting the stateful Parcel DB adds lots of complexity, so the usual advice is to scale it up first.');}},
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Courier phones send a steady stream of tiny GPS pings. Linh’s nightly export ships a few huge files. Over a day, both move about the same megabytes per second. Tobias: “Same throughput, so reuse the GPS design.” Right?</h1>');
+  L.mc(L.card,['Yes: equal throughput means an equal design','Yes, as long as both use the same database','No: tiny frequent and huge rare loads differ'],2,
+   'Like the book’s 1 kB versus 2 GB example: equal throughput, but many tiny requests and a few huge files stress completely different things.',
+   'Equal throughput doesn’t mean equal design, and sharing a database doesn’t fix it. Many tiny messages and a few huge files need very different systems.');}},
+{part:2,src:'Chapter 1 · Approaches for Coping with Load',pts:1,
+ solve:async L=>{L.$('#l20-web-out').click();L.$('#l20-db-up').click();L.$('#l20-nt-hyb').click();L.$('#l20go').click();await scWait(L,'#l20ok',200);},
+ run(L){
+  let first=true,running=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame’s plan for growth: every bar green on every rung up to 10×. Femi’s rule: the Parcel DB stays on one machine this year. Make your moves, then climb.</h1>'+
+   '<div id="l20"></div><button class="btn pri" id="l20go" style="margin-top:8px">'+L.ic('play')+'Climb to 10×</button><div id="l20res"></div>');
+  const ld=Ladder(L,L.$('#l20'),{id:'l20',rungs:[0,1,2,3],lockSplit:true});
+  L.$('#l20go').onclick=async()=>{if(running)return;running=true;L.$('#l20go').disabled=true;L.$('#l20res').innerHTML='';
+    const rows=[];for(const k of [0,1,2]){ld.at=k;await L.sleep(450);if(!ld.alive())return;const w=ld.worst(LD_M[k]);rows.push([LD_ML[k][0]+(LD_ML[k][1]?' '+LD_ML[k][1]:''),w<.7,Math.round(w*100)]);}
+    L.$('#l20res').innerHTML='<div class="ld-res">'+rows.map(r=>(r[1]?'<span class="ok-t">✓</span> ':'<span class="no-t">✗</span> ')+r[0]+': fullest bar at '+r[2]+'%').join('<br>')+'</div>';
+    const pass=rows.every(r=>r[1]);if(first){L.award(pass);first=false;}running=false;L.$('#l20go').disabled=false;
+    if(pass){L.$('#l20go').disabled=true;L.$('#l20res').insertAdjacentHTML('beforeend','<span id="l20ok"></span>');
+      L.sheet('ok','Green to 10×','More web machines (stateless, easy to spread), one bigger Parcel DB machine (the common wisdom for stateful data), and the hybrid for notices, so views stay cheap and the giant notice is written once. Tap 100×: even this design needs rethinking there.');L.done();}
+    else L.sheet('no','Not yet','Find the red or amber bar on the failing rung. Web servers need room to grow past 3×; the Parcel DB needs a lighter notice design <i>and</i> more power by 10×; pushing every notice can’t deliver Bramble & Bolt’s in time.');};}},
 
 /* ---------- PART 4: MAINTAINABILITY ---------- */
 {part:3,src:'Chapter 1 · Maintainability',run(L){
+  const chores=['fix bugs','keep it running','investigate failures','new platforms','new uses','pay off tech debt','add features'];
   L.h(L.kick('learn','Maintainability')+'<h1 class="q">Most of software’s cost comes after it ships</h1>'+
-   L.prose('Fixing bugs, keeping systems running, investigating failures, moving to new platforms, adapting to new uses, paying off technical debt, adding features: that ongoing work is where most of the money goes. Many people dislike “legacy” systems, so the aim is to design software that won’t become one.')+
-   L.tiers([['eye','Operability','Make it easy for operations teams to keep the system running smoothly.'],
-            ['leaf','Simplicity','Make it easy for new engineers to understand the system, by removing complexity. Not the same as a simple user interface.'],
-            ['cycle','Evolvability','Make it easy to change the system for needs nobody foresaw. Also called extensibility or modifiability.']]));
+   '<svg class="sc-svg" viewBox="0 0 320 70" role="img" aria-label="A bar of a system’s lifetime cost: a short part for building it, and a much longer part for maintaining it.">'+
+   scTx(4,16,'Cost over a system’s life','font-size:12.5px;font-weight:700;fill:var(--muted)')+
+   '<rect x="4" y="26" width="56" height="34" rx="8" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.8"/>'+scTx(32,47,'build','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--h1)')+
+   '<rect x="64" y="26" width="252" height="34" rx="8" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.8"/>'+scTx(190,47,'maintain: most of the cost','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--h3)')+
+   '</svg><div class="sc-facts" style="margin-top:0">'+chores.map(c=>'<span style="background:var(--h3-bg)">'+c+'</span>').join('')+'</div>'+
+   '<div class="lp">'+[['eye','Operability','Easy for operations to keep it running'],['leaf','Simplicity','Easy for new engineers to understand'],['cycle','Evolvability','Easy to change for needs nobody foresaw']].map((p,k)=>'<div'+(k===2?' class="w"':'')+'><small>'+L.ic(p[0])+'Principle '+(k+1)+'</small><b style="font-size:18px">'+p[1]+'</b><span>'+p[2]+'</span></div>').join('')+'</div>'+
+   '<div class="sc-cap">Many people dislike working on “legacy” systems. The goal is to design software that won’t become one. Simplicity here means the code, not a simple user interface.</div>');
   L.done();}},
-{part:3,src:'Chapter 1 · Operability: Making Life Easy for Operations',run(L){
-  L.h(L.kick('learn','Operability')+'<h1 class="q">Good operations can rescue weak software, but not the reverse</h1>'+
-   L.prose('Operations teams watch system health, track down causes of trouble, apply security patches, plan capacity, set up deployment tools and keep knowledge alive as people come and go. A data system can make their routine work easy by:')+
-   L.list([['eye','Showing what’s going on','Good monitoring of the system’s behaviour and internals.'],
-     ['layers','Not depending on one machine','Any machine can go down for maintenance while the rest keeps running.'],
-     ['book','Being easy to predict','Clear docs and a simple model: “if I do X, Y will happen.” Few surprises.'],
-     ['scale','Good defaults, with override','Sensible behaviour out of the box, self-healing where it fits, but manual control when admins need it.']],1)+
-   '<p class="small" style="margin-top:10px">Support for automation and standard tools is on the book’s list too.</p>');
-  L.done();}},
-{part:3,src:'Chapter 1 · Simplicity: Managing Complexity',run(L){
-  L.h(L.kick('learn','Simplicity')+'<h1 class="q">Remove the complexity users never asked for</h1>'+
-   L.prose('Small projects can be simple. Big ones drift into a “big ball of mud”: tangled dependencies, tightly coupled modules, inconsistent names, performance hacks, special cases working around problems elsewhere. Every change gets slower and riskier.')+
-   L.prose('Simpler doesn’t mean fewer features. It means removing '+L.g('accidental-complexity','accidental complexity')+': complexity that isn’t part of the problem users see, only of how it was built.')+
-   L.note('The best tool is a good <b>abstraction</b>: a clean surface that hides messy details and can be reused. SQL is one: it hides on-disk data structures, other users’ requests running at the same time, and the mess left by crashes. Good abstractions for distributed systems are much harder to find.','layers'));
-  L.done();}},
-{part:3,src:'Chapter 1 · Evolvability: Making Change Easy',run(L){
-  L.h(L.kick('learn','Evolvability')+'<h1 class="q">Requirements never stand still</h1>'+
-   L.prose('You learn new facts, new uses appear, priorities shift, laws change, growth forces new designs. Agile methods, test-driven development and refactoring help, but usually at the scale of a few source files.')+
-   L.prose('The book looks for the same agility at the level of a whole <b>data system</b>. Its example: how would you “refactor” Twitter’s timelines from approach 1 to approach 2? It calls this ease of change <b>evolvability</b>.')+
-   L.flow([['leaf','Simple','easy to understand','',1],['cycle','Evolvable','easy to change','',2]])+
-   L.prose('The two go together: simple, well-abstracted systems are usually easier to change than complex ones.'));
-  L.done();}},
-{part:3,src:'Chapter 1 · Simplicity: Managing Complexity',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab lists what makes the parcel code hard to work on. Which item is accidental complexity?</h1>');
-  L.mc(L.card,['Prices that vary by parcel size and zone','Three different names for the parcel ID','Rules for when a recipient isn’t home'],1,
-   'Users never see what the ID field is called. Three names for one thing exist only because of how the code grew, so it can be removed.',
-   'Pricing rules and missed-delivery rules are part of the real problem merchants and recipients see. Three names for one ID come only from the implementation: that’s accidental.');}},
+{part:3,src:'Chapter 1 · Operability: Making Life Easy for Operations',
+ solve:async L=>{L.$('#o22-ask').click();await scWait(L,'#o22-do');L.$('#o22-do').click();await scWait(L,'#o22ok',200);},
+ run(L){
+  const H=['Good monitoring','Predictable: “if I do X, Y happens”','Not tied to one machine','Good defaults you can override','Self-healing, with manual control','Automation and standard tools'];
+  let lit=new Set([0]),state='live';
+  L.h(L.kick('learn','Operability')+'<h1 class="q">Kwame must patch web-2 tonight. Ask what will happen, then do it.</h1>'+
+   '<svg class="sc-svg" id="o22s" viewBox="0 0 320 178" role="img" aria-label="A load balancer sends tracking-page traffic to three web servers. A small chart below shows p99 response time."></svg>'+
+   '<div class="sc-row"><button class="btn" id="o22-ask">'+L.ic('info')+'What happens if I patch web-2?</button></div><div id="o22p"></div>'+
+   '<div class="sc-facts" id="o22h"></div>'+
+   '<div class="sc-cap">Strong operations can often make up for weak software; the reverse doesn’t work. A data system helps by making routine work easy, so the team can focus on high-value work.</div>');
+  function draw(){const web=k=>{const down=k===1&&state==='patch',x=20+k*100;return '<rect x="'+x+'" y="92" width="80" height="34" rx="8" style="fill:'+(down?'var(--soft)':'var(--h2-bg)')+';stroke:'+(down?'var(--line2)':'var(--h2)')+';stroke-width:2'+(down?';stroke-dasharray:5 4':'')+'"/>'+
+      scTx(x+40,108,'web-'+(k+1),'font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+scTx(x+40,121,down?'patching…':k===1&&state==='done'?'patched ✓':'running','font-size:11px;text-anchor:middle;fill:'+(down?'var(--muted)':'var(--h2)'));};
+    const share=state==='patch'?['50%','','50%']:['33%','33%','33%'];
+    let s='<rect x="100" y="8" width="120" height="30" rx="8" style="fill:var(--card);stroke:var(--line2);stroke-width:1.8"/>'+scTx(160,27,'Load balancer','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+    [0,1,2].forEach(k=>{if(share[k])s+='<line x1="160" y1="38" x2="'+(60+k*100)+'" y2="90" style="stroke:var(--h1);stroke-width:'+(share[k]==='50%'?3.2:2)+'"/>'+scTx(160+(k*100-100)*.62+(k===1?16:0),72,share[k],SC_HALO+'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)');});
+    s+=web(0)+web(1)+web(2);
+    s+=scTx(8,152,'p99','font-size:12px;font-weight:700;fill:var(--muted)')+'<polyline points="34,160 70,158 106,161 142,159 178,160 214,158 250,161 286,159 312,160" style="fill:none;stroke:var(--ok-strong);stroke-width:2"/>'+scTx(312,174,'steady: merchants notice nothing','font-size:11.5px;text-anchor:end;fill:var(--ok)');
+    L.$('#o22s').innerHTML=s;
+    L.$('#o22h').innerHTML=H.map((h,k)=>'<span style="'+(lit.has(k)?'background:var(--ok-bg);color:var(--ok)':'')+'">'+(lit.has(k)?'✓ ':'')+h+'</span>').join('');}
+  L.$('#o22-ask').onclick=()=>{if(L.$('#o22-do'))return;lit.add(1);draw();
+    L.$('#o22p').innerHTML='<div class="ld-say"><b>Preview:</b> web-2 stops taking traffic; web-1 and web-3 take half each; no request is lost. When the patch is done, web-2 rejoins.</div><div class="sc-row"><button class="btn pri" id="o22-do">'+L.ic('play')+'Patch web-2</button></div>';
+    L.$('#o22-do').onclick=async()=>{L.$('#o22-do').disabled=true;state='patch';draw();await L.sleep(1100);if(!L.$('#o22s'))return;state='done';lit.add(2);draw();
+      L.$('#o22p').insertAdjacentHTML('beforeend','<span id="o22ok"></span>');
+      L.sheet('info','Routine work stayed routine','Kwame knew what would happen before acting, and no single machine was essential. Other things the book lists: good monitoring, automation, good documentation, sensible defaults admins can override, and self-healing with manual control. Ops teams also plan capacity, apply security patches and keep knowledge alive as people come and go.');L.done();};};
+  draw();}},
+{part:3,src:'Chapter 1 · Simplicity: Managing Complexity',pts:1,
+ solve:async L=>{[0,1,2].forEach(k=>L.$('#m23-k'+k).click());L.$('#m23go').click();},
+ run(L){
+  const K=[['Three names for the parcel ID: pid, parcel_id, ref',[0,1,2],[],1],['A Bramble & Bolt special case, copied into 5 modules',[0,1,3,4,5],[],1],['Every module reads Billing’s tables directly',[2],[1,5,9,10,11],1],
+    ['Prices that vary by parcel size and zone',[2],[],0],['Redelivery rules for when nobody is home',[3,4],[],0]];
+  const cut=new Set();let doneOnce=false;
+  L.h(L.kick('pr','Untangle the mud')+'<h1 class="q">Zainab’s parcel code has become a ball of mud. Strike out only the <i>accidental</i> complexity, then clean up.</h1>'+
+   '<svg class="sc-svg" id="m23s" viewBox="0 0 320 196" role="img" aria-label="Six modules of the parcel code with tangled links between all of them."></svg><p class="small" id="m23n" style="margin:0"></p>'+
+   '<div class="mud-k" id="m23k"></div><button class="btn pri" id="m23go">'+L.ic('leaf')+'Clean up</button>');
+  const draw=(hl)=>{const k=hl==null?null:K[hl];L.$('#m23s').innerHTML=mudSvg({hlM:k?k[1]:[],hlE:k?k[2]:[]});L.$('#m23n').textContent='15 direct links between 6 modules. Tap an item to see where it lives.';};
+  K.forEach((k,j)=>{const b=document.createElement('button');b.className='chip';b.id='m23-k'+j;b.textContent=k[0];
+    b.onclick=()=>{if(doneOnce)return;cut.has(j)?cut.delete(j):cut.add(j);b.classList.toggle('cut',cut.has(j));b.setAttribute('aria-pressed',cut.has(j));draw(j);};L.$('#m23k').appendChild(b);});
+  draw();
+  L.$('#m23go').onclick=()=>{if(doneOnce)return;doneOnce=true;L.$('#m23go').disabled=true;
+    const ok=K.every((k,j)=>cut.has(j)===!!k[3]);L.award(ok);
+    K.forEach((k,j)=>{const b=L.$('#m23-k'+j);b.classList.remove('cut');b.classList.add(k[3]?'cut':'static');if(cut.has(j)!==!!k[3])b.classList.add('no');});
+    L.$('#m23s').innerHTML=mudSvg({clean:true,tags:true});L.$('#m23n').textContent='6 links, all through one Parcel API. Pricing and redelivery rules are still there.';
+    L.sheet(ok?'ok':'no',ok?'Mud cleared':'Not quite','Names, a copied special case and modules reaching into each other’s tables come only from how the code was built: '+L.g('accidental-complexity','accidental complexity')+'. Pricing and redelivery rules are the real problem merchants and recipients have, so they stay. Simpler doesn’t mean fewer features. The tool: a good <b>abstraction</b>, a clean surface hiding detail, like SQL hiding on-disk structures, other clients’ requests and the mess left by crashes. Good abstractions for distributed systems are much harder to find.');L.done();};}},
+{part:3,src:'Chapter 1 · Evolvability: Making Change Easy',
+ solve:async L=>{L.$('#v24-b0').click();L.$('#v24-go').click();await L.sleep(10);L.$('#v24-b1').click();L.$('#v24-go').click();},
+ run(L){
+  let view=0;const seen=new Set();
+  const D=[['Before cleanup',{touch:[0,1,3,4,5]},'5 modules each parse addresses their own way. All 5 must change, and each may hide its own surprise.'],
+    ['After cleanup',{clean:true,touch:[6]},'Addresses live behind the Parcel API. One place changes; the six modules don’t notice.']];
+  L.h(L.kick('ex','Evolvability')+'<h1 class="q">New need: Nordhaven addresses have a different format. Apply the change to each design.</h1>'+
+   '<div class="sc-row"><button class="chip" id="v24-b0">Before cleanup</button><button class="chip" id="v24-b1">After cleanup</button></div>'+
+   '<svg class="sc-svg" id="v24s" viewBox="0 0 320 196" role="img" aria-label="The parcel code, with the modules a change touches highlighted."></svg>'+
+   '<div class="sc-row"><button class="btn pri" id="v24-go">'+L.ic('pencil')+'Apply the change</button></div><div class="ld-say" id="v24c" aria-live="polite"></div>'+
+   '<div class="sc-cap">Requirements keep changing. Refactoring and TDD help inside a few files. <b>Evolvability</b> is that ease of change across a whole data system, like moving Twitter from approach 1 to 2.</div>');
+  const draw=t=>{const d=D[view];L.$('#v24s').innerHTML=mudSvg(Object.assign({},d[1],{touch:t?d[1].touch:[]}));[0,1].forEach(k=>L.$('#v24-b'+k).classList.toggle('sel',k===view));};
+  [0,1].forEach(k=>{L.$('#v24-b'+k).onclick=()=>{view=k;draw(false);L.$('#v24c').innerHTML='<b>'+D[k][0]+'.</b> Tap “Apply the change”.';};});
+  L.$('#v24-go').onclick=()=>{draw(true);seen.add(view);L.$('#v24c').innerHTML='<b>'+D[view][0]+': '+(view?'1 place':'5 modules')+' to change.</b> '+D[view][2];
+    if(seen.size===2&&!L.$('#v24ok')){L.$('#v24c').insertAdjacentHTML('beforeend','<span id="v24ok"></span>');
+      L.sheet('info','Simple systems are easier to change','Evolvability is closely linked to simplicity and good abstractions: a system that is easy to understand is usually easier to modify.');L.done();}};
+  draw(false);L.$('#v24c').innerHTML='<b>Before cleanup.</b> Tap “Apply the change”.';}},
 {part:3,src:'Chapter 1 · Maintainability',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which principle does it serve?',['Operability','Simplicity','Evolvability'],[

@@ -13,10 +13,299 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0032 only. Two signature models, reused through the lesson:
+   1. The formula grid: Otterpost as one spreadsheet. Column A holds
+      source cells (parcels, scans, merchants, rates), column B holds
+      formula cells (support search, tracking view, merchant stats,
+      Nordhaven bills) with "derived from" arrows. Editing a source
+      ripples along the arrows into the formulas that use that field.
+      Screens put faults on it: search down in a flash sale, a formula
+      redefined, events applied twice / out of order / lost, and the
+      exchange rate asked on demand vs subscribed to.
+   2. The journey line: the path from a write to a read, with a
+      draggable meeting point (the derived dataset). Left of it is the
+      write path (eager), right of it the read path (lazy). Reused for
+      support search, a three-query challenge, and extended onto
+      Mrs. Okoro's phone.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.card [hidden]{display:none!important}'+
+ '.pic32{width:100%;display:block;margin:4px 0 2px}.pic32 text,.g32 text,.j32 text{font-family:var(--sans)}'+
+ '.p32t{font:600 13px var(--sans);fill:var(--ink)}.p32m{font:500 12.5px var(--sans);fill:var(--muted)}.p32b{font:700 14px var(--sans);fill:var(--ink)}.p32v{font:400 12.5px var(--sans);fill:var(--ink)}'+
+ '.p32c{font:600 13.5px ui-monospace,Menlo,Consolas,monospace}'+
+ '.capt32{font-size:15.5px;line-height:1.5;margin:10px 0 0}.capt32.sm{font-size:13.5px;color:var(--muted);margin-top:6px}'+
+ '.g32 svg,.j32 svg{width:100%;display:block;-webkit-user-select:none;user-select:none}'+
+ '.g32 .c32{cursor:pointer;outline:none}.g32 .c32:focus-visible rect.cb{stroke-width:3.5}'+
+ '.fx32{display:flex;gap:8px;align-items:baseline;border:1.5px solid var(--line);border-radius:10px;padding:7px 10px;font-size:13.5px;line-height:1.4;margin:6px 0 4px;background:var(--card);min-height:38px}'+
+ '.fx32>i{font-family:var(--serif);font-weight:600;color:var(--pri);flex:none}.fx32 b{color:var(--ink)}'+
+ '.rd32{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.5;margin:8px 0 4px;min-height:44px}'+
+ '.row32{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.row32 .chip{margin:0;min-height:40px;font-size:15px;padding:7px 11px}.row32 .btn{margin:0;min-height:40px}'+
+ '.vd32{display:inline-block;font-weight:700;border-radius:99px;padding:1px 9px;font-size:13px;margin:0 6px 2px 0}.vd32.ok{background:var(--ok-bg);color:var(--ok)}.vd32.no{background:var(--no-bg);color:var(--no)}'+
+ '.tape32{display:flex;flex-wrap:wrap;gap:5px;margin:6px 0;min-height:30px;align-items:center}.tape32 .lb{font-size:12.5px;color:var(--muted);font-weight:600;margin-right:2px}'+
+ '.tape32 span.e{font-size:12.5px;font-weight:600;border-radius:8px;padding:4px 8px;background:var(--pri-bg);color:var(--pri-deep);border:1.5px solid var(--pri)}'+
+ '.tape32 span.e.lost{background:var(--no-bg);color:var(--no);border-color:var(--no-line);text-decoration:line-through}.tape32 span.e.dup{background:var(--h4-bg);color:var(--h4);border-color:var(--h4)}'+
+ '.tape32 span.e.mk{background:var(--soft);color:var(--muted);border:1.5px dashed var(--line2)}'+
+ '.rng32{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14.5px;margin:8px 0 2px}.rng32 input{grid-column:1/3;width:100%;accent-color:var(--pri);height:34px}.rng32 b{color:var(--pri-deep)}'+
+ '.mt32 .meterrow{margin:6px 0}.mt32 .meterrow .lb{width:96px}.mt32 .mv{font-size:13px;font-weight:700;min-width:58px;text-align:right}'+
+ '.q32{border:1.5px solid var(--line);border-radius:14px;padding:9px 11px 8px;margin:8px 0}.q32 .qt{font-size:14px;font-weight:600;line-height:1.35}'+
+ '.trk32{position:relative;display:flex;justify-content:space-between;margin:4px 2px 0}.trk32:before{content:"";position:absolute;left:26px;right:26px;top:18px;height:4px;background:var(--line);border-radius:2px}'+
+ '.trk32 button{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:4px;background:none;border:0;padding:0 0 2px;font:500 12.5px var(--sans);color:var(--muted);min-width:56px;min-height:44px;cursor:pointer}'+
+ '.trk32 button i{display:block;width:20px;height:20px;margin-top:10px;border-radius:50%;background:var(--card);border:2.5px solid var(--line2);box-sizing:border-box}'+
+ '.trk32 button.sel{color:var(--pri-deep);font-weight:700}.trk32 button.sel i{transform:rotate(45deg);border-radius:4px;background:var(--pri);border-color:var(--pri)}'+
+ '.bar32{display:flex;height:12px;background:var(--soft2);border-radius:99px;overflow:hidden;margin:6px 0 2px}.bar32 span{height:100%;transition:width .2s}'+
+ '.bl32{display:flex;justify-content:space-between;font-size:13px;color:var(--muted)}.bl32 b{color:var(--ink)}.bl32 b.no{color:var(--no)}'+
+ '.tot32{display:flex;justify-content:space-between;align-items:center;font-size:15px;font-weight:600;background:var(--soft);border-radius:12px;padding:8px 12px;margin:8px 0}.tot32 .ok{color:var(--ok)}.tot32 .no{color:var(--no)}'+
+ '</style>');
+
+/* ---------- small SVG helpers ---------- */
+const zz=ms=>new Promise(r=>setTimeout(r,ms));
+const fmt=n=>n.toLocaleString('en-US');
+const t32=(x,y,s,cls,anc,st)=>'<text x="'+x+'" y="'+y+'" class="'+(cls||'p32t')+'"'+(anc?' text-anchor="'+anc+'"':'')+(st?' style="'+st+'"':'')+'>'+s+'</text>';
+const tc=(x,y,s,cls,st)=>t32(x,y,s,cls,'middle',st);
+const bx=(x,y,w,h,col,dash,r)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(r==null?10:r)+'" style="fill:var(--'+(col?col+'-bg':'soft')+');stroke:var(--'+(col||'line2')+');stroke-width:'+(col?1.8:1.4)+(dash?';stroke-dasharray:5 4':'')+'"/>';
+const ar=(x1,y1,x2,y2,col,dash)=>{const a=Math.atan2(y2-y1,x2-x1),c=Math.cos(a),s=Math.sin(a),bxx=x2-9*c,byy=y2-9*s,k='var(--'+(col||'muted')+')';
+  return '<path d="M'+x1+' '+y1+' L'+bxx.toFixed(1)+' '+byy.toFixed(1)+'" style="stroke:'+k+';stroke-width:2;fill:none'+(dash?';stroke-dasharray:4 3':'')+'"/>'+
+   '<path d="M'+x2+' '+y2+' L'+(bxx-5*s).toFixed(1)+' '+(byy+5*c).toFixed(1)+' L'+(bxx+5*s).toFixed(1)+' '+(byy-5*c).toFixed(1)+'Z" style="fill:'+k+'"/>';};
+const cyl=(x,y,w,h,col,l1,l2)=>{const e=7,k=col||'line2',f=col?col+'-bg':'soft';
+  return '<path d="M'+x+' '+(y+e)+' V'+(y+h-e)+' A'+(w/2)+' '+e+' 0 0 0 '+(x+w)+' '+(y+h-e)+' V'+(y+e)+'" style="fill:var(--'+f+');stroke:var(--'+k+');stroke-width:1.8"/>'+
+   '<ellipse cx="'+(x+w/2)+'" cy="'+(y+e)+'" rx="'+(w/2)+'" ry="'+e+'" style="fill:var(--'+f+');stroke:var(--'+k+');stroke-width:1.8"/>'+
+   (l1?tc(x+w/2,y+h/2+(l2?3:7),l1,'p32t'):'')+(l2?tc(x+w/2,y+h/2+18,l2,'p32m'):'');};
+const tape=(x,y,n,w)=>{let s='<rect x="'+x+'" y="'+y+'" width="'+(n*w)+'" height="22" rx="4" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.5"/>';
+  for(let i=1;i<n;i++)s+='<path d="M'+(x+i*w)+' '+y+' v22" style="stroke:var(--pri);stroke-width:1"/>';return s;};
+const vd=(ok,t)=>'<span class="vd32 '+(ok?'ok':'no')+'">'+t+'</span>';
+const svgo=(h,label)=>'<svg class="pic32" viewBox="0 0 340 '+h+'" role="img" aria-label="'+label+'">';
+
+/* ---------- teaching pictures ---------- */
+const PIC_PHIL=svgo(200,'Unix puts a thin layer of files and pipes over the hardware and leaves the rest to your code. A relational database stacks a thick layer: SQL, optimizer, indexes and joins, concurrency and recovery, replication.')+
+ tc(170,15,'Same job: store data, process it, query it','p32t')+
+ tc(82,42,'Unix','p32b','fill:var(--h1)')+tc(256,42,'Relational database','p32b','fill:var(--h2)')+
+ bx(8,52,148,80,null,true)+tc(82,88,'your code','p32m')+tc(82,104,'does the rest','p32m')+
+ bx(8,138,148,24,'h1',false,6)+tc(82,155,'files + pipes (bytes)','p32t')+
+ bx(178,52,156,20,'pri',false,6)+tc(256,67,'one short query','p32t','fill:var(--pri-deep)')+
+ ['query optimizer','indexes · joins','concurrency, recovery','replication'].map((l,j)=>bx(178,76+j*22,156,19,'h2',false,5)+tc(256,90+j*22,l,'p32m','fill:var(--h2)')).join('')+
+ bx(8,168,324,26,null,false,8)+tc(170,186,'hardware: disks, memory, CPUs','p32m')+'</svg>';
+
+const PIC_CI=svgo(186,'CREATE INDEX runs three steps: snapshot and sort, catch up on writes made meanwhile, then follow every new write. A new follower and change data capture into search run the same three steps.')+
+ t32(8,15,'CREATE INDEX, table not locked','p32t')+
+ [['1 Snapshot','scan + sort'],['2 Catch up','writes made'],['3 Follow','new writes']].map((s,j)=>bx(4+j*114,24,104,52,'h2')+tc(56+j*114,45,s[0],'p32t')+tc(56+j*114,63,s[1],'p32m')).join('')+
+ ar(109,50,117,50)+ar(223,50,231,50)+
+ t32(8,100,'A new follower replica','p32t')+
+ ['copy snapshot','apply backlog','follow the log'].map((s,j)=>bx(4+j*114,106,104,24,'h3',false,12)+tc(56+j*114,122,s,'p32m','fill:var(--h3)')).join('')+
+ t32(8,152,'Change data capture into search','p32t')+
+ ['snapshot','catch up','stream changes'].map((s,j)=>bx(4+j*114,158,104,24,'h3',false,12)+tc(56+j*114,174,s,'p32m','fill:var(--h3)')).join('')+'</svg>';
+
+const PIC_META=svgo(236,'Zoomed out, Otterpost looks like one huge database: the Parcel DB feeds an event log, jobs read the log, and derived stores hold the results. Jobs are like triggers and view upkeep; the stores are like index types.')+
+ '<rect x="5" y="22" width="330" height="208" rx="16" style="fill:none;stroke:var(--line2);stroke-width:1.8;stroke-dasharray:6 5"/>'+
+ t32(10,15,'Zoom out: one huge database','p32t')+
+ cyl(14,58,72,70,null,'Parcel DB','source')+ar(88,93,104,93)+
+ tape(106,82,3,16)+tc(130,120,'event','p32m')+tc(130,134,'log','p32m')+
+ [44,86,128].map(y=>ar(156,93,174,y+11,'muted')).join('')+
+ [44,86,128].map(y=>bx(176,y,40,22,'h4',false,11)+tc(196,y+16,'job','p32m','fill:var(--h4)')).join('')+
+ [['support search',44],['tracking view',86],['warehouse',128]].map(s=>ar(217,s[1]+11,227,s[1]+11)+bx(229,s[1],106,22,'h3',false,6)+tc(282,s[1]+16,s[0],'p32m','fill:var(--h3)')).join('')+
+ '<rect x="14" y="170" width="12" height="12" rx="6" style="fill:var(--h4)"/>'+t32(32,181,'jobs ≈ triggers, view upkeep','p32v')+
+ '<rect x="14" y="196" width="12" height="12" rx="3" style="fill:var(--h3)"/>'+t32(32,207,'derived stores ≈ index types','p32v')+'</svg>';
+
+const PIC_FED=svgo(214,'Federated: one query reads from three stores, but writes are not synced. Unbundled: a write goes into a log that delivers it to all three stores.')+
+ bx(4,4,162,206,null,false,14)+bx(174,4,162,206,null,false,14)+
+ tc(85,24,'Federated','p32b','fill:var(--h1)')+tc(85,40,'unify reads','p32m')+
+ tc(255,24,'Unbundled','p32b','fill:var(--h2)')+tc(255,40,'unify writes','p32m')+
+ bx(35,54,100,26,'h1',false,8)+tc(85,72,'one query','p32t','fill:var(--h1)')+
+ [22,64,106].map(x=>ar(85,82,x+20,128,'h1')+cyl(x,130,40,40,null)).join('')+
+ tc(85,196,'writes? not synced','p32m')+
+ bx(205,54,100,26,'h2',false,8)+tc(255,72,'one write','p32t','fill:var(--h2)')+ar(255,82,255,96,'h2')+
+ tape(225,98,4,15)+
+ [192,234,276].map(x=>ar(255,122,x+20,130,'h2')+cyl(x,132,40,38,null)).join('')+
+ tc(255,196,'every store gets it','p32m','fill:var(--ok)')+'</svg>';
+
+const PIC_LOG=svgo(238,'Top: a distributed transaction across the Parcel DB, billing ledger and support search; search cannot vote yes, so every booking aborts. Bottom: the booking goes to the Parcel DB and an event log; billing and notifications carry on while search is down and catches up later.')+
+ bx(4,4,332,112,'no',false,14)+t32(14,24,'Distributed transaction','p32t')+
+ bx(12,54,62,28,null,false,8)+tc(43,72,'booking','p32t')+
+ [['Parcel DB',34,''],['billing ledger',60,''],['support search',86,'x']].map(b=>ar(76,68,118,b[1]+11)+bx(120,b[1],104,22,b[2]?'no':'h1',false,6)+tc(172,b[1]+16,b[0],'p32m','fill:var(--'+(b[2]?'no':'h1')+')')).join('')+
+ tc(282,56,'search can’t','p32t','fill:var(--no)')+tc(282,72,'vote yes →','p32t','fill:var(--no)')+tc(282,90,'every booking','p32m')+tc(282,105,'aborts','p32m')+
+ bx(4,122,332,112,'ok',false,14)+t32(14,142,'Event log, idempotent consumers','p32t')+
+ bx(10,168,52,26,null,false,8)+tc(36,185,'booking','p32m')+ar(63,181,74,181)+
+ cyl(76,160,52,44,null,'DB')+ar(130,181,140,181)+tape(142,170,4,13)+
+ [['billing ✓',152,'ok'],['notify ✓',178,'ok'],['search · later',204,'h4']].map(c=>ar(195,181,212,c[1]+10)+bx(214,c[1],116,21,c[2],false,6)+tc(272,c[1]+15,c[0],'p32m','fill:var(--'+c[2]+')')).join('')+
+ t32(14,226,'the log buffers search’s backlog','p32m')+'</svg>';
+
+const PIC_BREADTH=svgo(210,'Left: everything Otterpost needs fits inside one database, so use it. Right: some needs, like fuzzy search, analytics and ETA training, fall outside one product, so compose tools.')+
+ tc(170,15,'Breadth, not depth','p32t')+
+ '<circle cx="84" cy="104" r="64" style="fill:var(--ok-bg);stroke:var(--ok);stroke-width:2"/>'+tc(84,72,'one database','p32m','fill:var(--ok)')+
+ [['store rows',100],['look up',122],['reports',144]].map(d=>'<circle cx="50" cy="'+(d[1]-4)+'" r="4" style="fill:var(--ok)"/>'+t32(60,d[1],d[0],'p32v')).join('')+
+ tc(84,192,'all inside: use it','p32t','fill:var(--ok)')+
+ '<circle cx="218" cy="112" r="44" style="fill:var(--soft);stroke:var(--line2);stroke-width:2"/>'+tc(218,98,'one database','p32m')+
+ [['store',120],['look up',140]].map(d=>'<circle cx="196" cy="'+(d[1]-4)+'" r="4" style="fill:var(--muted)"/>'+t32(205,d[1],d[0],'p32v')).join('')+
+ [['fuzzy search',290,46],['analytics',302,104],['ETA training',290,162]].map(d=>'<circle cx="'+d[1]+'" cy="'+(d[2]-6)+'" r="4.5" style="fill:var(--h2)"/>'+tc(d[1],d[2]+12,d[0],'p32m','fill:var(--h2)')).join('')+
+ tc(256,192,'some outside: compose','p32t','fill:var(--h2)')+'</svg>';
+
+const PIC_SHELL=svgo(172,'A one-line wish, parcel_db pipe support_search, that copies every parcel and then follows every change, with no custom code.')+
+ '<rect x="6" y="6" width="328" height="44" rx="10" style="fill:var(--ink)"/>'+
+ t32(18,33,'$ parcel_db | support_search','p32c','','fill:var(--bg)')+
+ t32(8,76,'1  copy every parcel','p32t')+'<rect x="150" y="65" width="182" height="14" rx="7" style="fill:var(--h2)"/>'+
+ t32(8,104,'2  then follow every change','p32t')+'<rect x="230" y="93" width="102" height="14" rx="7" style="fill:var(--h3-bg);stroke:var(--h3);stroke-dasharray:4 3"/>'+tc(281,104,'forever','p32m','fill:var(--h3)')+
+ bx(8,122,152,40,'ok',false,20)+tc(84,147,'no custom code','p32t','fill:var(--ok)')+
+ bx(180,122,152,40,null,true,20)+tc(256,140,'today: custom','p32m')+tc(256,155,'code per pair','p32m')+'</svg>';
+
+const PIC_SHEET=svgo(200,'A spreadsheet: A1 is 120, A2 is 80, B1 is the formula A1 plus A2, showing 200. Change A1 to 150 and B1 recalculates to 230 by itself.')+
+ (()=>{const grid=(x,a1,b1,hl)=>{let s='<rect x="'+x+'" y="34" width="150" height="96" rx="8" style="fill:var(--card);stroke:var(--line2)"/>';
+   s+='<path d="M'+(x+22)+' 34 v96 M'+(x+86)+' 34 v96 M'+x+' 56 h150 M'+x+' 93 h150" style="stroke:var(--line);stroke-width:1.2"/>';
+   s+=tc(x+54,50,'A','p32m')+tc(x+118,50,'B','p32m')+tc(x+11,79,'1','p32m')+tc(x+11,116,'2','p32m');
+   s+=tc(x+54,80,a1,'p32t',hl?'fill:var(--pri)':'')+tc(x+54,117,'80','p32t');
+   s+='<rect x="'+(x+89)+'" y="59" width="58" height="31" rx="5" style="fill:var(--'+(hl?'ok-bg':'soft')+')"/>'+tc(x+118,80,b1,'p32b',hl?'fill:var(--ok)':'');
+   return s;};
+  return tc(170,16,'VisiCalc, 1979: formulas recalculate','p32t')+grid(6,'120','200')+grid(184,'150','230',true)+ar(160,82,180,82,'pri')+
+   t32(212,152,'B1 = A1 + A2','p32m')+
+   bx(6,162,328,32,'pri',false,16)+tc(170,183,'record changes → index, cache, view refresh','p32t','fill:var(--pri-deep)');})()+'</svg>';
+
+const PIC_FUNC=svgo(226,'Four derivation functions, from standard to custom: parcels to a secondary index by picking and sorting values; notes to a full-text index by language processing; history to an ETA model by features and statistics; parcels and scans to a tracking cache shaped for the screen.')+
+ [[['parcels'],['pick values,','sort'],['secondary','index'],'h3'],
+  [['delivery','notes'],['language, stems,','synonyms'],['full-text','index'],'h3'],
+  [['delivery','history'],['features +','statistics'],['ETA','model'],'h4'],
+  [['parcels +','scans'],['shape it for','the screen'],['tracking','cache'],'h4']].map((r,i)=>{const y=6+i*50;
+   const two=(x,a,cls,st)=>a.length>1?tc(x,y+19,a[0],cls,st)+tc(x,y+35,a[1],cls,st):tc(x,y+27,a[0],cls,st);
+   return bx(4,y,78,42,null,false,8)+two(43,r[0],'p32m')+ar(84,y+21,98,y+21)+
+    bx(100,y,128,42,r[3],false,8)+tc(110,y+12,'f','p32m','font-style:italic;fill:var(--'+r[3]+')')+two(166,r[1],'p32v')+ar(230,y+21,244,y+21)+
+    bx(246,y,90,42,null,false,8)+two(291,r[2],'p32t');}).join('')+
+ '<rect x="100" y="208" width="10" height="10" rx="3" style="fill:var(--h3)"/>'+t32(114,217,'standard','p32m')+
+ '<rect x="190" y="208" width="10" height="10" rx="3" style="fill:var(--h4)"/>'+t32(204,217,'custom code','p32m')+'</svg>';
+
+const PIC_STATE=svgo(214,'Stateless app servers read and write a database like a shared variable, and must poll to notice changes; subscribing is not offered. Below, dataflow: a state change runs code that makes another change elsewhere.')+
+ bx(4,6,124,124,null,true,12)+tc(66,24,'deployment tools','p32m')+
+ [34,64,94].map(y=>bx(14,y,104,24,'h1',false,6)+tc(66,y+17,'stateless app','p32m','fill:var(--h1)')).join('')+
+ cyl(222,26,112,90,'h2','database','shared variable')+
+ ar(130,48,218,48,'muted')+ar(218,72,130,72,'muted')+tc(174,42,'write','p32m')+tc(174,88,'read','p32m')+
+ tc(174,108,'poll, poll…','p32m','fill:var(--h4)')+tc(174,126,'subscribe? ✗','p32t','fill:var(--no)')+
+ bx(4,144,332,64,'ok',false,14)+t32(14,162,'Dataflow','p32t','','fill:var(--ok)')+
+ bx(12,170,98,28,null,false,8)+tc(61,189,'state change','p32m')+ar(112,184,124,184,'ok')+
+ bx(126,170,88,28,'pri',false,8)+tc(170,189,'your code','p32t','fill:var(--pri-deep)')+ar(216,184,228,184,'ok')+
+ bx(230,170,98,28,null,false,8)+tc(279,189,'another change','p32m')+'</svg>';
+
+const PIC_PATHS=svgo(168,'The write path runs from Ravi’s scan through stream jobs to the derived dataset, eagerly. The read path runs from Signe’s search to the derived dataset, only when asked. They meet at the derived dataset.')+
+ t32(8,16,'write path · eager','p32t','','fill:var(--h2)')+t32(332,16,'read path · lazy','p32t','end','fill:var(--h3)')+
+ '<path d="M24 70 H170" style="stroke:var(--h2);stroke-width:6;stroke-linecap:round"/><path d="M170 70 H316" style="stroke:var(--h3);stroke-width:6;stroke-linecap:round"/>'+
+ '<circle cx="24" cy="70" r="13" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:2"/>'+tc(24,104,'Ravi’s','p32m')+tc(24,118,'scan','p32m')+
+ [74,122].map(x=>bx(x-18,58,36,24,'h2',false,6)+tc(x,75,'job','p32m','fill:var(--h2)')).join('')+
+ '<rect x="158" y="58" width="24" height="24" rx="3" transform="rotate(45 170 70)" style="fill:var(--pri);stroke:var(--pri)"/>'+
+ tc(170,40,'derived dataset','p32t','fill:var(--pri-deep)')+tc(170,108,'paths meet','p32m')+
+ bx(222,58,52,24,'h3',false,6)+tc(248,75,'query','p32m','fill:var(--h3)')+
+ '<circle cx="316" cy="70" r="13" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+tc(316,104,'Signe','p32m')+tc(316,118,'asks','p32m')+
+ bx(6,132,158,30,'h2',false,15)+tc(85,152,'done as data arrives','p32m','fill:var(--h2)')+
+ bx(176,132,158,30,'h3',false,15)+tc(255,152,'done when asked','p32m','fill:var(--h3)')+'</svg>';
+
+const PIC_PHONE=svgo(206,'The datacenter holds the tracking view. The phone keeps model objects, a local replica of that state, and the pixels on screen are a materialized view of the model objects.')+
+ bx(4,46,116,116,null,false,14)+tc(62,66,'datacenter','p32t')+cyl(28,78,68,58,'h2','tracking','view')+
+ ar(122,104,166,104,'pri')+tc(144,96,'sync','p32m')+
+ '<rect x="170" y="6" width="164" height="194" rx="22" style="fill:var(--card);stroke:var(--ink);stroke-width:2.5"/>'+
+ '<rect x="232" y="13" width="40" height="5" rx="2.5" style="fill:var(--line2)"/>'+
+ bx(182,28,140,160,'h3',false,12)+tc(252,48,'model objects','p32t','fill:var(--h3)')+tc(252,64,'= local replica','p32m')+
+ bx(194,80,116,96,'pri',false,10)+tc(252,102,'pixels','p32t','fill:var(--pri-deep)')+tc(252,118,'= materialized','p32m')+tc(252,133,'view','p32m')+
+ tc(252,160,'Out for delivery','p32t')+'</svg>';
+
+const PIC_READS=svgo(216,'Write events (scans) and read events (where is OP-48213?) both enter a stream processor holding a table of latest statuses; it answers each read on an output stream. A one-off read passes through and is forgotten; a subscription stays joined.')+
+ t32(4,30,'write events','p32t','','fill:var(--h2)')+t32(4,46,'Ravi’s scans','p32m')+ar(96,40,124,64,'h2')+
+ t32(4,128,'read events','p32t','','fill:var(--h3)')+t32(4,144,'“where is','p32m')+t32(4,159,'OP-48213?”','p32m')+ar(96,132,124,108,'h3')+
+ bx(126,50,110,74,'pri',false,12)+tc(181,70,'stream','p32t','fill:var(--pri-deep)')+tc(181,86,'processor','p32t','fill:var(--pri-deep)')+tc(181,108,'table: latest','p32m')+
+ ar(238,87,262,87,'pri')+bx(264,62,72,50,null,false,8)+tc(300,81,'answer','p32m')+tc(300,99,'“out”','p32t')+
+ bx(4,172,160,40,null,true,14)+tc(84,189,'one-off read','p32t')+tc(84,205,'passes, forgotten','p32m')+
+ bx(176,172,160,40,'h3',false,14)+tc(256,189,'subscription','p32t','fill:var(--h3)')+tc(256,205,'stays joined','p32m','fill:var(--h3)')+'</svg>';
+
+/* ---------------- Signature 1: the formula grid ---------------- */
+const COL32={A:{x:14,w:142},B:{x:190,w:146}};
+const CELL32={
+ A1:{t:'Parcels',f:'Source (system of record): each parcel’s recipient, address and price.'},
+ A2:{t:'Scans',f:'Source: scan events from couriers’ phones, in log order.'},
+ A3:{t:'Merchants',f:'Source: merchant accounts and their names.'},
+ A4:{t:'Rates',f:'Source: exchange-rate updates for Nordhaven’s currency.'},
+ B1:{t:'Support search',f:'= INDEX(A1 by name, phone, postcode)'},
+ B2:{t:'Tracking view',f:'= LATEST(A2 scan) + A1 address'},
+ B3:{t:'Merchant stats',f:'= COUNT(A2 delivered) per A3 merchant'},
+ B4:{t:'Nordhaven bills',f:'= A1 price × A4 rate'}};
+const DEP32=[['A1','B1'],['A1','B2'],['A1','B4'],['A2','B2'],['A2','B3'],['A3','B3'],['A4','B4']];
+const V32={A1:['OP-48213 · Okoro','12 Quay St · $6.00'],A2:['OP-48213','at Eastvale hub'],A3:['M-17','Bramble & Bolt'],A4:['Nordhaven rate','$1 = 9.80 local'],
+ B1:['search “Okoro”','→ 12 Quay St'],B2:['at Eastvale hub','to 12 Quay St'],B3:['Bramble & Bolt','1,204 delivered'],B4:['$6.00 parcel','= 58.80 local']};
+const BK32={ok:['ok-bg','ok'],no:['no-bg','no'],pri:['pri-bg','pri-deep'],mut:['soft2','muted'],warn:['h4-bg','h4']};
+
+function Grid(host,o){
+  o=o||{};
+  const cells=o.cells||Object.keys(CELL32);
+  const rows=[...new Set(cells.map(c=>+c[1]))].sort((a,b)=>a-b);
+  const PITCH=72,TOP=34,CH=56,H=TOP+rows.length*PITCH-6;
+  const g={v:JSON.parse(JSON.stringify(V32)),f:{},t:{},badge:{},cls:{},hl:new Set(),dash:new Set(),mark:new Set(),prog:{},sel:o.sel||null,lock:false};
+  host.innerHTML=(o.bar===false?'':'<div class="fx32"><i>fx</i><span></span></div>')+
+   '<div class="g32"><svg viewBox="0 0 340 '+H+'" role="img" aria-label="Spreadsheet of Otterpost data: source cells in column A, formula cells in column B; arrows show which sources each formula is derived from"></svg></div>'+
+   (o.read===false?'':'<div class="rd32" aria-live="polite"></div>');
+  const svg=host.querySelector('svg'),fx=host.querySelector('.fx32 span'),rd=host.querySelector('.rd32');
+  const P=id=>{const c=COL32[id[0]];return {x:c.x,y:TOP+rows.indexOf(+id[1])*PITCH,w:c.w};};
+  const deps=()=>DEP32.filter(d=>cells.includes(d[0])&&cells.includes(d[1]));
+  const ends=d=>{const D=deps(),out=D.filter(e=>e[0]===d[0]),inn=D.filter(e=>e[1]===d[1]),a=P(d[0]),b=P(d[1]);
+    return [a.x+a.w,a.y+CH/2+(out.indexOf(d)-(out.length-1)/2)*14,b.x,b.y+CH/2+(inn.indexOf(d)-(inn.length-1)/2)*14];};
+  g.draw=()=>{let s='';
+    s+=tc(COL32.A.x+COL32.A.w/2,14,'A · sources','p32m')+tc(COL32.B.x+COL32.B.w/2,14,'B · formulas','p32m');
+    rows.forEach((r,i)=>{s+=tc(6,TOP+i*PITCH+CH/2+4,r,'p32m');
+      ['A','B'].forEach(c=>{if(!cells.includes(c+r)){const p=P(c+r);s+='<rect x="'+p.x+'" y="'+p.y+'" width="'+p.w+'" height="'+CH+'" rx="9" style="fill:none;stroke:var(--line);stroke-dasharray:3 4"/>';}});});
+    deps().forEach(d=>{const [x1,y1,x2,y2]=ends(d),k=d[0]+d[1],h=g.hl.has(k),col=h?'var(--pri)':'var(--line2)';
+      s+='<path data-a="'+k+'" d="M'+x1+' '+y1+' C'+(x1+18)+' '+y1+' '+(x2-22)+' '+y2+' '+(x2-8)+' '+y2+'" style="fill:none;stroke:'+col+';stroke-width:'+(h?2.6:1.8)+(g.dash.has(k)?';stroke-dasharray:5 4':'')+'"/>'+
+        '<circle cx="'+x1+'" cy="'+y1+'" r="3.2" style="fill:'+col+'"/><path d="M'+x2+' '+y2+' L'+(x2-9)+' '+(y2-5)+' L'+(x2-9)+' '+(y2+5)+'Z" style="fill:'+col+'"/>';});
+    cells.forEach(id=>{const p=P(id),k=g.cls[id]||'',sel=g.sel===id,mk=g.mark.has(id);
+      const fill=k==='ok'?'ok-bg':k==='no'?'no-bg':k==='flash'?'pri-bg':k==='warn'?'h4-bg':(id[0]==='A'?'soft':'card');
+      const st=mk||sel||k==='flash'?'pri':k==='ok'?'ok-line':k==='no'?'no-line':k==='warn'?'h4':'line2';
+      s+='<g class="c32" data-c="'+id+'" tabindex="0" role="button" aria-label="Cell '+id+', '+(g.t[id]||CELL32[id].t)+': '+g.v[id].join(', ')+(mk?', marked':'')+'"'+(k==='dim'?' style="opacity:.4"':'')+'>'+
+        '<rect class="cb" x="'+p.x+'" y="'+p.y+'" width="'+p.w+'" height="'+CH+'" rx="9" style="fill:var(--'+fill+');stroke:var(--'+st+');stroke-width:'+(mk||sel?3:1.6)+'"/>'+
+        '<text x="'+(p.x+8)+'" y="'+(p.y+18)+'" class="p32t" style="font-size:12.5px"><tspan style="fill:var(--muted);font-weight:700">'+id+'</tspan> '+(g.t[id]||CELL32[id].t)+'</text>'+
+        t32(p.x+8,p.y+34,g.v[id][0],'p32v')+t32(p.x+8,p.y+49,g.v[id][1],'p32v')+
+        (g.prog[id]!=null?'<rect x="'+(p.x+8)+'" y="'+(p.y+CH-5)+'" width="'+((p.w-16)*g.prog[id]).toFixed(1)+'" height="3" rx="1.5" style="fill:var(--pri)"/>':'')+'</g>';});
+    cells.forEach(id=>{const b=g.badge[id];if(!b)return;const p=P(id),w=b[0].length*7.1+14,c=BK32[b[1]||'ok'];
+      s+='<rect x="'+(p.x+p.w-w-4)+'" y="'+(p.y-14)+'" width="'+w+'" height="19" rx="9.5" style="fill:var(--'+c[0]+');stroke:var(--'+c[1]+');stroke-width:1.2"/>'+
+        tc(p.x+p.w-4-w/2,p.y,b[0],'','font:700 12.5px var(--sans);fill:var(--'+c[1]+')');});
+    svg.innerHTML=s;
+    if(fx){const id=o.fxFixed||g.sel;fx.innerHTML=id?'<span><b>'+id+' '+(g.t[id]||CELL32[id].t)+'</b> '+(g.f[id]||CELL32[id].f)+'</span>':'<span style="color:var(--muted)">Tap a cell to see its formula.</span>';}};
+  g.say=h=>{if(rd)rd.innerHTML=h;};
+  g.pulse=(pairs,ms,rev)=>new Promise(res=>{ms=ms||420;pairs.forEach(k=>g.hl.add(k));g.draw();
+    const ps=pairs.map(k=>svg.querySelector('[data-a="'+k+'"]')).filter(Boolean);
+    const dots=ps.map(()=>{const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('r','5.5');c.setAttribute('style','fill:var(--pri);stroke:var(--card);stroke-width:2');svg.appendChild(c);return c;});
+    const t0=Date.now();
+    const step=()=>{if(!svg.isConnected){res();return;}const u=Math.min(1,(Date.now()-t0)/ms);
+      ps.forEach((p,j)=>{const len=p.getTotalLength(),pt=p.getPointAtLength(len*(rev?1-u:u));dots[j].setAttribute('cx',pt.x);dots[j].setAttribute('cy',pt.y);});
+      if(u<1)setTimeout(step,30);else{dots.forEach(d=>d.remove());pairs.forEach(k=>g.hl.delete(k));g.draw();res();}};
+    step();});
+  /* a source edit ripples into the formulas that use the changed field */
+  g.ripple=async(src,nv,targets)=>{g.badge={};g.cls={};g.v[src]=nv;g.cls[src]='flash';g.draw();await zz(150);
+    if(targets.length)await g.pulse(targets.map(t=>src+t[0]));
+    for(const t of targets){if(t[1])g.v[t[0]]=t[1];g.cls[t[0]]=t[3]==='mut'?'':(t[3]||'ok');g.badge[t[0]]=[t[2],t[3]||'ok'];g.draw();await zz(130);}
+    g.cls[src]='';g.draw();};
+  const tap=e=>{const c=e.target.closest('.c32');if(!c||g.lock)return;const id=c.dataset.c;
+    if(o.pick){g.mark.has(id)?g.mark.delete(id):g.mark.add(id);}else g.sel=id;g.draw();
+    const n=svg.querySelector('[data-c="'+id+'"]');if(n&&e.type==='keydown')n.focus();if(o.onTap)o.onTap(id,g);};
+  svg.addEventListener('click',tap);
+  svg.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();tap(e);}});
+  g.draw();
+  return g;
+}
+const tapCell=(L,id)=>{const c=L.$('[data-c="'+id+'"]');if(c)c.dispatchEvent(new MouseEvent('click',{bubbles:true}));};
+
+/* ---------------- Signature 2: the journey line ---------------- */
+/* stations: [[line1,line2]...]; k = the station where the write path meets the read path */
+function journey(stations,k,start,end,note){
+  const n=stations.length,X=i=>22+(i+1)*(296/(n+1)),xk=X(k),Y=58;
+  let s='<svg viewBox="0 0 340 126" role="img" aria-label="Journey from '+start.join(' ')+' to '+end.join(' ')+'. Stations up to '+stations[k].join(' ')+' are built on the write path; the rest happens on the read path.">';
+  s+=t32(6,16,'write path · eager','p32t','','fill:var(--h2)')+t32(334,16,'read path · lazy','p32t','end','fill:var(--h3)');
+  s+='<path d="M22 '+Y+' H'+xk+'" style="stroke:var(--h2);stroke-width:6;stroke-linecap:round"/><path d="M'+xk+' '+Y+' H318" style="stroke:var(--h3);stroke-width:6;stroke-linecap:round"/>';
+  s+='<circle cx="22" cy="'+Y+'" r="11" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:2"/><circle cx="318" cy="'+Y+'" r="11" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>';
+  s+=tc(22,92,start[0],'p32m')+tc(22,106,start[1]||'','p32m')+tc(318,92,end[0],'p32m')+tc(318,106,end[1]||'','p32m');
+  stations.forEach((st,i)=>{const x=X(i),built=i<=k;
+    if(i===k)s+='<rect x="'+(x-11)+'" y="'+(Y-11)+'" width="22" height="22" rx="3" transform="rotate(45 '+x+' '+Y+')" style="fill:var(--pri);stroke:var(--card);stroke-width:2"/>';
+    else s+='<circle cx="'+x+'" cy="'+Y+'" r="8" style="fill:var(--'+(built?'h2':'card')+');stroke:var(--'+(built?'h2':'line2')+');stroke-width:2'+(built?'':';stroke-dasharray:3 2')+'"/>';
+    const st2=i===k?'fill:var(--pri-deep);font-weight:700':built?'':'opacity:.55';
+    s+=tc(x,92,st[0],'p32m',st2)+tc(x,106,st[1]||'','p32m',st2);});
+  s+=tc(xk,36,note||'paths meet','p32m','fill:var(--pri-deep);font-weight:700');
+  return s+'</svg>';
+}
+
 Course.lesson({
   id:'0032', title:'Unbundling databases', minutes:20, icon:'layers',
-  goals:['See Otterpost’s pipelines as one big database turned inside out','Choose between federating reads, unbundling writes or one integrated database','Move work between the write path and the read path, all the way to a phone'],
-  parts:['Inside a database','Unbundling','Dataflow apps','Observing state'],
+  goals:['See Otterpost’s pipelines as one big database turned inside out','Choose between federating reads, unbundling writes or one integrated database','Decide how much work to do at write time versus read time, all the way to a phone'],
+  parts:['Inside a database','Unbundling writes','Dataflow apps','Write and read paths'],
   read:'Read “Unbundling Databases” in chapter 12 for the spreadsheet comparison, the exchange-rate example and the write path and read path in full.',
   glossary:{
     idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
@@ -30,44 +319,62 @@ Course.lesson({
   cheatsheet:[
     'A database’s index is <b>derived data</b>. CREATE INDEX = snapshot, catch up, then follow every write, like a new follower or CDC.',
     'Across an organization, pipelines act like one big database: stream jobs are its <b>triggers and view maintenance</b>, derived systems its <b>index types</b>.',
-    '<b>Federated</b> databases unify reads. <b>Unbundled</b> databases unify writes, through an ordered event log and idempotent consumers.',
+    '<b>Federated</b> databases unify reads. <b>Unbundled</b> databases unify writes, through an ordered event log and idempotent consumers, not distributed transactions.',
     'Logs give <b>loose coupling</b>: a slow consumer can’t stall the rest, and teams can work independently. But if one product does everything you need, use it.',
-    'Think of application code as a <b>derivation function</b>, run outside the database. Derived data needs stable order and no lost messages.',
-    'Subscribe to changes instead of querying another service: <b>local, faster and more robust</b>. Watch out for time-dependent joins.',
-    'Indexes, caches and views shift the boundary between the <b>write path</b> (eager) and the <b>read path</b> (lazy).',
-    'Push state changes all the way to the client. Reads can be events too, recording what a user saw.'
+    'Think of application code as a <b>derivation function</b>, like a spreadsheet formula. Derived data needs a stable order and no lost messages.',
+    'Subscribe to changes instead of querying another service: <b>local, faster and more robust</b>. Joins with changing data still depend on time.',
+    'Indexes, caches and materialized views shift the boundary between the <b>write path</b> (eager) and the <b>read path</b> (lazy).',
+    'Push state changes all the way to the client; it resumes from its offset after being offline. Reads can be events too, recording what a user saw.'
   ],
   steps:[
-/* ---------- PART 1: INSIDE A DATABASE ---------- */
+/* ================= PART 1: INSIDE A DATABASE ================= */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Zainab adds an index on postcode to the Parcel DB. Then Tobias’s code inserts a new parcel. Does Tobias’s code also have to update the index?</h1>');
   L.mc(L.card,['Yes, or the index goes stale','No, the database keeps it in step'],1,
-   'Inside one database, keeping indexes up to date is built in. This lesson asks what happens when the “index” is a whole separate system, like support search.',
+   'Inside one database, keeping indexes up to date is built in. This lesson asks who does that job when the “index” is a whole separate system, like support search.',
    'The database updates its own indexes on every write. This lesson asks who does that job when the “index” is a whole separate system, like support search.');}},
+
 {part:0,src:'Chapter 12 · Unbundling Databases',run(L){
-  L.h(L.kick('learn','Two philosophies')+'<h1 class="q">Unix and relational databases solve the same problem differently</h1>'+
-   L.prose('At the most abstract level, databases, Hadoop and operating systems do the same thing: they store data and let you process and query it. Both a filesystem and a database are information management systems. But they grew from opposite philosophies:')+
-   L.lanes([['list','Unix','A thin, fairly low-level layer over the hardware. Files and pipes are just sequences of bytes. “Simple” because there’s little in the way.',1],
-            ['layers','Relational databases','A high-level layer that hides disk structures, concurrency and crash recovery. SQL and transactions. “Simple” because a short query draws on a lot of machinery.',2]])+
-   L.prose('The tension has lasted since both appeared in the early 1970s. Kleppmann reads the NoSQL movement as applying the Unix style of low-level tools to distributed OLTP storage. In this section he tries to combine the best of both.'));
+  L.h(L.kick('learn','Two philosophies')+'<h1 class="q">Unix and relational databases solve the same problem from opposite ends</h1>'+PIC_PHIL+
+   '<p class="capt32">Both store data and let you process and query it. Unix offers a thin layer: files and pipes are just bytes. Relational databases hide disks, concurrency and crash recovery behind SQL and transactions. Both date from the early 1970s.</p>'+
+   '<p class="capt32 sm">Kleppmann reads NoSQL as the Unix style applied to distributed storage, and tries to combine the best of both.</p>');
   L.done();}},
+
 {part:0,src:'Chapter 12 · Creating an index',run(L){
-  L.h(L.kick('learn','Creating an index')+'<h1 class="q">CREATE INDEX is a small data pipeline</h1>'+
-   L.prose('Think about what a relational database does when you create an '+L.g('index','index')+' without locking the table:')+
-   L.flow([['eye','Snapshot','Scan a consistent snapshot; pick out and sort the values'],['cycle','Catch up','Apply writes made since the snapshot'],['pencil','Follow','Update the index on every new write']])+
-   L.prose('That’s almost exactly how you set up a new follower, and how you start '+L.g('cdc','change data capture')+' with an initial snapshot. In effect the database reprocesses the existing data and derives the index as a new view of it.'));
+  L.h(L.kick('learn','Creating an index')+'<h1 class="q">CREATE INDEX is a small data pipeline</h1>'+PIC_CI+
+   '<p class="capt32">Without locking the table, the database snapshots and sorts, applies the writes made meanwhile, then keeps following. A new follower and change data capture start exactly the same way. The '+L.g('index','index')+' is a new view derived from existing data.</p>');
   L.done();}},
-{part:0,src:'Chapter 12 · Creating an index',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh is building support search from scratch, fed from the Parcel DB, while bookings keep coming in. Put the steps in order.</h1>');
-  L.order(L.card,['Take a consistent snapshot of parcels','Load the snapshot into search','Apply changes made since the snapshot','Keep applying every new change'],
-   'Snapshot, load, catch up, follow. The same shape as CREATE INDEX, only across two systems.');}},
+
 {part:0,src:'Chapter 12 · The meta-database of everything',run(L){
-  L.h(L.kick('learn','The meta-database of everything')+'<h1 class="q">Zoom out, and the whole company looks like one database</h1>'+
-   L.prose('Kleppmann argues that the dataflow across an organization starts to look like one huge database. Whenever a batch, stream or ETL job moves data from one place and form to another, it’s acting like the part of a database that keeps indexes and views up to date.')+
-   L.tiers([['cycle','Batch and stream jobs','are like triggers, stored procedures and view-maintenance routines.','Linh’s jobs reading the event log'],
-            ['layers','Derived data systems','are like different index types: B-tree, hash, spatial…','support search, tracking cache, warehouse'],
-            ['people','The difference','The pieces run as separate software, on separate machines, run by separate teams.','not one integrated product']]));
+  L.h(L.kick('learn','The meta-database of everything')+'<h1 class="q">Zoom out, and the whole company looks like one database</h1>'+PIC_META+
+   '<p class="capt32">Kleppmann argues that every batch, stream or ETL job that moves data acts like the part of a database that keeps indexes and views up to date. The difference: the pieces are separate software, on separate machines, run by separate teams.</p>');
   L.done();}},
+
+{part:0,src:'Chapter 12 · The meta-database of everything',
+ solve:async L=>{L.$('#e5a').click();await L.sleep(1300);L.$('#e5b').click();await L.sleep(1300);},
+ run(L){
+  const seen=new Set();let busy=false,shown=false,addr=0,stat=0,nm=0,rate=0,count=1204;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Otterpost as one spreadsheet. Change a source cell and watch which formulas recompute.</h1>'+
+   '<div class="row32"><button class="chip" id="e5a">Mrs. Okoro moves</button><button class="chip" id="e5b">Ravi scans</button><button class="chip" id="e5c">Rename merchant</button><button class="chip" id="e5d">Rate changes</button></div><div id="g5"></div>'+
+   '<p class="capt32 sm">Tap any cell to see its formula. Lags are illustrative.</p>');
+  const g=Grid(L.$('#g5'),{sel:'B2'});
+  g.say('Each B cell is derived data: a formula over column A. Change a source to see the ripple.');
+  const run=async(k,fn)=>{if(busy)return;busy=true;const msg=await fn();busy=false;if(!L.$('#g5'))return;g.say(msg);seen.add(k);
+    if(seen.size>=2&&!shown){shown=true;L.sheet('info','One change, many updates','Each formula is kept in step by a job reading the log, the way a database keeps its own indexes and views. Zoomed out, the jobs are Otterpost’s triggers and view upkeep; the B cells are its index types.');L.done();}};
+  L.$('#e5a').onclick=()=>run('a',async()=>{addr^=1;const a=addr?'4 Mill Ln':'12 Quay St';
+    await g.ripple('A1',['OP-48213 · Okoro',a+' · $6.00'],[['B1',['search “Okoro”','→ '+a],'+0.3 s'],['B2',[g.v.B2[0],'to '+a],'+0.5 s']]);
+    return 'Mrs. Okoro moved to <b>'+a+'</b>. B1 and B2 use the address, so they recomputed. B4 uses only the price, so it stayed.';});
+  L.$('#e5b').onclick=()=>run('b',async()=>{const S=['out for delivery','delivered','at Eastvale hub'];const s=S[stat%3];stat++;
+    const del=s==='delivered';if(del)count++;
+    await g.ripple('A2',['OP-48213',s],[['B2',[s,g.v.B2[1]],'+0.4 s'],['B3',['Bramble & Bolt',fmt(count)+' delivered'],del?'+1':'no change',del?'ok':'mut']]);
+    return 'Ravi’s scan says <b>'+s+'</b>. B2 shows the new status. B3 counts deliveries, so it changes only for “delivered” ('+fmt(count)+' today).';});
+  L.$('#e5c').onclick=()=>run('c',async()=>{nm^=1;const n=nm?'Bramble & Bolt Co.':'Bramble & Bolt';
+    await g.ripple('A3',['M-17',n],[['B3',[n,g.v.B3[1]],'+0.6 s']]);
+    return 'M-17 is now <b>'+n+'</b>. Only B3 shows merchant names, so only B3 recomputed.';});
+  L.$('#e5d').onclick=()=>run('d',async()=>{rate^=1;const r=rate?10.1:9.8;
+    await g.ripple('A4',['Nordhaven rate','$1 = '+r.toFixed(2)+' local'],[['B4',['$6.00 parcel','= '+(6*r).toFixed(2)+' local'],'+0.2 s']]);
+    return 'The Nordhaven rate is now <b>'+r.toFixed(2)+'</b>. B4 multiplies price by rate, so it recomputed: '+(6*r).toFixed(2)+' local.';});}},
+
 {part:0,src:'Chapter 12 · The meta-database of everything',pts:5,run(L){
   L.h(L.kick('pr','Inside and outside twins')+'<h1 class="q">Each Otterpost system plays the role of a database feature. Which one?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Index','Materialized view','Trigger'],[
@@ -78,52 +385,61 @@ Course.lesson({
    ['The tracking cache holding each parcel’s ready-to-show page',1,'A precomputed result shaped for display: a cache, which is a kind of materialized view.']],
    'Otterpost has rebuilt, outside the Parcel DB, the features a database has inside it.');}},
 
-/* ---------- PART 2: UNBUNDLING ---------- */
+/* ================= PART 2: UNBUNDLING WRITES ================= */
 {part:1,src:'Chapter 12 · Composing Data Storage Technologies',run(L){
-  L.h(L.kick('learn','Two ways to compose')+'<h1 class="q">Unify the reads, or unify the writes</h1>'+
-   L.prose('If no single data model fits every access pattern, Kleppmann sees two ways to make many tools act as one system:')+
-   L.lanes([['eye','Federated: unify reads','One query interface over many storage engines (a '+L.g('federated','polystore')+'), like PostgreSQL’s foreign data wrappers. Relational tradition: a high-level language, a complicated inside. It doesn’t sync writes.',1],
-            ['list','Unbundled: unify writes','Plug systems together with CDC and event logs so every change reaches every place, even with faults. Unix tradition: small tools, a uniform low-level interface (pipes), composed by a higher-level language.',2]])+
-   L.prose('He calls them two sides of one coin. Mapping data models for reads is manageable; keeping writes in sync is the harder problem, so that’s his focus: '+L.g('unbundling','unbundling')+' the database’s index-maintenance features.'));
+  L.h(L.kick('learn','Two ways to compose')+'<h1 class="q">Unify the reads, or unify the writes</h1>'+PIC_FED+
+   '<p class="capt32">A '+L.g('federated','federated database')+' (polystore), like PostgreSQL’s foreign data wrappers, puts one query interface over many stores: the relational tradition. '+L.g('unbundling','Unbundling')+' syncs writes through change data capture and event logs: the Unix tradition of small tools.</p>'+
+   '<p class="capt32 sm">Two sides of one coin. Kleppmann focuses on writes, the harder problem.</p>');
   L.done();}},
+
 {part:1,src:'Chapter 12 · Composing Data Storage Technologies',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Signe wants one query that combines support search with warehouse reports, only to read. Which approach fits?</h1>');
   L.mc(L.card,['A federated query interface over both','An unbundled pipeline that syncs writes','Merge both systems into one database'],0,
    'Read-only querying across several systems is exactly what federation offers. Each system keeps working directly as before.',
    'Signe only needs to read across two systems. Federation gives one query interface over both. Unbundling is about writes, and merging them loses what each is good at.');}},
+
 {part:1,src:'Chapter 12 · Making unbundling work',run(L){
-  L.h(L.kick('learn','Making unbundling work')+'<h1 class="q">An event log with idempotent writes, not transactions across systems</h1>'+
-   L.prose('The traditional way to sync writes across different systems is a distributed transaction. Kleppmann thinks that’s the wrong tool between different technologies: there’s no standard transaction protocol they all speak. An ordered log of events with '+L.g('idempotence','idempotent')+' consumers is a much simpler abstraction, so it’s far easier to implement everywhere.')+
-   '<h2 class="sub">The big win is loose coupling, in two ways</h2>'+
-   L.list([['shield','System level','If one consumer is slow or down, the log buffers its messages. The producer and other consumers carry on, and the broken one catches up later without missing data. A distributed transaction would spread the fault.'],
-     ['people','Human level','Different teams build and improve their pieces independently. The event log is a clear interface: strong enough to keep order and durability, general enough for almost any data.']],2));
+  L.h(L.kick('learn','Making unbundling work')+'<h1 class="q">An event log beats a transaction across different systems</h1>'+PIC_LOG+
+   '<p class="capt32">Different technologies share no standard transaction protocol. An ordered log with '+L.g('idempotence','idempotent')+' consumers is simpler, so it works everywhere. The win is loose coupling: a fault stays in one consumer, and each team works behind a clear interface.</p>');
   L.done();}},
+
 {part:1,src:'Chapter 12 · Making unbundling work',pts:1,
- solve:async L=>{L.$('#mt').click();L.$('#ml').click();},
+ solve:async L=>{L.$('#p10').children[1].click();L.$('#go10').click();await L.sleep(2700);},
  run(L){
-  const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Support search crashes for 20 minutes during a Bramble & Bolt flash sale. Run it both ways.</h1>'+
-   L.lanes([['lock','Distributed transaction','Each booking commits to the Parcel DB, the ledger and search together.<div class="res" id="xa"></div>',4],
-            ['list','Event log','Each booking goes to the Parcel DB; the others follow the log.<div class="res" id="xb"></div>',2]])+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="mt">'+L.ic('play')+'Crash search: transaction</button><button class="btn" id="ml">'+L.ic('play')+'Crash search: log</button></div><div id="mq"></div>');
-  const ask=()=>{const q=L.$('#mq');if(!q||seen.size<2||q.innerHTML)return;q.innerHTML='<h2 class="sub">Which kind of loose coupling did the log just show?</h2>';
-    L.mc(q,['System level: one fault stays inside one consumer','Human level: each team deploys on its own','Neither: the log just made search faster'],0,
-     'The log buffered search’s changes while bookings, billing and notifications carried on. Search then caught up without missing anything.',
-     'Watch what happened during the crash: the log held search’s backlog, everything else kept running, and search caught up. That’s system-level loose coupling.');};
-  L.$('#mt').onclick=function(){this.disabled=true;L.$('#xa').innerHTML='Search can’t vote “yes”, so every booking waits, then aborts. <span style="color:var(--no)">Bramble & Bolt’s sale stops for 20 minutes.</span>';seen.add(0);ask();};
-  L.$('#ml').onclick=function(){this.disabled=true;let t=0;const box=L.$('#xb');
-    const iv=setInterval(()=>{t++;const b=L.$('#xb');if(!b){clearInterval(iv);return;}
-      const lag=t<=8?t*1500:Math.max(0,12000-(t-8)*2400);
-      b.innerHTML='Bookings, billing and notifications: <span style="color:var(--ok)">running</span><br>Search behind by <b>'+lag.toLocaleString('en-US')+'</b> events'+(t>8?' (fixed, catching up)':'');
-      if(t>=13){clearInterval(iv);b.innerHTML+='<br><span style="color:var(--ok)">Caught up. Nothing lost.</span>';seen.add(1);ask();}},100);
-    box.textContent='Starting…';};}},
+  const PR=['Bookings stop until search is back','Bookings go on; search catches up later','Bookings go on; search misses them for good'];let p=null;
+  const TL=m=>{const X=i=>8+i*10.8;let s=svgo(104,'Thirty minutes of bookings. Search is down from minute 5 to 25. With the event log every minute’s bookings succeed; with a distributed transaction the bookings in those 20 minutes fail.')+
+     '<rect x="'+X(5)+'" y="20" width="'+(10.8*20)+'" height="70" rx="4" style="fill:var(--no-bg)"/>'+tc(X(15),14,'search down','p32m','fill:var(--no)');
+    [['Event log',34,0],['Distributed transaction',70,1]].forEach(l=>{s+=t32(8,l[1],l[0],'p32t');
+      for(let i=0;i<30;i++){const bad=l[2]&&i>=5&&i<25,on=i<m;s+='<rect x="'+(X(i)+.5)+'" y="'+(l[1]+5)+'" width="9.8" height="13" rx="2" style="fill:var(--'+(on?(bad?'no':'ok'):'soft2')+')"/>';}});
+    return s+t32(8,102,'0','p32m')+t32(332,102,'30 min','p32m','end')+'</svg>';};
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt’s flash sale. Support search goes down for 20 minutes. With the event log, what happens?</h1><div id="g10"></div><div id="t10">'+TL(0)+'</div><div class="row32" id="p10"></div><button class="btn pri" id="go10" hidden>'+L.ic('play')+'Play 30 minutes</button>');
+  const g=Grid(L.$('#g10'),{cells:['A1','B1','B2'],bar:false});
+  g.badge.B1=['down min 5–25','no'];g.draw();
+  g.say('About 300 bookings a minute land in A1 (illustrative). Search and the tracking view follow the log.');
+  PR.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#go10').hidden=false;};L.$('#p10').appendChild(b);});
+  L.$('#go10').onclick=function(){this.remove();let m=0;
+    const tick=()=>{if(!L.$('#g10'))return;m++;const i=m-1,acc=m*300,failed=Math.max(0,Math.min(m,25)-5)*300;
+      let b1;if(i<5)b1=['in step','ok'];else if(i<25)b1=['behind '+fmt((i-4)*300),'no'];else{const left=Math.max(0,6000-(i-24)*1500);b1=left?['catching up '+fmt(left),'warn']:['caught up','ok'];}
+      g.badge={A1:['+300/min','pri'],B1:b1,B2:['in step','ok']};g.cls={B1:b1[1]==='ok'?'ok':b1[1]};g.draw();
+      L.$('#t10').innerHTML=TL(m);
+      g.say('Minute '+m+'. <b>Event log:</b> '+fmt(acc)+' bookings taken; search '+(b1[0])+'. <b>Distributed transaction:</b> '+fmt(failed)+' bookings failed.');
+      if(m<30){setTimeout(tick,75);return;}
+      const ok=p===1;L.award(ok);
+      L.sheet(ok?'ok':'no',ok?'You called it':'Bookings never stopped','With the log, all 9,000 bookings went through. Search fell 6,000 events behind, then read on from its offset and caught up, missing nothing. With a distributed transaction, search couldn’t vote yes, so 6,000 bookings failed. That’s loose coupling at the system level.');L.done();};
+    tick();};}},
+
 {part:1,src:'Chapter 12 · Unbundled versus integrated systems',run(L){
-  L.h(L.kick('learn','Unbundled versus integrated systems')+'<h1 class="q">Unbundling is for breadth, not for beating a database</h1>'+
-   L.prose('Even if unbundling wins, databases stay as needed as ever: to hold stream processors’ state and to serve the outputs of batch and stream jobs. Specialized engines, like MPP warehouses for analytic queries, still matter.')+
-   L.prose('Running many pieces of infrastructure has a cost: each has a learning curve, configuration issues and quirks. So deploy as few moving parts as you can. One integrated product may also perform better on the work it’s built for. And building for scale you don’t need is premature optimization.')+
-   L.note('<b>The rule of thumb:</b> if one technology does everything you need, use it. Unbundling pays off only when no single piece of software meets all your requirements.','scale')+
-   '<p class="small" style="margin-top:12px"><b>What’s missing?</b> Kleppmann wants an unbundled equivalent of the Unix shell: declare something like <code>mysql | elasticsearch</code> and have it index everything and then follow every change, with no custom code. He’d like caches to be declared as materialized views too. Research such as differential dataflow points that way.</p>');
+  L.h(L.kick('learn','Unbundled versus integrated systems')+'<h1 class="q">Unbundling is for breadth, not for beating a database</h1>'+PIC_BREADTH+
+   '<p class="capt32">Databases stay as needed as ever: stream jobs keep state in them and serve results from them. Each extra system adds a learning curve and quirks, and building for scale you don’t need is premature optimization. If one product does everything you need, use it.</p>');
   L.done();}},
+
+{part:1,src:'Chapter 12 · What’s missing?',run(L){
+  L.h(L.kick('learn','What’s missing?')+'<h1 class="q">A shell for unbundled databases doesn’t exist yet</h1>'+PIC_SHELL+
+   '<p class="capt32">Kleppmann wants a high-level way to compose storage systems, like the Unix shell. His example pipes MySQL into Elasticsearch: copy everything, then apply every change, with no custom code. That would be CREATE INDEX across systems.</p>'+
+   '<p class="capt32 sm">He’d also like to declare caches as materialized views. Research such as differential dataflow points that way.</p>');
+  L.done();}},
+
 {part:1,src:'Chapter 12 · Unbundled versus integrated systems',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'One product, or compose tools?',['Use one integrated database','Compose specialized tools'],[
@@ -131,120 +447,235 @@ Course.lesson({
    ['Parcel data must serve bookings, fuzzy search by partial phone number, on-time analytics and ETA training.',1,'No single product does all of this well. That’s when composing tools pays off.'],
    ['Tobias wants the merchant dashboard prototype on an event log, a search cluster and a cache, “for when we’re huge”.',0,'Building for scale you don’t need is premature optimization. Start with one database.'],
    ['Signe’s team needs typo-tolerant name search that the Parcel DB’s built-in text search can’t do.',1,'Specialist search is a real requirement the database can’t meet. Feed a search index from the Parcel DB through CDC.']]);}},
-{part:1,src:'Chapter 12 · What’s missing?',pts:1,run(L){
-  L.h(L.kick('pr','The missing shell')+'<h1 class="q">Suppose Linh could type one line, <code>parcel_db | support_search</code>, as Kleppmann wishes. What would it have to do to match CREATE INDEX?</h1>');
-  L.mc(L.card,['Copy all parcels into search once each night','Let search query the Parcel DB live on demand','Copy all parcels, then apply every later change'],2,
-   'Like CREATE INDEX: load everything, then keep following changes automatically, with no custom code.',
-   'A nightly copy goes stale between runs, and querying live isn’t an index at all. The unbundled CREATE INDEX copies everything and then follows every change.');}},
 
-/* ---------- PART 3: DATAFLOW APPS ---------- */
+/* ================= PART 3: DATAFLOW APPS ================= */
 {part:2,src:'Chapter 12 · Designing Applications Around Dataflow',run(L){
-  L.h(L.kick('learn','Designing applications around dataflow')+'<h1 class="q">What spreadsheets got right</h1>'+
-   L.prose('Kleppmann’s name for this approach is the “database inside-out”, after a 2014 talk he gave. He calls it a design pattern rather than a new architecture, built from other people’s ideas: dataflow languages, functional reactive programming, logic programming. The term “unbundling” comes from Jay Kreps.')+
-   L.prose('In a spreadsheet, a formula cell recalculates whenever any input changes. That’s what we want from data systems: change a record, and every index, cache and view that depends on it refreshes by itself.')+
-   L.flow([['pencil','Change','A parcel’s price is corrected'],['cycle','Recompute','Merchant’s balance view updates'],['eye','Refresh','Dashboard total updates']])+
-   L.prose('The difference: data systems also need to be fault-tolerant, scalable and durable, and to join together technologies written by different people over time.'));
+  L.h(L.kick('learn','Designing applications around dataflow')+'<h1 class="q">What spreadsheets got right</h1>'+PIC_SHEET+
+   '<p class="capt32">Change a cell and every formula that uses it recalculates. Kleppmann wants that from data systems, and calls the idea the “database inside-out”: a design pattern, not a new architecture. Unlike a spreadsheet, it must be fault-tolerant, scalable and durable.</p>'+
+   '<p class="capt32 sm">It borrows from dataflow languages, functional reactive programming and logic programming. The term “unbundling” comes from Jay Kreps.</p>');
   L.done();}},
-{part:2,src:'Chapter 12 · Application code as a derivation function',run(L){
-  L.h(L.kick('learn','Application code as a derivation function')+'<h1 class="q">Every derived dataset comes from some function</h1>'+
-   L.prose('When one dataset is derived from another, a transformation function sits in between. Some are standard, some need custom code:')+
-   L.tiers([['list','Secondary index','Pick out the indexed values and sort by them. So common that databases build it in.','Standard: just CREATE INDEX'],
-            ['eye','Full-text index','Detect language, split words, stem, fix spelling, find synonyms, then build an inverted index.','Partly built in, often tuned'],
-            ['bulb','Machine learning model','Derived from training data through feature extraction and statistics.','Very application-specific'],
-            ['layers','Cache','Data shaped the way the screen shows it. Change the screen, and the cache must be redefined and rebuilt.','Custom, tied to the UI']])+
-   '<p class="small" style="margin-top:10px">Custom code is where many databases struggle: triggers, stored procedures and user-defined functions were an afterthought in their design.</p>');
-  L.done();}},
-{part:2,src:'Chapter 12 · Application code as a derivation function',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias redesigns the tracking page to show a map of the courier’s route. Which derived dataset must be redefined and rebuilt?</h1>');
-  L.mc(L.card,['The postcode index in the Parcel DB','The ETA model trained on delivery history','The cache of each ready-to-show tracking page'],2,
-   'The cache holds data in the shape the screen shows it, so a new screen means a new cache definition and a rebuild.',
-   'The index and the ETA model don’t depend on the page layout. The cache does: it stores data shaped for the screen.');}},
-{part:2,src:'Chapter 12 · Separation of application code and state',run(L){
-  L.h(L.kick('learn','Separation of application code and state')+'<h1 class="q">Keep code and state apart, then let state talk back</h1>'+
-   L.prose('Databases could in theory run any application code, but they handle modern needs badly: package management, version control, rolling upgrades, monitoring, metrics, calls to other services. Tools built to run code (Kubernetes, Docker, YARN, Mesos) do it much better.')+
-   L.prose('So most web apps are stateless services with the state in a database. The database works like a shared variable over the network: you can read it and write it. But, as with a variable in most languages, you can’t <i>subscribe</i> to it. To find out if something changed, you poll, asking again and again.')+
-   L.note('Dataflow thinking changes this: code reacts to a state change in one place by causing a state change somewhere else. Unbundling takes what a trigger or index update does inside a database and applies it, with stream processing, to caches, search indexes, ML and analytics outside it.','cycle'));
-  L.done();}},
-{part:2,src:'Chapter 12 · Dataflow: Interplay between state changes and application code',run(L){
-  L.h(L.kick('learn','Derived data is not a job queue')+'<h1 class="q">Two strict demands that ordinary messaging doesn’t meet</h1>'+
-   L.prose('Message queues were traditionally built to run jobs asynchronously. Keeping derived data correct is stricter:')+
-   L.list([['list','Order matters','Several views derived from one log must apply events in the same order to stay consistent. Many brokers redeliver unacknowledged messages out of order. Dual writes are out, too.'],
-     ['alert','No message may be lost','Lose a single message and the derived dataset is out of sync with its source for good. Many actor systems keep state and messages in memory, so a crash loses them.']],4)+
-   L.prose('These demands are stringent, but Kleppmann notes they’re far cheaper and sturdier than distributed transactions. Modern stream processors meet them at scale and run application code as operators that chain like Unix pipes.'));
-  L.done();}},
-{part:2,src:'Chapter 12 · Dataflow: Interplay between state changes and application code',pts:4,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'What’s wrong with this design?',['Messages can arrive out of order','Messages are lost in a crash','App logic is inside the database','Nothing, for this kind of job'],[
-   ['The tracking view is fed by a queue that redelivers unacknowledged status changes after newer ones.',0,'A late “at hub” could overwrite a newer “out for delivery”. Derived views need a stable order.'],
-   ['The support search updater keeps unprocessed changes only in memory, and restarts drop them.',1,'One lost change leaves search out of sync with the Parcel DB for good.'],
-   ['Tobias puts label-pricing logic in a stored procedure inside the Parcel DB.',2,'Databases are poor at versioning, rolling upgrades, monitoring and network calls. Run the code in tools built for it.'],
-   ['A queue of “send this courier a shift reminder” jobs where two sometimes run out of order.',3,'This is plain asynchronous job execution, what queues were made for. No derived view depends on the order.']]);}},
-{part:2,src:'Chapter 12 · Stream processors and services',run(L){
-  L.h(L.kick('ex','Stream processors and services')+'<h1 class="q">Nordhaven merchants are billed in their own currency</h1>'+
-   L.quote('The fastest and most reliable network request is no network request at all!','Martin Kleppmann, chapter 12'));
-  L.beats(L.card,[
-   ['The setup','Prices are set in Westport’s currency, but Nordhaven merchants pay in theirs. Every booking needs the current exchange rate. This mirrors the book’s own currency example.'],
-   ['Microservices way','The booking code calls the exchange-rate service for each booking: a synchronous request. If that service is slow or down, bookings suffer.'],
-   ['Dataflow way','The booking code subscribes in advance to a stream of rate updates and keeps the latest rate in a local database. Each booking just reads locally.'],
-   ['The difference','A network call becomes a local lookup: faster, and robust to the rate service failing. In stream terms it’s a stream-table join between bookings and rate updates.'],
-   ['The catch','The join depends on time. If Linh reprocesses last March’s bookings, Linh needs the rate <i>as it was</i> at each booking, not today’s, whichever way rates are fetched.']],
-   'Both styles split work across teams. Dataflow uses one-way asynchronous streams instead of request and response, so data is already local when it’s needed.');}},
 
-/* ---------- PART 4: OBSERVING STATE ---------- */
-{part:3,src:'Chapter 12 · Observing Derived State',run(L){
-  L.h(L.kick('learn','Observing derived state')+'<h1 class="q">Where the write path meets the read path</h1>'+
-   L.lanes([['pencil','Write path','Done eagerly as data comes in, whether or not anyone asked: every stage of batch and stream processing until each derived dataset is updated.',2],
-            ['eye','Read path','Done lazily, only when someone asks: read the derived dataset, maybe process a bit, respond.',3]])+
-   L.prose('The derived dataset is where the two paths meet. It’s a trade-off between work at write time and work at read time. (Programmers will recognize eager and lazy evaluation.)')+
-   L.prose('So caches, indexes and '+L.g('materialized-view','materialized views')+' all play one role: they shift the boundary, doing more on the '+L.g('write-path','write path')+' to save effort on the '+L.g('read-path','read path')+'. The book’s Twitter timeline example in chapter 1 was this same choice, so after 500 pages it comes full circle.'));
+{part:2,src:'Chapter 12 · Application code as a derivation function',run(L){
+  L.h(L.kick('learn','Application code as a derivation function')+'<h1 class="q">Every derived dataset comes from some function</h1>'+PIC_FUNC+
+   '<p class="capt32">A secondary index is so standard that you just say CREATE INDEX. Full-text search needs tuning; ML models and caches need custom code. That’s where many databases struggle: triggers and stored procedures were an afterthought.</p>');
   L.done();}},
-{part:3,src:'Chapter 12 · Materialized views and caching',pts:1,
- solve:async L=>{[...L.$('#bc').children].forEach(b=>b.click());},
+
+{part:2,src:'Chapter 12 · Application code as a derivation function',pts:1,
+ solve:async L=>{tapCell(L,'B2');L.$('#go16').click();await L.sleep(1900);},
  run(L){
-  const S=[['No index',6,100,'Writes just store the parcel. Every search scans everything, like grep. Fine for a handful, hopeless for millions.'],
-           ['Search index',40,30,'Writes update the entries for every term; reads look up each term and combine the results. Both paths do some work.'],
-           ['Index + cached common searches',60,12,'Popular searches are precomputed. A new parcel that matches one must update it on the write path. Rare searches still use the index.'],
-           ['Precompute every search',100,3,'Reads would be instant, but the possible searches are endless, so the write path could never finish.']];
-  const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Move the boundary for support search. Try all four strategies.</h1><div id="bc"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:10px 0 6px"><div class="meterrow"><div class="lb">Write path</div><div class="meter"><div id="bw" style="background:var(--h2);width:0"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">Read path</div><div class="meter"><div id="br" style="background:var(--h3);width:0"></div></div></div><p class="small" id="bt" style="margin:8px 0 0">Choose a strategy above.</p></div><div id="bq"></div>');
-  S.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0];
-    b.onclick=()=>{[...L.$('#bc').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#bw').style.width=s[1]+'%';L.$('#br').style.width=s[2]+'%';L.$('#bt').textContent=s[3];
-      const q=L.$('#bq');if(seen.size===S.length&&!q.innerHTML){q.innerHTML='<h2 class="sub">Signe’s team runs “Bramble & Bolt, today” hundreds of times a day, so its results are cached. A new Bramble & Bolt parcel is booked. Which path pays to keep that answer right?</h2>';
-        L.mc(q,['The read path, next time someone searches','The write path, when the parcel comes in','Neither, since a cache is just old results'],1,
-         'A cached common query is really a materialized view: it’s updated when new matching data arrives, on the write path.',
-         'The book treats a cache of common searches as a materialized view that must be updated when matching data appears. That work happens on the write path.');}};
-    L.$('#bc').appendChild(b);});}},
-{part:3,src:'Chapter 12 · Pushing state changes to clients',run(L){
-  L.h(L.kick('learn','Clients and the write path')+'<h1 class="q">Extend the write path all the way to the phone</h1>'+
-   L.prose('<b>Stateful, offline-capable clients.</b> Web apps taught us that clients hold no state and servers own the data. But single-page apps and mobile apps now keep plenty of state on the device, and offline-first apps sync in the background. Then the on-device state is a cache of the server’s: the pixels are a materialized view of the app’s model objects, which are a local replica of state in a datacenter.')+
-   L.prose('<b>Pushing state changes.</b> A normal web page reads data once, then goes stale until you reload or poll (RSS is polling too). Server-sent events and WebSockets keep a connection open so the server can push changes. That extends the write path to the end user: read once to start, then follow a stream of changes.')+
-   L.note('Offline for a while? It’s a solved problem: like a consumer of a log-based broker, the device reconnects from its last offset and misses nothing. Each device is a small subscriber to a small stream.','cycle'));
+  let did=false;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias changes the tracking page to show every scan, not just the latest. Tap every cell that must be rebuilt, then press Rebuild.</h1><div id="g16"></div>'+
+   '<button class="btn pri" id="go16" disabled>'+L.ic('cycle')+'Rebuild</button>');
+  const g=Grid(L.$('#g16'),{pick:true,fxFixed:'B2',onTap:()=>{L.$('#go16').disabled=!g.mark.size;g.say(g.mark.size?'Marked: <b>'+[...g.mark].sort().join(', ')+'</b>.':'Nothing marked yet.');}});
+  g.f.B2='= ALL(A2 scans) + A1 address  <span class="vd32 ok">new</span>';g.draw();
+  g.say('Nothing marked yet. Sources are in column A, formulas in column B.');
+  L.$('#go16').onclick=async function(){if(did||!g.mark.size)return;did=true;this.disabled=true;g.lock=true;
+    const picked=new Set(g.mark),ok=picked.size===1&&picked.has('B2');L.award(ok);
+    Object.keys(CELL32).forEach(id=>{if(id!=='B2')g.cls[id]=picked.has(id)?'no':'dim';});
+    Object.keys(CELL32).forEach(id=>{if(id!=='B2'&&picked.has(id))g.badge[id]=['unchanged','no'];});
+    g.badge.B2=['reprocessing scans','pri'];
+    for(let i=0;i<=10;i++){if(!L.$('#g16'))return;g.prog.B2=i/10;g.draw();await zz(110);}
+    delete g.prog.B2;g.v.B2=['picked up → at hub','to 12 Quay St'];g.badge.B2=['rebuilt','ok'];g.cls.B2='ok';g.draw();
+    g.say('B2 was rebuilt by running its new formula over every scan in the log. Nothing else changed.');
+    L.sheet(ok?'ok':'no',ok?'Only B2':'Only B2 needed it','The sources are the system of record and didn’t change, and no other formula reads B2. Only the redefined view is rebuilt, by reprocessing history, like CREATE INDEX deriving a new view. A cache shaped for a screen changes whenever the screen does.');L.done();};}},
+
+{part:2,src:'Chapter 12 · Separation of application code and state',run(L){
+  L.h(L.kick('learn','Separation of application code and state')+'<h1 class="q">Keep code and state apart, then let state talk back</h1>'+PIC_STATE+
+   '<p class="capt32">Tools like Kubernetes and Docker run code better than a database can, so apps keep stateless code apart from state. But a database is like a variable you can’t subscribe to: apps must poll. In dataflow, code reacts to one change by making another.</p>');
   L.done();}},
-{part:3,src:'Chapter 12 · End-to-end event streams',run(L){
-  L.h(L.kick('ex','End-to-end event streams')+'<h1 class="q">Mrs. Okoro watches a parcel on the tracking page</h1>');
-  L.beats(L.card,[
-   ['Open','Mrs. Okoro opens the tracking page. Their phone uses the read path once to load the current status: “At Eastvale hub”.'],
-   ['Subscribe','The page keeps a connection open and subscribes to changes for the parcel, instead of polling every minute.'],
-   ['Scan','Courier Ravi scans the parcel “out for delivery”. The scan goes into the event log, the tracking view updates, and the change is pushed to Mrs. Okoro’s phone, all in under a second.'],
-   ['Lift','They step into a lift and lose signal while Ravi marks “two stops away”. On reconnecting, the phone resumes from its last offset and gets the missed update.'],
-   ['Why not always?','UI tools like Elm and React with Flux or Redux already manage screen state as a stream of events. The obstacle is that request and response are deeply built into databases, libraries and protocols; few datastores let you subscribe. Kleppmann thinks the switch to publish and subscribe is worth the effort.']],
-   'The tracking page is a materialized view pushed to the recipient’s phone. The write path runs from Ravi’s scanner to Mrs. Okoro’s screen.');}},
+
+{part:2,src:'Chapter 12 · Dataflow: Interplay between state changes and application code',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#e18p'+j).click();await L.sleep(1700);L.$('#fx18').click();await L.sleep(1700);}},
+ run(L){
+  const P=[
+   {nm:'Applied twice',fix:'Make it idempotent',
+    ev:f=>[{o:41,s:'out for delivery'},{o:42,s:'delivered'},{mk:'restart'},{o:42,s:'delivered',dup:true}],
+    bad:'The stats job restarted and got offset 42 again. It counted the same delivery twice: <b>1,206</b> instead of 1,205.',
+    good:'The job stores the last offset it applied together with the count, so it skips 42 the second time. Same result however often it runs.'},
+   {nm:'Out of order',fix:'Keep the log’s order',
+    ev:f=>f?[{o:41,s:'out for delivery'},{o:42,s:'delivered'}]:[{o:42,s:'delivered'},{o:41,s:'out for delivery',dup:true}],
+    bad:'A broker redelivered offset 41 after 42. The tracking view now says <b>out for delivery</b> while stats say delivered: two views disagree.',
+    good:'Consumers read the log in offset order, so every view applies 41 before 42 and they agree.'},
+   {nm:'Lost in a crash',fix:'Resume from the offset',
+    ev:f=>f?[{o:41,s:'out for delivery'},{mk:'crash · restart at 42'},{o:42,s:'delivered'}]:[{o:41,s:'out for delivery'},{o:42,s:'delivered',lost:true}],
+    bad:'The job held offset 42 only in memory and crashed. The view is stuck at <b>out for delivery</b> and stats missed a delivery, for good.',
+    good:'The log is durable and the job records its offset. After the crash it resumes at 42 and catches up.'}];
+  const fixed=new Set();let cur=-1,busy=false,shown=false;
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Derived data is stricter than a job queue. Break each view, then fix it.</h1>'+
+   '<div class="row32">'+P.map((p,j)=>'<button class="chip" id="e18p'+j+'">'+p.nm+'</button>').join('')+'</div>'+
+   '<div class="tape32" id="tp18"><span class="lb">Delivered to the jobs:</span></div><div id="g18"></div><button class="btn pri" id="fx18" hidden></button>');
+  const g=Grid(L.$('#g18'),{cells:['A2','B2','A3','B3'],bar:false});
+  g.say('Parcel OP-48213 gets two scans: offset 41 “out for delivery”, then 42 “delivered”. Pick a fault.');
+  const play=async(j,f)=>{busy=true;const p=P[j],tp=L.$('#tp18');tp.innerHTML='<span class="lb">Delivered to the jobs:</span>';
+    g.badge={};g.cls={};g.v.B2=['at Eastvale hub','to 12 Quay St'];g.v.B3=['Bramble & Bolt','1,204 delivered'];g.v.A2=['OP-48213','at Eastvale hub'];g.draw();
+    let status='at Eastvale hub',count=1204;const seen=new Set();
+    for(const e of p.ev(f)){if(!L.$('#g18'))return;
+      const sp=document.createElement('span');sp.className='e'+(e.mk?' mk':e.lost?' lost':e.dup?' dup':'');sp.textContent=e.mk||(e.o+' '+e.s+(e.lost?' (lost)':''));tp.appendChild(sp);
+      if(e.mk){await zz(260);continue;}
+      g.v.A2=['offset '+e.o,e.s];g.cls.A2='flash';g.draw();
+      if(e.lost){await zz(380);g.cls.A2='';continue;}
+      await g.pulse(['A2B2','A2B3'],300);g.cls.A2='';
+      if(!(f&&j===0&&seen.has(e.o))){status=e.s;if(e.s==='delivered')count++;}
+      seen.add(e.o);g.v.B2=[status,'to 12 Quay St'];g.v.B3=['Bramble & Bolt',fmt(count)+' delivered'];g.draw();await zz(120);}
+    const okB2=status==='delivered',okB3=count===1205;
+    g.cls={B2:okB2?'ok':'no',B3:okB3?'ok':'no'};
+    g.badge={B2:okB2?['right','ok']:['wrong status','no'],B3:okB3?['right','ok']:[count>1205?'counted twice':'missed one','no']};g.draw();
+    g.say((f?vd(true,'Fixed')+p.good:vd(false,'Broken')+p.bad));busy=false;};
+  P.forEach((p,j)=>{L.$('#e18p'+j).onclick=async()=>{if(busy)return;cur=j;P.forEach((_,q)=>L.$('#e18p'+q).classList.toggle('sel',q===j));
+    const b=L.$('#fx18');b.hidden=true;await play(j,false);if(!L.$('#g18'))return;b.hidden=false;b.innerHTML=L.ic('shield')+p.fix;};});
+  L.$('#fx18').onclick=async function(){if(busy||cur<0)return;this.hidden=true;const j=cur;await play(j,true);if(!L.$('#g18'))return;
+    fixed.add(j);L.$('#e18p'+j).classList.add('ok');
+    if(fixed.size===3&&!shown){shown=true;L.sheet('info','Order, and nothing lost','Several views fed from one log must apply events in the same order, and losing one message leaves a view wrong for good. A durable, ordered log with idempotent consumers gives both, far more cheaply than distributed transactions. Dual writes are ruled out too.');L.done();}};}},
+
+{part:2,src:'Chapter 12 · Stream processors and services',
+ solve:async L=>{L.$('#a19d').click();await L.sleep(60);L.$('#a19b').click();await L.sleep(1700);L.$('#m19s').click();await L.sleep(60);L.$('#a19b').click();await L.sleep(1300);},
+ run(L){
+  let mode='ask',down=false,busy=false,shown=false,rate=9.8;const tried=new Set();
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Nordhaven merchants pay in their own currency. Price a booking by asking the rate service, or by subscribing to rate changes.</h1>'+
+   '<div class="row32"><button class="chip sel" id="m19a">Ask each time</button><button class="chip" id="m19s">Subscribe</button></div><div id="g19"></div>'+
+   '<div class="row32"><button class="chip" id="a19b">Book a parcel</button><button class="chip" id="a19d">Service down</button><button class="chip" id="a19c">Rate changes</button><button class="chip" id="a19r">Reprocess March</button></div>');
+  const g=Grid(L.$('#g19'),{cells:['A1','A4','B4'],fxFixed:'B4'});
+  const setMode=m=>{mode=m;L.$('#m19a').classList.toggle('sel',m==='ask');L.$('#m19s').classList.toggle('sel',m==='sub');
+    g.dash=m==='ask'?new Set(['A4B4']):new Set();g.t.A4=m==='ask'?'Rate service':'Rate updates';
+    g.f.B4=m==='ask'?'= A1 price × ASK(rate service): one network call per booking':'= A1 price × local copy of A4, kept fresh by a stream of rate updates';
+    g.badge={B4:m==='ask'?['asks each time','mut']:['local copy','pri']};if(down)g.badge.A4=['down','no'];g.cls=down?{A4:'no'}:{};g.draw();
+    g.say(m==='ask'?'Microservice style: the booking code calls the rate service for each booking.':'Dataflow style: the booking code subscribed in advance and keeps the latest rate in a local database.');};
+  setMode('ask');
+  const act=async fn=>{if(busy)return;busy=true;await fn();busy=false;};
+  L.$('#m19a').onclick=()=>act(async()=>setMode('ask'));
+  L.$('#m19s').onclick=()=>act(async()=>setMode('sub'));
+  L.$('#a19d').onclick=()=>act(async()=>{down=!down;L.$('#a19d').classList.toggle('sel',down);setMode(mode);
+    g.say(down?'The rate service is down. Now book a parcel.':'The rate service is back.');});
+  L.$('#a19c').onclick=()=>act(async()=>{if(down){g.say('The rate service is down, so no rate updates arrive right now.');return;}
+    rate=rate===9.8?10.1:9.8;g.v.A4=['Nordhaven rate','$1 = '+rate.toFixed(2)+' local'];g.cls={A4:'flash'};g.draw();
+    if(mode==='sub'){await g.pulse(['A4B4']);g.badge={B4:['copy updated','ok']};g.cls={};g.draw();
+      g.say('The new rate streamed into the local copy before any booking needed it.');}
+    else{g.cls={};g.draw();g.say('The service has the new rate. Nothing else happens until a booking asks for it.');}});
+  L.$('#a19b').onclick=()=>act(async()=>{g.badge={};g.cls=down?{A4:'no'}:{};if(down)g.badge.A4=['down','no'];g.draw();
+    await g.pulse(['A1B4'],350);
+    const price='= '+(6*rate).toFixed(2)+' local';
+    if(mode==='ask'){await g.pulse(['A4B4'],350,true);
+      if(down){g.cls.B4='no';g.badge.B4=['can’t price','no'];g.v.B4=['$6.00 parcel','waiting…'];g.draw();
+        g.say(vd(false,'Booking stuck')+'The call to the rate service times out, so the booking waits, then fails. One service’s outage spreads to bookings.');tried.add('ask');}
+      else{await g.pulse(['A4B4'],350);g.cls.B4='ok';g.badge.B4=['1 call · ~40 ms','ok'];g.v.B4=['$6.00 parcel',price];g.draw();
+        g.say('One network call per booking (about 40 ms, illustrative). Priced at '+(6*rate).toFixed(2)+' local.');}}
+    else{g.cls.B4='ok';g.badge.B4=['local · ~1 ms','ok'];g.v.B4=['$6.00 parcel',price];g.draw();
+      g.say(down?vd(true,'Booking priced')+'The rate service is down, but the local copy still has the latest rate. No network call at all.':'A local lookup, no network call (about 1 ms, illustrative). Priced at '+(6*rate).toFixed(2)+' local.');
+      if(down)tried.add('sub');}
+    if(tried.size===2&&!shown){shown=true;L.sheet('info','No network request at all',L.quote('The fastest and most reliable network request is no network request at all!','Martin Kleppmann, chapter 12')+'<p>Subscribing turns a call into a stream-table join between bookings and rate updates. Both styles let teams work apart; dataflow uses one-way streams instead of request and response.</p>');L.done();}});
+  L.$('#a19r').onclick=()=>act(async()=>{g.badge={B4:['needs March rate','warn']};g.cls={B4:'warn'};g.draw();
+    g.say('Linh reprocesses last March’s bookings. Today’s rate would give wrong bills: either way, asking or subscribing, the join needs each booking’s rate <b>as it was then</b>. The join depends on time.');});}},
+
+/* ================= PART 4: WRITE AND READ PATHS ================= */
+{part:3,src:'Chapter 12 · Observing Derived State',run(L){
+  L.h(L.kick('learn','Observing derived state')+'<h1 class="q">Where the write path meets the read path</h1>'+PIC_PATHS+
+   '<p class="capt32">The '+L.g('write-path','write path')+' is done eagerly as data arrives, whether anyone asked or not. The '+L.g('read-path','read path')+' runs only when someone asks. They meet at the derived dataset: a trade-off between work at write time and at read time.</p>'+
+   '<p class="capt32 sm">Programmers will recognize eager and lazy evaluation.</p>');
+  L.done();}},
+
+{part:3,src:'Chapter 12 · Materialized views and caching',
+ solve:async L=>{const r=L.$('#r21');for(const v of [0,3]){r.value=v;r.dispatchEvent(new Event('input',{bubbles:true}));await L.sleep(60);}},
+ run(L){
+  const ST=[['raw','log'],['search','index'],['cached','searches'],['every','answer']];
+  const B=[{n:'No index (scan)',w:6,r:100,s:8,wt:'tiny',rt:'huge',stt:'small',cap:'Writes just store the parcel. Every search scans everything, like grep. Fine for a handful of parcels, hopeless for millions.'},
+   {n:'Search index',w:38,r:30,s:35,wt:'some',rt:'some',stt:'more',cap:'Writes update the entry for every word in the parcel. Reads look up each word and combine the results (AND, OR). Both paths do some work.'},
+   {n:'Index + cached common searches',w:56,r:12,s:50,wt:'more',rt:'little',stt:'more',cap:'Popular searches are precomputed, so a new matching parcel must update them: really a '+L.g('materialized-view','materialized view')+'. Rare searches still use the index.'},
+   {n:'Precompute every answer',w:100,r:3,s:100,wt:'∞',rt:'tiny',stt:'∞',cap:'Reads would just fetch the answer. But the possible searches are endless, so the write path would never finish.'}];
+  const seen=new Set();let shown=false;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Signe searches support search. Move the meeting point and watch the work shift between writing and reading.</h1>'+
+   '<div class="j32" id="j21"></div><label class="rng32"><span>Meeting point</span><b id="v21"></b><input type="range" id="r21" min="0" max="3" step="1" value="1"></label>'+
+   '<div class="mt32">'+[['Per write','w','h2'],['Per read','r','h3'],['Storage','s','h4']].map(m=>'<div class="meterrow"><div class="lb">'+m[0]+'</div><div class="meter"><div id="m21'+m[1]+'" style="background:var(--'+m[2]+')"></div></div><span class="mv" id="t21'+m[1]+'"></span></div>').join('')+'</div>'+
+   '<div class="rd32" id="c21" aria-live="polite"></div>');
+  const draw=k=>{const b=B[k];L.$('#j21').innerHTML=journey(ST,k,['parcel','booked'],['Signe','asks']);L.$('#v21').textContent=b.n;
+    L.$('#m21w').style.width=b.w+'%';L.$('#m21r').style.width=b.r+'%';L.$('#m21s').style.width=b.s+'%';
+    L.$('#t21w').textContent=b.wt;L.$('#t21r').textContent=b.rt;L.$('#t21s').textContent=b.stt;
+    ['w','s'].forEach(x=>{L.$('#m21'+x).style.background=k===3?'var(--no)':'var(--'+(x==='w'?'h2':'h4')+')';});
+    L.$('#c21').innerHTML=b.cap;seen.add(k);
+    if(seen.has(0)&&seen.has(3)&&!shown){shown=true;L.sheet('info','Caches, indexes and views move one line','They all shift the boundary: more work at write time, by precomputing, to save work on the read path. A cached common search is a materialized view, kept right on the write path. Chapter 1’s Twitter timelines made the same choice, drawn differently for celebrities.');L.done();}};
+  const r=L.$('#r21');r.setAttribute('aria-label','Where the write path meets the read path');r.addEventListener('input',()=>draw(+r.value));draw(1);}},
+
+{part:3,src:'Chapter 12 · Materialized views and caching',pts:1,
+ solve:async L=>{L.$('#q22s0_0').click();L.$('#q22s2_2').click();L.$('#ck22').click();},
+ run(L){
+  const Q=[{t:'Find a word in today’s 30 open complaints (searched twice a day)',c:[[0,60],[100,10],[150,4],null]},
+   {t:'Find a parcel by phone number (300 searches a day, all different)',c:[[0,1200000],[800,1500],[1200,1480],null]},
+   {t:'“Bramble & Bolt, booked today” (900 searches a day, always the same)',c:[[0,3600000],[800,4500],[860,900],null]}];
+  const NM=['Scan','Index','Cache','All'],MAX=6000,TARGET=4200;const pick=[1,1,1];let checked=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Place the meeting point for each of Signe’s searches. Get total daily work to '+fmt(TARGET)+' or less.</h1>'+
+   Q.map((q,i)=>'<div class="q32"><div class="qt">'+q.t+'</div><div class="trk32" role="group" aria-label="Meeting point for this search">'+NM.map((n,j)=>'<button id="q22s'+i+'_'+j+'" aria-pressed="false"><i></i>'+n+'</button>').join('')+'</div>'+
+     '<div class="bar32"><span id="q22w'+i+'" style="background:var(--h2)"></span><span id="q22r'+i+'" style="background:var(--h3)"></span></div><div class="bl32"><span>write <b id="q22a'+i+'"></b> · read <b id="q22b'+i+'"></b></span><b id="q22t'+i+'"></b></div></div>').join('')+
+   '<div class="tot32"><span>Total work a day</span><span id="tt22"></span></div><p class="capt32 sm">Work units are illustrative. “All” means every possible answer precomputed.</p>'+
+   '<button class="btn pri" id="ck22">'+L.ic('check')+'Check</button>');
+  const cost=i=>{const c=Q[i].c[pick[i]];return c?c[0]+c[1]:Infinity;};
+  const draw=()=>{let tot=0;Q.forEach((q,i)=>{const c=q.c[pick[i]];
+      NM.forEach((_,j)=>{const b=L.$('#q22s'+i+'_'+j);b.classList.toggle('sel',j===pick[i]);b.setAttribute('aria-pressed',j===pick[i]);});
+      if(!c){L.$('#q22w'+i).style.width='100%';L.$('#q22w'+i).style.background='var(--no)';L.$('#q22r'+i).style.width='0';
+        L.$('#q22a'+i).textContent='∞';L.$('#q22b'+i).textContent='tiny';L.$('#q22t'+i).textContent='never finishes';L.$('#q22t'+i).className='no';tot=Infinity;return;}
+      const over=c[0]+c[1]>MAX;L.$('#q22w'+i).style.background='var(--h2)';
+      L.$('#q22w'+i).style.width=Math.min(100,c[0]/MAX*100)+'%';L.$('#q22r'+i).style.width=Math.max(0,Math.min(100-c[0]/MAX*100,c[1]/MAX*100))+'%';
+      L.$('#q22r'+i).style.background=over?'var(--no)':'var(--h3)';
+      L.$('#q22a'+i).textContent=fmt(c[0]);L.$('#q22b'+i).textContent=fmt(c[1]);L.$('#q22t'+i).textContent=fmt(c[0]+c[1]);L.$('#q22t'+i).className=over?'no':'';tot+=c[0]+c[1];});
+    const tt=L.$('#tt22');tt.textContent=tot===Infinity?'never finishes':fmt(tot)+' / '+fmt(TARGET);tt.className=tot<=TARGET?'ok':'no';return tot;};
+  Q.forEach((q,i)=>NM.forEach((_,j)=>{L.$('#q22s'+i+'_'+j).onclick=()=>{if(checked)return;pick[i]=j;draw();};}));
+  draw();
+  L.$('#ck22').onclick=function(){if(checked)return;checked=true;this.disabled=true;const tot=draw(),ok=tot<=TARGET;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Each search in its place':'Not under '+fmt(TARGET)+' yet','<b>Complaints:</b> 30 items, rarely searched, so a plain scan is cheapest. <b>Phone number:</b> every search differs, so a cache rarely hits: the index wins. <b>Bramble & Bolt today:</b> one query asked 900 times, so cache its answer and update it on the write path. Precomputing everything never finishes. Best total: 4,120.');L.done();};}},
+
+{part:3,src:'Chapter 12 · Stateful, offline-capable clients',run(L){
+  L.h(L.kick('learn','Stateful, offline-capable clients')+'<h1 class="q">The phone’s screen is a cache too</h1>'+PIC_PHONE+
+   '<p class="capt32">Single-page and mobile apps keep state on the device, and offline-first apps sync in the background. Then the device’s state is a cache of the server’s: the pixels are a materialized view of model objects, a local replica of the datacenter.</p>');
+  L.done();}},
+
+{part:3,src:'Chapter 12 · Pushing state changes to clients',
+ solve:async L=>{L.$('#go24').click();await L.sleep(2700);L.$('#m24p').click();L.$('#go24').click();await L.sleep(2700);},
+ run(L){
+  const EV=[{s:'At Eastvale hub',txt:'Mrs. Okoro opens the tracking page. The first load uses the read path.',on:true},
+   {s:'Out for delivery',txt:'Ravi scans the parcel: out for delivery.',on:true},
+   {s:'Out for delivery',txt:'Mrs. Okoro steps into a lift. No signal.',on:false},
+   {s:'Two stops away',txt:'Ravi’s app marks the parcel two stops away.',on:false},
+   {s:'Two stops away',txt:'Out of the lift, back online.',on:true,re:true},
+   {s:'Delivered',txt:'Ravi scans: delivered.',on:true}];
+  let mode='once',busy=false,shown=false;const played=new Set();
+  const ST=[['event','log'],['tracking','view'],['phone','state'],['pixels','']];
+  const scene=(srv,ph,on,missed,label)=>svgo(150,'Server tracking view says '+srv+'. Mrs. Okoro’s phone shows '+ph+(on?'':', offline')+'.')+
+    bx(4,30,118,84,'h2',false,12)+tc(63,52,'tracking view','p32m','fill:var(--h2)')+tc(63,78,srv,'p32t')+tc(63,98,'(server)','p32m')+
+    '<path d="M124 72 H196" style="stroke:var(--'+(on?(mode==='push'?'pri':'line2'):'no')+');stroke-width:3'+(on&&mode==='push'?'':';stroke-dasharray:5 4')+'"/>'+
+    tc(160,62,on?(mode==='push'?'pushes':'read once'):'no signal','p32m',on?'':'fill:var(--no)')+
+    '<rect x="200" y="4" width="132" height="142" rx="18" style="fill:var(--card);stroke:var(--ink);stroke-width:2.5"/>'+
+    '<rect x="212" y="20" width="108" height="112" rx="8" style="fill:var(--'+(missed?'no-bg':'soft')+')"/>'+
+    tc(266,40,'OP-48213','p32m')+tc(266,66,ph.split(' ').slice(0,2).join(' '),'p32b')+tc(266,84,ph.split(' ').slice(2).join(' '),'p32b')+
+    (missed?tc(266,112,missed+' change'+(missed>1?'s':'')+' missed','p32m','fill:var(--no);font-weight:700'):tc(266,112,label||'up to date','p32m','fill:var(--ok)'))+'</svg>';
+  L.h(L.kick('ex','Extend the write path')+'<h1 class="q">Mrs. Okoro watches parcel OP-48213. Play the delivery with each kind of page.</h1>'+
+   '<div class="row32"><button class="chip sel" id="m24o">Read once</button><button class="chip" id="m24p">Subscribe: server pushes</button></div>'+
+   '<div class="j32" id="j24"></div><div id="s24"></div><div class="rd32" id="c24" aria-live="polite"></div><button class="btn pri" id="go24">'+L.ic('play')+'Play the delivery</button>');
+  const draw0=()=>{L.$('#j24').innerHTML=journey(ST,mode==='push'?3:1,['Ravi’s','scan'],['Mrs.','Okoro'],mode==='push'?'paths meet on the phone':'paths meet');
+    L.$('#s24').innerHTML=scene('At Eastvale hub','At Eastvale hub',true,0);
+    L.$('#c24').innerHTML=mode==='push'?'The page loads once, then keeps a connection open (server-sent events or WebSockets) and the server pushes each change.':'The page reads the data once, like most web pages, and only a reload or polling would refresh it.';};
+  const setMode=m=>{if(busy)return;mode=m;L.$('#m24o').classList.toggle('sel',m==='once');L.$('#m24p').classList.toggle('sel',m==='push');draw0();};
+  L.$('#m24o').onclick=()=>setMode('once');L.$('#m24p').onclick=()=>setMode('push');draw0();
+  L.$('#go24').onclick=async()=>{if(busy)return;busy=true;let ph=EV[0].s,missed=0;
+    for(let i=0;i<EV.length;i++){if(!L.$('#s24'))return;const e=EV[i],changed=i>0&&e.s!==EV[i-1].s;
+      if(mode==='once'){if(changed)missed++;}
+      else if(e.on){ph=e.s;missed=0;}else if(changed)missed++;
+      const note=mode==='push'&&e.re?' The phone resumes from its last offset and gets the missed update.':'';
+      L.$('#s24').innerHTML=scene(e.s,ph,e.on,missed,mode==='push'&&e.re?'caught up':'');
+      L.$('#c24').innerHTML='<b>'+(i+1)+'/6</b> '+e.txt+note;await zz(380);}
+    if(!L.$('#s24'))return;
+    L.$('#c24').innerHTML=mode==='push'?vd(true,'Live')+'Each scan reached the phone in under a second. After the lift it resumed from its offset and missed nothing: the write path reached her screen.':vd(false,'Stale')+'The phone still says “At Eastvale hub”: 3 changes missed. The page read once and became a stale cache.';
+    played.add(mode);busy=false;
+    if(played.size===2&&!shown){shown=true;L.sheet('info','Pushing the write path out to the phone','Pushing changes extends the write path to the end user: read once, then follow a stream of changes. After being offline, a device resumes from its offset, like a log consumer. UI tools like Elm and React with Redux already treat screen state as events; few databases let you subscribe yet. Kleppmann thinks the switch is worth it.');L.done();}};}},
+
 {part:3,src:'Chapter 12 · Reads are events too',run(L){
-  L.h(L.kick('learn','Reads are events too')+'<h1 class="q">Send the reads through the stream as well</h1>'+
-   L.prose('Normally writes go through the event log, while reads are passing network requests that go straight to the store. Kleppmann suggests reads can be events too: send them through a stream processor, which answers by emitting the result to an output stream.')+
-   L.lanes([['eye','A one-off read','is a stream-table join: the request passes through the join and is forgotten.',2],
-            ['cycle','A subscription','is a lasting join with past and future events on the other side.',3]])+
-   L.prose('Logging reads records what a user saw before deciding. The book’s example: an online shop’s predicted shipping date and stock level may decide a purchase. That helps trace causal dependencies, at a cost in storage and I/O; making it cheap is still open research.')+
-   '<p class="small" style="margin-top:10px"><b>Multi-partition processing.</b> Streams are overkill for a one-partition query, but can run queries that combine many partitions, like counting everyone who saw a link (a union of many follower lists) or fraud checks joining several differently partitioned reputation stores. A database that already does such joins is probably simpler.</p>');
+  L.h(L.kick('learn','Reads are events too')+'<h1 class="q">Send the reads through the stream as well</h1>'+PIC_READS+
+   '<p class="capt32">Kleppmann suggests treating reads as events: the stream processor answers each one by joining it with its state. A one-off read passes through; a subscription stays joined. Logging reads shows what a user saw before deciding, at extra storage cost.</p>'+
+   '<p class="capt32 sm">Streams can also run queries across many partitions, like counting everyone who saw a URL. A database that already does such joins is probably simpler.</p>');
   L.done();}},
-{part:3,src:'Chapter 12 · Observing Derived State',pts:4,run(L){
+
+{part:3,src:'Chapter 12 · End-to-end event streams',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'What would Kleppmann reach for?',['Push changes to the client','Log the read as an event','Use a database’s own joins'],[
    ['Recipients complain the tracking page still says “At hub” an hour after the van left, unless they reload.',0,'The page read once and went stale. Push state changes so the write path reaches the phone.'],
-   ['Bramble & Bolt disputes which delivery promise a shopper was shown before buying.',1,'Recording the read, with an ID, lets you reconstruct what the shopper saw before deciding.'],
+   ['Bramble & Bolt disputes which delivery promise a shopper was shown before buying.',1,'Recording the read lets you reconstruct what the shopper saw before deciding, like the book’s shipping-date example.'],
    ['Kwame needs a fraud score per booking from several partitioned stores, and their MPP database already joins them well.',2,'Kleppmann says a database that offers multi-partition joins is probably simpler than building it on streams.'],
    ['A courier’s app loses signal in a tunnel and must not miss any route changes sent meanwhile.',0,'Pushed changes plus a stored offset: on reconnect, the device resumes where it left off.']]);}}
   ]

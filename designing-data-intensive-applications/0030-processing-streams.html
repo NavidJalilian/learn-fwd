@@ -13,57 +13,353 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0030 only. Two signature models, reused through the lesson:
+   1. Sc: the event-time vs processing-time scatter. Each dot is 10 scans
+      at Westport Central: x = when the scan happened, y = when Linh's job
+      processed it (on-time dots sit on the diagonal). Basis switch:
+      event-time windows are vertical bands, processing-time windows are
+      horizontal bands; live per-minute bars. A "window closes" step line
+      (event time + allowance) turns later dots into stragglers.
+   2. Odo: the checkpoint odometer. Bramble & Bolt's "delivered today"
+      counter in an outside database, fed by delivered scans (offsets
+      7,041-7,056) with checkpoint barriers. Crash, restart from the last
+      checkpoint, and watch the counter overshoot unless the job stores
+      the offset with the value or commits output and offset together.
+   Scan rates, intervals and targets are illustrative.
+   ===================================================================== */
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.card [hidden]{display:none!important}'+
+ '.pic30{width:100%;display:block;margin:4px 0 2px}.pic30 text,.sc30 text,.tp30 text,.tiles30 text{font-family:var(--sans)}'+
+ '.t30{font:600 13px var(--sans);fill:var(--ink)}.m30{font:500 12px var(--sans);fill:var(--muted)}.b30{font:700 15px var(--sans);fill:var(--ink)}'+
+ '.cap30{font-size:15.5px;line-height:1.5;margin:10px 0 0}.cap30.sm{font-size:13.5px;color:var(--muted);margin-top:6px}'+
+ '.row30{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.row30 .chip{margin:0;min-height:40px}'+
+ '.lbl30{font-size:12.5px;font-weight:700;color:var(--muted);margin:10px 0 0;text-transform:uppercase;letter-spacing:.03em}'+
+ '.rd30{background:var(--soft);border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.5;margin:8px 0 4px;min-height:44px}'+
+ '.vd30{display:inline-block;font-weight:700;border-radius:99px;padding:1px 9px;font-size:13px;margin:0 6px 2px 0}.vd30.ok{background:var(--ok-bg);color:var(--ok)}.vd30.no{background:var(--no-bg);color:var(--no)}.vd30.in{background:var(--pri-bg);color:var(--pri-deep)}'+
+ '.sc30 svg,.tp30{width:100%;display:block;touch-action:none;-webkit-user-select:none;user-select:none}'+
+ '.bars30 .bh{font-size:12.5px;font-weight:600;color:var(--muted);margin:4px 0}'+
+ '.bars30 .bg{display:grid;grid-template-columns:repeat(10,1fr);gap:3px}'+
+ '.bars30 .bc{display:flex;flex-direction:column;align-items:center;font-variant-numeric:tabular-nums;min-width:0}'+
+ '.bars30 .n{font-size:11.5px;font-weight:700;line-height:1.15;text-align:center;min-height:27px;display:flex;flex-direction:column;justify-content:flex-end}.bars30 .n i{font-style:normal;color:var(--no)}'+
+ '.bars30 .bb{position:relative;width:100%;height:50px;border-bottom:1.5px solid var(--line2)}'+
+ '.bars30 .ct,.bars30 .lt{position:absolute;left:3px;right:3px;border-radius:4px 4px 0 0}.bars30 .ct.event{background:var(--h2)}.bars30 .ct.proc{background:var(--h3)}.bars30 .lt{background:var(--no-bg);border:1.5px dashed var(--no);border-bottom:0}'+
+ '.bars30 .tr{position:absolute;left:0;right:0;border-top:2px dotted var(--ink);opacity:.6}'+
+ '.bars30 .l{font-size:11px;color:var(--muted);margin-top:2px}'+
+ '.rng30{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14.5px;margin:8px 0}.rng30 input{grid-column:1/3;width:100%;accent-color:var(--pri);height:34px}.rng30 b{font-variant-numeric:tabular-nums}'+
+ '.stepcap30{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0;min-height:72px}.stepcap30 .n{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.mtr30{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.mtr30 span{flex:1 1 92px;border-radius:12px;padding:6px 9px;font-size:13.5px;font-weight:600;background:var(--soft);line-height:1.35}.mtr30 span small{display:block;font-size:11.5px;font-weight:600;color:var(--muted)}.mtr30 span.ok{background:var(--ok-bg);color:var(--ok)}.mtr30 span.no{background:var(--no-bg);color:var(--no)}'+
+ '.tiles30{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}'+
+ '.tiles30 button{background:var(--card);border:2px solid var(--line);border-bottom-width:3px;border-radius:14px;padding:6px 6px 8px;text-align:left;font:600 14px/1.25 var(--sans);color:var(--ink);min-height:44px}'+
+ '.tiles30 button svg{width:100%;display:block;margin-bottom:4px}.tiles30 button.sel{border-color:var(--pri);background:var(--pri-bg)}.tiles30 button.seen:not(.sel){border-color:var(--ok-line)}'+
+ '.odo30{display:flex;gap:8px;margin:8px 0}.odo30>div{flex:1;border-radius:14px;padding:7px 11px;background:var(--soft)}.odo30 b{display:block;font-size:11.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}'+
+ '.odo30 .dg{display:block;font:700 25px var(--sans);font-variant-numeric:tabular-nums;letter-spacing:.03em}.odo30 .ext{background:var(--ink);color:var(--card)}.odo30 .ext b{color:var(--card);opacity:.75}'+
+ '.jn30{display:grid;gap:4px;margin:8px 0}.jn30 .box{border-radius:14px;padding:8px 10px;border:1.5px solid var(--line);background:var(--card)}.jn30 .box.st{background:var(--soft)}'+
+ '.jn30 .hd{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;margin-bottom:4px}'+
+ '.jn30 .cols{display:grid;grid-template-columns:1fr 1fr;gap:6px}.jn30 .cols>div{min-height:34px}'+
+ '.jn30 .ev{display:block;border-radius:9px;padding:4px 8px;font-size:13.5px;line-height:1.3;margin:3px 0;border:1.5px solid var(--h4);background:var(--h4-bg)}'+
+ '.jn30 .ev.bk{border-color:var(--h2);background:var(--h2-bg)}.jn30 .ev.new{box-shadow:0 0 0 3px var(--pri-bg);border-color:var(--pri)}'+
+ '.jn30 .ev.ok{border-color:var(--ok-line);background:var(--ok-bg)}.jn30 .ev.nm{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.jn30 .ar{text-align:center;color:var(--muted);font-size:14px;line-height:1}'+
+ '.jn30 .clk{float:right;font-size:12px;font-weight:700;color:var(--pri-deep);background:var(--pri-bg);border-radius:99px;padding:1px 8px;text-transform:none;letter-spacing:0}'+
+ '.more30{margin:8px 0 0;border-top:1px solid var(--line);font-size:14px;line-height:1.5}.more30 summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;min-height:40px;color:var(--pri);font-weight:600}'+
+ '.more30 summary::-webkit-details-marker{display:none}.more30 summary:before{content:"+";display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:99px;border:1.5px solid var(--pri);font-size:14px;line-height:1;flex:none}'+
+ '.more30[open] summary:before{content:"–"}.more30 p{margin:0 0 4px;color:var(--muted)}'+
+ '.tb30{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0}.tb30 th{font-size:11.5px;text-transform:uppercase;letter-spacing:.03em;color:var(--muted);text-align:left;padding:3px 4px}.tb30 td{padding:5px 4px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}.tb30 td.ok{color:var(--ok);font-weight:700}.tb30 td.no{color:var(--no);font-weight:700}'+
+ '</style>');
+
+/* ---------------- small SVG helpers ---------------- */
+const f1=n=>Math.round(n*10)/10;
+const tx=(x,y,t,cls,anc,st)=>'<text x="'+f1(x)+'" y="'+f1(y)+'"'+(anc?' text-anchor="'+anc+'"':'')+' class="'+(cls||'t30')+'"'+(st?' style="'+st+'"':'')+'>'+t+'</text>';
+const rc=(x,y,w,h,fill,stroke,rx,st)=>'<rect x="'+f1(x)+'" y="'+f1(y)+'" width="'+f1(w)+'" height="'+f1(h)+'" rx="'+(rx==null?8:rx)+'" style="fill:'+(fill?'var(--'+fill+')':'none')+';stroke:'+(stroke?'var(--'+stroke+')':'none')+';stroke-width:1.5'+(st?';'+st:'')+'"/>';
+const ln=(x1,y1,x2,y2,col,w,dash)=>'<path d="M'+f1(x1)+' '+f1(y1)+' L'+f1(x2)+' '+f1(y2)+'" style="stroke:var(--'+(col||'line2')+');stroke-width:'+(w||1.5)+';fill:none'+(dash?';stroke-dasharray:'+dash:'')+'"/>';
+const dot=(x,y,r,col,hollow)=>'<circle cx="'+f1(x)+'" cy="'+f1(y)+'" r="'+r+'" style="'+(hollow?'fill:var(--card);stroke:var(--'+col+');stroke-width:2':'fill:var(--'+col+')')+'"/>';
+function ar(x1,y1,x2,y2,col,w){col=col||'muted';const a=Math.atan2(y2-y1,x2-x1),bx=x2-7*Math.cos(a),by=y2-7*Math.sin(a),px=-Math.sin(a)*4,py=Math.cos(a)*4;
+  return ln(x1,y1,bx,by,col,w||2)+'<path d="M'+f1(x2)+' '+f1(y2)+' L'+f1(bx+px)+' '+f1(by+py)+' L'+f1(bx-px)+' '+f1(by-py)+'Z" style="fill:var(--'+col+')"/>';}
+const pic=(h,label,body)=>'<svg class="pic30" viewBox="0 0 340 '+h+'" role="img" aria-label="'+label+'">'+body+'</svg>';
+const more=(s,t)=>'<details class="more30"><summary>'+s+'</summary><p>'+t+'</p></details>';
+const vd=(k,t)=>'<span class="vd30 '+k+'">'+t+'</span>';
+const hm=m=>{const h=Math.floor(m/60),x=Math.round(m-h*60);return (h<10?'0':'')+h+':'+(x<10?'0':'')+x;};
+const fmt=n=>n.toLocaleString('en-US');
+function chips(host,names,onPick){host.innerHTML='';const bs=names.map((n,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=n;
+  b.onclick=()=>{bs.forEach((x,q)=>x.classList.toggle('sel',q===j));onPick(j,b);};host.appendChild(b);return b;});return bs;}
+function rng(seed){let a=seed>>>0;return()=>{a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296;};}
+
+/* ---------------- teaching pictures ---------------- */
+const P_THREE=(()=>{let g=tx(36,15,'event log','m30','middle');
+  for(let j=0;j<7;j++)g+=rc(14,24+j*27,44,22,j<6?'h4-bg':'soft',j<6?'h4':'line2',5);
+  const T=[[22,'Store it','into a database, cache','or search index','h2'],[96,'Show it','push alerts and live','dashboards to people','h3'],[170,'Process it','a job turns streams into','new streams, then 1 or 2','h1']];
+  T.forEach(([y,t,a,b,c],j)=>{g+=ar(62,y+29,104,y+29)+rc(108,y,226,62,c+'-bg',c,12)+tx(120,y+22,(j+1)+'  '+t)+tx(120,y+39,a,'m30')+tx(120,y+54,b,'m30');
+    if(j===0)g+='<ellipse cx="312" cy="'+(y+18)+'" rx="12" ry="4" style="fill:var(--card);stroke:var(--h2);stroke-width:1.5"/><path d="M300 '+(y+18)+' v22 a12 4 0 0 0 24 0 v-22" style="fill:var(--card);stroke:var(--h2);stroke-width:1.5"/>';
+    if(j===1)g+=rc(302,y+12,20,36,'card','h3',5)+dot(312,y+24,4,'h3');
+    if(j===2)g+='<circle cx="312" cy="'+(y+31)+'" r="12" style="fill:var(--card);stroke:var(--h1);stroke-width:3;stroke-dasharray:4 3"/>'+dot(312,y+31,4,'h1');});
+  g+=rc(8,244,326,28,'no-bg',null,14)+tx(171,263,'Never ends: no sort, no rerun from the start','t30','middle','fill:var(--no)');
+  return pic(276,'An event log feeds three options: store the events, show them to people, or process them into new streams. A stream never ends.',g);})();
+
+const P_CLOCKS=(()=>{let g=tx(95,14,'Scans at a hub','t30','middle')+tx(255,14,'Star Wars','t30','middle');
+  /* panel A */
+  g+=ln(30,28,30,160)+ln(30,160,160,160)+ln(30,160,160,28,'muted',1.5,'4 4');
+  [0.08,0.2,0.32,0.5,0.62,0.74,0.88].forEach(t=>{g+=dot(30+130*t,160-132*(t+0.03),4,'h1');});
+  g+=ln(75.5,112,75.5,52,'h3',1.5,'3 3')+dot(75.5,48,4.5,'h3')+tx(84,52,'queued','m30','start','fill:var(--h3)');
+  g+=tx(34,40,'processed ↑','m30')+tx(160,176,'happened →','m30','end')+tx(128,124,'on time','m30','middle');
+  /* panel B: episode (story order) vs release year */
+  const SWX=ep=>196+(ep-1)*22.3,SWY=yr=>160-(yr-1977)*(132/38),EP=[[4,1977,'IV'],[5,1980,'V'],[6,1983,'VI'],[1,1999,'I'],[2,2002,'II'],[3,2005,'III'],[7,2015,'VII']];
+  g+=ln(190,28,190,160)+ln(190,160,334,160);
+  g+='<path d="M'+EP.map(e=>f1(SWX(e[0]))+' '+f1(SWY(e[1]))).join(' L')+'" style="stroke:var(--line2);stroke-width:1.5;fill:none"/>';
+  EP.forEach(e=>{g+=dot(SWX(e[0]),SWY(e[1]),4.5,'h4')+tx(SWX(e[0]),SWY(e[1])-8,e[2],'m30','middle','fill:var(--ink);font-weight:700');});
+  g+=tx(SWX(4)+8,SWY(1977)+4,'1977','m30')+tx(SWX(1)+8,SWY(1999)+4,'1999','m30')+tx(194,40,'watched ↑','m30')+tx(334,176,'story order →','m30','end');
+  return pic(184,'Left: scans plotted by when they happened and when they were processed; most sit on the diagonal, one queued scan sits high above it. Right: Star Wars episodes by story order and release year: IV, V, VI came out in 1977 to 1983, then I, II, III from 1999.',g);})();
+
+const P_READY=(()=>{const X=m=>40+(m-36)*72,Y=p=>196-(p-36)*34;let g='';
+  g+=rc(X(37),26,72,170,'h2-bg',null,0)+tx(X(37.5),188,'window :37','m30','middle','fill:var(--h2);font-weight:700');
+  g+=ln(40,26,40,196)+ln(40,196,328,196)+ln(X(36),Y(36),X(40.2),Y(40.2),'muted',1.5,'4 4');
+  [36.15,36.4,36.65,36.9].forEach(e=>{g+=dot(X(e),Y(e+0.3),4,'faint');});
+  [37.1,37.3,37.5,37.7,37.9].forEach(e=>{g+=dot(X(e),Y(e+0.35),4,'h2');});
+  [38.1,38.3,38.5,38.7,38.9,39.1,39.3,39.5].forEach(e=>{g+=dot(X(e),Y(e+0.3),4,'faint');});
+  g+=ln(X(37),Y(39.4),X(38),Y(39.4),'no',2.5,'5 3')+tx(X(38)+5,Y(39.4)+4,'declare :37 done','m30','start','fill:var(--no);font-weight:700');
+  g+=dot(X(37.45),Y(40.55),4.5,'no',true)+tx(X(37.45)+9,Y(40.55)+4,'straggler for :37','m30','start','fill:var(--no)');
+  [36,37,38,39,40].forEach(m=>{g+=tx(X(m),212,':'+m,'m30','middle');});
+  g+=tx(328,228,'event time →','m30','end')+tx(44,18,'↑ processing time','m30');
+  g+=rc(8,238,158,62,'soft','line2',10)+tx(18,257,'1  Drop it')+tx(18,274,'count drops as a metric,','m30')+tx(18,290,'alert if they grow','m30');
+  g+=rc(174,238,160,62,'soft','line2',10)+tx(184,257,'2  Correct it')+tx(184,274,'send an updated count,','m30')+tx(184,290,'maybe retract the old','m30');
+  return pic(304,'Zoom on minute 37. Its dots are counted until the job declares the minute done; a dot for minute 37 that is processed after that line is a straggler. Two options: drop it, counting drops as a metric and alerting if they grow, or publish an updated count and maybe retract the old one.',g);})();
+
+const P_JOINS=(()=>{let g='';
+  const R=[['Stream–stream (window join)',['card left','h4'],['redelivery booked','h4'],['both kinds,','last 48 h'],['match, or','no match']],
+           ['Stream–table (enrichment)',['delivered scans','h4'],['merchants changes','h2'],['local copy of','merchants table'],['scan +','shop name']],
+           ['Table–table (view upkeep)',['tweets changes','h2'],['follows changes','h2'],['followers','per user'],['timeline','cache']]];
+  R.forEach((r,j)=>{const y=8+j*82+(j>1?20:0);g+=tx(8,y+12,r[0]);
+    if(j===1)g+=tx(8,y+90,'Local copy: no slow remote query per scan','m30','start','fill:var(--h2);font-weight:600');
+    g+=rc(8,y+20,124,22,r[1][1]+'-bg',r[1][1],6)+tx(16,y+35,r[1][0],'m30','start','fill:var(--ink)');
+    g+=rc(8,y+48,124,22,r[2][1]+'-bg',r[2][1],6)+tx(16,y+63,r[2][0],'m30','start','fill:var(--ink)');
+    g+=ar(134,y+31,154,y+40)+ar(134,y+59,154,y+50);
+    g+=rc(156,y+20,98,50,'soft','line2',10)+tx(205,y+41,r[3][0],'m30','middle','fill:var(--ink)')+tx(205,y+57,r[3][1],'m30','middle','fill:var(--ink)');
+    g+=ar(256,y+45,268,y+45)+rc(270,y+20,64,50,'ok-bg','ok-line',10)+tx(302,y+41,r[4][0],'m30','middle','fill:var(--ok)')+tx(302,y+57,r[4][1],'m30','middle','fill:var(--ok)');});
+  g+=rc(8,278,12,12,'h4-bg','h4',3)+tx(26,289,'activity events','m30')+rc(140,278,12,12,'h2-bg','h2',3)+tx(158,289,'a table’s changelog','m30');
+  return pic(296,'Three joins. Stream-stream: card-left and redelivery-booked events kept for 48 hours, emitting a match or no match. Stream-table: delivered scans plus merchants changes kept as a local copy of the table, so there is no slow remote query per scan, emitting enriched scans. Table-table: tweets and follows changes kept as followers per user, emitting a timeline cache.',g);})();
+
+const P_TIMEDEP=(()=>{let g='';const X=d=>20+d*2.5; /* d = day from 1 Jan, 30-day months */
+  ['Jan','Feb','Mar','Apr'].forEach((m,j)=>{g+=tx(X(j*30+15),92,m,'m30','middle');});
+  g+=ln(20,74,320,74)+[0,30,60,90,120].map(d=>ln(X(d),70,X(d),78)).join('');
+  g+=rc(20,34,150,26,'h2-bg','h2',6)+tx(28,52,'v1 · $4.20','t30')+rc(172,34,148,26,'h3-bg','h3',6)+tx(180,52,'v2 · $4.60 from 1 Mar','t30');
+  g+=tx(20,22,'Otterpost’s price per parcel (illustrative)','m30');
+  g+=dot(X(43),74,6,'h4')+tx(X(43),112,'booking, 14 Feb','m30','middle','fill:var(--ink)');
+  g+=dot(X(105),74,6,'pri')+tx(X(105),112,'rerun in April','m30','middle','fill:var(--pri-deep)');
+  g+=rc(8,124,326,48,'no-bg','no-line',12)+tx(20,144,'Join with today’s table')+tx(20,162,'Feb booking gets $4.60, a price it never had','m30','start','fill:var(--no)');
+  g+=rc(8,180,326,48,'ok-bg','ok-line',12)+tx(20,200,'Booking stores price version v1')+tx(20,218,'$4.20 on every rerun · but keep every version','m30','start','fill:var(--ok)');
+  return pic(232,'Price v1 at $4.20 until the end of February, v2 at $4.60 from 1 March. A 14 February booking rerun in April gets $4.60 if joined with today’s table, but $4.20 if the booking stores price version v1.',g);})();
+
+const P_ONCE=(()=>{let g=tx(8,14,'Batch: a failed task leaves no trace');
+  g+=rc(8,22,82,40,'no-bg','no',10)+tx(49,47,'task fails','t30','middle','fill:var(--no)')+ar(92,42,108,42);
+  g+=rc(110,22,104,40,'soft','line2',10)+tx(162,39,'throw its','m30','middle','fill:var(--ink)')+tx(162,54,'output away','m30','middle','fill:var(--ink)')+ar(216,42,232,42);
+  g+=rc(234,22,100,40,'ok-bg','ok-line',10)+tx(284,39,'rerun: looks','m30','middle','fill:var(--ok)')+tx(284,54,'processed once','m30','middle','fill:var(--ok)');
+  g+=tx(8,86,'Stream: it never finishes, so cut it up');
+  for(let j=0;j<16;j++){const x=8+j*20.4;g+=rc(x,94,18,18,Math.floor(j/4)%2?'h1-bg':'h2-bg',Math.floor(j/4)%2?'h1':'h2',4);
+    g+=rc(x,140,18,18,'soft','line2',4);if(j%5===4)g+=ln(x+19.2,134,x+19.2,164,'h4',3);}
+  g+=tx(8,128,'microbatches of about 1 second (Spark Streaming)','m30')+tx(8,178,'checkpoints at barriers in the stream (Flink)','m30');
+  g+=rc(8,190,190,62,'h1-bg','h1',12)+tx(18,210,'Inside the framework')+tx(18,227,'state, output streams:','m30')+tx(18,243,'can be thrown away ✓','m30','start','fill:var(--ok)');
+  g+=ar(200,221,220,221,'no')+rc(222,190,112,62,'no-bg','no',12)+tx(232,210,'Leaves it','t30','start','fill:var(--no)')+tx(232,227,'DB write, email:','m30')+tx(232,243,'can’t undo ✗','m30','start','fill:var(--no)');
+  return pic(256,'Batch: a failed task’s output is thrown away and the task rerun, so it looks processed once. Stream: cut into microbatches of about a second, or checkpoints at barriers. Inside the framework output can be thrown away; a database write or email that leaves it cannot.',g);})();
+
+const P_TWO=(()=>{let g=tx(87,16,'Atomic commit','t30','middle')+tx(254,16,'Idempotence','t30','middle');
+  g+=rc(8,24,158,124,'h1-bg','h1',12,'stroke-dasharray:5 4');
+  ['counter +4','email sent','state change','offset → 7,044'].forEach((t,j)=>{g+=rc(18,34+j*27,138,22,'card','line2',6)+tx(87,49+j*27,t,'m30','middle','fill:var(--ink)');});
+  g+=tx(87,168,'all happen, or none','t30','middle')+tx(87,186,'one transaction','m30','middle');
+  g+=rc(174,24,160,52,'h2-bg','h2',10)+tx(184,46,'count 1,204','b30')+tx(184,66,'last offset 7,041','m30','start','fill:var(--ink)');
+  g+=rc(174,112,160,26,'soft','line2',8)+tx(254,130,'replay of 7,041','m30','middle','fill:var(--ink)')+ar(254,110,254,80);
+  g+=tx(254,168,'already applied: skip','t30','middle','fill:var(--ok)')+tx(254,186,'set a value: safe · add 1: not','m30','middle');
+  return pic(192,'Left: atomic commit bundles the counter write, the email, the state change and moving the offset into one transaction: all or none. Right: idempotence stores the last offset with the count, so a replay of offset 7,041 is spotted and skipped.',g);})();
+
+const P_REBUILD=(()=>{let g='';const C=[63,173,283];
+  ['Remote','Local + copy','Rebuild'].forEach((t,j)=>{g+=tx(C[j],16,t,'t30','middle');});
+  g+='<ellipse cx="63" cy="40" rx="26" ry="7" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/><path d="M37 40 v34 a26 7 0 0 0 52 0 v-34" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.5"/>'+tx(63,66,'replicated','m30','middle','fill:var(--ink)');
+  g+=ar(55,120,55,86,'muted')+ar(71,86,71,120,'muted')+rc(25,122,76,30,'h1-bg','h1',8)+tx(63,142,'job','t30','middle');
+  g+=tx(63,176,'simple, but a','m30','middle')+tx(63,192,'query per message','m30','middle');
+  g+=rc(127,28,92,32,'h1-bg','h1',8)+tx(173,48,'job + state','t30','middle')+ar(150,62,150,86)+ar(196,62,196,122);
+  g+=rc(118,88,110,28,'soft','line2',7)+tx(173,107,'snapshots','m30','middle','fill:var(--ink)')+rc(118,124,110,28,'soft','line2',7)+tx(173,143,'compacted topic','m30','middle','fill:var(--ink)');
+  g+=tx(173,176,'Flink · Samza ·','m30','middle')+tx(173,192,'Kafka Streams','m30','middle');
+  for(let j=0;j<5;j++)g+=rc(240+j*17,30,15,18,'h4-bg','h4',3);
+  g+=ar(283,52,283,86,'muted')+rc(241,88,84,30,'h1-bg','h1',8)+tx(283,108,'state','t30','middle');
+  g+=tx(283,144,'replay','m30','middle','fill:var(--ink)');
+  g+=tx(283,176,'a short window,','m30','middle')+tx(283,192,'or a compacted','m30','middle')+tx(283,208,'CDC log','m30','middle');
+  g+=rc(8,218,326,28,'soft',null,14)+tx(171,237,'No single best: depends on disk vs network','m30','middle','fill:var(--ink)');
+  return pic(250,'Three ways to get state back after a crash: keep it in a replicated remote database (simple but a query per message), keep it local and copy it out as snapshots or a compacted topic, or rebuild it by replaying a short window or a compacted change log.',g);})();
+
+/* ---------------- Signature 1: event-time vs processing-time scatter ---------------- */
+const SX=e=>46+e*28.4,SY=p=>254-p*22;
+function scans(o){o=o||{};const r=rng(o.seed||7),out=[];
+  for(let m=0;m<10;m++)for(let k=0;k<6;k++){const e=m+0.06+0.15*k+(r()-0.5)*0.04;
+    const lag=o.lag==='real'?(r()<0.1?0.9+r()*1.1:0.1+r()*0.5):0.12+r()*0.06;out.push({e,p:e+lag,k:'n'});}
+  if(o.redeploy!=null)out.forEach(d=>{if(d.p>=o.redeploy&&d.p<o.redeploy+1)d.p=o.redeploy+1+(d.p-o.redeploy)*0.35;});
+  if(o.offline)[2.3,2.45,2.6].forEach(e=>out.push({e,p:e+120,k:'r'}));
+  if(o.clock)[5.2,5.4,5.6,5.8].forEach(t=>out.push({e:t-60,t,p:t+0.15,k:'c'}));
+  return out;}
+function Sc(host,cfg){
+  const s=Object.assign({basis:'event',A:null,fix:false,drag:false,read:null,on:null},cfg);
+  host.innerHTML='<div class="sc30"><svg viewBox="0 0 340 292" role="img" aria-label="Scatter chart. Each dot is 10 scans. Across: when the scan happened (event time). Up: when the job processed it (processing time). Dots on the dashed diagonal were processed at once."></svg></div><div class="bars30"></div><div class="rd30" aria-live="polite"></div>';
+  const svg=host.querySelector('svg'),bars=host.querySelector('.bars30'),rd=host.querySelector('.rd30');
+  s.ee=d=>(d.t!=null&&s.fix)?d.t:d.e;
+  s.late=d=>{const e=s.ee(d);return s.basis==='event'&&s.A!=null&&e>=0&&e<10&&d.p>Math.floor(e)+1+s.A;};
+  s.count=()=>{const c=Array(10).fill(0),late=Array(10).fill(0),tr=Array(10).fill(0);
+    s.dots.forEach(d=>{const te=d.t!=null?d.t:d.e;if(te>=0&&te<10)tr[Math.floor(te)]++;
+      if(s.basis==='event'){const e=s.ee(d);if(e<0||e>=10)return;const m=Math.floor(e);if(s.late(d))late[m]++;else c[m]++;}
+      else if(d.p>=0&&d.p<10)c[Math.floor(d.p)]++;});
+    const lateN=late.reduce((a,b)=>a+b,0),off=c.reduce((a,v,m)=>a+Math.abs(v-tr[m]),0),tot=tr.reduce((a,b)=>a+b,0);
+    return {c,late,tr,lateN,off,tot};};
+  s.draw=()=>{const R=s.count(),ev=s.basis==='event';let g='';
+    for(let m=0;m<10;m++)if(m%2===0)g+=ev?rc(SX(m),34,28.4,220,ev?'h2-bg':'soft',null,0):rc(46,SY(m+1),284,22,'h3-bg',null,0);
+    for(let m=0;m<=10;m+=2){const l=m===10?'10:10':'10:0'+m;g+=tx(m===10?336:SX(m),270,l,'m30',m===10?'end':'middle')+tx(41,SY(m)+4,l,'m30','end');}
+    g+=ln(46,34,46,254,'line2')+ln(46,254,330,254,'line2')+ln(SX(0),SY(0),SX(10),SY(10),'muted',1.5,'4 4')+tx(SX(7.7),SY(6.8),'on time','m30');
+    g+=tx(4,14,'↑ processed (processing time)','t30')+tx(330,288,'happened (event time) →','t30','end');
+    if(ev&&s.A!=null){for(let m=0;m<10;m++){const y=m+1+s.A;if(y<=10.1)g+=ln(SX(m)+1,SY(y),SX(m+1)-1,SY(y),'no',2.2,'5 3');}
+      if(s.A>=1&&1+s.A<=9)g+=tx(SX(0)+2,SY(1+s.A)-6,'window closes','m30','start','fill:var(--no);font-weight:600');}
+    let top=null,left=null;
+    s.dots.forEach(d=>{const e=s.ee(d),col=d.k==='r'?'h3':d.k==='c'?'h4':'h1';
+      if(d.p>10.15){if(d.k!=='r')return;const x=SX(e);top=x;g+='<path d="M'+f1(x)+' 20 l5 8 h-10z" style="fill:var(--'+col+')"/>';}
+      else if(e<0){const y=SY(d.p);left=y;g+='<path d="M50 '+f1(y)+' l8 -5 v10z" style="fill:var(--'+col+')"/>';}
+      else g+=dot(SX(e),SY(d.p),s.late(d)?3.7:3.3,s.late(d)?'no':col,s.late(d));});
+    if(top!=null)g+=tx(top+12,30,'processed 2 h later','m30','start','fill:var(--h3);font-weight:600');
+    if(left!=null)g+=tx(62,left+4,'stamped 1 h early','m30','start','fill:var(--h4);font-weight:600');
+    svg.innerHTML=g;
+    const ph=50/14;
+    bars.innerHTML='<div class="bh">Scans per minute, counted by <b style="color:var(--'+(ev?'h2':'h3')+')">'+(ev?'event time':'processing time')+'</b> · dotted line = true count'+(R.lateN?' · red = straggler':'')+'</div><div class="bg">'+
+      R.c.map((c,m)=>'<div class="bc"><span class="n">'+(R.late[m]?'<i>+'+R.late[m]*10+'</i>':'')+c*10+'</span><div class="bb"><div class="ct '+s.basis+'" style="bottom:0;height:'+f1(Math.min(50,c*ph))+'px"></div>'+
+        (R.late[m]?'<div class="lt" style="bottom:'+f1(c*ph)+'px;height:'+f1(R.late[m]*ph)+'px"></div>':'')+'<div class="tr" style="bottom:'+f1(R.tr[m]*ph)+'px"></div></div><span class="l">:0'+m+'</span></div>').join('')+'</div>';
+    rd.innerHTML=s.read?s.read(R,s):'';
+    if(s.on)s.on(R,s);};
+  if(s.drag){let cur=null;
+    const pt=ev=>{const r=svg.getBoundingClientRect();return {x:(ev.clientX-r.left)*340/r.width,y:(ev.clientY-r.top)*292/r.height};};
+    svg.addEventListener('pointerdown',ev=>{const q=pt(ev);let best=null,bd=16;
+      s.dots.forEach(d=>{if(d.k!=='n')return;const dx=SX(d.e)-q.x,dy=SY(d.p)-q.y,dd=Math.sqrt(dx*dx+dy*dy);if(dd<bd){bd=dd;best=d;}});
+      if(best){cur=best;svg.setPointerCapture(ev.pointerId);ev.preventDefault();}});
+    svg.addEventListener('pointermove',ev=>{if(!cur)return;const q=pt(ev);cur.p=Math.max(cur.e+0.1,Math.min(9.95,(254-q.y)/22));s.draw();});
+    const up=()=>{cur=null;};svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',up);}
+  s.anim=(to,ms,done)=>{const from=s.dots.map(d=>({e:d.e,p:d.p})),t0=Date.now();
+    const t=setInterval(()=>{if(!host.isConnected){clearInterval(t);return;}const k=Math.min(1,(Date.now()-t0)/ms),q=k<.5?2*k*k:1-Math.pow(-2*k+2,2)/2;
+      s.dots.forEach((d,j)=>{d.e=from[j].e+(to[j].e-from[j].e)*q;d.p=from[j].p+(to[j].p-from[j].p)*q;});s.draw();
+      if(k>=1){clearInterval(t);if(done)done();}},30);};
+  s.draw();return s;}
+const basisChips=(host,s,after)=>chips(host,['By event time','By processing time'],j=>{s.basis=j?'proc':'event';s.draw();if(after)after(j);});
+
+/* ---------------- the two-rulers picture (three timestamps) ---------------- */
+function rulers(o){ /* o:{t0,t1,shift,phone:[[t,label,col]],server:[[t,label,col]],arrow:[tPhone,tServer],drop:[tPhone,tServer],id} */
+  const k=300/(o.t1-o.t0),X=t=>20+(t-o.t0)*k,PX=t=>X(t-(o.shift||0));let g='';
+  g+=tx(20,18,'Ravi’s phone clock','t30')+tx(20,124,'Otterpost server clock','t30');
+  g+='<clipPath id="cl'+o.id+'"><rect x="14" y="20" width="312" height="80"/></clipPath><g clip-path="url(#cl'+o.id+')">';
+  g+=ln(PX(o.t0-20),70,PX(o.t1+20),70,'h4',2);
+  const starts=[o.arrow,o.drop].filter(Boolean).map(a=>PX(a[0])); /* no tick label where an arrow leaves the ruler */
+  for(let t=Math.ceil((o.t0-20)/5)*5;t<=o.t1+20;t+=5){g+=ln(PX(t),66,PX(t),74,'h4',t%10?1:1.8);if(t%10===0&&PX(t)>32&&PX(t)<308&&!starts.some(x=>Math.abs(x-PX(t))<26))g+=tx(PX(t),90,hm(t),'m30','middle');}
+  (o.phone||[]).forEach(m=>{g+=dot(PX(m[0]),70,6,m[2]||'h4')+tx(PX(m[0]),52,m[1],'m30','middle','fill:var(--ink);font-weight:600');});
+  g+='</g>';
+  g+=ln(X(o.t0),170,X(o.t1),170,'h2',2);
+  for(let t=o.t0;t<=o.t1;t+=5){g+=ln(X(t),166,X(t),174,'h2',t%10?1:1.8);if(t%10===0)g+=tx(X(t),190,hm(t),'m30','middle');}
+  (o.server||[]).forEach(m=>{g+=dot(X(m[0]),170,6,m[2]||'h2')+tx(X(m[0]),207,m[1],'m30','middle','fill:var(--ink);font-weight:600');});
+  if(o.arrow)g+=ar(PX(o.arrow[0]),78,X(o.arrow[1]),162,'pri');
+  if(o.drop)g+=ar(PX(o.drop[0]),78,X(o.drop[1]),162,'ok');
+  return '<svg class="pic30" viewBox="0 0 340 214" role="img" aria-label="Two clock rulers: the phone’s clock on top, the server’s clock below, with the scan, sent and received times marked">'+g+'</svg>';}
+
+/* ---------------- Signature 2: the checkpoint odometer ---------------- */
+const DSN=['Add 1 per scan','Store offset with value','Commit output + offset together'],DK=['plain','offset','atomic'],IV=[2,4,8,16],IVL=['every 0.5 s','every 1 s','every 2 s','every 4 s'];
+function odoSim(o){
+  const N=16,cells=Array(N).fill(''),redo=Array(N).fill(false),snaps=[];let C=1200,T=1200,stored=7040,ck=-1,buf=[],head=-1,crashAt=-1,zomb=null;const seen=new Set();
+  const snap=()=>snaps.push({cells:cells.slice(),redo:redo.slice(),C,T,head,ck,crashAt,zomb});
+  const bar=i=>(i+1)%o.I===0;
+  const proc=i=>{head=i;if(!seen.has(i)){seen.add(i);T++;}const off=7041+i;
+    if(o.design==='plain'){C++;cells[i]=cells[i]?'a2':'a';}
+    else if(o.design==='offset'){if(off>stored){C++;stored=off;cells[i]='a';}else cells[i]=o.special==='reorder'&&!cells[i]?'u':'s';}
+    else{buf.push(i);cells[i]='b';}
+    if(bar(i)){ck=i;if(o.design==='atomic'){C+=buf.length;buf.forEach(j=>{cells[j]='c';});buf=[];}}
+    snap();};
+  snap();
+  if(o.special==='reorder'){[0,1,2,3,5,6].forEach(proc);crashAt=6;snap();[4,7,8,9,10,11,12,13,14,15].forEach(proc);}
+  else{const c=o.crash;
+    if(c>=0&&c<N-1){for(let i=0;i<=c;i++)proc(i);crashAt=c;if(o.design==='atomic'){buf.forEach(j=>{cells[j]='x';redo[j]=true;});buf=[];}snap();
+      for(let i=ck+1;i<N;i++)proc(i);}
+    else for(let i=0;i<N;i++)proc(i);
+    if(o.special==='zombie'){zomb=o.fence?'rejected':'wrote';if(!o.fence)C=1208;head=-1;snap();}}
+  const f=snaps[snaps.length-1];f.over=f.C-f.T;return {snaps,final:f};}
+function Odo(host,cfg){
+  const o=Object.assign({design:'plain',I:4,crash:6,special:null,fence:false},cfg.init||{});
+  host.innerHTML='<div class="odo30"><div class="ext"><b>Counter in DB</b><span class="dg">1,200</span></div><div><b>True deliveries</b><span class="dg">1,200</span></div></div>'+
+    '<svg class="tp30" viewBox="0 0 340 172" role="img" aria-label="Tape of 16 delivered scans, offsets 7,041 to 7,056, with checkpoint barriers, a crash marker and each scan’s state"></svg><div class="rd30" aria-live="polite"></div>';
+  const dg=host.querySelectorAll('.dg'),svg=host.querySelector('svg'),rd=host.querySelector('.rd30');let timer=null,last=null;
+  const CX=i=>12+(i%8)*40,CY=i=>i<8?40:114;
+  const LB={a2:['×2','no-bg','no'],s:['skip','ok-bg','ok-line'],u:['lost','no-bg','no'],b:['wait','pri-bg','pri'],x:['undo','no-bg','no-line'],c:['','h1-bg','h1'],a:['','h1-bg','h1']};
+  const draw=(sn,running)=>{let g=tx(12,16,'Delivered scans · offsets 7,041 → 7,056','t30');
+    for(let i=0;i<16;i++){const x=CX(i),y=CY(i),st=sn.cells[i],L=LB[st]||['','card','line2'];
+      g+=rc(x,y,36,34,L[1],L[2],7,st==='b'||st==='x'?'stroke-dasharray:4 3':'')+tx(x+18,y+15,'0'+(41+i),'t30','middle',st?'':'fill:var(--faint)');
+      const lab=sn.redo[i]&&st==='c'?'redo':L[0];if(lab)g+=tx(x+18,y+29,lab,'m30','middle','font-weight:700;fill:var(--'+(st==='s'?'ok':st==='b'?'pri-deep':'no')+')');}
+    if(o.special!=='reorder'){g+=ln(9,34,9,80,sn.ck===-1?'h2':'line2',sn.ck===-1?3:2);
+      for(let i=0;i<16;i++)if((i+1)%o.I===0){const x=CX(i)+38,y=CY(i);g+=ln(x,y-6,x,y+40,i===sn.ck?'h2':'line2',i===sn.ck?3.2:2);}
+      const cx=sn.ck===-1?9:CX(sn.ck)+38,cy=sn.ck===-1?40:CY(sn.ck);g+=tx(Math.max(36,Math.min(cx,300)),cy+50,'checkpoint','m30','middle','fill:var(--h2);font-weight:700');}
+    if(sn.crashAt>=0){const x=CX(sn.crashAt)+37,y=CY(sn.crashAt);g+='<path d="M'+x+' '+(y-4)+' l4 8 l-6 8 l6 8 l-6 8 l4 8" style="stroke:var(--no);stroke-width:3;fill:none"/>'+tx(Math.min(x,318),y-8,'crash','m30','middle','fill:var(--no);font-weight:700');}
+    if(sn.head>=0&&running){const x=CX(sn.head)+18,y=CY(sn.head);g+='<path d="M'+(x-6)+' '+(y-12)+' h12 l-6 8z" style="fill:var(--pri)"/>';}
+    svg.innerHTML=g;dg[0].textContent=fmt(sn.C);dg[1].textContent=fmt(sn.T);};
+  const res=sim=>{const f=sim.final;last=f;const k=f.over===0?'ok':'no';
+    rd.innerHTML=vd(k,f.over===0?'Exact':f.over>0?'Over by '+f.over:'Under by '+(-f.over))+(cfg.read?cfg.read(f,o):'')+'';if(cfg.on)cfg.on(f,o);};
+  const api={o,
+    run(fast){if(timer)clearInterval(timer);const sim=odoSim(o);
+      if(fast){draw(sim.final,false);res(sim);return;}
+      let k=0;rd.innerHTML='Running…';timer=setInterval(()=>{if(!host.isConnected){clearInterval(timer);return;}draw(sim.snaps[k],true);k++;if(k>=sim.snaps.length){clearInterval(timer);timer=null;draw(sim.final,false);res(sim);}},48);},
+    reset(){if(timer)clearInterval(timer);timer=null;const s0=odoSim(Object.assign({},o,{crash:-1})).snaps[0];draw(Object.assign({},s0,{ck:-1}),false);rd.innerHTML=cfg.idle||'Set it up, then run it.';},
+    last:()=>last};
+  api.reset();return api;}
+
+/* ===================================================================== */
 Course.lesson({
   id:'0030', title:'Processing streams', minutes:20, icon:'clock',
-  goals:['Pick the right use and time window for a stream job, counting by event time','Choose between stream-stream, stream-table and table-table joins','Make a stream job safe to restart, so its effects happen effectively once'],
+  goals:['Count events in the right time window, and handle late events and wrong clocks','Pick the right stream join, and join with the version of the data that was true at the time','Make a stream job’s effects count once, even after a crash'],
   parts:['Uses','Reasoning about time','Stream joins','Fault tolerance'],
-  read:'Read “Processing Streams” in chapter 11, then its summary, for the book’s figures on windowing artifacts and the full search, profile and timeline join examples.',
+  read:'Read “Processing Streams” in chapter 11, then its summary, for the book’s figure of windowing artifacts and the full search, profile and timeline join examples.',
   glossary:{
     eventtime:'Event time vs processing time: event time is when something actually happened (the timestamp inside the event); processing time is when a stream processor gets round to handling it. The two can be far apart.',
     straggler:'Straggler: an event that arrives after its time window was already declared complete.',
+    window:'Window: the stretch of time a stream job groups events by, such as “each minute” or “the last 5 minutes”, so it can count or average them.',
+    'materialized-view':'Materialized view: a stored copy of a query’s results, written to disk and updated when the data changes, so the query isn’t recomputed each time.',
+    cdc:'Change data capture: reading a database’s log of row changes so another system (a warehouse, a search index, a cache) can copy them.',
+    compaction:'Compaction: rewriting log segments to throw away values that were overwritten or deleted, keeping only the latest value for each key.',
+    offset:'Offset: the position number of a message inside one partition of a log. A consumer remembers the offset it has reached, like a reader remembers a page number.',
+    exactlyonce:'Exactly-once semantics (better called effectively-once): even if some work is retried after a fault, the visible result is as if every input was processed exactly once.',
     idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
-    exactlyonce:'Exactly-once semantics (better called effectively-once): even if some work is retried after a fault, the visible result is as if every input was processed exactly once.'
+    fencing:'Fencing token: a number that goes up every time a lock or lease is granted. The protected resource rejects any request carrying a lower number than one it has already processed.'
   },
   cheatsheet:[
-    'Do one of three things with a stream: <b>store</b> it, <b>show</b> it to people, or <b>process</b> it into new streams. Streams never end, so no sorting and no restarting from the beginning.',
-    'Uses: <b>complex event processing</b> (stored patterns), <b>stream analytics</b> (windowed aggregates), <b>materialized views</b> (all events ever), <b>search on streams</b> (stored queries).',
-    'Count by <b>event time</b>, not processing time, or a restart creates fake dips and spikes. <b>Stragglers</b>: ignore and measure, or publish a correction.',
-    'Untrusted device clocks: log <b>three timestamps</b> (happened, sent, received) and correct by the offset between sent and received.',
-    'Windows: <b>tumbling</b> (fixed, no overlap), <b>hopping</b> (fixed, overlapping), <b>sliding</b> (within an interval of each other), <b>session</b> (ends after inactivity).',
-    'Joins: <b>stream-stream</b> (two event streams in a window), <b>stream-table</b> (enrich events from a local table kept current by CDC), <b>table-table</b> (maintain a joined view). Join with the version valid at that time.',
-    '<b>Exactly-once really means effectively-once.</b> Microbatching and checkpointing work inside the framework; external side effects need <b>atomic commit</b> or <b>idempotent</b> writes.',
+    'A stream job can <b>store</b> events, <b>show</b> them to people, or <b>process</b> them into new streams. Streams never end: no sorting, and no restarting from the beginning.',
+    'Uses: <b>complex event processing</b> (stored patterns), <b>stream analytics</b> (windowed aggregates; probabilistic algorithms only save memory), <b>materialized views</b> (every event ever), <b>search on streams</b> (stored queries).',
+    'Window by <b>event time</b>, not processing time: a one-minute redeploy turns a steady rate into a fake dip and a fake spike.',
+    'You never know a window is complete. <b>Stragglers</b>: drop them and count the drops, or publish a correction. Device clocks: log <b>three timestamps</b> and correct by received − sent.',
+    'Windows: <b>tumbling</b> (fixed, no overlap), <b>hopping</b> (fixed, overlapping), <b>sliding</b> (events within an interval of each other), <b>session</b> (ends after inactivity).',
+    'Joins: <b>stream-stream</b> (two event streams in a window), <b>stream-table</b> (enrich from a local copy kept current by CDC), <b>table-table</b> (maintain a joined view). Join with the <b>version valid at the time</b>.',
+    '<b>Exactly-once really means effectively-once.</b> Microbatches and checkpoints work inside the framework; effects outside it need <b>atomic commit</b> or <b>idempotent</b> writes (store the offset with the value).',
     'State must survive crashes: keep it remote, copy local state out (snapshots, compacted changelog topic), or rebuild it from the input.'
   ],
   steps:[
 /* ---------- PART 1: USES ---------- */
-{part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Kwame wants an alert if a hub stops scanning parcels for 15 minutes on a busy afternoon. Should Linh’s nightly batch job produce it?</h1>');
-  L.mc(L.card,['Yes, the batch job sees all the data','No, the alert has to fire within minutes'],1,
-   'A nightly job would notice tomorrow. Reacting to events as they arrive is what stream processing is for.',
-   'The batch job does see everything, but only the next night. An alert about the last 15 minutes needs a job that processes events as they arrive.');}},
 {part:0,src:'Chapter 11 · Processing Streams',run(L){
-  L.h(L.kick('learn','Processing streams')+'<h1 class="q">Three things you can do with a stream</h1>'+
-   L.list([['box','Store it','Write the events to a database, cache or search index for others to query. It’s the streaming version of a batch job’s output, and works best when the stream consumer is the only writer.'],
-     ['chat','Show it to people','Send email alerts or push notifications, or feed a live dashboard. A human is the final consumer.'],
-     ['cycle','Process it','Turn one or more input streams into new output streams, perhaps through several stages, before they end up stored or shown.']],1)+
-   L.prose('Code that processes streams is called an <b>operator</b> or a <b>job</b>. Like a Unix process or a MapReduce job, it reads its input without changing it and appends its output elsewhere. Partitioning, parallelism, mapping and filtering work much as in batch.')+
-   L.note('The crucial difference: a stream <b>never ends</b>. Sorting makes no sense, so sort-merge joins are out. Fault tolerance changes too: you can restart a few-minutes-old batch task from scratch, but not a stream job that has run for years.','alert'));
+  L.h(L.kick('learn','Processing streams')+'<h1 class="q">Three things you can do with a stream</h1>'+P_THREE+
+   '<p class="cap30">This lesson is about option 3. A <b>job</b> (or operator) reads streams without changing them and appends its output elsewhere, like a Unix tool or a MapReduce job. The big difference from batch: a stream never ends.</p>'+
+   more('What carries over from batch, and what doesn’t','Partitioning, mapping and filtering work as in batch. But you can’t sort an endless stream, so sort-merge joins are out, and a job that has run for years can’t simply restart from the beginning.'));
   L.done();}},
-{part:0,src:'Chapter 11 · Uses of Stream Processing',run(L){
-  L.h(L.kick('learn','Uses of stream processing')+'<h1 class="q">What stream processing is used for</h1>'+
-   L.prose('It has long been used for monitoring: spotting a stolen credit card, trading on price moves, watching factory machines, raising military alarms. Other uses followed. Tap each card.'));
-  L.flips(L.card,[
-   ['Complex event processing','Like a regular expression for events: describe a pattern, often in a SQL-like language, and the engine emits a “complex event” when it matches. The roles are reversed: queries are stored long-term and events flow past them.'],
-   ['Stream analytics','Aggregates over many events: a rate, a rolling average, now compared with the same time last week. Computed over a time window, such as the last 5 minutes.'],
-   ['Materialized views','Keep a cache, search index or event-sourced state up to date from a stream of changes. Needs every event since the beginning, not just a recent window.'],
-   ['Search on streams','Store search queries in advance and match each new document against them, like a property site alerting you to new homes. The queries can be indexed too.'],
-   ['Actors and messages','Built on messages too, but not usually called stream processing. Actors manage concurrency, talk one-to-one and briefly, and can loop. Stream jobs form durable, acyclic pipelines with many subscribers.']],
-   'Stream analytics sometimes uses probabilistic algorithms, such as HyperLogLog for counting distinct items. They save a lot of memory in exchange for approximate answers.');}},
-{part:0,src:'Chapter 11 · Stream analytics',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh’s job estimates distinct recipients per day with HyperLogLog. Tobias concludes that stream processing is always approximate. Is Tobias right?</h1>');
-  L.mc(L.card,['Yes, streams are lossy by nature','No, approximation is just an optimization'],1,
-   'There’s nothing inherently approximate about stream processing. Probabilistic algorithms are only a way to use much less memory.',
-   'The book calls this belief wrong: probabilistic algorithms are merely an optimization that saves memory. Stream processing itself can be exact.');}},
+
+{part:0,src:'Chapter 11 · Uses of Stream Processing',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#u2'+j).click();},
+ run(L){
+  const U=[['Complex event processing','<b>Complex event processing</b>: describe a pattern of events, like a regular expression, often in a SQL-like language. The roles reverse: the queries are stored for a long time, events flow past them, and a match emits a “complex event”.',
+     '<rect x="4" y="34" width="20" height="20" rx="10" style="fill:var(--h1)"/><rect x="32" y="34" width="20" height="20" rx="3" style="fill:var(--h2)"/><path d="M70 34 l10 20 h-20z" style="fill:var(--h4)"/><rect x="88" y="34" width="20" height="20" rx="3" style="fill:var(--h2)"/><rect x="116" y="34" width="20" height="20" rx="10" style="fill:var(--h1)"/><path d="M58 28 v-8 h52 v8" style="stroke:var(--no);stroke-width:2.5;fill:none"/><text x="84" y="14" text-anchor="middle" class="m30" style="fill:var(--no);font-weight:700">match!</text>'],
+    ['Stream analytics','<b>Stream analytics</b>: aggregates over many events in a '+L.g('window','window')+': a rate, a rolling average, a comparison with last week. Some use probabilistic algorithms (Bloom filters, HyperLogLog, percentile estimates) to save memory. That’s an optimization: streams aren’t inherently approximate.',
+     [12,18,15,22,30,26].map((h,j)=>'<rect x="'+(8+j*22)+'" y="'+(60-h)+'" width="16" height="'+h+'" rx="3" style="fill:var(--h2)"/>').join('')+'<path d="M4 40 L140 30" style="stroke:var(--h3);stroke-width:2;stroke-dasharray:4 3"/><text x="140" y="22" text-anchor="end" class="m30" style="fill:var(--h3)">last week</text>'],
+    ['Materialized views','<b>Materialized views</b>: keep a cache, search index or event-sourced state current from a change stream (a '+L.g('materialized-view','materialized view')+'). Unlike analytics, it needs every event since the beginning (minus what log compaction drops), not a recent window.',
+     [0,1,2,3,4].map(j=>'<rect x="'+(4+j*15)+'" y="30" width="13" height="18" rx="3" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5"/>').join('')+'<text x="4" y="22" class="m30">from the start</text><path d="M80 39 H96" style="stroke:var(--muted);stroke-width:2"/><path d="M96 34 l7 5 l-7 5z" style="fill:var(--muted)"/><rect x="106" y="22" width="38" height="36" rx="4" style="fill:var(--card);stroke:var(--h2);stroke-width:1.5"/><path d="M106 34 H144 M106 46 H144 M125 22 V58" style="stroke:var(--h2);stroke-width:1.2"/>'],
+    ['Search on streams','<b>Search on streams</b>: save the search first, then match each new item against it, like an alert for new homes on a property site. Normal search indexes documents and runs queries; this turns it around. The queries can be indexed too.',
+     '<rect x="4" y="22" width="56" height="34" rx="8" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.5"/><circle cx="20" cy="37" r="6" style="fill:none;stroke:var(--pri);stroke-width:2"/><path d="M24 41 l6 6" style="stroke:var(--pri);stroke-width:2"/><text x="36" y="42" class="m30" style="fill:var(--pri-deep)">saved</text>'+
+       [0,1,2].map(j=>'<rect x="'+(72+j*24)+'" y="26" width="18" height="24" rx="3" style="fill:'+(j===1?'var(--ok-bg)':'var(--card)')+';stroke:var(--'+(j===1?'ok':'line2')+');stroke-width:1.5"/>').join('')+'<text x="105" y="66" text-anchor="middle" class="m30" style="fill:var(--ok)">match</text>']];
+  const seen=new Set();let shown=false;
+  L.h(L.kick('learn','Uses of stream processing')+'<h1 class="q">What stream jobs are used for</h1>'+
+   '<p class="cap30 sm" style="margin-top:0">Monitoring is the long-standing use: spotting a stolen card, trading on price rules, watching factory machines, raising military alarms. Tap each use.</p>'+
+   '<div class="tiles30">'+U.map((u,j)=>'<button id="u2'+j+'"><svg viewBox="0 0 150 70" aria-hidden="true">'+u[2]+'</svg>'+u[0]+'</button>').join('')+'</div><div class="rd30" id="r2">Tap a tile.</div>');
+  U.forEach((u,j)=>{L.$('#u2'+j).onclick=function(){U.forEach((_,q)=>L.$('#u2'+q).classList.toggle('sel',q===j));this.classList.add('seen');L.$('#r2').innerHTML=u[1];seen.add(j);
+    if(seen.size===4&&!shown){shown=true;L.sheet('info','Not called stream processing: actors','Actor frameworks pass messages too, but they manage concurrency, talk one-to-one and briefly, and can loop. Stream jobs are a data technique: durable logs, many subscribers, acyclic pipelines.');L.done();}};});}},
+
 {part:0,src:'Chapter 11 · Uses of Stream Processing',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which use is this?',['Complex event processing','Stream analytics','Materialized view','Search on streams'],[
@@ -75,57 +371,99 @@ Course.lesson({
 
 /* ---------- PART 2: REASONING ABOUT TIME ---------- */
 {part:1,src:'Chapter 11 · Event time versus processing time',run(L){
-  L.h(L.kick('learn','Event time versus processing time')+'<h1 class="q">Whose “last five minutes”?</h1>'+
-   L.prose('A batch job that reads a year of history in a few minutes uses the timestamps <i>inside</i> the events. The clock of the machine running it is irrelevant, and using event timestamps makes reruns give the same result.')+
-   L.prose('Many stream frameworks instead use the local clock of the processing machine: '+L.g('eventtime','processing time')+'. That’s simple, and fine if events are handled almost as soon as they happen. It breaks when there’s lag: queueing, network faults, contention in the broker, a restarted consumer, or replaying old events after a bug fix.')+
-   L.note('Delays also reorder events. A user’s first request is handled by server A and the second by server B, but B’s event reaches the broker first. The book’s analogy: the Star Wars films came out as episodes IV–VI before I–III, so release order (processing time) doesn’t match story order (event time).','clock'));
+  L.h(L.kick('learn','Event time versus processing time')+'<h1 class="q">Every event has two times</h1>'+P_CLOCKS+
+   '<p class="cap30">When it happened (<b>event time</b>) and when a job handled it (<b>processing time</b>): '+L.g('eventtime','two different clocks')+'. Queues, faults, restarts and replays push dots up. Delays can also reorder events, like watching Star Wars in release order.</p>'+
+   more('Why batch jobs rarely notice','A batch job reading a year of history uses the timestamps inside the events, so reruns give the same answer. Many stream frameworks use the machine’s clock instead: simple, and fine only while delays are tiny. Lag can come from a queue, a network fault, a busy broker, a restart or a replay.'));
   L.done();}},
-{part:1,src:'Chapter 11 · Event time versus processing time',pts:1,
- solve:async L=>{const c=L.$('#tg').children;c[0].click();c[1].click();},
+
+{part:1,src:'Chapter 11 · Event time versus processing time',
+ solve:async L=>{L.$('#q5').click();L.$('#b5').children[1].click();L.$('#b5').children[0].click();},
  run(L){
-  const T=['10:01','10:02','10:03','10:04','10:05','10:06'],V=[[1000,1000,0,2000,1000,1000],[1000,1000,1000,1000,1000,1000]],N=['By processing time','By event time'];const seen=new Set();
-  const lab=v=>v===2000?'2,000':v===1000?'1,000':'0';
-  const bars=vs=>'<div style="display:flex;align-items:flex-end;gap:6px;height:130px">'+vs.map(v=>'<div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;height:100%"><span style="font-size:11px;color:var(--muted)">'+lab(v)+'</span><div style="width:100%;height:'+Math.round(v/2000*100)+'px;background:var(--'+(v===2000||v===0?'no':'h2')+');border-radius:6px 6px 0 0"></div></div>').join('')+'</div>'+
-   '<div style="display:flex;gap:6px;margin-top:4px">'+T.map(t=>'<span style="flex:1;text-align:center;font-size:11px;color:var(--muted)">'+t+'</span>').join('')+'</div>';
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">Scans arrive steadily, about 1,000 a minute. At 10:03 Linh redeploys the counting job; it’s down for one minute, then works through the backlog. Look at the chart both ways.</h1><div id="tg"></div>'+
-   '<div id="ch" style="background:var(--soft);border-radius:16px;padding:12px;margin:8px 0"><div class="small">Pick a way of counting above.</div></div><div id="cq"></div>');
-  N.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('clock')+n;
-    b.onclick=()=>{[...L.$('#tg').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#ch').innerHTML='<div class="small" style="margin-bottom:6px"><b>Scans per minute</b>, counted '+n.toLowerCase()+'</div>'+bars(V[j]);
-      if(seen.size===2&&!L.$('#cq').innerHTML){const q=L.$('#cq');q.innerHTML='<h2 class="sub">Kwame’s alert fires when the scan rate suddenly doubles. Which count should it use?</h2>';
-        L.mc(q,['Processing time, since it’s simpler','Event time, from the scans’ timestamps'],1,
-         'The dip at 10:03 and the spike at 10:04 are artifacts of the redeploy, not real traffic. Counting by event time shows the steady rate.',
-         'Processing time turned a one-minute pause into a fake dip and a fake spike, which would set off the alert. The real rate was steady, as event time shows.');}};
-    L.$('#tg').appendChild(b);});}},
+  let moved=false,shown=false;const seen=new Set([0]);
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Each dot is 10 scans at Westport Central. Drag a dot up to hold it in a queue. Compare both ways of counting.</h1>'+
+   '<div class="row30" id="b5"></div><div id="s5"></div><button class="btn" id="q5">'+L.ic('clock')+'Hold 3 scans in a queue</button>');
+  const chk=()=>{if(moved&&seen.size===2&&!shown){shown=true;
+    L.sheet('info','Lag moves dots between processing windows','The held scans still happened in the same minute, so the event-time count didn’t move. By processing time they land in a later minute: one window short, another too full.');L.done();}};
+  const s=Sc(L.$('#s5'),{dots:scans({seed:5}),drag:true,
+    read:(R,s)=>{const mv=s.dots.filter(d=>Math.floor(d.p)!==Math.floor(d.e)).length;if(mv)moved=true;
+      return s.basis==='event'?'<b>Event time</b>: each scan counts in the minute it happened. '+(mv?'The held scans still count where they belong.':'Every minute shows 60.')
+        :'<b>Processing time</b>: each scan counts in the minute the job saw it. '+(mv?vd('no','Off')+'The held scans moved to a later minute.':'With no delay, it agrees with event time.');},
+    on:()=>chk()});
+  basisChips(L.$('#b5'),s,j=>{seen.add(j);chk();})[0].classList.add('sel');
+  L.$('#q5').onclick=()=>{const ds=s.dots.filter(d=>d.k==='n'&&d.e>2.5&&d.e<3.5).slice(0,3);ds.forEach(d=>{d.p=d.e+2.4;});s.draw();};}},
+
+{part:1,src:'Chapter 11 · Event time versus processing time',pts:1,
+ solve:async L=>{L.$('#p6').children[2].click();L.$('#go6').click();await L.sleep(1400);},
+ run(L){
+  const PR=['60 scans','0 scans','120 scans','180 scans'];let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">At 10:03 Linh redeploys the job. It’s down for one minute, then clears the backlog. Counted by processing time, what will 10:04 show?</h1>'+
+   '<div id="s6"></div><div class="row30" id="b6" hidden></div><div class="row30" id="p6"></div><button class="btn pri" id="go6" hidden>'+L.ic('play')+'Play the redeploy</button>');
+  const s=Sc(L.$('#s6'),{dots:scans({seed:5}),basis:'proc',
+    read:(R,s)=>s.basis==='proc'?'By processing time: 10:03 shows <b>'+R.c[3]*10+'</b>, 10:04 shows <b>'+R.c[4]*10+'</b>.':'By event time: 10:03 shows <b>'+R.c[3]*10+'</b>, 10:04 shows <b>'+R.c[4]*10+'</b>. The real rate never changed.'});
+  chips(L.$('#p6'),PR,j=>{if(p!==null)return;p=j;L.$('#p6').querySelectorAll('.chip').forEach(b=>b.disabled=true);L.$('#go6').hidden=false;});
+  L.$('#go6').onclick=function(){this.remove();const to=scans({seed:5,redeploy:3});try{L.$('#s6').scrollIntoView({block:'start',behavior:'smooth'});}catch(e){}
+    s.anim(to,900,()=>{const ok=p===2;L.award(ok);L.$('#b6').hidden=false;basisChips(L.$('#b6'),s)[1].classList.add('sel');
+      L.sheet(ok?'ok':'no',ok?'120: a fake spike':'It shows 120','10:03’s scans were processed during 10:04, on top of 10:04’s own. By processing time that reads 0, then 120, though the real rate was a steady 60. An alert on “rate doubled” would go off for nothing. Tap “By event time” to compare.');L.done();});};}},
+
 {part:1,src:'Chapter 11 · Knowing when you’re ready',run(L){
-  L.h(L.kick('learn','Knowing when you’re ready')+'<h1 class="q">When is a window finished?</h1>'+
-   L.prose('With event time, you can never be sure all events for a window have arrived. Say you count scans per minute, and most new events now belong to 10:38 and 10:39. When do you close 10:37 and publish its count? You can wait until nothing new has arrived for a while, but some events may still be stuck on another machine behind a network problem.')+
-   L.prose('Events that arrive after their window was declared complete are '+L.g('straggler','stragglers')+'. You have two options:')+
-   L.list([['Ignore them','They’re usually a small share. Track how many you drop as a metric, and alert if that number grows.'],
-     ['Publish a correction','Send an updated value for the window with the stragglers included, and maybe retract the earlier one.']],3)+
-   '<p class="small" style="margin-top:10px">A producer can also send a special message: “no more events earlier than time t.” But with many producers on different machines, consumers must track each one separately, which makes adding and removing producers trickier.</p>');
+  L.h(L.kick('learn','Knowing when you’re ready')+'<h1 class="q">When is a minute finished?</h1>'+P_READY+
+   '<p class="cap30">You can never be sure a window has every event. Most new events are for :38 and :39, so you declare :37 done and publish its count. A later event for :37 is a '+L.g('straggler','straggler')+'.</p>'+
+   more('Why not wait for silence?','A quiet spell doesn’t prove much: some events may be stuck on another machine. A producer can send “nothing older than t from now on”, but with many producers, each one must be tracked separately.'));
   L.done();}},
-{part:1,src:'Chapter 11 · Whose clock are you using, anyway?',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Ravi’s phone and the three timestamps</h1>');
-  L.beats(L.card,[
-   ['The problem','Ravi, a courier, scans parcels in a basement with no signal. The courier app keeps the scans and uploads them later, so to consumers they look like very late stragglers.'],
-   ['Which clock?','The event should carry the time of the scan by the phone’s clock. But a phone’s clock can be wrong, by accident or on purpose. The server’s clock is trustworthy, but it only says when the event arrived.'],
-   ['Log three times','So the app records when the scan happened (phone clock), when it was sent (phone clock), and when it was received (server clock).'],
-   ['The numbers','Scan at 10:00 and sent at 10:30, by the phone. Received at 10:23, by the server. Received minus sent is −7 minutes: the phone runs about 7 minutes fast.'],
-   ['The estimate','Apply that offset to the scan time: it really happened at about 09:53.']],
-   'This assumes the network delay is small compared with the accuracy you need, and that the phone’s clock offset didn’t change between the scan and the upload. Batch jobs face the same problem; streaming just makes it more visible.');}},
-{part:1,src:'Chapter 11 · Whose clock are you using, anyway?',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Another upload: scan at 14:10 and sent at 14:40, both by the phone’s clock. Received at 14:35 by the server’s clock. When did the scan really happen?</h1>');
-  L.mc(L.card,['About 14:05','About 14:10','About 14:15'],0,
-   'Received 14:35 minus sent 14:40 is −5 minutes, so the phone runs 5 minutes fast. 14:10 − 5 minutes = 14:05.',
-   'The server got it at 14:35, but the phone claims it sent it at 14:40, so the phone is 5 minutes fast. Correct the scan time: 14:10 − 5 minutes = 14:05.');}},
-{part:1,src:'Chapter 11 · Types of windows',run(L){
-  L.h(L.kick('learn','Types of windows')+'<h1 class="q">Four ways to slice time</h1>'+
-   L.tiers([['cal','Tumbling','Fixed length, and every event belongs to exactly one window.','1-minute windows: 10:03:00–10:03:59, then 10:04:00–10:04:59. Round each timestamp down to the minute.'],
-            ['layers','Hopping','Fixed length, but windows overlap, which smooths the result.','5 minutes long, hopping by 1: 10:03:00–10:07:59, then 10:04:00–10:08:59. Built from 1-minute tumbling windows.'],
-            ['clock','Sliding','All events that occur within some interval of each other.','Events at 10:03:39 and 10:08:12 are under 5 minutes apart, so they share a 5-minute sliding window. Fixed windows would split them.'],
-            ['person','Session','No fixed length: one user’s events that come close together, ending after a period of inactivity.','For example, end the session after 30 minutes with no events. Common in website analytics.']]));
-  L.done();}},
+
+{part:1,src:'Chapter 11 · Whose clock are you using, anyway?',
+ solve:async L=>{for(let j=0;j<5;j++){const b=L.$('#n8');if(b&&!b.hidden)b.click();}},
+ run(L){
+  const S=[{cap:'Ravi scans parcel OP-48213 in a basement with no signal. The courier app stamps it <b>10:00</b> by the phone’s clock and keeps it.',ph:[[600,'scan 10:00']]},
+    {cap:'Upstairs, the app uploads and stamps <b>sent 10:30</b>, again by the phone. To consumers, this scan is a very late straggler.',ph:[[600,'scan 10:00'],[630,'sent 10:30']]},
+    {cap:'The server stamps <b>received 10:23</b> by its own clock. Otterpost controls that clock, so it’s more trustworthy, but it only says when the event arrived.',ph:[[600,'scan 10:00'],[630,'sent 10:30']],sv:[[623,'received 10:23']],arrow:[630,623]},
+    {cap:'Received − sent = <b>−7 minutes</b>. If the network delay is tiny, the phone runs about 7 minutes fast. Slide its ruler to match.',ph:[[600,'scan 10:00'],[630,'sent 10:30']],sv:[[623,'received 10:23']],arrow:[630,623],shift:7},
+    {cap:'Apply the same offset to the scan: it really happened at about <b>09:53</b>. This assumes the phone’s offset didn’t change between the scan and the upload.',ph:[[600,'scan 10:00'],[630,'sent 10:30']],sv:[[623,'received 10:23'],[593,'true 09:53','ok']],shift:7,drop:[600,593]}];
+  let k=0,sh=0;
+  L.h(L.kick('ex','Three timestamps')+'<h1 class="q">Ravi’s phone clock can’t be trusted. The server’s can. Log three times.</h1><div id="v8"></div><div class="stepcap30" id="c8"></div><button class="btn pri" id="n8">Next '+L.ic('arrow')+'</button><p class="cap30 sm">Times are illustrative.</p>');
+  const paint=()=>{const st=S[k];L.$('#v8').innerHTML=rulers({t0:585,t1:635,id:'8',shift:sh,phone:st.ph,server:st.sv,arrow:st.arrow,drop:st.drop});
+    L.$('#c8').innerHTML='<span class="n">Step '+(k+1)+' of '+S.length+'</span>'+st.cap;};
+  paint();
+  L.$('#n8').onclick=()=>{k++;const st=S[k];if(st.shift&&sh<st.shift){const t0=Date.now();const t=setInterval(()=>{if(!L.$('#v8')){clearInterval(t);return;}const q=Math.min(1,(Date.now()-t0)/500);sh=st.shift*q;paint();if(q>=1)clearInterval(t);},30);}
+    else{sh=st.shift||0;}paint();
+    if(k===S.length-1){L.$('#n8').hidden=true;L.sheet('info','Three timestamps','Scan time and sent time come from the device; received time comes from the server. Batch jobs have the same problem; streaming just makes it easier to notice.');L.done();}};}},
+
+{part:1,src:'Chapter 11 · Whose clock are you using, anyway?',pts:1,
+ solve:async L=>{const r=L.$('#r9');r.value=845;r.dispatchEvent(new Event('input'));L.$('#k9').click();},
+ run(L){
+  let done=false,guess=850;
+  L.h(L.kick('try','Your turn')+'<h1 class="q">Another upload from Ravi’s phone: scan <b>14:10</b> and sent <b>14:40</b> by the phone, received <b>14:35</b> by the server. When did the scan really happen?</h1><div id="v9"></div>'+
+   '<div class="rng30"><label for="r9">The scan really happened at</label><b id="o9">14:10</b><input type="range" id="r9" min="835" max="865" step="1" value="850"></div><button class="btn pri" id="k9">Check</button><p class="cap30 sm">Times are illustrative.</p>');
+  const paint=(shift,truth)=>{L.$('#v9').innerHTML=rulers({t0:835,t1:885,id:'9',shift:shift||0,phone:[[850,'scan 14:10'],[880,'sent 14:40']],
+    server:[[875,'received 14:35']].concat(truth?[[845,'true 14:05','ok']]:[[guess,'your answer','pri']]),arrow:truth?null:[880,875],drop:truth?[850,845]:null});};
+  paint(0);
+  L.$('#r9').oninput=e=>{if(done)return;guess=+e.target.value;L.$('#o9').textContent=hm(guess);paint(0);};
+  L.$('#k9').onclick=function(){if(done)return;done=true;this.remove();L.$('#r9').disabled=true;const ok=guess===845;L.award(ok);
+    const t0=Date.now();const t=setInterval(()=>{if(!L.$('#v9')){clearInterval(t);return;}const q=Math.min(1,(Date.now()-t0)/500);paint(5*q,q>=1);if(q>=1)clearInterval(t);},30);
+    L.sheet(ok?'ok':'no',ok?'About 14:05':'It was about 14:05','Received 14:35 − sent 14:40 = −5 minutes: the phone runs 5 minutes fast. Shift the scan by the same amount: 14:10 − 5 minutes = 14:05.');L.done();};}},
+
+{part:1,src:'Chapter 11 · Types of windows',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#w10').children[j].click();},
+ run(L){
+  const EV=[0.4,1.2,1.5,3.65,8.2,9.0,12.3,12.9,13.4],X=m=>16+m*20.5,H=[3.65,8.2];
+  const base=()=>{let g=ln(X(0),150,X(15),150,'line2',2);[0,5,10,15].forEach(m=>{g+=ln(X(m),146,X(m),154,'line2',2)+tx(X(m),192,'10:'+(m<10?'0':'')+m,'m30','middle');});
+    EV.forEach(e=>{const h=H.includes(e);g+=dot(X(e),150,h?6:5,h?'h3':'h1');});
+    g+=tx(X(3.65),172,'10:03:39','m30','middle','fill:var(--h3);font-weight:700')+tx(X(8.2),172,'10:08:12','m30','middle','fill:var(--h3);font-weight:700');return g;};
+  const W=[['Tumbling','Fixed length, no overlap: every event is in exactly one window. Round each timestamp down. The two amber events land in different windows.',
+      ()=>[[0,5],[5,10],[10,15]].map((w,j)=>rc(X(w[0])+1,22,X(w[1])-X(w[0])-2,116,j%2?'h2-bg':'h1-bg',j%2?'h2':'h1',8)+tx((X(w[0])+X(w[1]))/2,40,EV.filter(e=>e>=w[0]&&e<w[1]).length+' events','m30','middle','fill:var(--ink);font-weight:600')).join('')],
+    ['Hopping','Fixed length, but windows overlap: 5 minutes long, starting every minute. Smoother. Built by adding up 1-minute tumbling windows. No window holds both amber events.',
+      ()=>{let g='';for(let s=0;s<=10;s++){const n=EV.filter(e=>e>=s&&e<s+5).length;g+=rc(X(s),22+s*10,X(s+5)-X(s),7,'h2-bg','h2',3)+tx(X(s+5)+3,29+s*10,n,'m30','start','font-size:11px');}return g;}],
+    ['Sliding','All events within some interval of each other. A 5-minute sliding window holds both amber events: they are under 5 minutes apart. Kept as a time-sorted buffer that drops expired events.',
+      ()=>rc(X(3.2),40,X(8.2)-X(3.2),98,'h3-bg','h3',8)+tx((X(3.2)+X(8.2))/2,60,'5 min back from 10:08:12','m30','middle','fill:var(--ink);font-weight:600')],
+    ['Session','No fixed length. One user’s events that come close together; the session ends after a quiet gap (here 2 minutes, illustrative; the book’s example is 30). Common in website analytics.',
+      ()=>[[0.4,1.5],[3.65,3.65],[8.2,9.0],[12.3,13.4]].map(w=>rc(X(w[0])-9,40,X(w[1])-X(w[0])+18,98,'h4-bg','h4',10)).join('')+tx(X(6),70,'quiet gap','m30','middle')+ar(X(4.6),80,X(7.4),80,'muted',1.5)]];
+  const seen=new Set();let shown=false;
+  L.h(L.kick('learn','Types of windows')+'<h1 class="q">Four ways to slice time into '+L.g('window','windows')+'</h1><p class="cap30 sm" style="margin-top:0">One merchant’s dashboard clicks, 10:00 to 10:15. Tap each window type.</p>'+
+   '<div class="row30" id="w10"></div><svg class="pic30" id="v10" viewBox="0 0 340 200" role="img" aria-label="A time axis from 10:00 to 10:15 with nine click events and the chosen windows drawn above them"></svg><div class="rd30" id="r10">Pick a window type.</div>');
+  L.$('#v10').innerHTML=base();
+  chips(L.$('#w10'),W.map(w=>w[0]),j=>{L.$('#v10').innerHTML=W[j][2]()+base();L.$('#r10').innerHTML='<b>'+W[j][0]+'.</b> '+W[j][1];seen.add(j);
+    if(seen.size===4&&!shown){shown=true;L.sheet('info','Fixed or flexible','Tumbling and hopping use fixed boundaries. Sliding looks at the gaps between events. Session follows one user until they go quiet.');L.done();}});}},
+
 {part:1,src:'Chapter 11 · Types of windows',pts:5,run(L){
   L.h(L.kick('pr','Which window?')+'<h1 class="q">Match each of Otterpost’s needs to a window type.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Tumbling','Hopping','Sliding','Session'],[
@@ -136,96 +474,214 @@ Course.lesson({
    ['Hourly on-time rate per zone: 9:00–9:59, 10:00–10:59 and so on.',0,'Fixed hours that don’t overlap: tumbling.']],
    'Tumbling and hopping use fixed boundaries; sliding looks at the gaps between events; session follows one user until they go quiet.');}},
 
+{part:1,src:'Chapter 11 · Knowing when you’re ready',
+ solve:async L=>{for(let j=0;j<4;j++)L.$('#e12p'+j).click();},
+ run(L){
+  const P=[{nm:'Redeploy',dots:()=>scans({seed:5,redeploy:3}),basis:'proc',A:1},
+    {nm:'Offline phone',dots:()=>scans({seed:5,offline:true}),basis:'event',A:1},
+    {nm:'Wrong clock',dots:()=>scans({seed:5,clock:true}),basis:'event',A:1},
+    {nm:'No waiting',dots:()=>scans({seed:7,lag:'real'}),basis:'event',A:0}];
+  let cur=-1,shown=false;const seen=new Set();
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Where does counting by event time hold up, and where does it break? Run each case.</h1>'+
+   '<div class="row30">'+P.map((p,j)=>'<button class="chip" id="e12p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="s12"></div><div class="row30" id="b12"></div><div class="row30" id="f12"></div>');
+  const s=Sc(L.$('#s12'),{dots:scans({seed:5}),basis:'event',A:1,read:(R,s)=>{
+    if(cur<0)return 'Pick a case. The red step line is where each minute is declared done (1 minute after it ends).';
+    if(cur===0)return s.basis==='proc'?vd('no','Fake spike')+'By processing time 10:03 shows 0 and 10:04 shows 120. Switch to event time.':vd('ok','Holds')+'By event time, with a 1-minute wait, every minute shows 60. The backlog arrived before 10:03 closed.';
+    if(cur===1)return vd('no','Stragglers')+'Ravi’s phone was offline. Its 30 scans from 10:02 arrive about 2 hours late, long after 10:02 closed. Drop them and count the drops, or publish a correction.';
+    if(cur===2)return s.fix?vd('ok','Fixed')+'Received − sent showed the phone was 1 hour slow, so its 40 scans move back to 10:05.':vd('no','Wrong window')+'A courier’s phone clock is 1 hour slow, so 40 scans are stamped 09:05 and miss 10:05 entirely. Try the three-timestamp fix.';
+    return vd('no',R.lateN*10+' scans late')+'Closing each minute the instant it ends turns ordinary network lag into stragglers: '+Math.round(R.lateN/R.tot*100)+'% of scans miss their window.';}});
+  const bc=basisChips(L.$('#b12'),s);bc[0].classList.add('sel');
+  P.forEach((p,j)=>{L.$('#e12p'+j).onclick=()=>{P.forEach((_,q)=>L.$('#e12p'+q).classList.toggle('sel',q===j));cur=j;s.dots=p.dots();s.basis=p.basis;s.A=p.A;s.fix=false;
+    bc.forEach((b,q)=>b.classList.toggle('sel',q===(p.basis==='proc'?1:0)));
+    L.$('#f12').innerHTML=j===2?'<button class="btn" id="fx12">'+L.ic('clock')+'Fix with three timestamps</button>':'';
+    if(j===2)L.$('#fx12').onclick=()=>{s.fix=true;s.draw();};
+    s.draw();seen.add(j);
+    if(seen.size===P.length&&!shown){shown=true;L.sheet('info','Event time has limits too','It fixes processing artifacts, but late data still forces a choice (drop or correct), and it’s only as good as the timestamps. How long to wait is a trade-off between speed and completeness.');L.done();}};});}},
+
+{part:1,src:'Chapter 11 · Knowing when you’re ready',pts:1,
+ solve:async L=>{L.$('#b13').children[0].click();const r=L.$('#r13');r.value=2;r.dispatchEvent(new Event('input'));L.$('#k13').click();},
+ run(L){
+  let done=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame wants per-minute scan counts that leave out at most 2% of scans and are published within 2½ minutes of each minute’s end. Set it up.</h1>'+
+   '<div class="row30" id="b13"></div><div class="rng30"><label for="r13">Wait before declaring a minute done</label><b id="o13">0 min</b><input type="range" id="r13" min="0" max="4" step="0.5" value="0"></div>'+
+   '<div id="s13"></div><div class="mtr30" id="m13"></div><button class="btn pri" id="k13">Check</button><p class="cap30 sm">Today’s data: normal network lag, some slow uploads, and a redeploy at 10:06. Targets are illustrative.</p>');
+  const s=Sc(L.$('#s13'),{dots:scans({seed:5,lag:'real',redeploy:6}),basis:'proc',A:0,read:(R,s)=>s.basis==='proc'?'Processing time publishes each minute at once, but scans land in the wrong minute.':'Event time: scans count in the minute they happened; anything later than the wait is a straggler.',
+    on:(R,s)=>{const ev=s.basis==='event',miss=ev?R.lateN:R.off/2,pct=Math.round(miss/R.tot*1000)/10,delay=ev?s.A:0;
+      s.res={pct,delay,ok:pct<=2&&delay<=2.5};
+      const m=L.$('#m13');if(m)m.innerHTML='<span class="'+(pct<=2?'ok':'no')+'"><small>'+(ev?'Left out of first count':'Counted in wrong minute')+'</small>'+pct+'% of scans</span><span class="'+(delay<=2.5?'ok':'no')+'"><small>Published after</small>'+(ev?delay+' min':'at once')+'</span>';}});
+  basisChips(L.$('#b13'),s)[1].classList.add('sel');s.draw();
+  L.$('#r13').oninput=e=>{s.A=+e.target.value;L.$('#o13').textContent=s.A+' min';s.draw();};
+  L.$('#k13').onclick=function(){if(done)return;done=true;this.remove();const r=s.res,ok=s.basis==='event'&&r.ok;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Accurate and quick enough':'Not yet',(ok?'Counting by event time with a '+s.A+'-minute wait catches almost every late scan and still publishes on time. ':s.basis==='proc'?'Processing time publishes at once, but the redeploy and slow uploads put scans in the wrong minute. ':r.pct>2?'Too few minutes of waiting: slow uploads become stragglers. ':'That waits too long before publishing. ')+
+      'The trade-off: wait longer for completeness, or publish sooner and handle stragglers: send corrections, or drop them while counting drops as a metric and alerting if they grow. Here 2 to 2½ minutes works.');L.done();};}},
+
 /* ---------- PART 3: STREAM JOINS ---------- */
-{part:2,src:'Chapter 11 · Stream-stream join (window join)',run(L){
-  L.h(L.kick('learn','Stream joins')+'<h1 class="q">Stream-stream join: match events that belong together</h1>'+
-   L.prose('Stream pipelines need joins just as batch jobs do. But a stream can deliver a new event at any moment, which makes joining harder. The book separates three kinds.')+
-   L.prose('In a <b>stream-stream join</b>, both inputs are activity events. The book’s case: to measure click-through rates, join each search event with the click event that has the same session ID. The click may come seconds or weeks later, may arrive <i>before</i> the search because of network delays, or may never come. So you choose a window, such as one hour.')+
-   L.flow([['list','Keep state','the last hour of both kinds, indexed by session ID'],['check','Match','emit “result 3 was clicked”'],['clock','Expire','emit “nothing was clicked”']])+
-   L.note('Copying the search details into the click event is not the same as a join. It only tells you about searches that got a click, never about the ones that didn’t.','info'));
+{part:2,src:'Chapter 11 · Stream Joins',run(L){
+  L.h(L.kick('learn','Stream joins')+'<h1 class="q">Three kinds of join, one shared trick: keep state</h1>'+P_JOINS+
+   '<p class="cap30">Each join keeps state from one input and looks it up for events from the other. Inputs are activity events or a table’s changelog from '+L.g('cdc','change data capture')+'. New events never stop, so it’s harder than in batch.</p>'+
+   more('Why a local copy? And the Twitter case','Querying a remote database for every event is slow and can overload it. So the job keeps its own copy, like a map-side hash join in batch, kept current from the table’s changelog. Table-table is the book’s Twitter case: home timelines are a cache of tweets joined with follows, updated on every tweet, delete, follow and unfollow.'));
   L.done();}},
-{part:2,src:'Chapter 11 · Stream-table join (stream enrichment)',run(L){
-  L.h(L.kick('learn','Two more joins')+'<h1 class="q">Stream-table and table-table joins</h1>'+
-   L.lanes([['eye','Stream-table (enrichment)','Activity events joined with a database table, such as adding profile details to each event. A remote query per event is slow and can overload the database, so the processor keeps a <b>local copy</b>, kept current by change data capture. For the table side, the window reaches back to the beginning of time.',1],
-            ['layers','Table-table (view upkeep)','Both inputs are database changelogs. Every change on one side is joined with the latest state of the other. The book’s case: Twitter timelines, updated from tweet and follow events, are a cached result of joining the tweets and follows tables.',2]]));
-  L.done();}},
-{part:2,src:'Chapter 11 · Stream-table join (stream enrichment)',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh enriches scans with merchant details</h1>');
-  L.beats(L.card,[
-   ['The need','Notifications must name the shop a parcel comes from and use that merchant’s chosen wording. Scan events carry only a merchant ID.'],
-   ['The tempting way','Tobias suggests querying the Parcel DB for each of the millions of scans a day. That’s slow, and during Peak Week it could overload the database.'],
-   ['A local copy','Instead the job loads the merchants table into a local hash table, much like a map-side hash join in batch.'],
-   ['Kept current','A batch job uses a fixed snapshot, but this job runs for months while merchants change their settings. So it also subscribes to the merchants table’s change stream and updates its copy.'],
-   ['The result','Two streams in, one out: scans and merchant changes go in; enriched scans come out.']],
-   'A stream-table join is really a join of two streams: the activity events, and the changelog that keeps the local table up to date.');}},
-{part:2,src:'Chapter 11 · Stream Joins',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh wants to know how often a “card left, nobody home” event is followed by the recipient booking a redelivery within 48 hours. Which join is that?</h1>');
-  L.mc(L.card,['A stream-table join','A table-table join','A stream-stream join'],2,
-   'Two kinds of activity events, matched by parcel within a 48-hour window: a stream-stream (window) join.',
-   'Neither input is a database table here. Both are activity events, matched within a time window: a stream-stream join.');}},
+
+{part:2,src:'Chapter 11 · Stream-stream join (window join)',
+ solve:async L=>{for(let j=0;j<7;j++){const b=L.$('#n15');if(b&&!b.hidden)b.click();}},
+ run(L){
+  const S=[{clk:'Mon 09:55',cap:'Two streams flow in: “card left, nobody home” scans and “redelivery booked” events. Linh’s job keeps both for 48 hours, indexed by parcel.'},
+    {clk:'Mon 10:00',inc:['c','OP-48213 · card left'],cap:'No booking for OP-48213 yet, so the scan waits in state.'},
+    {clk:'Mon 11:30',inc:['c','OP-48250 · card left'],cap:'Another parcel waits.'},
+    {clk:'Mon 12:05',inc:['b','OP-48277 · rebooked'],cap:'A booking for OP-48277 arrives <b>before</b> its card-left scan: network delays reorder streams. It waits too.'},
+    {clk:'Mon 12:06',inc:['c','OP-48277 · card left 11:50'],out:['ok','OP-48277 rebooked 15 min after the card'],rm:'OP-48277',cap:'The late scan finds its booking in state: a match. Both leave the state.'},
+    {clk:'Tue 09:00',inc:['b','OP-48213 · rebooked'],out:['ok','OP-48213 rebooked after 23 h'],rm:'OP-48213',cap:'Almost a day later, OP-48213’s booking finds its card in state. Still inside 48 hours.'},
+    {clk:'Wed 11:30',out:['nm','OP-48250: no redelivery booked'],rm:'OP-48250',cap:'48 hours pass with no booking for OP-48250. The window expires and the job says so.'}];
+  let k=0;const st={c:[],b:[]},out=[];
+  L.h(L.kick('ex','Stream-stream join')+'<h1 class="q">How often does a “card left” lead to a redelivery within 48 hours? Step through Linh’s join.</h1>'+
+   '<div class="jn30"><div class="box"><div class="hd">Arriving now <span class="clk" id="k15"></span></div><div id="i15"><span class="small">Nothing yet</span></div></div><div class="ar">▼</div>'+
+   '<div class="box st"><div class="hd">Job state · last 48 h, by parcel</div><div class="cols"><div id="sc15"></div><div id="sb15"></div></div></div><div class="ar">▼</div>'+
+   '<div class="box"><div class="hd">Output</div><div id="o15"><span class="small">Nothing yet</span></div></div></div>'+
+   '<div class="stepcap30" id="c15"></div><button class="btn pri" id="n15">Next event '+L.ic('arrow')+'</button><p class="cap30 sm">The 48-hour window, parcels and times are illustrative.</p>');
+  const ev=(cls,t)=>'<span class="ev '+cls+'">'+t+'</span>';
+  const paint=fresh=>{const s=S[k];L.$('#k15').textContent=s.clk;
+    L.$('#i15').innerHTML=s.inc?ev((s.inc[0]==='b'?'bk ':'')+'new',s.inc[1]):'<span class="small">'+(k?'No event: the clock moves on':'Nothing yet')+'</span>';
+    L.$('#sc15').innerHTML='<div class="small"><b>Card left</b></div>'+st.c.map(x=>ev(x===fresh?'new':'',x)).join('');
+    L.$('#sb15').innerHTML='<div class="small"><b>Rebooked</b></div>'+st.b.map(x=>ev('bk'+(x===fresh?' new':''),x)).join('');
+    L.$('#o15').innerHTML=out.length?out.map(o=>ev(o[0],o[1])).join(''):'<span class="small">Nothing yet</span>';
+    L.$('#c15').innerHTML='<span class="n">Step '+(k+1)+' of '+S.length+'</span>'+s.cap;};
+  paint();
+  L.$('#n15').onclick=()=>{k++;const s=S[k];let fresh=null;
+    if(s.rm){st.c=st.c.filter(x=>x.indexOf(s.rm)!==0);st.b=st.b.filter(x=>x.indexOf(s.rm)!==0);}
+    else if(s.inc){fresh=s.inc[1];(s.inc[0]==='c'?st.c:st.b).push(fresh);}
+    if(s.out)out.push(s.out);paint(fresh);
+    if(k===S.length-1){L.$('#n15').hidden=true;L.sheet('info','2 of 3 rebooked','Only a join can report OP-48250. Copying card details into booking events would show parcels that were rebooked, never the ones that weren’t, and the rate needs both.');L.done();}};}},
+
 {part:2,src:'Chapter 11 · Time-dependence of joins',run(L){
-  L.h(L.kick('learn','Time-dependence of joins')+'<h1 class="q">Which version of the table do you join with?</h1>'+
-   L.prose('All three joins keep state built from one input and look it up for messages from the other. So the <b>order</b> of the state changes matters: follow then unfollow is not the same as unfollow then follow. A partitioned log keeps order within a partition, but usually not across streams or partitions.')+
-   L.prose('So if a merchant changes its settings just as scans arrive, which scans get the old settings and which the new? If the order across streams isn’t fixed, the join is <b>nondeterministic</b>: rerun the job on the same input and you may get a different result.')+
-   L.note('The book’s example is tax rates. Joining sales with tax rates should use the rate on the day of the sale, not today’s. Data warehouses call this a <b>slowly changing dimension</b>. The fix: give each version of the record its own ID and store that ID with the sale. The join becomes deterministic, but log compaction is no longer possible, since every version must be kept.','scale'));
+  L.h(L.kick('learn','Time-dependence of joins')+'<h1 class="q">Which version of the table do you join with?</h1>'+P_TIMEDEP+
+   '<p class="cap30">The table changes, and order across streams isn’t guaranteed, so a rerun can give a different answer: the join is <b>nondeterministic</b>. Fix: give each version an ID and store it on the record.</p>'+
+   more('The fine print','Warehouses call this a <b>slowly changing dimension</b>. A partitioned log keeps order within one partition only. The cost of version IDs: every version must be kept, so the table’s changelog can’t use '+L.g('compaction','log compaction')+'.'));
   L.done();}},
+
+{part:2,src:'Chapter 11 · Stream-table join (stream enrichment)',pts:1,
+ solve:async L=>{L.$('#ca17').children[1].click();L.$('#cb17').children[1].click();L.$('#k17').click();},
+ run(L){
+  const RUNS=[{nm:'Live: 28 Feb → 1 Mar',sub:'The job started on 20 Feb. The price rises at midnight.',rows:[['OP-47912 · 28 Feb 23:50','v1',4.20],['OP-47913 · 1 Mar 00:10','v2',4.60],['OP-47960 · 1 Mar 09:00','v2',4.60]]},
+    {nm:'Rerun February in April',sub:'Linh fixes an invoice bug and replays February’s bookings.',rows:[['OP-47012 · 3 Feb','v1',4.20],['OP-47388 · 14 Feb','v1',4.20],['OP-47790 · 27 Feb','v1',4.20]]}];
+  let copy=-1,join=-1,run=0,done=false;
+  const got=(r,row)=>{if(r===0){if(join===0)return copy===0?4.20:row[2];return copy===0&&row[1]==='v2'?null:row[2];}return join===0?4.60:row[2];};
+  const why=r=>{if(copy<0||join<0)return 'Pick both settings.';
+    if(r===0){if(copy===0)return join===0?'The copy was loaded on 20 Feb and never updated, so March bookings get February’s price.':'The copy was loaded on 20 Feb, so it has never heard of v2.';return 'The change stream updates the copy at midnight, so each booking finds its price.';}
+    return join===0?'The copy now holds only the latest price, so February gets March’s $4.60.':'Each booking carries v1, and v1 is still kept, so February gets $4.20.';};
+  L.h(L.kick('pr','Join lab')+'<h1 class="q">Linh’s billing job joins each delivered booking with Otterpost’s price list. Make both runs charge the right price.</h1>'+
+   '<svg class="pic30" viewBox="0 0 340 50" role="img" aria-label="Price list: v1 $4.20 until 28 February, v2 $4.60 from 1 March">'+rc(8,8,160,30,'h2-bg','h2',7)+tx(18,28,'v1 · $4.20 · to 28 Feb','t30')+rc(172,8,160,30,'h3-bg','h3',7)+tx(182,28,'v2 · $4.60 · from 1 Mar','t30')+'</svg>'+
+   '<div class="lbl30">The job’s local copy of the price list</div><p class="cap30 sm" style="margin-top:2px">Local, because a remote query per booking is slow and can overload the database: like a map-side hash join.</p><div class="row30" id="ca17"></div>'+
+   '<div class="lbl30">Each booking joins with</div><div class="row30" id="cb17"></div>'+
+   '<div class="lbl30">Run</div><div class="row30" id="cr17"></div><div id="o17"></div><button class="btn pri" id="k17">Check both runs</button><p class="cap30 sm">Prices, dates and bookings are illustrative.</p>');
+  const paint=()=>{const R=RUNS[run];let h='<div class="rd30" style="min-height:0"><b>'+R.nm+'.</b> '+R.sub+'</div><table class="tb30"><tr><th>Booking</th><th>Should be</th><th>Charged</th></tr>';
+    R.rows.forEach(row=>{const g=(copy<0||join<0)?undefined:got(run,row);h+='<tr><td>'+row[0]+'</td><td>$'+row[2].toFixed(2)+' ('+row[1]+')</td>'+
+      (g===undefined?'<td>—</td>':g===null?'<td class="no">no price ✗</td>':'<td class="'+(g===row[2]?'ok':'no')+'">$'+g.toFixed(2)+(g===row[2]?' ✓':' ✗')+'</td>')+'</tr>';});
+    L.$('#o17').innerHTML=h+'</table><div class="small">'+why(run)+'</div>';};
+  chips(L.$('#ca17'),['Loaded once at start','Kept current by CDC'],j=>{copy=j;paint();});
+  chips(L.$('#cb17'),['The latest price','The price version on the booking'],j=>{join=j;paint();});
+  chips(L.$('#cr17'),RUNS.map(r=>r.nm),j=>{run=j;paint();})[0].classList.add('sel');paint();
+  L.$('#k17').onclick=function(){if(done)return;if(copy<0||join<0){L.err('Pick both settings first');return;}done=true;this.remove();
+    const ok=copy===1&&join===1;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Both runs right':'One run still charges the wrong price',
+      'A change stream keeps the live copy current (a stream-table join is really a join of two streams). The version ID on each booking makes reruns repeatable. The cost: every price version must be kept, so no log compaction.');L.done();};}},
+
 {part:2,src:'Chapter 11 · Summary',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which join?',['Stream-stream','Stream-table','Table-table'],[
    ['Add each courier’s vehicle type, from the couriers table, to every GPS ping.',1,'Activity events enriched from a table kept current by change data capture: stream-table.'],
-   ['Recipients follow several parcels. Keep each “my parcels” page current from changes to the parcels table and the follows table.',2,'Both inputs are changelogs, and the output is a maintained view of their join, just like Twitter timelines: table-table.'],
+   ['Recipients follow several parcels. Keep each “my parcels” page current from changes to the parcels table and the follows table.',2,'Both inputs are changelogs, and the output is a maintained view of their join, like Twitter timelines: table-table.'],
    ['Match each “out for delivery” scan with the “delivered” scan for the same parcel within 12 hours.',0,'Two activity events matched within a window. Both come from the same stream, which makes it a self-join.'],
    ['Attach the current zone name, from the zones table, to each scan event.',1,'Enriching events with table data: stream-table.']]);}},
-{part:2,src:'Chapter 11 · Time-dependence of joins',pts:1,run(L){
-  L.h(L.kick('pr','Old data, new prices')+'<h1 class="q">Otterpost raised its prices on 1 March. In April, Linh reruns February’s bookings to fix an invoice bug, joining each booking with the price table. What goes wrong, and what’s the fix?</h1>');
-  L.mc(L.card,['Nothing goes wrong; today’s prices work fine','February gets March prices; store a price-version ID','Bookings must first be sorted by price to join'],1,
-   'The join must use the price in force at booking time. A version ID on each booking makes the join deterministic, at the cost of keeping every price version.',
-   'Joining with today’s table charges February bookings March prices. As in the book’s tax-rate case, record which price version applied on each booking.');}},
 
 /* ---------- PART 4: FAULT TOLERANCE ---------- */
 {part:3,src:'Chapter 11 · Fault Tolerance',run(L){
-  L.h(L.kick('learn','Fault tolerance')+'<h1 class="q">Exactly-once, or rather effectively-once</h1>'+
-   L.prose('A failed batch task is simply rerun and its partial output thrown away. Inputs never change and output appears only when a task succeeds, so the result looks as if each record was processed <b>exactly once</b>, even if some were really processed twice. '+L.g('exactlyonce','Effectively-once')+' would be a more accurate name.')+
-   L.prose('A stream job can’t hold back its output until it’s finished, because it never finishes. Two ways to get close:')+
-   L.lanes([['box','Microbatching','Cut the stream into blocks of about a second and treat each like a tiny batch job (Spark Streaming). Smaller blocks mean more overhead, bigger ones more delay. It also gives a tumbling window by processing time.',1],
-            ['shield','Checkpointing','Now and then, write a checkpoint of the state to durable storage, triggered by barriers in the stream (Apache Flink). After a crash, restart from the last checkpoint and discard output since then.',2]])+
-   L.note('Both give exactly-once <b>inside</b> the framework. But once output leaves it, as a database write, a message to another broker or an email, it can’t be thrown away. A restarted task then causes that side effect twice.','alert'));
+  L.h(L.kick('learn','Fault tolerance')+'<h1 class="q">“Exactly once” really means effectively once</h1>'+P_ONCE+
+   '<p class="cap30">A batch job hides failures: output appears only on success, so each record seems processed once ('+L.g('exactlyonce','exactly-once semantics')+'). A stream never finishes, so jobs cut it into microbatches or checkpoints instead.</p>'+
+   more('Microbatch or checkpoint?','Smaller microbatches cost more overhead; bigger ones add delay. Microbatches also quietly make a tumbling window by processing time. Checkpoints don’t force a window size. Neither can recall a database write or an email once it has left the framework.'));
   L.done();}},
-{part:3,src:'Chapter 11 · Atomic commit revisited',run(L){
-  L.h(L.kick('learn','Atomic commit and idempotence')+'<h1 class="q">Two ways to make side effects count once</h1>'+
-   L.list([['lock','Atomic commit','All the effects of processing an event happen together, or none do: messages sent, emails, database writes, state changes, and moving the consumer offset forward. Chapter 9’s XA had problems, but some systems do this efficiently by keeping the transactions inside the framework and grouping several messages per transaction.'],
-     ['check','Idempotence','An '+L.g('idempotence','idempotent')+' operation has the same effect however many times you do it. Setting a key to a fixed value is idempotent; adding 1 to a counter is not. A little extra data can often fix that: store the offset of the message that caused each write, so a repeat can be spotted and skipped.']],3)+
-   L.note('Idempotence relies on three things: a restarted task replays the same messages in the same order (a log-based broker does), processing is deterministic, and nobody else updates the same value at the same time. When failing over to another node, fencing may be needed so a node wrongly thought dead can’t interfere.','info'));
-  L.done();}},
-{part:3,src:'Chapter 11 · Idempotence',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which of these can a restarted job safely repeat?</h1>');
-  L.mc(L.card,['Add 1 to parcel 88’s attempt counter','Set parcel 88’s status to “delivered”','Email the recipient that it was delivered'],1,
-   'Setting a key to a fixed value is idempotent: the second write changes nothing.',
-   'Adding 1 twice gives the wrong count, and a second email is a second email. Setting the status to a fixed value is the one that’s safe to repeat.');}},
-{part:3,src:'Chapter 11 · Idempotence',pts:1,
- solve:async L=>{const c=L.$('#dz').children;c[0].click();c[1].click();},
+
+{part:3,src:'Chapter 11 · Microbatching and checkpointing',
+ solve:async L=>{const r=L.$('#r20');r.value=6;r.dispatchEvent(new Event('input'));L.$('#go20').click();await L.sleep(1700);},
  run(L){
-  const D=[['Plain increment',[['Process offset 7,041: counter 1,203 → 1,204',''],['Crash before offset 7,041 is recorded','no'],['Restart replays offset 7,041: counter 1,204 → 1,205','no']],'1,205','Wrong: one delivery counted twice'],
-           ['Store the offset with the value',[['Process offset 7,041: write 1,204, last offset 7,041',''],['Crash before the consumer offset is recorded','no'],['Restart replays 7,041: stored offset is already 7,041, so skip','ok']],'1,204','Right: counted once']];const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Linh’s job adds 1 to Bramble & Bolt’s “delivered today” counter in an external database for each delivered scan. It crashes after handling offset 7,041 but before recording that offset. Run the crash with each design.</h1><div id="dz"></div>'+
-   '<div id="out" style="background:var(--soft);border-radius:16px;padding:12px 14px;margin:8px 0;min-height:110px"><div class="small">Pick a design above.</div></div><div id="iq"></div>');
-  D.forEach((d,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic('play')+d[0];
-    b.onclick=()=>{[...L.$('#dz').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#out').innerHTML=d[1].map((s,k)=>'<div class="small" style="padding:3px 0;'+(s[1]?'color:var(--'+s[1]+');font-weight:600':'')+'">'+(k+1)+'. '+s[0]+'</div>').join('')+
-       '<div class="meterrow"><div class="lb">Counter now</div><b style="font-size:20px">'+d[2]+'</b></div><div class="small" style="color:var(--'+(j?'ok':'no')+')">'+d[3]+'</div>';
-      if(seen.size===2&&!L.$('#iq').innerHTML){const q=L.$('#iq');q.innerHTML='<h2 class="sub">The offset trick only works if one thing is true about the restart. Which?</h2>';
-        L.mc(q,['The database never crashes during a write','The replay brings the same messages in the same order','Counters are naturally idempotent anyway'],1,
-         'If the replay arrived in a different order or with different messages, the stored offset couldn’t tell what was already applied. A log-based broker gives you that same order.',
-         'The database may crash, and counters are not idempotent: that’s the whole problem. The trick relies on the restart replaying the same messages in the same order, as a log-based broker does.');}};
-    L.$('#dz').appendChild(b);});}},
-{part:3,src:'Chapter 11 · Rebuilding state after a failure',run(L){
-  L.h(L.kick('learn','Rebuilding state after a failure')+'<h1 class="q">Getting the state back after a crash</h1>'+
-   L.prose('Windowed counters, averages and the tables used for joins are all state, and must survive a crash. Three approaches:')+
-   L.list([['shield','Keep it remote','Store state in a replicated remote database. Simple, but querying it for every message can be slow.'],
-     ['layers','Keep it local, copy it out','Keep state in the processor and replicate it now and then. Flink snapshots operator state to durable storage such as HDFS. Samza and Kafka Streams send state changes to a log-compacted topic, much like change data capture. VoltDB processes each message on several nodes.'],
-     ['cycle','Rebuild it','Sometimes no copy is needed: replay the input events for a short window, or rebuild a local table from its compacted change stream.']],2)+
-   '<p class="small" style="margin-top:10px">The best choice depends on the hardware. In some systems the network is faster than the disk. There’s no universally ideal trade-off.</p>');
+  let shown=false;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Linh’s job adds 1 to Bramble & Bolt’s “delivered today” counter for each delivered scan. Pick a crash point and a checkpoint interval, then run it.</h1>'+
+   '<div id="d20"></div><div class="lbl30">Checkpoint (4 scans a second, illustrative)</div><div class="row30" id="i20"></div>'+
+   '<div class="rng30"><label for="r20">Crash right after offset</label><b id="o20">no crash</b><input type="range" id="r20" min="0" max="15" step="1" value="15"></div>'+
+   '<button class="btn pri" id="go20">'+L.ic('play')+'Run</button>');
+  const od=Odo(L.$('#d20'),{idle:'Move the crash slider, then run. After a crash the job restarts from its last checkpoint, which only the framework controls.',
+    read:(f,o)=>f.over>0?'Restarted from the checkpoint and replayed '+f.over+' scan'+(f.over>1?'s':'')+' it had already counted. The outside database can’t take back the extra +1s.':'No scan was counted twice.',
+    on:f=>{if(f.over>0&&!shown){shown=true;L.sheet('info','Replayed, so counted twice','Scans between the last checkpoint and the crash were processed twice. Inside the framework that’s invisible; in the outside counter it sticks. Move the crash or the interval and the overshoot changes.');L.done();}}});
+  chips(L.$('#i20'),IVL,j=>{od.o.I=IV[j];od.reset();})[1].classList.add('sel');
+  L.$('#r20').oninput=e=>{const v=+e.target.value;od.o.crash=v===15?-1:v;L.$('#o20').textContent=v===15?'no crash':'7,0'+(41+v);od.reset();};
+  od.o.crash=-1;
+  L.$('#go20').onclick=()=>od.run();}},
+
+{part:3,src:'Chapter 11 · Microbatching and checkpointing',pts:1,
+ solve:async L=>{L.$('#p21').children[3].click();L.$('#go21').click();await L.sleep(1900);},
+ run(L){
+  const PR=['Exact','Over by 3','Over by 11','Over by 15'];let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">To save work, Linh checkpoints only every 4 seconds (16 scans). The job crashes right after offset 7,055. How far off is the counter?</h1>'+
+   '<div class="row30" id="p21"></div><button class="btn pri" id="go21" hidden>'+L.ic('play')+'Run it</button><div id="d21"></div>');
+  const od=Odo(L.$('#d21'),{init:{I:16,crash:14},idle:'The last checkpoint is at 7,040, before the first scan on the tape.'});
+  chips(L.$('#p21'),PR,j=>{if(p!==null)return;p=j;L.$('#p21').querySelectorAll('.chip').forEach(b=>b.disabled=true);L.$('#go21').hidden=false;});
+  L.$('#go21').onclick=function(){this.remove();try{L.$('#d21').scrollIntoView({block:'start',behavior:'smooth'});}catch(e){}od.run();const t=setInterval(()=>{if(!L.$('#d21')){clearInterval(t);return;}const f=od.last();if(!f)return;clearInterval(t);
+    const ok=p===3;L.award(ok);L.sheet(ok?'ok':'no',ok?'Over by 15':'It’s over by 15','The last checkpoint was 7,040, so the restart replayed 7,041 to 7,055 and added 1 for each again. Rarer checkpoints mean less overhead but more repeated work after a crash.');L.done();},60);};}},
+
+{part:3,src:'Chapter 11 · Atomic commit revisited',run(L){
+  L.h(L.kick('learn','Atomic commit and idempotence')+'<h1 class="q">Two ways to make each effect count once</h1>'+P_TWO+
+   '<p class="cap30"><b>Atomic commit</b>: an event’s effects and the '+L.g('offset','offset')+' move happen together or not at all. <b>Idempotence</b>: make repeats harmless. Setting a value is '+L.g('idempotence','idempotent')+'; adding 1 isn’t, unless you store the offset with it.</p>'+
+   more('How this differs from XA','Unlike XA, efficient atomic commit keeps transactions inside the framework (Google Cloud Dataflow, VoltDB; planned for Kafka) and groups several messages per transaction to cut overhead.'));
   L.done();}},
+
+{part:3,src:'Chapter 11 · Idempotence',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#e23p'+j).click();await L.sleep(5);}},
+ run(L){
+  const P=[{nm:'Add 1',o:{design:'plain',I:4,crash:6,special:null}},
+    {nm:'Store offset',o:{design:'offset',I:4,crash:6,special:null}},
+    {nm:'Commit together',o:{design:'atomic',I:4,crash:6,special:null}},
+    {nm:'Out of order',o:{design:'offset',I:16,crash:6,special:'reorder'}},
+    {nm:'Old node wakes',o:{design:'offset',I:4,crash:6,special:'zombie',fence:false}}];
+  const CAP=['Plain +1: the three scans after the 7,044 checkpoint are added twice.',
+    'Each write stores its offset. On replay, 7,045 to 7,047 are already applied, so they’re skipped.',
+    'Increments wait for the checkpoint and commit with the offset. The crash throws away the uncommitted three; the replay redoes them once.',
+    'No log: a queue redelivered 7,045 after 7,047. The offset check thinks it’s a repeat and skips it. Idempotence needs the same messages replayed in the same order.',
+    ''];
+  let cur=-1,shown=false;const seen=new Set();
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Same crash after offset 7,047, five designs. Which keep the counter exact, and where do they break?</h1>'+
+   '<div class="row30">'+P.map((p,j)=>'<button class="chip" id="e23p'+j+'">'+p.nm+'</button>').join('')+'</div><div id="d23"></div><div class="row30" id="f23"></div>');
+  const od=Odo(L.$('#d23'),{idle:'Pick a design. The crash comes right after offset 7,047.',
+    read:(f,o)=>' '+(cur===4?(o.fence?'The old node’s write carries an older '+L.g('fencing','fencing token')+', so the database rejects it.':'The old node wasn’t dead, only paused. It wakes and writes the count it had (1,208), over the newer value. Idempotence assumes no other writer.'):CAP[cur]),
+    on:()=>{if(seen.size===P.length&&!shown){shown=true;L.sheet('info','Exact, within limits','Storing the offset or committing atomically makes replays harmless. Idempotence also needs a deterministic job, the same replay order (a log gives it), and no second writer: fencing stops a node wrongly thought dead.');L.done();}}});
+  P.forEach((p,j)=>{L.$('#e23p'+j).onclick=()=>{P.forEach((_,q)=>L.$('#e23p'+q).classList.toggle('sel',q===j));cur=j;Object.assign(od.o,{fence:false},p.o);seen.add(j);
+    L.$('#f23').innerHTML=j===4?'<button class="btn" id="fx23">'+L.ic('shield')+'Turn on fencing tokens</button>':'';
+    if(j===4)L.$('#fx23').onclick=function(){od.o.fence=true;this.remove();od.run(true);};
+    od.run();};});}},
+
+{part:3,src:'Chapter 11 · Atomic commit revisited',pts:1,
+ solve:async L=>{L.$('#ca24').children[1].click();L.$('#k24').click();},
+ run(L){
+  let d=0,iv=1,done=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Bramble & Bolt’s dashboard must be exact after a crash, at most 1 second behind, with at most 60 transactions a minute. Set up Linh’s job.</h1>'+
+   '<div class="lbl30">How the counter is written</div><div class="row30" id="ca24"></div><div class="lbl30">Checkpoint or microbatch</div><div class="row30" id="cb24"></div>'+
+   '<div class="mtr30" id="m24"></div><div id="d24"></div><div class="row30"><button class="btn" id="go24">'+L.ic('play')+'Run with a crash after 7,051</button><button class="btn pri" id="k24">Check</button></div><p class="cap30 sm">4 scans a second; limits are illustrative.</p>');
+  const od=Odo(L.$('#d24'),{init:{design:'plain',I:4,crash:10},idle:'Run it to watch the crash, or check when you’re ready.'});
+  const meters=()=>{const f=odoSim(od.o).final,behind=d===2?IV[iv]/4:0,tx=d===2?240/IV[iv]:0;
+    L.$('#m24').innerHTML='<span class="'+(f.over===0?'ok':'no')+'"><small>After the crash</small>'+(f.over===0?'exact':f.over>0?'over by '+f.over:'under by '+(-f.over))+'</span>'+
+      '<span class="'+(behind<=1?'ok':'no')+'"><small>Dashboard behind</small>'+(behind?behind+' s':'0 s')+'</span><span class="'+(tx<=60?'ok':'no')+'"><small>Transactions</small>'+tx+' / min</span>';
+    return f.over===0&&behind<=1&&tx<=60;};
+  chips(L.$('#ca24'),DSN,j=>{d=j;od.o.design=DK[j];od.reset();meters();})[0].classList.add('sel');
+  chips(L.$('#cb24'),IVL,j=>{iv=j;od.o.I=IV[j];od.reset();meters();})[1].classList.add('sel');meters();
+  L.$('#go24').onclick=()=>od.run();
+  L.$('#k24').onclick=function(){if(done)return;done=true;this.remove();const ok=meters();L.award(ok);od.run(true);
+    L.sheet(ok?'ok':'no',ok?'Exact and fresh':'Not all three',(d===0?'Plain +1 always overshoots after a crash. ':d===2&&iv===0?'Committing every half second is exact, but costs 120 transactions a minute. ':d===2&&iv>1?'Exact, but the dashboard only moves at each commit, so it lags. ':'')+
+      'Two designs pass: store the offset with the value (exact, instant, no transactions), or commit output and offset together about once a second, as microbatching does.');L.done();};}},
+
+{part:3,src:'Chapter 11 · Rebuilding state after a failure',run(L){
+  L.h(L.kick('learn','Rebuilding state after a failure')+'<h1 class="q">Getting the job’s state back</h1>'+P_REBUILD+
+   '<p class="cap30">Windowed counts, averages and join tables are state, and must survive a crash. Keep it in a remote database, keep it local and copy it out, or rebuild it from the input.</p>'+
+   more('Which tools do what','Flink snapshots operator state to durable storage such as HDFS. Samza and Kafka Streams send state changes to a log-compacted topic, much like CDC. VoltDB processes each message on several nodes.'));
+  L.done();}},
+
 {part:3,src:'Chapter 11 · Rebuilding state after a failure',pts:1,run(L){
   L.h(L.kick('pr','Build it yourself')+'<h1 class="q">The merchant-enrichment job crashed. Tap each piece until it’s a sound recovery plan.</h1>');
   L.sentence(L.card,[['Start with an empty merchants table','Rebuild the merchants table','Ask merchants to resend their settings'],['from the compacted change topic,','from the last hour of scans,','from the courier app’s cache,'],['then add 1 per scan as before.','then write counters only daily.','then store each message’s offset with its write.']],[1,0,2],

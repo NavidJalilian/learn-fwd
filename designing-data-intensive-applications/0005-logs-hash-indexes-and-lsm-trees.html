@@ -13,84 +13,370 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-const LOGBOX='font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;background:var(--soft);border-radius:14px;padding:12px 14px;line-height:1.75;overflow-wrap:anywhere;margin:12px 0';
+/* =====================================================================
+   Lesson 0005 only. Two hands-on models used across the lesson:
+   1. The append tape – a log file drawn as rows of key:value cells, one row
+      group per segment, with the in-memory hash map above it drawing arrows
+      to byte offsets. Appends, full-file scans, one-seek lookups, compaction,
+      tombstones, torn records, lost maps.
+   2. The LSM stack – a sorted memtable with its crash log beside it and the
+      SSTables stacked below, newest first. Writes in any order come out
+      sorted; flush, merge-sort, reads that travel newest to oldest, Bloom
+      filters, crash replay, range scans, and a tuning challenge.
+   Plus this lesson’s own pictures: two engine families, the index seesaw,
+   sequential vs random writes, the hash map that outgrows memory, the
+   sparse-index block finder and the term dictionary.
+   ===================================================================== */
+(function(){const st=document.createElement('style');st.textContent=`
+.card [hidden]{display:none!important}
+.lg-svg{width:100%;display:block;margin:6px 0 2px;user-select:none;-webkit-user-select:none}
+.lg-svg text{font-family:var(--sans)}
+.lg-cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:8px 0 4px}
+.lg-cap .t{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px;letter-spacing:.2px}
+.lg-ro{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px;color:var(--muted);margin:4px 0 6px}
+.lg-ro b{color:var(--ink);font-variant-numeric:tabular-nums;font-weight:600}
+.lg-row{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}
+.lg-row .chip,.lg-row .btn{margin:0;min-height:40px}
+.lg-row .chip[disabled],.lg-row .btn[disabled]{opacity:.45;cursor:not-allowed}
+.lg-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 2px}
+.lg-ill{font-size:12.5px;color:var(--faint);margin:4px 0 0}
+.lg-tasks{margin:6px 0 4px;padding:0;list-style:none}
+.lg-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0;color:var(--muted)}
+.lg-tasks li i{width:18px;height:18px;border-radius:6px;border:2px solid var(--line2);flex:none}
+.lg-tasks li.done{color:var(--ok)}.lg-tasks li.done i{background:var(--ok-strong);border-color:var(--ok-strong)}
+.lg-cells{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;margin:4px 0 6px}
+.lg-cell{border:2px solid var(--c);background:var(--cb);border-radius:9px;padding:5px 0 4px;min-height:46px;white-space:nowrap;letter-spacing:-.1px;display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1.2;color:var(--ink);font:600 12px var(--sans);min-width:0}
+.lg-cell span{font-weight:700;font-size:12px;color:var(--c)}
+.lg-cell.x{border-color:var(--line2);background:var(--soft);opacity:.55;text-decoration:line-through;text-decoration-thickness:2px;text-decoration-color:var(--no-strong)}
+.lg-cell.x span{color:var(--muted)}
+.lg-cell.gone{visibility:hidden}
+.lg-cell.ok{box-shadow:0 0 0 3px var(--ok-strong)}
+.lg-cell.miss{box-shadow:0 0 0 3px var(--no-strong)}
+.lg-file{background:var(--soft);border-radius:14px;padding:8px 8px;margin:6px 0}
+.lg-grid2{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0}
+.lg-grid2 .chip{margin:0;justify-content:center;min-height:42px;padding:8px 6px;white-space:nowrap}
+.lg-rng.st{grid-template-columns:1fr auto;grid-template-areas:"a b" "c c";gap:2px 10px}.lg-rng.st span{grid-area:a}.lg-rng.st b{grid-area:b}.lg-rng.st input{grid-area:c}
+.lg-file .h{font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:4px;display:flex;justify-content:space-between;gap:8px}
+.lg-file .r{display:flex;flex-wrap:wrap;gap:4px}
+.lg-file .r .lg-cell{width:62px;flex:none}
+button.lg-cell{cursor:pointer}
+button.lg-cell.front{box-shadow:0 0 0 3px var(--pri)}
+.lg-tbl{width:100%;border-collapse:collapse;font-size:13.5px;margin:6px 0}
+.lg-tbl td{padding:5px 4px;border-bottom:1px solid var(--line);vertical-align:top}
+.lg-tbl td:last-child{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.lg-tbl b{font-weight:600}
+.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}
+.lg-rng{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:14.5px;margin:6px 0}
+.lg-rng input{width:100%;accent-color:var(--pri);height:32px;margin:0}
+.lg-rng b{font-variant-numeric:tabular-nums;min-width:58px;text-align:right}
+`;document.head.appendChild(st);})();
+
+/* ---------- small helpers ---------- */
+const LG_HALO='paint-order:stroke;stroke:var(--card);stroke-width:3px;stroke-linejoin:round;';
+function lgT(x,y,s,st){return '<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';}
+const LG_KC={'C-0017':'h1','C-0042':'h2','C-0230':'h3','C-0219':'h4','C-0105':'h4','C-0007':'h2','C-0400':'h1','C-0002':'h1','C-0003':'h2','C-0005':'h3','C-0009':'h4','C-0011':'h1','C-0014':'h2'};
+function lgC(k){return LG_KC[k]||'h2';}
+function lgMk(id){return '<defs>'+['h1','h2','h3','h4','ink','pri','no-strong','ok-strong','muted'].map(c=>'<marker id="'+id+'-'+c+'" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L8,4 L0,8z" style="fill:var(--'+c+')"/></marker>').join('')+'</defs>';}
+function lgAr(id,x1,y1,x2,y2,c,w,dash){const d=Math.abs(y2-y1)*.45;const p='M'+x1+' '+y1+' C'+x1+' '+(y1+d)+' '+x2+' '+(y2-d)+' '+x2+' '+y2;
+  return '<path d="'+p+'" style="fill:none;stroke:var(--card);stroke-width:'+((w||2)+3)+'"/><path d="'+p+'" style="fill:none;stroke:var(--'+c+');stroke-width:'+(w||2)+(dash?';stroke-dasharray:4 3':'')+'" marker-end="url(#'+id+'-'+c+')"/>';}
+function lgLine(id,x1,y1,x2,y2,c,w){return '<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:var(--'+c+');stroke-width:'+(w||2)+'" marker-end="url(#'+id+'-'+c+')"/>';}
+function lgSvg(id,inner,H,label){return '<svg class="lg-svg" id="'+id+'" viewBox="0 0 320 '+Math.ceil(H)+'" role="img" aria-label="'+label+'">'+lgMk(id)+inner+'</svg>';}
+function lgTasks(id,items){return '<ul class="lg-tasks" id="'+id+'">'+items.map((t,j)=>'<li data-k="'+j+'"><i></i><span>'+t+'</span></li>').join('')+'</ul>';}
+function lgTick(L,id,k){const li=L.$('#'+id+' li[data-k="'+k+'"]');if(li)li.classList.add('done');return [...L.$$('#'+id+' li')].every(x=>x.classList.contains('done'));}
+async function lgWait(L,sel,n){for(let i=0;i<(n||120)&&!L.$(sel);i++)await L.sleep(25);}
+function lgSet(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+const LG_Z=['W1','W2','W3','W4','W5','E1','E2','E3'];
+function lgFmt(n){return n.toLocaleString('en-US');}
+/* keep codes like C-0466 and OP-48213 from breaking at the hyphen in titles, captions and sheets */
+const lgNbs=s=>s==null?s:String(s).replace(/\b(C|OP)-(\d{4,5})\b/g,'<span style="white-space:nowrap">$1-$2</span>');
+function lgPatch(L){if(L._lg)return;L._lg=1;const h=L.h,sh=L.sheet,fb=L.fb;
+  L.h=x=>h(String(x).replace(/<h1 class="q">([\s\S]*?)<\/h1>/,(m,t)=>'<h1 class="q">'+lgNbs(t)+'</h1>'));
+  L.sheet=(k,t,x,a)=>sh(k,t,lgNbs(x),a);L.fb=(el,t,k)=>fb(el,lgNbs(t),k);}
+
+/* ---------- one key:value cell ---------- */
+function lgCell(x,y,w,h,r){
+  const c=lgC(r.k),tomb=r.tomb,dead=r.dead;
+  const fill=dead?'var(--soft)':tomb?'var(--no-bg)':'var(--'+c+'-bg)';
+  const stroke=dead?'var(--line2)':tomb?'var(--no-strong)':'var(--'+c+')';
+  let s='<g'+(dead?' style="opacity:.62"':'')+'>';
+  if(r.torn){
+    s+='<rect x="'+x+'" y="'+y+'" width="'+(w*.7)+'" height="'+h+'" rx="6" style="fill:var(--no-bg);stroke:var(--no-strong);stroke-width:1.6;stroke-dasharray:4 3"/>'+
+      lgT(x+w*.35,y+15,'C-0','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--no)')+lgT(x+w*.35,y+29,'?','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--no)');
+    return s+'</g>';
+  }
+  s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="6" style="fill:'+fill+';stroke:'+stroke+';stroke-width:1.6"/>';
+  s+=lgT(x+w/2,y+15,r.k,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  s+=lgT(x+w/2,y+29,tomb?'deleted':r.v,'font-size:11px;font-weight:600;text-anchor:middle;fill:'+(tomb?'var(--no)':dead?'var(--muted)':'var(--'+c+')'));
+  if(r.off!=null)s+=lgT(x+w/2,y+h-4,'@'+r.off,'font-size:11px;text-anchor:middle;fill:var(--muted)');
+  if(r.strike)s+='<line x1="'+(x+4)+'" y1="'+(y+20)+'" x2="'+(x+w-4)+'" y2="'+(y+20)+'" style="stroke:var(--no-strong);stroke-width:2"/>';
+  s+='</g>';
+  if(r.scan)s+='<rect x="'+(x-1.5)+'" y="'+(y-1.5)+'" width="'+(w+3)+'" height="'+(h+3)+'" rx="7" style="fill:none;stroke:var(--ink);stroke-width:2.6"/>';
+  if(r.found)s+='<rect x="'+(x-2)+'" y="'+(y-2)+'" width="'+(w+4)+'" height="'+(h+4)+'" rx="8" style="fill:none;stroke:var(--ok-strong);stroke-width:3.2"/>';
+  if(r.inr)s+='<rect x="'+(x-2)+'" y="'+(y-2)+'" width="'+(w+4)+'" height="'+(h+4)+'" rx="8" style="fill:none;stroke:var(--pri);stroke-width:3"/>';
+  return s;
+}
+
+/* ---------- 1. the append tape (segments + optional hash map) ---------- */
+function lgTape(o){
+  const CW=50,CH=o.ch||44,G=3,PER=6,X0=2;
+  let s='',y=2,mapY=-1;const pos={};
+  if(o.before){const b=o.before(y);s+=b[0];y+=b[1];}
+  if(o.map){mapY=y;y+=16+32+28;}
+  const below=!!o.map;
+  o.segs.forEach((sg,si)=>{
+    const lab=lgT(X0,0,sg.label,'font-size:12px;font-weight:600;fill:'+(sg.col||'var(--muted)'));
+    if(!below){s+=lab.replace('y="0"','y="'+(y+12)+'"');y+=17;}
+    if(!sg.recs.length)s+='<rect x="'+X0+'" y="'+y+'" width="314" height="'+CH+'" rx="7" style="fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:5 4"/>'+lgT(160,y+CH/2+4,sg.empty||'empty','font-size:12px;fill:var(--muted);text-anchor:middle');
+    sg.recs.forEach((r,ri)=>{const x=X0+(ri%PER)*(CW+G),yy=y+Math.floor(ri/PER)*(CH+G);pos[si+':'+ri]={x,y:yy};s+=lgCell(x,yy,CW,CH,r);});
+    y+=Math.max(1,Math.ceil(sg.recs.length/PER))*(CH+G)+7;
+    if(below){s+=lab.replace('y="0"','y="'+(y+5)+'"');y+=14;}
+  });
+  if(o.map){
+    s+=lgT(X0,mapY+12,o.mapTitle||'Hash map in memory · key → byte offset','font-size:12px;font-weight:700;fill:'+(o.lost?'var(--no)':'var(--ink)'));
+    const n=o.map.length,cw=Math.min(86,(316-(n-1)*6)/n);
+    o.map.forEach((e,j)=>{const x=X0+j*(cw+6),yy=mapY+17,c=lgC(e.k),lost=o.lost;
+      s+='<rect x="'+x+'" y="'+yy+'" width="'+cw+'" height="32" rx="8" style="fill:var(--card);stroke:'+(lost?'var(--line2)':'var(--'+c+')')+';stroke-width:'+(e.hl?3.2:1.8)+(lost?';stroke-dasharray:4 3':'')+'"/>';
+      s+=lgT(x+cw/2,yy+13,e.k,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+(lost?'var(--faint)':'var(--ink)'));
+      s+=lgT(x+cw/2,yy+27,lost?'lost':'→ '+e.off,'font-size:11px;font-weight:600;text-anchor:middle;fill:'+(lost?'var(--faint)':'var(--'+c+')'));
+      if(!lost&&e.to&&pos[e.to]){const p=pos[e.to];s+=lgAr(o.id,x+cw/2,yy+32,p.x+CW/2,p.y-1,c,e.hl?3:1.8);}});
+  }
+  if(o.after){const a=o.after(y);s+=a[0];y+=a[1];}
+  return {s,H:y,pos};
+}
+/* builds the map for a single-segment tape: newest record per key */
+function lgMapOf(recs,keys,hl){return keys.filter(k=>recs.some(r=>r.k===k)).map(k=>{let i=-1;recs.forEach((r,j)=>{if(r.k===k&&!r.torn)i=j;});return {k,off:recs[i].off,to:'0:'+i,hl:hl===k};});}
+
+/* ---------- 2. the LSM stack ---------- */
+function lgSortRecs(a){return a.slice().sort((x,y)=>x.k<y.k?-1:x.k>y.k?1:0);}
+function lgLsm(o){
+  const id=o.id,CW=50,CH=36,G=3,PER=6;let s='',y=2;
+  const BH=24+4*21+6,MW=188,LX=198,LW=120;
+  const memC=o.memSt==='scan'?'var(--pri)':o.memSt==='found'?'var(--ok-strong)':'var(--line2)';
+  s+='<rect x="2" y="'+y+'" width="'+MW+'" height="'+BH+'" rx="12" style="fill:var(--soft);stroke:'+memC+';stroke-width:'+(o.memSt?2.6:1.5)+(o.memLost?';stroke-dasharray:5 4':'')+'"/>';
+  s+=lgT(12,y+17,'Memtable','font-size:12.5px;font-weight:700;fill:var(--ink)')+(o.memSt?'':lgT(78,y+17,'memory · sorted','font-size:11px;fill:var(--muted)'));
+  if(o.memSt)s+=lgT(184,y+17,{scan:'checking',miss:'not here',found:'found',tomb:'deleted!'}[o.memSt]||'','font-size:11px;font-weight:700;text-anchor:end;fill:'+(o.memSt==='found'||o.memSt==='tomb'?'var(--ok)':'var(--pri)'));
+  if(o.memLost)s+=lgT(96,y+62,'wiped by the crash','font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--no)');
+  else if(!o.mem.length)s+=lgT(96,y+62,'empty','font-size:12px;text-anchor:middle;fill:var(--muted)');
+  o.mem.slice(0,4).forEach((r,j)=>{const yy=y+24+j*21,c=r.tomb?'no':lgC(r.k);
+    s+='<rect x="10" y="'+yy+'" width="'+(MW-16)+'" height="18" rx="5" style="fill:var(--'+(r.tomb?'no-bg':c+'-bg')+');stroke:var(--'+(r.tomb?'no-strong':c)+');stroke-width:'+(r.hl?2.6:1.3)+'"/>'+
+      lgT(17,yy+13.5,r.k,'font-size:11.5px;font-weight:700;fill:var(--ink)')+lgT(MW-12,yy+13.5,r.tomb?'deleted':r.v,'font-size:11px;font-weight:600;text-anchor:end;fill:var(--'+(r.tomb?'no':c)+')');});
+  s+='<rect x="'+LX+'" y="'+y+'" width="'+LW+'" height="'+BH+'" rx="12" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5'+(o.logHl?';stroke:var(--h3);stroke-width:2.6':'')+'"/>';
+  s+=lgT(LX+9,y+16,'Crash log','font-size:12.5px;font-weight:700;fill:var(--ink)')+lgT(LX+9,y+30,'disk · arrival order','font-size:11px;fill:var(--muted)');
+  const lg=o.log||[],sh=lg.slice(-4);
+  if(!lg.length)s+=lgT(LX+LW/2,y+70,o.logGone?'thrown away':'empty','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  sh.forEach((r,j)=>{s+=lgT(LX+9,y+49+j*19,r.k+(r.tomb?' del':' '+r.v),'font-size:11.5px;font-weight:600;fill:var(--'+(r.tomb?'no':lgC(r.k))+')');});
+  if(lg.length>4)s+=lgT(LX+LW-8,y+30,'+'+(lg.length-4),'font-size:11px;text-anchor:end;fill:var(--muted)');
+  y+=BH;
+  s+=lgLine(id,96,y+2,96,y+20,'muted',2)+lgT(106,y+16,o.flushNote||'flush when it reaches a few MB','font-size:11.5px;fill:var(--muted)');
+  y+=24;
+  s+=lgT(2,y+12,'SSTables on disk · newest first','font-size:12.5px;font-weight:700;fill:var(--ink)');y+=18;
+  const top=y;
+  o.ssts.forEach((t,i)=>{
+    const n=o.ssts.length,st=(o.sstSt||{})[i];
+    let lab=t.name||('SSTable '+t.n);if(!t.tmp&&n>1&&i===0)lab+=' (newest)';if(!t.tmp&&n>1&&i===n-1)lab+=' (oldest)';
+    s+=lgT(2,y+12,lab,'font-size:12px;font-weight:600;fill:'+(t.tmp?'var(--pri)':'var(--muted)'));
+    if(o.bloom&&!t.tmp)s+='<rect x="'+(lab.length*6.4+10)+'" y="'+(y+1)+'" width="44" height="15" rx="7" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.2"/>'+lgT(lab.length*6.4+32,y+12.5,'Bloom','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h2)');
+    if(st)s+=lgT(318,y+12,{scan:'reading…',miss:'read: not here',skip:'Bloom: skip',found:'found',tomb:'older: dropped at merge'}[st],'font-size:11.5px;font-weight:700;text-anchor:end;fill:'+(st==='skip'||st==='found'?'var(--ok)':st==='miss'||st==='tomb'?'var(--no)':'var(--pri)'));
+    y+=17;
+    const rows=Math.max(1,Math.ceil(t.recs.length/PER));
+    if(st==='scan'||st==='miss')s+='<rect x="0" y="'+(y-2)+'" width="'+(Math.min(t.recs.length,PER)*(CW+G)+1)+'" height="'+(rows*(CH+G)+1)+'" rx="8" style="fill:none;stroke:var(--'+(st==='scan'?'pri':'no-strong')+');stroke-width:2.2'+(st==='miss'?';stroke-dasharray:4 3':'')+'"/>';
+    s+='<g style="'+(st==='skip'?'opacity:.4':'')+'">';
+    if(!t.recs.length)s+=lgT(4,y+22,'(empty so far)','font-size:11.5px;fill:var(--muted)');
+    t.recs.forEach((r,j)=>{s+=lgCell(2+(j%PER)*(CW+G),y+Math.floor(j/PER)*(CH+G),CW,CH,r);});
+    s+='</g>';
+    y+=rows*(CH+G)+8;
+  });
+  if(o.mergeBracket&&o.ssts.length>1){const x=300;s+='<path d="M'+(x-6)+' '+(top+4)+' h6 V'+(y-10)+' h-6" style="fill:none;stroke:var(--h3);stroke-width:2"/>'+
+    '<text x="'+(x+12)+'" y="'+((top+y)/2)+'" transform="rotate(90 '+(x+12)+' '+((top+y)/2)+')" style="font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h3)">merge</text>';}
+  return {s,H:y};
+}
+/* the LSM engine used by the explore screen and the edge-case lab */
+function LsmBox(L,host,o){
+  o=Object.assign({id:'ls',bloom:false,cap:4},o);
+  const capH='<div class="lg-cap" id="'+o.id+'-cap" aria-live="polite"></div>';
+  host.insertAdjacentHTML('beforeend',(o.capFirst?capH:'')+'<div id="'+o.id+'-pic"></div>'+(o.capFirst?'':capH));
+  const S={mem:(o.mem||[]).map(r=>Object.assign({},r)),log:(o.log||o.mem||[]).map(r=>Object.assign({},r)),ssts:(o.ssts||[]).map(t=>({n:t.n,recs:t.recs.map(r=>Object.assign({},r))})),
+    bloom:o.bloom,memSt:null,sstSt:{},memLost:false,busy:false,made:(o.ssts||[]).length,logGone:false,count:{}};
+  const pic=host.querySelector('#'+o.id+'-pic'),cap=host.querySelector('#'+o.id+'-cap');
+  const alive=()=>pic.isConnected;
+  function draw(){if(!alive())return;const r=lgLsm({id:o.id+'-s',mem:S.mem,log:S.log,ssts:S.ssts,bloom:S.bloom,memSt:S.memSt,sstSt:S.sstSt,memLost:S.memLost,logGone:S.logGone});
+    pic.innerHTML=lgSvg(o.id+'-s',r.s,r.H,'Memtable and crash log on top; SSTables stacked below, newest first');}
+  function say(t,h){cap.innerHTML=(t?'<span class="t">'+t+'</span>':'')+lgNbs(h);}
+  const nap=ms=>L.sleep(o.fast?Math.min(ms,60):ms);
+  function nextVal(k){S.count[k]=(S.count[k]||0)+1;return LG_Z[(k.charCodeAt(5)+S.count[k]*3)%LG_Z.length];}
+  async function write(k,v,tomb){
+    if(S.busy)return;const rec={k,v:v||nextVal(k),tomb:!!tomb};
+    S.log.push(Object.assign({},rec));S.logGone=false;
+    const at=S.mem.findIndex(r=>r.k===k);if(at>=0)S.mem[at]=rec;else S.mem.push(rec);
+    S.mem=lgSortRecs(S.mem);S.mem.forEach(r=>r.hl=r===rec);draw();
+    if(S.mem.length>=o.cap&&o.autoFlush!==false){await nap(350);await flush();}
+    return rec;}
+  async function flush(){
+    if(!S.mem.length||!alive())return;S.busy=true;S.mem.forEach(r=>r.hl=true);draw();await nap(400);if(!alive())return;
+    S.made++;S.ssts.unshift({n:S.made,recs:S.mem.map(r=>({k:r.k,v:r.v,tomb:r.tomb}))});S.mem=[];S.log=[];S.logGone=true;S.busy=false;draw();
+    if(o.on)o.on({type:'flush'});}
+  async function merge(){
+    const n=S.ssts.length;if(n<2||S.busy)return;S.busy=true;
+    const A=S.ssts[n-1],B=S.ssts[n-2];/* A older, B newer */
+    const out={name:'New merged SSTable',tmp:true,recs:[]};S.ssts.push(out);
+    let a=0,b=0;
+    const mark=()=>{A.recs.forEach((r,j)=>r.scan=j===a);B.recs.forEach((r,j)=>r.scan=j===b);};
+    while(a<A.recs.length||b<B.recs.length){
+      mark();draw();await nap(230);if(!alive())return;
+      const ka=a<A.recs.length?A.recs[a].k:null,kb=b<B.recs.length?B.recs[b].k:null;
+      if(kb!==null&&(ka===null||kb<ka)){out.recs.push({k:kb,v:B.recs[b].v,tomb:B.recs[b].tomb});B.recs[b].dead=true;b++;}
+      else if(ka!==null&&(kb===null||ka<kb)){out.recs.push({k:ka,v:A.recs[a].v,tomb:A.recs[a].tomb});A.recs[a].dead=true;a++;}
+      else{out.recs.push({k:kb,v:B.recs[b].v,tomb:B.recs[b].tomb});A.recs[a].dead=true;A.recs[a].strike=true;B.recs[b].dead=true;a++;b++;}
+    }
+    A.recs.forEach(r=>r.scan=false);B.recs.forEach(r=>r.scan=false);draw();await nap(300);if(!alive())return;
+    S.ssts.splice(n-2,3,{n:B.n,name:'SSTable '+A.n+'–'+B.n+' (merged)',recs:out.recs.map(r=>({k:r.k,v:r.v,tomb:r.tomb}))});
+    S.busy=false;draw();if(o.on)o.on({type:'merge'});}
+  async function read(k,opt){
+    opt=opt||{};if(S.busy)return null;S.busy=true;S.sstSt={};let disk=0,res=null,where='';
+    S.memSt='scan';draw();await nap(320);if(!alive())return null;
+    const m=S.mem.find(r=>r.k===k);
+    if(m){S.memSt=m.tomb?'tomb':'found';m.hl=true;res=m;where='memtable';}
+    else{S.memSt='miss';
+      for(let i=0;i<S.ssts.length;i++){const t=S.ssts[i];const has=t.recs.find(r=>r.k===k);
+        if(S.bloom&&!has){S.sstSt[i]='skip';draw();await nap(240);if(!alive())return null;continue;}
+        S.sstSt[i]='scan';draw();await nap(330);if(!alive())return null;disk++;
+        if(has){S.sstSt[i]='found';t.recs.forEach(r=>r.found=r===has);res=has;where=t.name||('SSTable '+t.n);break;}
+        S.sstSt[i]='miss';}}
+    draw();S.busy=false;const r={k,res,where,disk,tomb:!!(res&&res.tomb)};if(o.on)o.on(Object.assign({type:'read'},r));return r;}
+  function clearMarks(){S.memSt=null;S.sstSt={};S.mem.forEach(r=>r.hl=false);S.ssts.forEach(t=>t.recs.forEach(r=>{r.found=false;r.scan=false;r.inr=false;}));}
+  draw();
+  return {S,draw,say,write,flush,merge,read,clearMarks,alive,nap};
+}
+
+/* =====================================================================
+   The lesson
+   ===================================================================== */
+let LG_STEPS;
 Course.lesson({
-  id:'0005', title:'Logs, hash indexes and LSM-trees', minutes:20, icon:'layers',
-  goals:['Explain why every index speeds up reads but slows down writes','Trace how a hash index and an LSM-tree store and find a key','Pick the right log-structured design for an Otterpost workload'],
+  id:'0005', title:'Logs, hash indexes and LSM-trees', minutes:22, icon:'layers',
+  goals:['Explain why every index speeds up reads but slows down writes','Trace how a hash index and an LSM-tree store and find a key, and where each one breaks','Tune a log-structured store with compaction, Bloom filters and a sparse index'],
   parts:['The simplest database','Hash indexes','SSTables and LSM-trees','LSM in practice'],
-  read:'Read the first part of chapter 3 (up to “B-Trees”) for the book’s two-line shell database and its cat-video counter.',
+  read:'Read the first part of chapter 3 (up to “B-Trees”) for the book’s two-line shell database, its cat-video counter and the figures of compaction and merging.',
   glossary:{
     'storage-engine':'Storage engine: the part of a database that decides how data is laid out on disk and in memory, and how it is found again.',
     'hashmap':'Hash map: an in-memory lookup table (a “dictionary”) that jumps straight from a key to its entry without searching.',
+    'byte-offset':'Byte offset: a position in a file, counted in bytes from the start. “Byte 120” means: skip the first 120 bytes.',
     'segment':'Segment: one file of a log. When it reaches a set size it is closed, never changed again, and new writes go to a fresh segment.',
     'compaction':'Compaction: rewriting log segments to throw away values that were overwritten or deleted, keeping only the latest value for each key.',
     'tombstone':'Tombstone: a special record appended to say “this key was deleted.” When segments are merged, it tells the merge to drop the key’s older values.',
     'checksum':'Checksum: a short fingerprint computed from a record. If the record is cut off or damaged, the fingerprint no longer matches.',
     'range-query':'Range query: a request for every key between a minimum and a maximum, such as all courier IDs from C-0100 to C-0199.',
     'sstable':'SSTable (Sorted String Table): a segment file whose key-value pairs are sorted by key, with each key appearing only once.',
+    'sparse-index':'Sparse index: an in-memory index that holds only some keys, say one for every few kilobytes of a sorted file. Any other key lies between two of them.',
     'memtable':'Memtable: the sorted tree in memory where an LSM storage engine collects new writes before writing them out as an SSTable.',
     'lsm':'LSM-tree (Log-Structured Merge-Tree): a storage engine design that keeps a memtable plus a cascade of SSTables on disk, merged in the background.',
-    'bloom':'Bloom filter: a small in-memory structure that can tell for certain that a key is not in a set, so the engine can skip disk reads for missing keys.'
+    'bloom':'Bloom filter: a small in-memory summary of a set of keys. It can tell for certain that a key is not in a file, so the engine can skip reading that file.'
   },
   cheatsheet:[
     '<b>The index trade-off:</b> well-chosen indexes speed up reads, but every index slows down writes. Choose them from the queries you actually run.',
     '<b>Simplest database:</b> an append-only log. Writes are cheap appends; without an index, every read scans the whole file.',
-    '<b>Hash index:</b> an in-memory map from each key to its byte offset. Fast, but every key must fit in memory and range queries are slow.',
-    '<b>Segments and compaction:</b> close files at a set size, keep only the latest value per key, merge in the background. Deletes are tombstones.',
-    '<b>SSTable:</b> a segment sorted by key. Merging works like mergesort, a sparse index is enough, and blocks can be compressed.',
-    '<b>LSM-tree:</b> writes go to a memtable (and a crash log), get flushed as SSTables, then merged. Reads check the newest data first.',
-    '<b>Tuning:</b> Bloom filters skip lookups for keys that don’t exist; compaction is size-tiered or leveled.'
+    '<b>Hash index:</b> an in-memory map from each key to its byte offset: one seek per read. Every key must fit in memory, and range queries are slow.',
+    '<b>Segments and compaction:</b> close files at a set size, keep only the latest value per key, merge in the background. Deletes are tombstones; checksums catch half-written records.',
+    '<b>SSTable:</b> a segment sorted by key. Merging works like mergesort, a sparse index (one key every few KB) is enough, and blocks can be compressed.',
+    '<b>LSM-tree:</b> writes go to a sorted memtable and a crash log, get flushed as SSTables, then merged. Reads check the newest data first.',
+    '<b>Tuning:</b> Bloom filters skip files that can’t hold a key; compaction is size-tiered (HBase) or leveled (LevelDB, RocksDB). Cassandra offers both.'
   ],
-  steps:[
+  steps:LG_STEPS=[
 /* ---------- PART 1: THE SIMPLEST DATABASE ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost writes every parcel scan as a new line at the end of one long file. Nothing is ever erased. Which line says where parcel OP-4471 is now?</h1>');
-  L.mc(L.card,['The first line that mentions OP-4471','The last line that mentions OP-4471'],1,
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost writes every parcel scan as a new line at the end of one long file. Nothing is ever erased. Which line says where parcel OP-48213 is now?</h1>');
+  L.mc(L.card,['The first line that mentions OP-48213','The last line that mentions OP-48213'],1,
    'New lines only ever go on the end, so the newest news about a parcel is its last line. That one rule is the heart of the simplest database there is.',
    'The first line is the oldest news: where the parcel was at pickup. Lines only go on the end, so the last mention is the newest.');}},
 {part:0,src:'Chapter 3 · Storage and Retrieval',run(L){
+  const id='f2';let s='';
+  /* log-structured */
+  s+=lgT(4,14,'Log-structured','font-size:13px;font-weight:700;fill:var(--h1)')+lgT(4,29,'this lesson','font-size:11px;fill:var(--muted)');
+  for(let j=0;j<4;j++)s+='<rect x="'+(4+j*30)+'" y="42" width="27" height="34" rx="5" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.4"/>';
+  s+='<rect x="130" y="42" width="34" height="34" rx="5" style="fill:var(--h1);stroke:var(--h1);stroke-width:1.4"/>'+lgT(147,63,'new','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--card)');
+  s+=lgT(4,94,'→ append','font-size:11px;font-weight:700;fill:var(--h1)')+lgT(4,116,'only appends to the end;','font-size:11.5px;fill:var(--ink)')+lgT(4,131,'old files merged, then deleted','font-size:11.5px;fill:var(--ink)');
+  /* page-oriented */
+  s+='<line x1="174" y1="6" x2="174" y2="138" style="stroke:var(--line);stroke-width:1.5"/>';
+  s+=lgT(182,14,'Page-oriented','font-size:13px;font-weight:700;fill:var(--h2)')+lgT(182,29,'B-trees · next lesson','font-size:11px;fill:var(--muted)');
+  for(let r=0;r<2;r++)for(let c=0;c<4;c++){const hot=r===0&&c===2;s+='<rect x="'+(182+c*33)+'" y="'+(40+r*22)+'" width="30" height="19" rx="4" style="fill:'+(hot?'var(--h2)':'var(--h2-bg)')+';stroke:var(--h2);stroke-width:1.3"/>';}
+  s+=lgT(263,99,'✎','font-size:15px;font-weight:700;text-anchor:middle;fill:var(--h2)')+lgT(182,116,'fixed-size pages,','font-size:11.5px;fill:var(--ink)')+lgT(182,131,'overwritten in place','font-size:11.5px;fill:var(--ink)');
   L.h(L.kick('learn','Why look under the hood?')+'<h1 class="q">You won’t build a storage engine, but you will pick one</h1>'+
-   L.prose('At heart a database does two jobs: it stores the data you give it, and it hands that data back when you ask. Chapter 2 looked at this from your side. This chapter looks from the database’s side: how it lays the data out, and how it finds it again.')+
-   L.prose('Why should an app developer care? You will probably never write a '+L.g('storage-engine','storage engine')+', but you will choose one and tune it for your workload. That needs a rough picture of what it does inside. The chapter looks at two families:')+
-   L.flow([['layers','Log-structured','Only ever appends to files. Old files get merged and thrown away.','this lesson',1],['box','Page-oriented','Splits the disk into fixed-size pages and overwrites them in place, like B-trees.','next lesson',2]],false)+
-   '<p class="small">Engines built for quick reads and writes by users also differ a lot from engines built for analytics. Lesson 7 covers that split.</p>');
+   lgSvg(id,s,142,'Two families of storage engine: log-structured, which only appends to files, and page-oriented, which overwrites fixed-size pages in place')+
+   '<div class="lg-cap">A database has two jobs: store what you give it, and find it again. You’ll choose and tune a '+L.g('storage-engine','storage engine')+', so you need a rough picture of what it does inside. Two families do it very differently.</div>'+
+   '<p class="lg-ill">Engines built for analytics differ again: that’s lesson 7.</p>');
   L.done();}},
 {part:0,src:'Chapter 3 · Data Structures That Power Your Database',run(L){
+  const id='f3',recs=[{k:'C-0017',v:'W2'},{k:'C-0230',v:'W1'},{k:'C-0017',v:'W3'},{k:'C-0042',v:'E1'},{k:'C-0017',v:'W4',found:true}];
+  const t=lgTape({id,ch:36,segs:[{label:'database (a plain text file, one key,value per line)',recs}],
+    before:y=>[lgT(2,y+13,'set C-0017 W4','font-size:12px;font-weight:700;fill:var(--h1);font-family:ui-monospace,Menlo,monospace')+lgT(318,y+13,'appends one line at the end','font-size:11.5px;text-anchor:end;fill:var(--muted)')+lgAr(id,240,y+18,236,y+38,'h1',2),40],
+    after:y=>['<path d="M2 '+(y+2)+' v8 H316 v-8" style="fill:none;stroke:var(--h2);stroke-width:2"/>'+lgT(2,y+28,'get C-0017','font-size:12px;font-weight:700;fill:var(--h2);font-family:ui-monospace,Menlo,monospace')+lgT(318,y+28,'reads every line, returns the last match','font-size:11.5px;text-anchor:end;fill:var(--muted)'),36]});
   L.h(L.kick('learn','The world’s simplest database')+'<h1 class="q">Two tiny functions make a key-value store</h1>'+
-   L.prose('The book opens with a database made of two short shell functions. <b>set</b> appends one line, <i>key,value</i>, to the end of a text file. <b>get</b> returns the value on the <i>last</i> line with that key.')+
-   '<div style="'+LOGBOX+'">C-0017,Zone W2<br>C-0230,Hub W1<br><b>C-0017,Zone W4</b> <span style="color:var(--muted)">← get C-0017</span></div>'+
-   L.prose('Updating a key overwrites nothing: the old line stays, and the newest one wins. Writing is about as fast as it gets, because appending to a file is cheap. Many real databases use a '+L.g('log','log')+' like this inside. Here “log” means any append-only list of records, not the debug messages an app prints.')+
-   L.prose('Reading is the problem. To find one key, <b>get</b> must scan the whole file from start to end. Double the records and every lookup takes twice as long.'));
+   lgSvg(id,t.s,t.H,'set appends a line to the end of the file; get reads the whole file and returns the last line with that key')+
+   '<div class="lg-cap"><b>set</b> appends, never overwrites. <b>get</b> scans the whole file and keeps the last match. Writes: as fast as it gets. Reads: double the records, double the time. Many databases keep a '+L.g('log','log')+' like this: an append-only list of records.</div>');
   L.done();}},
-{part:0,src:'Chapter 3 · Data Structures That Power Your Database',pts:1,
- solve:async L=>{L.$('#grow').click();L.$('#grow').click();L.$('#idx').click();},
+{part:0,src:'Chapter 3 · Data Structures That Power Your Database',
+ solve:async L=>{for(let j=0;j<6;j++)L.$('#t4-w'+(j%3)).click();L.$('#t4-get').click();await L.lgP;for(let j=0;j<3;j++)L.$('#t4-w'+j).click();L.$('#t4-get').click();await L.lgP;await lgWait(L,'#t4-ok');},
  run(L){
-  let n=10,idx=false,grows=0;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias keeps each courier’s latest position in a log like this. Grow the file, then add an index. Watch what one lookup costs.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:8px 0 12px">'+
-   '<div class="small">Records in the file</div><div class="week" id="nn"></div>'+
-   '<div class="meterrow"><div class="lb">Lines read to get C-0017</div><div class="meter"><div id="mr" style="background:var(--h3)"></div></div></div>'+
-   '<p class="small" id="rd" style="margin:0 0 10px"></p>'+
-   '<div class="small">Work done on every write</div><p id="wr" style="margin:2px 0 0;font-weight:600"></p></div>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="grow">'+L.ic('trend')+'Add 10× more records</button><button class="btn pri" id="idx">'+L.ic('list')+'Add an index</button></div><div id="q"></div>');
-  const draw=()=>{L.$('#nn').textContent=n.toLocaleString('en-US');
-    L.$('#mr').style.width=idx?'4%':Math.round(Math.log10(n)/5*100)+'%';
-    L.$('#rd').innerHTML=idx?'<b>1 jump</b>: the index says where the newest C-0017 line is.':'<b>'+n.toLocaleString('en-US')+' lines</b>: the whole file, to be sure of the last match.';
-    L.$('#wr').innerHTML=idx?'Append one line <span style="color:var(--no)">+ update the index</span>':'Append one line';
-    if(n>=100000)L.$('#grow').disabled=true;
-    if(grows>=2&&idx&&!L.$('#q').innerHTML){const q=L.$('#q');q.innerHTML='<h2 class="sub">What did the index cost?</h2>';
-      L.mc(q,['Each lookup now reads the file twice','The file must now be sorted by key','Each write now also updates the index'],2,
-       'That’s the trade-off. Lookups became one quick jump, and in return every write does a little extra work to keep the index up to date.',
-       'Look at the write line: with the index on, every write also updates it. Lookups got far cheaper, and nothing needed sorting.');}};
-  L.$('#grow').onclick=()=>{if(n<100000){n*=10;grows++;draw();}};
-  L.$('#idx').onclick=function(){idx=true;this.disabled=true;this.innerHTML=L.ic('check')+'Index on';draw();};
+  const keys=['C-0017','C-0042','C-0230'],recs=[],cnt={};let busy=false,lastGet=null,lastBytes=0,lastVal='–';
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Tobias keeps each courier’s latest position this way. Send pings, then run get. Watch what one lookup reads.</h1>'+
+   lgTasks('t4t',['Send at least 6 pings','Run <b>get C-0017</b>','Send 3 more pings, then get again: compare'])+
+   '<div id="t4"></div><div class="lg-ro" id="t4-ro"></div>'+
+   '<div class="lg-row">'+keys.map((k,j)=>'<button class="chip" id="t4-w'+j+'">'+L.ic('pencil')+'set '+k+'</button>').join('')+'<button class="btn pri" id="t4-get">'+L.ic('eye')+'get C-0017</button></div>'+
+   '<p class="lg-ill">Each record is 20 bytes here: illustrative.</p>');
+  function draw(scan,found){if(!L.$('#t4'))return;
+    const t=lgTape({id:'t4s',segs:[{label:'The file on disk · '+recs.length+' records · '+recs.length*20+' bytes',empty:'empty file: tap set below',recs:recs.map((r,i)=>Object.assign({},r,{scan:i===scan,found:i===found}))}]});
+    L.$('#t4').innerHTML=lgSvg('t4s',t.s,t.H,'The log file as a row of cells; get highlights every cell it reads');
+    L.$('#t4-ro').innerHTML='<span>Records <b>'+recs.length+'</b></span><span>Last get read <b>'+lgFmt(lastBytes)+' bytes</b></span><span>Answer <b>'+lastVal+'</b></span>';}
+  keys.forEach((k,j)=>L.$('#t4-w'+j).onclick=()=>{if(busy||recs.length>=18)return;cnt[k]=(cnt[k]||0)+1;recs.push({k,v:LG_Z[(j*3+cnt[k])%LG_Z.length],off:recs.length*20});
+    if(recs.length>=6)lgTick(L,'t4t',0);if(recs.length>=18)keys.forEach((_,q)=>L.$('#t4-w'+q).disabled=true);draw();});
+  L.$('#t4-get').onclick=()=>{if(busy||!recs.length)return;busy=true;L.lgP=(async()=>{let last=-1;
+    for(let i=0;i<recs.length;i++){if(recs[i].k==='C-0017')last=i;draw(i,-1);await L.sleep(70);if(!L.$('#t4'))return;}
+    const prev=lastGet;lastGet=recs.length;lastBytes=recs.length*20;lastVal=last>=0?recs[last].v:'not found';draw(-1,last);busy=false;
+    lgTick(L,'t4t',1);
+    if(prev!==null&&recs.length>=prev+3&&lgTick(L,'t4t',2)&&!L.$('#t4-ok')){L.$('#t4').insertAdjacentHTML('afterend','<span id="t4-ok"></span>');
+      L.sheet('info','Writes stay cheap; reads grow','Each set just added 20 bytes at the end. But get read '+lgFmt(prev*20)+' bytes, then '+lgFmt(lastBytes)+': it must read to the end, because a later line could be newer. Double the records, double the lookup time.');L.done();}})();};
   draw();}},
+{part:0,src:'Chapter 3 · Data Structures That Power Your Database',pts:1,
+ solve:async L=>{L.$('#p5 button:nth-child(3)').click();await lgWait(L,'#p5-idx',200);L.$('#p5-idx').click();await lgWait(L,'#p5-ok',200);},
+ run(L){
+  let pick=null,idx=false;const N=10000,B=N*20,TGT=191840;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias’s file has grown to 10,000 records of 20 bytes: 200,000 bytes. With no index, how much does one <b>get C-0017</b> read?</h1>'+
+   '<div id="p5-pic"></div><div class="lg-ro" id="p5-ro"></div><div class="lg-row" id="p5"></div><div id="p5-x"></div>');
+  function pic(sweep,seek){const id='p5s';let s='';const X0=10,W=300,Y=idx?78:30;
+    if(idx){s+='<rect x="96" y="4" width="128" height="40" rx="9" style="fill:var(--card);stroke:var(--h1);stroke-width:2"/>'+lgT(160,20,'Hash map in memory','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+lgT(160,36,'C-0017 → '+lgFmt(TGT),'font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--h1)');
+      s+=lgAr(id,224,30,X0+W*TGT/B,Y-2,'h1',2.4);}
+    s+=lgT(X0,Y-6,'The file: 10,000 records','font-size:12px;font-weight:600;fill:var(--muted)');
+    s+='<rect x="'+X0+'" y="'+Y+'" width="'+W+'" height="34" rx="6" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>';
+    for(let j=1;j<40;j++)s+='<line x1="'+(X0+j*W/40)+'" y1="'+(Y+4)+'" x2="'+(X0+j*W/40)+'" y2="'+(Y+30)+'" style="stroke:var(--line);stroke-width:1"/>';
+    if(sweep>0)s+='<rect x="'+X0+'" y="'+Y+'" width="'+(W*sweep)+'" height="34" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/>';
+    const cx=X0+W*TGT/B;s+='<rect x="'+(cx-2.5)+'" y="'+(Y-1)+'" width="5" height="36" style="fill:var(--h1)"/>';
+    if(seek)s+='<rect x="'+(cx-5)+'" y="'+(Y-4)+'" width="10" height="42" rx="3" style="fill:none;stroke:var(--ok-strong);stroke-width:3"/>';
+    s+=lgT(X0,Y+48,'byte 0','font-size:11px;fill:var(--muted)')+lgT(X0+W,Y+48,'byte 200,000','font-size:11px;text-anchor:end;fill:var(--muted)')+lgT(cx+4,Y+64,'↑ newest C-0017','font-size:11px;font-weight:700;text-anchor:end;fill:var(--h1)');
+    L.$('#p5-pic').innerHTML=lgSvg(id,s,Y+70,'A long file bar; the scan sweeps across it, or the hash map points straight at the newest C-0017');}
+  function ro(read,write){L.$('#p5-ro').innerHTML='<span>Bytes read by one get <b>'+read+'</b></span><span>Work per write <b>'+write+'</b></span>';}
+  pic(0,false);ro('?','append 20 bytes');
+  ['About 20 bytes: one record','About 100,000: half the file','All 200,000 bytes'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+      for(let f=1;f<=24;f++){pic(f/24,false);ro(lgFmt(Math.round(B*f/24)),'append 20 bytes');await L.sleep(45);if(!L.$('#p5-pic'))return;}
+      const ok=j===2;L.award(ok);b.classList.remove('sel');b.classList.add(ok?'ok':'no');
+      L.fb(L.$('#p5-x'),(ok?'<b>Right: all of it.</b> ':'<b>It read all 200,000 bytes.</b> ')+'The newest C-0017 sits near the end, but get can’t know that: a later line could be newer still, so it reads to the very end.',ok?'ok':'no');
+      L.$('#p5-x').insertAdjacentHTML('beforeend','<button class="btn pri" id="p5-idx" style="margin-top:8px">'+L.ic('list')+'Add a hash index</button>');
+      L.$('#p5-idx').onclick=function(){if(idx)return;idx=true;this.remove();pic(0,true);ro('20','append 20 bytes <span style="color:var(--no)">+ update the map</span>');
+        L.$('#p5-x').insertAdjacentHTML('beforeend','<span id="p5-ok"></span>');
+        L.sheet(ok?'ok':'info','One jump instead of a scan','With the hash map, get reads just the 20 bytes it needs. But look at the write line: every write now also updates the map. That extra upkeep on every write is the price of any index.');L.done();};};
+    L.$('#p5').appendChild(b);});}},
 {part:0,src:'Chapter 3 · Data Structures That Power Your Database',run(L){
+  const id='f6';let s='';
+  s+='<rect x="96" y="4" width="12" height="12" rx="3" style="fill:var(--h2)"/>'+lgT(112,14,'time per read','font-size:11.5px;fill:var(--ink)')+'<rect x="206" y="4" width="12" height="12" rx="3" style="fill:var(--h4)"/>'+lgT(222,14,'time per write','font-size:11.5px;fill:var(--ink)');
+  [['No index',160,14,'scan it all','append'],['1 index',22,58,'one jump','+1 update'],['3 indexes',22,150,'one jump','+3 updates']].forEach((r,j)=>{const y=30+j*52;
+    s+=lgT(2,y+20,r[0],'font-size:12.5px;font-weight:700;fill:var(--ink)');
+    s+='<rect x="96" y="'+y+'" width="'+r[1]+'" height="16" rx="5" style="fill:var(--h2)"/>'+lgT(96+r[1]+6,y+12.5,r[3],'font-size:11px;fill:var(--muted)');
+    s+='<rect x="96" y="'+(y+20)+'" width="'+r[2]+'" height="16" rx="5" style="fill:var(--h4)"/>'+lgT(96+r[2]+6,y+32.5,r[4],'font-size:11px;fill:var(--muted)');});
   L.h(L.kick('learn','The index trade-off')+'<h1 class="q">An index is a signpost, and signposts need upkeep</h1>'+
-   L.prose('An '+L.g('index','index')+' is extra data kept on the side that points to where things are. It is built from the main data, so adding or dropping an index never changes what the database holds. It only changes how fast queries run.')+
+   lgSvg(id,s,186,'Bars: with no index reads are long and writes short; each index makes reads short but adds work to every write')+
+   '<div class="lg-cap">An '+L.g('index','index')+' is extra data built from the main data. Adding or dropping one changes speed, never contents. Every write must update every index, so you pick indexes from the queries your app really runs.</div>'+
    L.quote('Well-chosen indexes speed up read queries, but every index slows down writes.','Martin Kleppmann, chapter 3')+
-   L.prose('Every write has to update every index too, and nothing beats a plain append for speed. So databases don’t index everything by default. You choose the indexes, based on the queries your app actually runs.')+
-   L.note('Need to search the same data in several different ways? You may need several indexes, each with its own cost on writes.','info'));
+   '<p class="lg-ill">Bar lengths show the shape, not measurements.</p>');
   L.done();}},
 {part:0,src:'Chapter 3 · Data Structures That Power Your Database',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants an index on all 40 columns of the scan-events table, “just in case.” Couriers write millions of scans a day. What happens?</h1>');
@@ -100,157 +386,384 @@ Course.lesson({
 
 /* ---------- PART 2: HASH INDEXES ---------- */
 {part:1,src:'Chapter 3 · Hash Indexes',run(L){
-  L.h(L.kick('learn','Hash indexes')+'<h1 class="q">Keep a map from each key to where its value sits</h1>'+
-   L.prose('Most programming languages have a '+L.g('hashmap','hash map')+'. The simplest index for an append-only file is one of these, kept in memory: each key maps to the <b>byte offset</b> (the position in the file) where its newest value starts.')+
-   L.flow([['list','In memory','The hash map says C-0017 is at byte 64.','one entry per key',1],['pointer','One seek','Jump straight to byte 64 in the file.','no scanning',2],['box','On disk','Read the value there.','the append-only file',3]])+
-   L.prose('Each write appends to the file and updates the map. Each read looks up the offset and reads from there. This is roughly what Bitcask, the default storage engine in Riak, does.')+
-   L.note('<b>The catch:</b> every key must fit in memory. The values don’t have to, because each one is a single disk seek away. It suits data where a modest number of keys get updated very often, like the book’s count of how many times each cat video was played.','alert'));
+  const recs=[{k:'C-0017',v:'W2'},{k:'C-0042',v:'W1'},{k:'C-0017',v:'W3'},{k:'C-0230',v:'E1'},{k:'C-0042',v:'W5'},{k:'C-0017',v:'W4'}].map((r,i)=>Object.assign(r,{off:i*20}));
+  const map=lgMapOf(recs,['C-0017','C-0042','C-0230']);recs.forEach((r,i)=>{if(!map.some(m=>m.to==='0:'+i))r.dead=true;});
+  const t=lgTape({id:'f8',map,segs:[{label:'Data file on disk (append-only)',recs}],
+    after:y=>[lgT(2,y+14,'The catch: every key must fit in memory','font-size:12px;font-weight:700;fill:var(--no)')+lgT(2,y+31,'Values needn’t: one disk seek each, none if cached','font-size:11.5px;fill:var(--muted)'),38]});
+  L.h(L.kick('learn','Hash indexes')+'<h1 class="q">Keep a map from each key to where its newest value sits</h1>'+
+   lgSvg('f8',t.s,t.H,'A hash map in memory points each courier key at the byte offset of its newest record in the file; older records are greyed out')+
+   '<div class="lg-cap">A '+L.g('hashmap','hash map')+' in memory maps each key to a '+L.g('byte-offset','byte offset')+'. A write appends and updates the map; a read looks up the offset and does one disk seek. Bitcask, Riak’s default engine, works like this.</div>');
   L.done();}},
+{part:1,src:'Chapter 3 · Hash Indexes',
+ solve:async L=>{for(let j=0;j<8;j++)L.$('#t9-w'+(j%3)).click();L.$('#t9-get').click();await L.lgP;await lgWait(L,'#t9-ok');},
+ run(L){
+  const keys=['C-0017','C-0042','C-0230'],cnt={};let busy=false,gets=0,lastGet='–';
+  const recs=[{k:'C-0017',v:'W2'},{k:'C-0042',v:'W1'},{k:'C-0230',v:'E1'}].map((r,i)=>Object.assign(r,{off:i*20}));
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">The same position store, now with a hash map. Send pings and watch the arrows move.</h1>'+
+   lgTasks('t9t',['Send 8 more pings: watch the disk and the map','Run <b>get C-0017</b>'])+
+   '<div id="t9"></div><div class="lg-ro" id="t9-ro"></div>'+
+   '<div class="lg-row">'+keys.map((k,j)=>'<button class="chip" id="t9-w'+j+'">'+L.ic('pencil')+k+' pings</button>').join('')+'<button class="btn pri" id="t9-get">'+L.ic('eye')+'get C-0017</button></div>'+
+   '<p class="lg-ill">20-byte records: illustrative.</p>');
+  function draw(hl){if(!L.$('#t9'))return;
+    const map=lgMapOf(recs,keys,hl),live=new Set(map.map(m=>m.to));
+    const t=lgTape({id:'t9s',map,segs:[{label:'Data file on disk · '+recs.length*20+' bytes',recs:recs.map((r,i)=>Object.assign({},r,{dead:!live.has('0:'+i),found:hl&&map.find(m=>m.k===hl).to==='0:'+i}))}]});
+    L.$('#t9').innerHTML=lgSvg('t9s',t.s,t.H,'Hash map above the file; each key’s arrow points at its newest record');
+    L.$('#t9-ro').innerHTML='<span>Disk used <b>'+recs.length*20+' bytes</b></span><span>Live keys <b>'+map.length+'</b></span><span>Map in memory <b>'+map.length+' entries</b></span><span>Last get <b>'+lastGet+'</b></span>';}
+  keys.forEach((k,j)=>L.$('#t9-w'+j).onclick=()=>{if(busy||recs.length>=18)return;cnt[k]=(cnt[k]||0)+1;recs.push({k,v:LG_Z[(j*3+cnt[k]+1)%LG_Z.length],off:recs.length*20});
+    if(recs.length>=11)lgTick(L,'t9t',0);if(recs.length>=18)keys.forEach((_,q)=>L.$('#t9-w'+q).disabled=true);draw();check();});
+  L.$('#t9-get').onclick=()=>{if(busy)return;busy=true;L.lgP=(async()=>{draw('C-0017');await L.sleep(350);if(!L.$('#t9'))return;
+    const m=lgMapOf(recs,keys).find(e=>e.k==='C-0017');lastGet='1 seek to byte '+m.off+' · 20 bytes';gets++;draw('C-0017');busy=false;lgTick(L,'t9t',1);check();})();};
+  function check(){if(L.$$('#t9t li.done').length===2&&!L.$('#t9-ok')){L.$('#t9').insertAdjacentHTML('afterend','<span id="t9-ok"></span>');
+    L.sheet('info','Few keys, many writes per key','The disk kept growing with every ping, but the map stayed at 3 entries, and a lookup was always one seek. That shape fits a hash index perfectly: the book’s example is a play counter per cat video, bumped on every play.');L.done();}}
+  draw();}},
+{part:1,src:'Chapter 3 · Hash Indexes',pts:4,run(L){
+  L.h(L.kick('try','Good fit or poor fit?')+'<h1 class="q">A hash-indexed log suits few keys with many writes each, as long as every key fits in memory. Sort these Otterpost stores.</h1>');
+  L.buckets(L.card,['Good fit','Poor fit'],[
+   ['Each hub’s running count of parcels handled today',0,'A few dozen keys, each bumped thousands of times a day: just like the cat-video play counter.'],
+   ['Every GPS ping ever sent, each stored under its own new ID',1,'Tens of millions of new keys a day: the map of keys would keep growing until it no longer fits in memory.'],
+   ['Each courier’s latest position, about 3,000 couriers',0,'About 3,000 keys, each overwritten every few seconds. The map stays tiny.'],
+   ['Each merchant’s prepaid credit balance, changed on every booking',0,'A few thousand merchants, each balance updated over and over: few keys, many writes per key.']],
+   'The test is the number of distinct keys, not the number of writes. Writes are cheap appends; it’s the in-memory map of keys that has to fit.');}},
 {part:1,src:'Chapter 3 · Hash Indexes',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Tobias’s latest-position store, step by step</h1>');
-  L.beats(L.card,[
-   ['The data','About 3,000 couriers are on shift, and each phone sends a GPS ping every few seconds. Tobias only needs each courier’s <b>latest</b> position.'],
-   ['A write','A ping from C-0017 arrives. The store appends <b>C-0017, Zone W4</b> at byte 6,120 of the file and sets C-0017 → 6,120 in the hash map.'],
-   ['Another write','Ten seconds later C-0017 pings again. A new line goes on the end at byte 9,880, and the map now says 9,880. The old line is still in the file, but nothing points to it.'],
-   ['A read','Dispatch asks where C-0017 is. One map lookup gives 9,880, and one disk seek reads the line. No scanning.'],
-   ['Why it fits','Only about 3,000 keys, so the map is tiny. But each key is written thousands of times a day. Many writes per key, few keys: exactly the shape this index suits.']],
-   'A hash index turns a lookup by key into one jump instead of a scan. It works as long as all the keys fit in memory.');}},
-{part:1,src:'Chapter 3 · Hash Indexes',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which Otterpost data suits a hash index kept in memory best?</h1>');
-  L.mc(L.card,['Every scan event ever, searched by time range','Each hub’s running count of parcels handled today','All parcels, listed in order of delivery postcode'],1,
-   'A few dozen hubs, each counter bumped thousands of times a day: few keys, many writes per key. Just like the cat-video play counter.',
-   'A hash map keeps no order, so “by time range” or “in postcode order” means checking keys one by one. The hub counters are few keys with many writes, the perfect fit.');}},
-{part:1,src:'Chapter 3 · Hash Indexes',run(L){
-  const seg=(xs,dim)=>'<div style="margin:6px 0 2px">'+xs.map(x=>'<span class="chip static'+(dim&&dim.includes(x)?'':' ok')+'" style="'+(dim&&dim.includes(x)?'opacity:.4;text-decoration:line-through':'')+'">'+x+'</span>').join('')+'</div>';
-  const raw=['C-0017 W2','C-0230 W1','C-0017 W3','C-0230 W5','C-0017 W4'];
+  const s1=[['C-0017','W2',1],['C-0042','W1',1],['C-0017','W3',1],['C-0230','E1',0],['C-0042','W5',1],['C-0017','W4',1]],s2=[['C-0042','W3',1],['C-0017','W1',0],['C-0042','W2',0]];
+  const mk=(a,o)=>a.map((r,i)=>({k:r[0],v:r[1],dead:!!r[2],strike:!!r[2],off:o+i*20}));
+  const t=lgTape({id:'f11',segs:[{label:'Segment 1 · older · own hash map, checked 2nd',recs:mk(s1,0)},{label:'Segment 2 · newer · own hash map, checked 1st',recs:mk(s2,120)},
+    {label:'↓ compact + merge in the background: one new file',col:'var(--h2)',recs:[{k:'C-0230',v:'E1',off:0},{k:'C-0017',v:'W1',off:20},{k:'C-0042',v:'W2',off:40}]}]});
   L.h(L.kick('learn','Segments and compaction')+'<h1 class="q">An append-only file would fill the disk, so cut it into segments</h1>'+
-   L.prose('If you only ever append, the file grows forever. The fix: close the file once it reaches a set size and start a new '+L.g('segment','segment')+'. A closed segment is never changed again.')+
-   L.prose(L.g('compaction','Compaction')+' rewrites closed segments, keeping only the latest value for each key:')+
-   '<div class="small">Segment before compaction</div>'+seg(raw,['C-0017 W2','C-0230 W1','C-0017 W3'])+
-   '<div class="small">After: one value per key</div>'+seg(['C-0230 W5','C-0017 W4'])+
-   L.list([['Merge too','Compacted segments are small, so several can be merged into one new file at the same time.'],
-     ['In the background','A background thread does the merging. Reads and writes carry on using the old files. When the new file is ready, reads switch to it and the old files are deleted.'],
-     ['Newest first','Each segment has its own hash map. A lookup checks the newest segment’s map, then the next-older one. Merging keeps the number of segments small.']],2));
+   lgSvg('f11',t.s,t.H,'Two closed segments with overwritten values struck out, merged into one small new segment')+
+   '<div class="lg-cap">Close each '+L.g('segment','segment')+' at a set size and write to a fresh one. '+L.g('compaction','Compaction')+' keeps only each key’s newest value and merges segments into a new file. Reads switch to it, and the old files are deleted.</div>');
   L.done();}},
+{part:1,src:'Chapter 3 · Hash Indexes',pts:1,
+ solve:async L=>{[0,1,2,3,4,6].forEach(i=>L.$('#c12-'+i).click());L.$('#c12-go').click();await lgWait(L,'#c12-ok',200);},
+ run(L){
+  const R=[['C-0230','W1'],['C-0105','E2'],['C-0230','W2'],['C-0105','E3'],['C-0230','W3'],['C-0007','E1'],['C-0105','W1'],['C-0230','W4'],['C-0105','W2']];
+  const STALE=new Set([0,1,2,3,4,6]);const x=new Set();let done=false;
+  const cell=i=>{const c=lgC(R[i][0]);return '<button class="lg-cell" id="c12-'+i+'" style="--c:var(--'+c+');--cb:var(--'+c+'-bg)" aria-pressed="false">'+R[i][0]+'<span>'+R[i][1]+'</span></button>';};
+  L.h(L.kick('pr','Compact it yourself')+'<h1 class="q">Linh is compacting two closed segments. Tap every record the merge will throw away, then run it.</h1>'+
+   '<div class="lg-file"><div class="h"><span>Segment 1 · older</span><span>@0–119</span></div><div class="lg-cells">'+[0,1,2,3,4,5].map(cell).join('')+'</div></div>'+
+   '<div class="lg-file"><div class="h"><span>Segment 2 · newer</span><span>@120–179</span></div><div class="lg-cells">'+[6,7,8].map(cell).join('')+'</div></div>'+
+   '<div class="lg-ro" id="c12-ro"></div><button class="btn pri" id="c12-go">'+L.ic('layers')+'Compact and merge</button><div id="c12-out"></div>');
+  const ro=()=>{L.$('#c12-ro').innerHTML='<span>Marked to throw away <b>'+x.size+'</b></span><span>Disk now <b>'+R.length*20+' bytes</b></span>';};
+  R.forEach((_,i)=>L.$('#c12-'+i).onclick=function(){if(done)return;if(x.has(i))x.delete(i);else x.add(i);this.classList.toggle('x',x.has(i));this.setAttribute('aria-pressed',x.has(i));ro();});
+  ro();
+  L.$('#c12-go').onclick=async function(){if(done)return;done=true;this.disabled=true;
+    const ok=x.size===STALE.size&&[...x].every(i=>STALE.has(i));L.award(ok);
+    R.forEach((_,i)=>{const b=L.$('#c12-'+i);b.classList.toggle('x',STALE.has(i));if(!STALE.has(i))b.classList.add('ok');else if(!x.has(i))b.classList.add('miss');});
+    await L.sleep(500);if(!L.$('#c12-out'))return;
+    const keep=[5,7,8];
+    L.$('#c12-out').innerHTML='<div class="lg-file" style="border:2px solid var(--h2)"><div class="h"><span style="color:var(--h2)">New merged segment</span><span>60 bytes</span></div><div class="r">'+keep.map(i=>{const c=lgC(R[i][0]);return '<div class="lg-cell" style="--c:var(--'+c+');--cb:var(--'+c+'-bg)">'+R[i][0]+'<span>'+R[i][1]+'</span></div>';}).join('')+'</div></div><span id="c12-ok"></span>';
+    L.$('#c12-ro').innerHTML='<span>Disk <b>180 → 60 bytes</b></span><span>Keys <b>3</b>, one value each</span>';
+    L.sheet(ok?'ok':'no',ok?'Clean merge':'Not quite','Only each key’s newest value survives: C-0007 E1 (its only value), and C-0230 W4 and C-0105 W2 from the <b>newer</b> segment. Every value in segment 2 is newer than every value in segment 1, so an old value there never wins. Green marks what stays; red marks a stale record you didn’t catch.');
+    L.done();};}},
+{part:1,src:'Chapter 3 · Hash Indexes',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#e13-'+j).click();await L.sleep(10);}await lgWait(L,'#e13-ok');},
+ run(L){
+  const seen=new Set();
+  const base=()=>[{k:'C-0017',v:'W2'},{k:'C-0219',v:'E1'},{k:'C-0042',v:'W1'},{k:'C-0219',v:'E2'},{k:'C-0017',v:'W4'}].map((r,i)=>Object.assign(r,{off:i*20}));
+  const K=['C-0017','C-0042','C-0219'];
+  const P=[
+   ['Delete a key',()=>{const r=base();r.push({k:'C-0219',tomb:true,off:100});r[1].dead=r[1].strike=r[3].dead=r[3].strike=true;r[0].dead=true;
+      const t=lgTape({id:'e13s',map:lgMapOf(r,K,'C-0219'),segs:[{label:'Data file · a tombstone appended at byte 100',recs:r}]});return t;},
+    'Delete = append a '+L.g('tombstone','tombstone')+'. A read for C-0219 finds it and answers “not found.” When segments are merged, the tombstone tells the merge to discard every older C-0219 value.'],
+   ['Restart',()=>{const r=base();
+      const t=lgTape({id:'e13s',lost:true,mapTitle:'Hash map: wiped by the restart',map:lgMapOf(r,K),segs:[{label:'Data file · still safe on disk',recs:r}],
+        after:y=>['<rect x="2" y="'+(y+4)+'" width="150" height="40" rx="8" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+lgT(77,y+21,'Option 1: read every','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+lgT(77,y+36,'segment, start to end','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+
+          '<rect x="166" y="'+(y+4)+'" width="152" height="40" rx="8" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.8"/>'+lgT(242,y+21,'Bitcask: load a saved','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+lgT(242,y+36,'snapshot of each map','font-size:11.5px;text-anchor:middle;fill:var(--h2)'),50]});return t;},
+    'Memory is wiped on restart. Rebuilding each map means reading every segment start to end: slow when files are big. Bitcask saves a snapshot of each segment’s map on disk, which loads much faster.'],
+   ['Power cut',()=>{const r=base();r.push({k:'C-0042',torn:true,off:100});
+      const t=lgTape({id:'e13s',map:lgMapOf(r.slice(0,5),K),segs:[{label:'Data file · the last record was cut short',recs:r}],
+        after:y=>['<rect x="122" y="'+(y-2)+'" width="196" height="24" rx="12" style="fill:var(--no-bg);stroke:var(--no-strong);stroke-width:1.5"/>'+lgT(220,y+14,'checksum ✗ → record ignored','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--no)'),28]});return t;},
+    'A crash can strike halfway through an append. Each Bitcask record carries a '+L.g('checksum','checksum')+'; the torn record’s doesn’t match, so it is detected and ignored instead of read as garbage.'],
+   ['Two pings at once',()=>{const r=base();const id='e13s';
+      const t=lgTape({id,segs:[{label:'Segment 1 · closed, never changes',recs:r},{label:'Segment 2 · open, the only one written',recs:[{k:'C-0042',v:'W3',off:0},{k:'C-0017',v:'W1',off:20}]}],
+        before:y=>[lgT(2,y+11,'Two pings arrive together','font-size:12px;font-weight:600;fill:var(--muted)')+
+          '<rect x="2" y="'+(y+18)+'" width="54" height="24" rx="12" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.6"/>'+lgT(29,y+34,'C-0042','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h2)')+
+          '<rect x="60" y="'+(y+18)+'" width="54" height="24" rx="12" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.6"/>'+lgT(87,y+34,'C-0017','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h1)')+
+          lgLine(id,118,y+30,140,y+30,'ink',2)+'<rect x="144" y="'+(y+16)+'" width="174" height="28" rx="8" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.8"/>'+lgT(231,y+34,'one writer: one at a time','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)'),52],
+        after:y=>[[30,110,190].map((x,j)=>'<rect x="'+(x-26)+'" y="'+(y+2)+'" width="64" height="22" rx="11" style="fill:var(--card);stroke:var(--h2);stroke-width:1.5"/>'+lgT(x+6,y+17,'reader '+(j+1),'font-size:11px;font-weight:600;text-anchor:middle;fill:var(--h2)')).join('')+lgT(262,y+17,'at once','font-size:11.5px;fill:var(--muted)'),28]});return t;},
+    'Writes go on the end in strict order, so a common choice is a single writer thread. Finished segments never change, so many threads can read them at the same time.'],
+   ['Comma in a value',()=>{const id='e13s';let s='';
+      s+=lgT(2,14,'CSV: key,value','font-size:12.5px;font-weight:700;fill:var(--ink)');
+      [['C-0230',58,'h3'],['Hub North',86,'no-strong'],[' door 2',62,'no-strong']].reduce((x,p)=>{s+='<rect x="'+x+'" y="22" width="'+p[1]+'" height="28" rx="6" style="fill:var(--soft);stroke:var(--'+p[2]+');stroke-width:1.6"/>'+lgT(x+p[1]/2,40,p[0],'font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)');return x+p[1]+16;},2);
+      s+=lgT(62,40,',','font-size:14px;font-weight:700;fill:var(--no)')+lgT(164,40,',','font-size:14px;font-weight:700;fill:var(--no)');
+      s+=lgT(2,68,'✗ the reader sees three fields: where does the value end?','font-size:11.5px;font-weight:600;fill:var(--no)');
+      s+=lgT(2,98,'Binary: length first, then the raw bytes','font-size:12.5px;font-weight:700;fill:var(--ink)');
+      [['6',24,'muted'],['C-0230',58,'h3'],['17',28,'muted'],['Hub North, door 2',128,'h2']].reduce((x,p)=>{s+='<rect x="'+x+'" y="106" width="'+p[1]+'" height="28" rx="6" style="fill:'+(p[2]==='muted'?'var(--soft2)':'var(--'+p[2]+'-bg)')+';stroke:var(--'+p[2]+');stroke-width:1.6"/>'+lgT(x+p[1]/2,124,p[0],'font-size:11.5px;font-weight:'+(p[2]==='muted'?700:600)+';text-anchor:middle;fill:var(--ink)');return x+p[1]+4;},2);
+      s+=lgT(2,152,'✓ no escaping: the reader knows exactly where it ends','font-size:11.5px;font-weight:600;fill:var(--ok)');
+      return {s,H:160};},
+    'CSV is a poor format for a log. A binary format that writes each string’s length in bytes, then the raw string, is faster and simpler, and needs no escaping.']];
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">A real engine must survive deletes, crashes and clashes. Run each case on the tape.</h1>'+
+   '<div class="lg-row" id="e13"></div><div id="e13-pic"></div><div class="lg-cap" id="e13-cap"><span class="t">Pick a case</span>Each one shows what goes wrong and the fix Bitcask-style engines use.</div>');
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e13-'+j;b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#e13').children].forEach(x=>x.classList.toggle('sel',x===b));const t=p[1]();
+      L.$('#e13-pic').innerHTML=lgSvg('e13s',t.s,t.H,p[0]);L.$('#e13-cap').innerHTML='<span class="t">'+p[0]+'</span>'+p[2];seen.add(j);b.classList.add('ok');
+      if(seen.size===P.length&&!L.$('#e13-ok')){L.$('#e13').insertAdjacentHTML('afterend','<span id="e13-ok"></span>');
+        L.sheet('info','See the pattern?','Finished segments never change. That one rule is why deletes, crashes and many readers stay simple: you only ever add to the end, and a merge writes a brand-new file.');L.done();}};
+    L.$('#e13').appendChild(b);});}},
 {part:1,src:'Chapter 3 · Hash Indexes',run(L){
-  L.h(L.kick('learn','Making it real')+'<h1 class="q">Five details that turn the idea into a real engine. Tap each one.</h1>');
-  L.flips(L.card,[
-   ['File format','CSV is a poor fit. A binary format that writes each string’s length in bytes, then the raw bytes, needs no escaping.'],
-   ['Deleting a key','Append a special deletion record, a '+L.g('tombstone','tombstone')+'. When segments are merged, it tells the merge to drop all older values for that key.'],
-   ['Crash recovery','A restart wipes the in-memory hash maps. Rebuilding them means reading every segment, which can be slow. Bitcask saves a snapshot of each map on disk to load quickly.'],
-   ['Half-written records','A crash can cut a record off mid-append. Bitcask files include '+L.g('checksum','checksums')+', so a damaged record is spotted and ignored.'],
-   ['Concurrency','Writes go on the end in strict order, so a common choice is one single writer thread. Segments never change, so many threads can read them at once.']],
-   'See the pattern? Because finished files never change, crashes and concurrency become much simpler to handle.');}},
-{part:1,src:'Chapter 3 · Hash Indexes',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which fix?',['Tombstone','Checksum','Snapshot of the map','Segments + compaction','Length-prefixed format'],[
-   ['A courier leaves Otterpost, and their key must disappear from the store.',0,'Append a tombstone. When segments merge, every older value for that key is dropped.'],
-   ['The power fails halfway through appending a ping. On restart, the last record is cut short.',1,'Each record’s checksum shows that the cut-off one doesn’t match, so it is skipped.'],
-   ['After a reboot, the server spends 20 minutes reading every segment before it can answer.',2,'Rebuilding every hash map from scratch is slow. Loading a saved snapshot of each map is much faster.'],
-   ['The disk keeps filling with old pings that no one will ever read again.',3,'Close segments at a set size, then compact and merge them so only the latest value per key survives.'],
-   ['A value contains a comma and a line break, and the reader splits it in the wrong place.',4,'Write each value’s length first, then the raw bytes. The reader never has to guess where a value ends.']]);}},
-{part:1,src:'Chapter 3 · Hash Indexes',run(L){
+  const id='f15';let s='';
+  const blk=(x,y,on,c)=>'<rect x="'+x+'" y="'+y+'" width="15" height="18" rx="3" style="fill:'+(on?'var(--'+c+')':'var(--soft2)')+';stroke:var(--line2);stroke-width:1"/>';
+  s+=lgT(2,13,'1 · Sequential, not random','font-size:12.5px;font-weight:700;fill:var(--ink)');
+  for(let j=0;j<8;j++)s+=blk(4+j*17,22,j<6,'h2');s+=lgLine(id,4,50,100,50,'h2',2)+lgT(4,66,'append: one smooth stream','font-size:11px;fill:var(--muted)');
+  const on=[1,6,3,7];for(let j=0;j<8;j++)s+=blk(172+j*17,22,on.includes(j),'h4');
+  s+='<path d="M'+(172+1*17+8)+' 46 Q'+(172+3.5*17)+' 62 '+(172+6*17+8)+' 46 M'+(172+6*17+8)+' 46 Q'+(172+4.5*17)+' 60 '+(172+3*17+8)+' 46 M'+(172+3*17+8)+' 46 Q'+(172+5*17)+' 64 '+(172+7*17+8)+' 46" style="fill:none;stroke:var(--h4);stroke-width:1.5"/>';
+  s+=lgT(172,66,'overwrite: jump around','font-size:11px;fill:var(--muted)');
+  s+=lgT(2,94,'2 · Crashes stay simple','font-size:12.5px;font-weight:700;fill:var(--ink)');
+  s+='<rect x="4" y="102" width="44" height="28" rx="6" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5"/>'+lgT(26,121,'W2','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+
+    '<rect x="52" y="102" width="44" height="28" rx="6" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5;stroke-dasharray:4 3"/>'+lgT(74,121,'W4…','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+
+    lgT(4,146,'append cut short:','font-size:11px;fill:var(--muted)')+lgT(4,160,'old value intact','font-size:11px;fill:var(--muted)');
+  s+='<rect x="172" y="102" width="60" height="28" rx="6" style="fill:var(--no-bg);stroke:var(--no-strong);stroke-width:1.5"/>'+'<path d="M202 102 l-5 7 l8 6 l-6 7 l4 8" style="fill:none;stroke:var(--no-strong);stroke-width:1.6"/>'+lgT(186,121,'W2','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--muted)')+lgT(218,121,'W4','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--no)')+
+    lgT(240,121,'✗','font-size:14px;font-weight:700;fill:var(--no)')+lgT(172,146,'crash mid-overwrite:','font-size:11px;fill:var(--muted)')+lgT(172,160,'spliced value','font-size:11px;fill:var(--muted)');
+  s+=lgT(2,188,'3 · No fragmentation','font-size:12.5px;font-weight:700;fill:var(--ink)');
+  [[4,198,22],[40,206,14],[66,198,30],[110,206,18]].forEach(p=>{s+='<rect x="'+p[0]+'" y="'+p[1]+'" width="'+p[2]+'" height="16" rx="3" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.2"/>';});
+  s+=lgLine(id,138,210,180,210,'ink',2)+'<rect x="186" y="200" width="84" height="20" rx="4" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.6"/>'+lgT(4,240,'merging rewrites scattered old segments into one tidy file','font-size:11px;fill:var(--muted)');
   L.h(L.kick('learn','Wasteful or wise?')+'<h1 class="q">Why not just overwrite the old value in place?</h1>'+
-   L.lanes([['check','Why append-only wins','<p style="margin:0 0 8px">Appending and merging are <b>sequential writes</b>, much faster than writing to random spots, especially on spinning hard disks and to some extent on SSDs.</p><p style="margin:0 0 8px">Crashes are simpler: you never end up with a value that is half old and half new.</p><p style="margin:0">Merging stops the data files from getting fragmented over time.</p>',2],
-            ['alert','Where hash indexes fall short','<p style="margin:0 0 8px">The map must <b>fit in memory</b>. A hash map on disk needs lots of random reads, is costly to grow, and handles collisions awkwardly.</p><p style="margin:0"><b>'+L.g('range-query','Range queries')+'</b> are slow: to get every courier from C-0100 to C-0199, you look up each key one by one.</p>',4]])+
-   '<p class="small" style="margin-top:12px">The next part fixes both limits with one small change.</p>');
+   lgSvg(id,s,248,'Three panels: appending is a sequential write; a crash cannot splice old and new values; merging avoids fragmentation')+
+   '<div class="lg-cap">Appending looks wasteful, but it wins. Sequential writes are much faster than random ones, especially on spinning disks and to some extent on SSDs. A crash can’t splice old and new values. Merging stops files fragmenting.</div>');
   L.done();}},
-{part:1,src:'Chapter 3 · Hash Indexes',pts:1,run(L){
-  L.h(L.kick('pr','Spot the limit')+'<h1 class="q">Zainab is asked to keep every parcel since launch, about 900 million tracking codes, in a hash-indexed log on a server with 16 GB of memory. What is the real problem?</h1>');
-  L.mc(L.card,['The map of all the keys may not fit in memory','Appending 400,000 new records a day is too slow','The parcel records won’t fit in memory'],0,
-   'Right. Values live on disk and cost one seek each, so their size is fine. It’s the in-memory map of every key that runs out of room.',
-   'Appends are the cheapest write there is, and records stay on disk, one seek away. The limit is the in-memory map: with hundreds of millions of keys, it may not fit.');}},
+{part:1,src:'Chapter 3 · Hash Indexes',pts:1,
+ solve:async L=>{lgSet(L,'w16k',4);L.$('#w16-rq').click();await L.lgP;await lgWait(L,'#w16-q button',200);L.$$('#w16-q button')[1].click();},
+ run(L){
+  const KS=[3000,1e6,1e8,3e8,9e8],KL=['3,000','1 million','100 million','300 million','900 million'],EB=40;
+  let maxK=0,ranged=false,asked=false,picked=false;
+  L.h(L.kick('pr','Where it breaks')+'<h1 class="q">Zainab is asked to keep every parcel since launch, about 900 million tracking codes, in a hash-indexed log on a server with 16 GB of memory. Push it to the limit.</h1>'+
+   lgTasks('w16t',['Slide the keys up to 900 million','Ask for couriers <b>C-0400 to C-0520</b>'])+
+   '<div id="w16-pic"></div><label class="lg-rng" for="w16k"><span>Distinct keys</span><input type="range" id="w16k" min="0" max="4" step="1" value="0"><b id="w16k-v"></b></label>'+
+   '<div class="lg-row"><button class="btn" id="w16-rq">'+L.ic('list')+'Range query: C-0400 to C-0520</button></div><div class="lg-ro" id="w16-ro"></div><div id="w16-q"></div>'+
+   '<p class="lg-ill">About 40 bytes of memory per map entry: illustrative.</p>');
+  function pic(lit,count){const k=+L.$('#w16k').value,gb=KS[k]*EB/1e9,id='w16s';let s='';
+    const X0=6,W=300,MAX=40,cap=X0+W*16/MAX,fw=Math.max(2,W*Math.min(gb,MAX)/MAX),over=gb>16;
+    s+=lgT(X0,13,'Hash map size vs memory','font-size:12.5px;font-weight:700;fill:var(--ink)');
+    s+='<rect x="'+X0+'" y="22" width="'+W+'" height="26" rx="6" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.2"/>';
+    s+='<rect x="'+X0+'" y="22" width="'+Math.min(fw,cap-X0)+'" height="26" rx="6" style="fill:var(--h2)"/>';
+    if(over)s+='<rect x="'+cap+'" y="22" width="'+(X0+fw-cap)+'" height="26" rx="4" style="fill:var(--no-strong)"/>';
+    s+='<line x1="'+cap+'" y1="16" x2="'+cap+'" y2="54" style="stroke:var(--ink);stroke-width:2.5"/>'+lgT(cap+4,66,'16 GB of memory','font-size:11.5px;font-weight:700;fill:var(--ink)');
+    s+=lgT(X0,66,(gb<0.001?Math.round(gb*1e6)+' KB':gb<1?Math.round(gb*1000)+' MB':gb+' GB'),'font-size:11.5px;font-weight:700;fill:'+(over?'var(--no)':'var(--h2)'));
+    s+=lgT(X0,88,'Values: on disk, one seek each','font-size:11.5px;fill:var(--muted)')+lgT(314,88,'fine at any size','font-size:11.5px;font-weight:600;text-anchor:end;fill:var(--ok)');
+    /* hash slots */
+    s+=lgT(X0,114,'Inside the hash map: keys land in scattered slots','font-size:12px;font-weight:600;fill:var(--muted)');
+    const keys=['C-0471','C-0013','C-0408','C-0899','C-0517','C-0233','C-0402','C-0650','C-0519','C-0077','C-0446','C-0301','C-0488','C-0160','C-0412','C-0702'];
+    keys.forEach((kk,j)=>{const x=X0+(j%8)*38,y=122+Math.floor(j/8)*32,inr=kk>='C-0400'&&kk<='C-0520',on=lit&&lit.has(j);
+      s+='<rect x="'+x+'" y="'+y+'" width="35" height="28" rx="5" style="fill:'+(on?'var(--pri-bg)':'var(--card)')+';stroke:'+(on?'var(--pri)':'var(--line2)')+';stroke-width:'+(on?2.4:1.2)+'"/>'+lgT(x+17.5,y+13,kk.slice(0,2),'font-size:11px;text-anchor:middle;fill:var(--muted)')+lgT(x+17.5,y+25,kk.slice(2),'font-size:11px;font-weight:'+(inr?700:500)+';text-anchor:middle;fill:'+(inr?'var(--ink)':'var(--muted)'));});
+    if(count)s+=lgT(X0,206,'Separate lookups so far: '+count+' of 121','font-size:12px;font-weight:700;fill:var(--pri)');
+    L.$('#w16-pic').innerHTML=lgSvg(id,s,count?212:190,'A memory bar with a 16 GB line; the hash map grows past it as keys grow. Below, hash slots hold keys in scattered order.');
+    L.$('#w16k-v').textContent=KL[k];
+    L.$('#w16-ro').innerHTML='<span>Map needs <b>'+(gb<0.001?Math.round(gb*1e6)+' KB':gb<1?Math.round(gb*1000)+' MB':gb+' GB')+'</b></span><span>Memory <b>16 GB</b></span><span>'+(over?'<span class="no-t">Doesn’t fit</span>':'<span class="ok-t">Fits</span>')+'</span>';}
+  L.$('#w16k').oninput=()=>{const k=+L.$('#w16k').value;maxK=Math.max(maxK,k);pic();if(k===4)lgTick(L,'w16t',0);ask();};
+  L.$('#w16-rq').onclick=function(){if(this.disabled)return;this.disabled=true;L.lgP=(async()=>{const order=[2,6,14,10,12,0,4,8];const lit=new Set();
+    for(let j=0;j<order.length;j++){lit.add(order[j]);pic(lit,Math.round((j+1)/order.length*121));await L.sleep(150);if(!L.$('#w16-pic'))return;}
+    ranged=true;lgTick(L,'w16t',1);L.fb(L.$('#w16-q'),'A hash map keeps no order. C-0400 to C-0520 means 121 separate lookups, one per possible key, hopping between scattered slots.','info');ask();})();};
+  function ask(){if(asked||maxK<4||!ranged)return;asked=true;const q=L.$('#w16-q');
+    q.insertAdjacentHTML('beforeend','<div class="lg-lbl">So for Zainab’s 900 million codes, what is the real problem?</div><div class="lg-row" style="flex-direction:column;align-items:stretch"></div>');
+    ['Appending new records every day is too slow','The map of all the keys doesn’t fit in memory','The parcel records themselves won’t fit in memory'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+      b.onclick=()=>{if(picked)return;picked=true;const ok=j===1;b.classList.add(ok?'ok':'no');L.award(ok);
+        L.sheet(ok?'ok':'no',ok?'Right: the map of keys':'Not that one','Appends are the cheapest write there is, and values live on disk, one seek away. The limit is the in-memory map: every key must be in it. A hash map on disk is hard to make fast (lots of random reads, costly to grow, fiddly collisions). And ranges need one lookup per key. The next part fixes both limits.');L.done();};
+      q.querySelector('.lg-row:last-child').appendChild(b);});}
+  pic();}},
 
 /* ---------- PART 3: SSTABLES AND LSM-TREES ---------- */
 {part:2,src:'Chapter 3 · SSTables and LSM-Trees',run(L){
+  const id='f17';let s='';
+  s+=lgT(2,13,'A hash-log segment: in write order','font-size:12px;font-weight:600;fill:var(--muted)');
+  ['C-0230','C-0017','C-0400','C-0042','C-0017','C-0219'].forEach((k,j)=>{s+=lgCell(2+j*53,20,50,30,{k,v:''});});
+  s+=lgLine(id,160,56,160,74,'ink',2)+lgT(170,70,'sort by key, each key once','font-size:11.5px;font-weight:600;fill:var(--ink)');
+  s+=lgT(2,92,'SSTable','font-size:12.5px;font-weight:700;fill:var(--ink)')+lgT(60,92,'sparse index in memory ↓','font-size:11.5px;fill:var(--muted)');
+  [['C-0017',0],['C-0230',2]].forEach((e,j)=>{s+='<rect x="'+(2+j*159)+'" y="98" width="70" height="20" rx="6" style="fill:var(--card);stroke:var(--h3);stroke-width:1.6"/>'+lgT(37+j*159,112,e[0]+' @'+(j?'4K':'0'),'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+    s+=lgAr(id,37+j*159,118,2+(j?159:0)+10,134,'h3',1.6);});
+  s+='<rect x="0" y="134" width="157" height="36" rx="7" style="fill:var(--soft2);stroke:none"/><rect x="159" y="134" width="160" height="36" rx="7" style="fill:var(--soft2);stroke:none"/>';
+  ['C-0017','C-0042','C-0219','C-0230','C-0400','C-0471'].forEach((k,j)=>{s+=lgCell(4+j*52+(j>=3?3:0),137,48,30,{k,v:''});});
+  s+=lgT(78,184,'block 1 · compressed','font-size:11px;text-anchor:middle;fill:var(--muted)')+lgT(238,184,'block 2 · compressed','font-size:11px;text-anchor:middle;fill:var(--muted)');
+  [['1','Merge like mergesort'],['2','Sparse index is enough'],['3','Compress each block']].forEach((b,j)=>{const x=2+j*107;s+='<circle cx="'+(x+9)+'" cy="206" r="9" style="fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.5"/>'+lgT(x+9,210,b[0],'font-size:11px;font-weight:700;text-anchor:middle;fill:var(--pri)')+lgT(x+22,210,b[1].split(' ').slice(0,2).join(' '),'font-size:11px;fill:var(--ink)')+lgT(x+22,224,b[1].split(' ').slice(2).join(' '),'font-size:11px;fill:var(--ink)');});
   L.h(L.kick('learn','SSTables')+'<h1 class="q">One small change: keep each segment sorted by key</h1>'+
-   L.prose('Now require every segment file to be sorted by key, with each key appearing only once in a merged segment. This format is called a '+L.g('sstable','Sorted String Table, or SSTable')+'. It brings three big wins:')+
-   L.list([['Easy merging','Merge files the way mergesort does: read them side by side and copy the smallest key each time. This works even when the files are bigger than memory. If a key is in several files, keep the value from the newest one.'],
-     ['A sparse index','You no longer need every key in memory. One key for every few kilobytes of file is enough: any other key must lie between two of these signposts, and a few kilobytes scan quickly.'],
-     ['Compressed blocks','The records between two signposts can be grouped into a block and compressed. That saves disk space and the bandwidth needed to read them.']],3)+
-   '<p class="small" style="margin-top:10px">But writes arrive in any order. How do they end up sorted? That comes in a few screens.</p>');
+   lgSvg(id,s,230,'A segment in write order becomes an SSTable sorted by key, with a sparse index pointing at the start of compressed blocks')+
+   '<div class="lg-cap">Sorted by key, each key once: a '+L.g('sstable','Sorted String Table (SSTable)')+'. Files merge like mergesort, even when bigger than memory. A '+L.g('sparse-index','sparse index')+' of one key every few kilobytes is enough. Compressed blocks save disk space and bytes moved from disk.</div>'+
+   '<p class="lg-ill">But writes arrive in any order. How do they end up sorted? Three screens from now.</p>');
   L.done();}},
-{part:2,src:'Chapter 3 · SSTables and LSM-Trees',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Finding courier C-0217 with a sparse index</h1>');
-  L.beats(L.card,[
-   ['The file','An SSTable of courier keys, sorted. The index in memory holds only some keys: C-0150 at byte 8,000, C-0300 at byte 12,000, and so on.'],
-   ['Narrow it down','C-0217 sorts after C-0150 and before C-0300. If it is in the file at all, it lies between bytes 8,000 and 12,000.'],
-   ['Read one block','Jump to byte 8,000 and read forward. That stretch was stored as one compressed block, so it is one small read.'],
-   ['Stop early','The keys are sorted. Once the scan passes a key bigger than C-0217, the engine knows C-0217 isn’t in this file.']],
-   'Sorting lets a small set of signposts do the job of a full index.');}},
-{part:2,src:'Chapter 3 · SSTables and LSM-Trees',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The sparse index has C-0400 at byte 20,000 and C-0520 at byte 26,000. Where does the search for C-0488 start?</h1>');
-  L.mc(L.card,['At byte 26,000, reading backward','At byte 20,000, reading forward','At byte 0, the start of the file'],1,
-   'C-0488 sorts between C-0400 and C-0520, so it can only be in that stretch. Start at the lower signpost and scan forward.',
-   'The keys are sorted, so C-0488 can only sit between the C-0400 and C-0520 signposts. Jump to byte 20,000 and scan forward. No need to start from the beginning.');}},
 {part:2,src:'Chapter 3 · SSTables and LSM-Trees',pts:1,
- solve:async L=>{for(let k=0;k<10;k++){const b=L.$('#mg [data-right="1"]');if(!b)break;b.click();await L.sleep(5);}},
+ solve:async L=>{L.$('#s18-1').click();await L.lgP;await lgWait(L,'#s18-nx',100);L.$('#s18-nx').click();await L.lgP;await lgWait(L,'#s18-ok',100);},
  run(L){
-  const A=[['C-0002','Westport North'],['C-0005','Zone W3'],['C-0009','Zone W1']],B=[['C-0003','Zone W2'],['C-0005','Zone W4'],['C-0011','Eastvale Depot']];
-  let a=0,b=0,miss=0,fin=false;const out=[];
-  L.h(L.kick('pr','Merge by hand')+'<h1 class="q">Merge two SSTables into one. Tap the entry that goes next into the new file.</h1><div id="mg"></div><div id="mm"></div>');
-  const right=()=>a>=A.length?'b':b>=B.length?'a':A[a][0]<B[b][0]?'a':A[a][0]>B[b][0]?'b':'b';
-  const col=(name,xs,k,side)=>'<div class="lane"><div class="lh">'+L.ic(side==='a'?'clock':'star')+name+'</div>'+
-    (k>=xs.length?'<p class="small" style="margin:0">Empty</p>':xs.slice(k).map((x,j)=>j===0?'<button class="chip" data-side="'+side+'"'+(right()===side?' data-right="1"':'')+'>'+x[0]+' · '+x[1]+'</button>':'<span class="chip static" style="opacity:.55">'+x[0]+' · '+x[1]+'</span>').join(''))+'</div>';
-  const draw=()=>{L.$('#mg').innerHTML='<div class="two">'+col('Older SSTable',A,a,'a')+col('Newer SSTable',B,b,'b')+'</div>'+
-    '<div class="small" style="margin-top:14px">New merged SSTable</div><div style="'+LOGBOX+'">'+(out.length?out.map(x=>x[0]+' · '+x[1]).join('<br>'):'<span style="color:var(--muted)">(empty)</span>')+'</div>';
-    L.$$('#mg button').forEach(btn=>btn.onclick=()=>take(btn.dataset.side));};
-  const take=s=>{if(fin)return;const r=right();L.$('#mm').innerHTML='';
+  const BL=[[14000,['C-0300','C-0322','C-0351','C-0377']],[20000,['C-0400','C-0431','C-0466','C-0488']],[26000,['C-0520','C-0547','C-0561','C-0590']],[32000,['C-0610','C-0644','C-0672','C-0699']]];
+  let first=true,busy=false,phase=0;
+  L.h(L.kick('try','Use the sparse index')+'<h1 class="q">Signe’s team needs courier <b>C-0466</b>. The index holds only the first key of each block. Tap the signpost to start reading from.</h1>'+
+   '<div class="lg-lbl">Sparse index in memory</div><div class="lg-grid2" id="s18"></div><div id="s18-pic"></div><div class="lg-ro" id="s18-ro"></div><div id="s18-x"></div>'+
+   '<p class="lg-ill">1,500-byte records, 6,000-byte blocks: illustrative.</p>');
+  function pic(scan,hit,stop,startB){const id='s18s';let s='';
+    BL.forEach((b,i)=>{const y=i*64;s+=lgT(2,y+13,'Block at byte '+lgFmt(b[0])+' · compressed','font-size:11.5px;font-weight:600;fill:'+(i===startB?'var(--pri)':'var(--muted)'));
+      s+='<rect x="0" y="'+(y+18)+'" width="320" height="40" rx="8" style="fill:var(--soft2)"/>';
+      b[1].forEach((k,j)=>{const g=i*4+j,x=6+j*78;s+='<rect x="'+x+'" y="'+(y+22)+'" width="72" height="32" rx="6" style="fill:var(--card);stroke:'+(g===hit?'var(--ok-strong)':g===stop?'var(--no-strong)':scan&&scan.has(g)?'var(--ink)':'var(--line2)')+';stroke-width:'+(g===hit||g===stop?3:scan&&scan.has(g)?2.4:1.2)+'"/>'+lgT(x+36,y+42,k,'font-size:12px;font-weight:'+(scan&&scan.has(g)?700:500)+';text-anchor:middle;fill:var(--ink)');});});
+    L.$('#s18-pic').innerHTML=lgSvg(id,s,BL.length*64,'Four compressed blocks of a sorted SSTable; the scan outlines each key it reads');}
+  async function scan(bi,target){busy=true;const sc=new Set();let g=bi*4,bytes=0,hit=-1,stop=-1;
+    while(g<16){sc.add(g);bytes+=1500;const k=BL[Math.floor(g/4)][1][g%4];pic(sc,-1,-1,bi);L.$('#s18-ro').innerHTML='<span>Bytes read <b>'+lgFmt(bytes)+'</b></span><span>Looking for <b>'+target+'</b></span>';
+      await L.sleep(160);if(!L.$('#s18-pic'))return null;
+      if(k===target){hit=g;break;}if(k>target){stop=g;break;}g++;}
+    pic(sc,hit,stop,bi);busy=false;return {hit,stop,bytes};}
+  BL.forEach((b,i)=>{const btn=document.createElement('button');btn.className='chip';btn.id='s18-'+i;btn.innerHTML=b[1][0]+' → '+lgFmt(b[0]);
+    btn.onclick=()=>{if(busy||phase)return;L.lgP=(async()=>{const r=await scan(i,'C-0466');if(!r)return;const ok=r.hit>=0&&i===1;
+      if(first){first=false;L.award(ok);}
+      if(ok){phase=1;btn.classList.add('ok');
+        L.$('#s18-x').innerHTML='<div class="fb ok">C-0466 sorts between C-0400 and C-0520, so it can only be in the block at byte 20,000. Three records read: 4,500 bytes.</div><button class="btn pri" id="s18-nx" style="margin-top:8px">'+L.ic('eye')+'Now look for C-0500</button>';
+        L.$('#s18-nx').onclick=function(){if(busy)return;this.remove();L.lgP=(async()=>{const r2=await scan(1,'C-0500');if(!r2)return;
+          L.$('#s18-x').insertAdjacentHTML('beforeend','<span id="s18-ok"></span>');
+          L.sheet('info','Stop early','The scan passed C-0488 and hit C-0520, which sorts after C-0500. The keys are sorted, so C-0500 can’t be further on: it isn’t in this file. Without sorting, you’d have to read everything to be sure.');L.done();})();};}
+      else{btn.classList.add('no');L.$('#s18-x').innerHTML='<div class="fb no">'+(r.hit>=0?'Found, but you read '+lgFmt(r.bytes)+' bytes: a whole extra block. Start from the signpost just below the key.':'The first key there already sorts after C-0466, so the scan stops without finding it. Start from the signpost just below the key.')+' Try another signpost.</div>';}})();};
+    L.$('#s18').appendChild(btn);});
+  pic(null,-1,-1,-1);L.$('#s18-ro').innerHTML='<span>Bytes read <b>0</b></span><span>Looking for <b>C-0466</b></span>';}},
+{part:2,src:'Chapter 3 · SSTables and LSM-Trees',pts:1,
+ solve:async L=>{for(let k=0;k<12;k++){const b=L.$('#m19 [data-right="1"]');if(!b)break;b.click();await L.sleep(5);}},
+ run(L){
+  const A=[['C-0002','W2'],['C-0005','W3'],['C-0009','W1'],['C-0014','E2']],B=[['C-0003','W2'],['C-0005','W4'],['C-0011','E1']];
+  let a=0,b=0,miss=0,fin=false;const out=[],drop=[];
+  L.h(L.kick('pr','Merge by hand')+'<h1 class="q">Merge two SSTables into one. Look only at the front of each file and tap the entry that goes next.</h1><div id="m19"></div><div id="m19-m"></div>');
+  const right=()=>a>=A.length?'b':b>=B.length?'a':A[a][0]<B[b][0]?'a':'b';
+  const cl=(x,extra,st)=>{const c=lgC(x[0]);return '<div class="lg-cell'+(extra||'')+'" style="--c:var(--'+c+');--cb:var(--'+c+'-bg);'+(st||'')+'">'+x[0]+'<span>'+x[1]+'</span></div>';};
+  const file=(name,xs,k,side)=>'<div class="lg-file"><div class="h"><span>'+name+'</span><span>'+(k>=xs.length?'done':'front ▸ '+xs[k][0])+'</span></div><div class="r">'+
+    xs.map((x,j)=>j<k?cl(x,drop.includes(side+j)?' x':' gone'):j===k?'<button class="lg-cell front" data-side="'+side+'"'+(right()===side?' data-right="1"':'')+' style="--c:var(--'+lgC(x[0])+');--cb:var(--'+lgC(x[0])+'-bg)">'+x[0]+'<span>'+x[1]+'</span></button>':cl(x,'','opacity:.6')).join('')+'</div></div>';
+  const draw=()=>{L.$('#m19').innerHTML=file('Older SSTable',A,a,'a')+file('Newer SSTable',B,b,'b')+
+    '<div class="lg-file" style="border:2px solid var(--h2)"><div class="h"><span style="color:var(--h2)">New merged SSTable</span><span>'+out.length+' entries</span></div><div class="r">'+(out.length?out.map(x=>cl(x)).join(''):'<span class="small">(empty)</span>')+'</div></div>';
+    L.$$('#m19 button').forEach(btn=>btn.onclick=()=>take(btn.dataset.side));};
+  const take=s=>{if(fin)return;const r=right();L.$('#m19-m').innerHTML='';
     if(s!==r){miss++;const tie=a<A.length&&b<B.length&&A[a][0]===B[b][0];
-      L.fb(L.$('#mm'),tie?'<b>Same key in both files.</b> Which value is more recent?':'<b>Not yet.</b> The new file must stay sorted. Which key comes first?','no');return;}
-    if(s==='b'){if(a<A.length&&A[a][0]===B[b][0]){L.fb(L.$('#mm'),'C-0005 was in both files. The newer value wins, and the older one is dropped.','ok');a++;}out.push(B[b]);b++;}
+      L.fb(L.$('#m19-m'),tie?'<b>Same key in both files.</b> Which file’s value is more recent?':'<b>Not yet.</b> The new file must stay sorted. Which front key comes first?','no');return;}
+    if(s==='b'){if(a<A.length&&A[a][0]===B[b][0]){drop.push('a'+a);L.fb(L.$('#m19-m'),'C-0005 was in both files. Every value in the newer file is more recent, so W4 wins and W3 is dropped.','ok');a++;}out.push(B[b]);b++;}
     else{out.push(A[a]);a++;}
     draw();
     if(a>=A.length&&b>=B.length){fin=true;L.award(miss===0);
-      L.sheet(miss===0?'ok':'info',miss===0?'Perfect merge':'Merged','Smallest key first, and when both files hold the same key, the newer file wins. The engine only ever looks at the front of each file, which is why this works even for files bigger than memory.');L.done();}};
+      L.sheet(miss===0?'ok':'info',miss===0?'Perfect merge':'Merged','Smallest key first; when both files hold a key, the newer file wins. The engine only ever looks at the front of each file, so this works even for files far bigger than memory, and the output comes out sorted too.');L.done();}};
   draw();}},
 {part:2,src:'Chapter 3 · Constructing and maintaining SSTables',run(L){
-  L.h(L.kick('learn','Memtables')+'<h1 class="q">Writes arrive in any order, so sort them in memory first</h1>'+
-   L.prose('Keeping data sorted on disk is hard. In memory it’s easy, with a balanced tree such as a red-black tree: insert keys in any order, read them back sorted. So the engine works like this:')+
-   L.flow([['pencil','1 · Memtable','Each write goes into a sorted tree in memory, the '+L.g('memtable','memtable')+'.','',1],['down','2 · Flush','At a few megabytes, it’s written out as a new SSTable. A fresh memtable takes new writes meanwhile.','',2],['layers','3 · Merge','In the background, SSTables are merged and old or deleted values dropped.','',3]])+
-   L.prose('Reads check the memtable first, then the newest SSTable, then older ones. One risk: a crash wipes the memtable. So every write is also appended straight away to a separate log on disk. That log isn’t sorted and doesn’t need to be: its only job is to rebuild the memtable. After a flush, it’s thrown away.')+
-   '<p class="small">This design is the '+L.g('lsm','LSM-tree')+' (Log-Structured Merge-Tree), first described by Patrick O’Neil and others. LevelDB and RocksDB work this way, and Cassandra and HBase use similar engines, inspired by Google’s Bigtable paper.</p>');
+  const r=lgLsm({id:'f20',mergeBracket:true,mem:[{k:'C-0017',v:'W4'},{k:'C-0105',v:'E2'},{k:'C-0230',v:'W1'}],log:[{k:'C-0230',v:'W1'},{k:'C-0017',v:'W4'},{k:'C-0105',v:'E2'}],
+    ssts:[{n:2,recs:[{k:'C-0042',v:'W3'},{k:'C-0219',v:'W5'},{k:'C-0400',v:'E1'}]},{n:1,recs:[{k:'C-0007',v:'E1'},{k:'C-0017',v:'W2'},{k:'C-0042',v:'W2'},{k:'C-0230',v:'E3'}]}]});
+  L.h(L.kick('learn','The LSM-tree')+'<h1 class="q">Writes arrive in any order, so sort them in memory first</h1>'+
+   lgSvg('f20',r.s,r.H,'The memtable keeps writes sorted in memory while the crash log keeps them in arrival order; flushed SSTables stack below, newest first, and are merged in the background')+
+   '<div class="lg-cap">Each write goes into a sorted in-memory tree (such as a red-black tree), the '+L.g('memtable','memtable')+', and onto a log on disk. At a few megabytes it becomes a new SSTable; background merges combine files. This design is the '+L.g('lsm','LSM-tree')+'.</div>');
   L.done();}},
-{part:2,src:'Chapter 3 · Making an LSM-tree out of SSTables',pts:1,run(L){
-  L.h(L.kick('pr','Follow a read')+'<h1 class="q">Tobias rebuilds the ping store as an LSM-tree. Dispatch asks it for key C-0042. Tap the places it checks, in order.</h1>');
-  L.order(L.card,['The memtable in memory','The newest SSTable on disk','The next-older SSTable','The oldest SSTable'],
-   'Newest first, because a newer value for a key always overrides an older one. Only when every place says “not here” does the engine know the key doesn’t exist.');}},
-{part:2,src:'Chapter 3 · Constructing and maintaining SSTables',pts:1,run(L){
-  L.h(L.kick('pr','Crash test')+'<h1 class="q">Tobias’s LSM store crashes. Its memtable held 3 MB of pings that were not yet flushed. What brings them back?</h1>');
-  L.mc(L.card,['The newest SSTable on disk','The sparse index in memory','The unsorted log on disk'],2,
-   'Every write was appended to that log the moment it arrived. Replaying it rebuilds the memtable.',
-   'Those pings never reached an SSTable, and anything in memory is gone after a crash. The unsorted log on disk was written first, exactly for this.');}},
+{part:2,src:'Chapter 3 · Constructing and maintaining SSTables',
+ solve:async L=>{const ks=['C-0230','C-0017','C-0105','C-0042'];for(let j=0;j<8;j++){L.$('#x21-'+ks[j%4]).click();await L.sleep(5);await L.lgP;}
+   L.$('#x21-mg').click();await L.lgP;L.$('#x21-rd').click();await L.lgP;await lgWait(L,'#x21-ok');},
+ run(L){
+  const ks=['C-0230','C-0017','C-0105','C-0042'];let flushes=0;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">Tobias rebuilds the ping store as an LSM-tree. Write pings in any order and watch where they go.</h1>'+
+   lgTasks('x21t',['Write until the memtable flushes twice','Merge the two oldest SSTables','Read <b>C-0042</b>'])+
+   '<div class="lg-row">'+ks.map(k=>'<button class="chip" id="x21-'+k+'">'+L.ic('pencil')+k+'</button>').join('')+'</div><div id="x21"></div>'+
+   '<div class="lg-row"><button class="btn" id="x21-mg">'+L.ic('layers')+'Merge two oldest</button><button class="btn pri" id="x21-rd">'+L.ic('eye')+'Read C-0042</button></div>'+
+   '<p class="lg-ill">The memtable flushes at 4 entries here, standing in for “a few megabytes.”</p>');
+  const box=LsmBox(L,L.$('#x21'),{id:'x21b',ssts:[{n:1,recs:[{k:'C-0007',v:'E1'},{k:'C-0042',v:'W2'},{k:'C-0219',v:'W5'},{k:'C-0400',v:'E3'}]}],
+    on:e=>{if(e.type==='flush'){flushes++;box.say('Flushed','The memtable was already sorted, so writing it out as an SSTable is one sequential write. The crash log for it is thrown away; a fresh memtable takes new writes.');if(flushes>=2)lgTick(L,'x21t',0);}
+      if(e.type==='merge'){lgTick(L,'x21t',1);box.say('Merged','Like mergesort: the two sorted files were read side by side into one new sorted file. Where a key was in both, the newer value won and the older one was dropped.');}
+      if(e.type==='read'){lgTick(L,'x21t',2);box.say('Read C-0042',e.res?'Checked newest first, and stopped at the first hit: '+e.where+' had '+e.res.v+'. A newer value always overrides an older one.':'Checked every place, newest first: not found.');}
+      if(L.$$('#x21t li.done').length===3&&!L.$('#x21-ok')){L.$('#x21').insertAdjacentHTML('afterend','<span id="x21-ok"></span>');
+        L.sheet('info','The whole LSM loop','Random writes become sorted in memory, then sequential writes to disk. Merges keep the number of files small, and reads go newest to oldest.');L.done();}}});
+  box.say('Try it','Tap couriers in any order. The memtable stays sorted; the crash log keeps arrival order.');
+  ks.forEach(k=>L.$('#x21-'+k).onclick=()=>{if(box.S.busy)return;if(box.S.ssts.length>=4){box.say('Disk is getting crowded','Merge the two oldest SSTables first.');return;}L.lgP=box.write(k);});
+  L.$('#x21-mg').onclick=()=>{if(box.S.busy)return;if(box.S.ssts.length<2){box.say('Nothing to merge yet','Write until the memtable flushes, so there are two SSTables.');return;}box.clearMarks();L.lgP=box.merge();};
+  L.$('#x21-rd').onclick=()=>{if(box.S.busy)return;box.clearMarks();L.lgP=box.read('C-0042');};}},
 
 /* ---------- PART 4: LSM IN PRACTICE ---------- */
-{part:3,src:'Chapter 3 · Performance optimizations',run(L){
-  L.h(L.kick('learn','Two tuning knobs')+'<h1 class="q">Bloom filters and the style of compaction</h1>'+
-   L.prose('Looking up a key that <i>doesn’t</i> exist is slow in an LSM-tree. The engine checks the memtable, then every segment back to the oldest, maybe reading disk each time. So engines often add a '+L.g('bloom','Bloom filter')+': a small structure in memory that can say “this key is definitely not here” and skip those reads.')+
-   L.prose('Engines also differ in when and how SSTables get merged. The two most common styles:')+
-   L.tiers([['layers','Size-tiered compaction','Newer, smaller SSTables are merged into older, larger ones.','HBase uses it. Cassandra supports both styles.'],
-            ['list','Leveled compaction','The key range is split into smaller SSTables, and older data moves into separate “levels.” Compaction goes in smaller steps and uses less disk space.','LevelDB (hence the name) and RocksDB use it.']]));
-  L.done();}},
+{part:3,src:'Chapter 3 · Performance optimizations',
+ solve:async L=>{for(let j=0;j<5;j++){L.$('#e22-'+j).click();await L.sleep(5);await L.lgP;}await lgWait(L,'#e22-ok');},
+ run(L){
+  const seen=new Set();let box=null,busy=false;
+  const SST=()=>[{n:3,recs:[{k:'C-0042',v:'W3'},{k:'C-0105',v:'E1'},{k:'C-0412',v:'W1'},{k:'C-0480',v:'E2'}]},{n:2,recs:[{k:'C-0017',v:'W2'},{k:'C-0219',v:'W5'},{k:'C-0410',v:'W1'},{k:'C-0515',v:'E3'}]},
+    {n:1,recs:[{k:'C-0007',v:'E1'},{k:'C-0042',v:'W2'},{k:'C-0219',v:'W4'},{k:'C-0400',v:'E3'},{k:'C-0520',v:'W2'},{k:'C-0611',v:'E1'}]}];
+  const fresh=(mem,extra)=>{L.$('#e22-pic').innerHTML='';box=LsmBox(L,L.$('#e22-pic'),Object.assign({id:'e22b',capFirst:true,mem:mem||[{k:'C-0017',v:'W4'},{k:'C-0230',v:'W1'}],ssts:SST(),autoFlush:false},extra||{}));return box;};
+  const P=[
+   ['Missing key',async()=>{fresh();box.say('Look up C-0300, no Bloom filters','It isn’t anywhere, but the engine can’t know until it has checked every file.');
+      const r1=await box.read('C-0300');if(!r1)return;await box.nap(400);if(!box.alive())return;
+      box.S.bloom=true;box.clearMarks();box.draw();const r2=await box.read('C-0300');if(!r2)return;
+      box.say('Key that doesn’t exist','Without filters: '+r1.disk+' disk reads to learn “not found.” With a '+L.g('bloom','Bloom filter')+' per file: '+r2.disk+'. The filter is a small summary in memory that can say “definitely not in this file.”');}],
+   ['Crash',async()=>{fresh([{k:'C-0017',v:'W4'},{k:'C-0105',v:'E2'},{k:'C-0230',v:'W1'}]);box.S.log=[{k:'C-0230',v:'W1'},{k:'C-0017',v:'W4'},{k:'C-0105',v:'E2'}];box.draw();
+      box.say('Crash!','The memtable lives in memory, so the crash wipes it. Those pings never reached an SSTable.');await box.nap(500);if(!box.alive())return;
+      const keep=box.S.mem;box.S.mem=[];box.S.memLost=true;box.draw();await box.nap(800);if(!box.alive())return;box.S.memLost=false;box.draw();
+      for(const r of box.S.log){await box.nap(250);if(!box.alive())return;box.S.mem=lgSortRecs(box.S.mem.concat([Object.assign({},r)]));box.draw();}
+      box.say('Crash with 3 MB in the memtable','Every write was appended to the crash log on disk the moment it arrived. Replaying it rebuilds the memtable. The log isn’t sorted, and needn’t be: restoring is its only job.');}],
+   ['Range query',async()=>{fresh();box.S.ssts.forEach(t=>t.recs.forEach(r=>{r.inr=r.k>='C-0400'&&r.k<='C-0520';}));box.draw();
+      box.say('Range C-0400 to C-0520','Each file is sorted, so the engine jumps to C-0400 and reads forward until it passes C-0520: one short sequential scan per file. A hash index would need 121 separate lookups.');}],
+   ['Delete',async()=>{fresh();await box.write('C-0219','',true);box.S.mem.forEach(r=>r.hl=false);
+      const r=await box.read('C-0219');if(!r)return;box.S.ssts.forEach((t,i)=>t.recs.forEach(x=>{if(x.k==='C-0219'){x.dead=x.strike=true;box.S.sstSt[i]='tomb';}}));box.draw();
+      box.say('Delete C-0219','The delete is just a write: a '+L.g('tombstone','tombstone')+' in the memtable. A read hits it first and stops: deleted. Older C-0219 values still sit in older files; merging drops them.');}],
+   ['Compaction styles',async()=>{const id='e22c';let s='';
+      s+=lgT(2,14,'Size-tiered','font-size:12.5px;font-weight:700;fill:var(--h1)')+lgT(318,14,'HBase · Cassandra option','font-size:11px;text-anchor:end;fill:var(--muted)');
+      [[4,24,22],[30,24,22],[56,24,22],[82,24,22]].forEach(p=>{s+='<rect x="'+p[0]+'" y="'+p[1]+'" width="'+p[2]+'" height="16" rx="3" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.3"/>';});
+      s+=lgLine(id,110,32,134,32,'h1',2)+'<rect x="140" y="22" width="56" height="20" rx="4" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5"/>'+lgLine(id,202,32,226,32,'h1',2)+'<rect x="232" y="20" width="86" height="24" rx="4" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.8"/>';
+      s+=lgT(2,62,'newer, smaller tables merge into older, larger ones','font-size:11.5px;fill:var(--ink)');
+      s+=lgT(2,94,'Leveled','font-size:12.5px;font-weight:700;fill:var(--h2)')+lgT(318,94,'LevelDB · RocksDB · Cassandra option','font-size:11px;text-anchor:end;fill:var(--muted)');
+      [['L0',2,52,10],['L1',4,34,10],['L2',8,17,7]].forEach((l,j)=>{const y=104+j*24;s+=lgT(2,y+13,l[0],'font-size:11.5px;font-weight:700;fill:var(--h2)');
+        for(let q=0;q<l[1];q++)s+='<rect x="'+(28+q*(l[2]+l[3]))+'" y="'+y+'" width="'+l[2]+'" height="17" rx="3" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.3"/>';
+        if(j)s+=lgT(318,y+13,j===1?'keys A–Z, split':'older data','font-size:11px;text-anchor:end;fill:var(--muted)');});
+      s+=lgT(2,190,'key range split into small tables; older data moves','font-size:11.5px;fill:var(--ink)')+lgT(2,205,'down a level: smaller steps, less disk space','font-size:11.5px;fill:var(--ink)');
+      L.$('#e22-pic').innerHTML='<div class="lg-cap" id="e22b-cap"></div>'+lgSvg(id,s,212,'Size-tiered compaction merges small tables into bigger ones; leveled compaction keeps levels of small key-range tables');
+      L.$('#e22b-cap').innerHTML='<span class="t">Size-tiered vs leveled</span>Two common ways to decide when and how SSTables get merged. Leveled compaction proceeds more incrementally and uses less disk space. LevelDB takes its name from it.';box=null;}]];
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Push the LSM-tree into its awkward cases. Run each one.</h1><div class="lg-row" id="e22"></div><div id="e22-pic"></div>');
+  fresh();box.say('Pick a case','The memtable holds two recent pings; three SSTables sit on disk.');
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e22-'+j;b.textContent=p[0];
+    b.onclick=()=>{if(busy)return;busy=true;[...L.$('#e22').children].forEach(x=>x.classList.toggle('sel',x===b));
+      L.lgP=(async()=>{await p[1]();busy=false;if(!L.$('#e22'))return;seen.add(j);b.classList.add('ok');
+        if(seen.size===P.length&&!L.$('#e22-ok')){L.$('#e22').insertAdjacentHTML('afterend','<span id="e22-ok"></span>');
+          L.sheet('info','Where LSM-trees need help','Missing keys are the slow case, fixed by Bloom filters. The crash log protects the memtable. Sorted files make ranges cheap. Deletes and old values are cleaned up by merging, in a size-tiered or leveled style.');L.done();}})();};
+    L.$('#e22').appendChild(b);});}},
 {part:3,src:'Chapter 3 · Making an LSM-tree out of SSTables',run(L){
-  L.h(L.kick('learn','Why LSM-trees caught on')+'<h1 class="q">A cascade of sorted files, merged in the background, is simple and effective</h1>'+
-   L.list([['layers','Bigger than memory','It keeps working well even when the data is far larger than the available memory.'],
-     ['list','Range queries','The data is stored sorted, so scanning all keys between a minimum and a maximum is efficient.'],
-     ['trend','Fast writes','Disk writes are sequential, so it can take a remarkably high rate of writes.']],1)+
-   L.prose('The same idea powers full-text search. Lucene, the indexing engine behind Elasticsearch and Solr, keeps its <b>term dictionary</b> in SSTable-like sorted files, merged in the background. The key is a word (a term). The value is the list of IDs of every document that contains it, called the <b>postings list</b>.'));
+  const id='f23';let s='';
+  s+=lgT(2,13,'Lucene’s term dictionary (SSTable-like, sorted)','font-size:12px;font-weight:700;fill:var(--ink)');
+  [['north',['OP-48213','OP-51007']],['okafor',['OP-50112']],['okoro',['OP-48213','OP-49930']],['osei',['OP-47761']]].forEach((r,j)=>{const y=22+j*28;
+    s+='<rect x="2" y="'+y+'" width="70" height="22" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/>'+lgT(37,y+15.5,r[0],'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+lgLine(id,76,y+11,96,y+11,'muted',1.6);
+    r[1].forEach((d,q)=>{s+='<rect x="'+(100+q*76)+'" y="'+y+'" width="72" height="22" rx="6" style="fill:var(--card);stroke:var(--line2);stroke-width:1.2"/>'+lgT(136+q*76,y+15.5,d,'font-size:11px;font-weight:600;text-anchor:middle;fill:var(--muted)');});});
+  s+=lgT(100,142,'key: a word · value: its postings list','font-size:11px;fill:var(--muted)');
+  [['layers','Far bigger','than memory'],['list','Range queries','sorted keys'],['trend','High write','throughput']].forEach((b,j)=>{const x=2+j*107;
+    s+='<rect x="'+x+'" y="156" width="102" height="44" rx="10" style="fill:var(--h'+(j+1)+'-bg);stroke:var(--h'+(j+1)+');stroke-width:1.5"/>'+lgT(x+51,174,b[1],'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+lgT(x+51,190,b[2],'font-size:11px;text-anchor:middle;fill:var(--muted)');});
+  L.h(L.kick('learn','Why LSM-trees caught on')+'<h1 class="q">A cascade of sorted files, merged in the background</h1>'+
+   lgSvg(id,s,204,'A term dictionary: sorted words, each pointing to the parcels that mention it; three strengths of LSM-trees below')+
+   '<div class="lg-cap">The idea is simple and effective: it works far beyond memory, scans ranges efficiently and takes very high write rates. Lucene (behind Elasticsearch and Solr) stores its full-text term dictionary the same way: word → postings list.</div>'+
+   '<p class="lg-ill">Signe’s support search finds “Okoro” as one key and gets every matching parcel back at once.</p>');
   L.done();}},
-{part:3,src:'Chapter 3 · Making an LSM-tree out of SSTables',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Signe’s support team searches recipient names. In a full-text index like Lucene’s, what is the key and what is the value?</h1>');
-  L.mc(L.card,['Key: a word. Value: IDs of parcels that mention it','Key: a parcel ID. Value: every word on that parcel','Key: a past search. Value: the results it returned'],0,
-   'Look up “Okoro” as one key and get back the list of matching parcels in one go. That list is the postings list.',
-   'A search starts from a word, so the word is the key. Its value is the postings list: the IDs of every parcel that mentions it.');}},
+{part:3,src:'Chapter 3 · Performance optimizations',pts:1,
+ solve:async L=>{L.$('#c24-cp').click();L.$('#c24-bl').click();lgSet(L,'c24s',1);L.$('#c24-go').click();await lgWait(L,'#c24-ok',200);},
+ run(L){
+  const SP=[1,4,16,64];let comp=false,bloom=false,first=true,running=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Peak Week is coming. Tune Tobias’s ping store so a lookup for a <b>missing</b> courier stays fast, and memory and disk stay under budget.</h1>'+
+   '<div class="lg-row"><button class="chip" id="c24-cp" aria-pressed="false">'+L.ic('layers')+'Background compaction: off</button><button class="chip" id="c24-bl" aria-pressed="false">'+L.ic('eye')+'Bloom filters: off</button></div>'+
+   '<label class="lg-rng st" for="c24s"><span>Sparse index: one key every</span><input type="range" id="c24s" min="0" max="3" step="1" value="2"><b id="c24s-v"></b></label>'+
+   '<div id="c24-pic"></div><table class="lg-tbl" id="c24-t"></table><button class="btn pri" id="c24-go">'+L.ic('play')+'Run the Peak Week test</button><div id="c24-x"></div>'+
+   '<p class="lg-ill">Budgets, sizes and 32 bytes per index entry are illustrative.</p>');
+  const calc=()=>{const sp=SP[+L.$('#c24s').value],n=comp?2:6,disk=comp?3:12,mem=Math.round(disk*1e9/(sp*1000)*32/1e6);return {sp,n,disk,mem,reads:bloom?0:n};};
+  function pic(stat){const c=calc(),id='c24p';let s='';
+    s+='<rect x="2" y="2" width="120" height="26" rx="8" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.4"/>'+lgT(62,19,'Memtable','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+lgT(132,19,'lookup: C-0300 (missing)','font-size:11.5px;fill:var(--muted)');
+    const sizes=comp?[1,2]:[2,2,2,2,2,2];
+    sizes.forEach((g,i)=>{const y=36+i*26,w=g*62;s+=lgT(2,y+15,'SSTable '+(sizes.length-i),'font-size:11.5px;font-weight:600;fill:var(--muted)');
+      s+='<rect x="74" y="'+(y+2)+'" width="'+w+'" height="18" rx="4" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.3"/>'+lgT(80,y+15.5,g+' GB','font-size:11px;font-weight:600;fill:var(--h1)');
+      if(bloom)s+='<rect x="206" y="'+(y+3)+'" width="44" height="16" rx="8" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.2"/>'+lgT(228,y+15,'Bloom','font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h2)');
+      if(stat&&stat[i])s+=lgT(318,y+15,stat[i]==='read'?'disk read':'skipped','font-size:11.5px;font-weight:700;text-anchor:end;fill:'+(stat[i]==='read'?'var(--no)':'var(--ok)'));});
+    let y=40+sizes.length*26;
+    s+=lgT(2,y+10,'Any 64 KB of an SSTable, with its sparse-index keys:','font-size:11.5px;font-weight:600;fill:var(--muted)');
+    s+='<rect x="4" y="'+(y+18)+'" width="312" height="22" rx="4" style="fill:var(--soft2)"/>';
+    const step=312*c.sp/64;for(let x=0;x<312;x+=step)s+='<line x1="'+(4+x)+'" y1="'+(y+14)+'" x2="'+(4+x)+'" y2="'+(y+44)+'" style="stroke:var(--h3);stroke-width:'+(c.sp===1?1:2)+'"/>';
+    s+='<rect x="4" y="'+(y+20)+'" width="'+Math.min(312,step)+'" height="18" rx="3" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/>';
+    s+=lgT(4,y+58,'shaded: the most one lookup scans ('+c.sp+' KB)','font-size:11px;fill:var(--h3)');
+    L.$('#c24-pic').innerHTML=lgSvg(id,s,y+64,'SSTables listed with their sizes and Bloom badges, and a strip showing how densely the sparse index marks the file');}
+  function table(marks){const c=calc();const row=(lab,val,bud,ok)=>'<tr><td>'+(marks?(ok?'<span class="ok-t">✓</span> ':'<span class="no-t">✗</span> '):'')+lab+'<br><span class="small">budget '+bud+'</span></td><td><b>'+val+'</b></td></tr>';
+    L.$('#c24-t').innerHTML=row('Disk reads to learn C-0300 is missing',c.reads,'at most 1',c.reads<=1)+row('Bytes scanned inside a file per lookup','up to '+c.sp+' KB','at most 4 KB',c.sp<=4)+
+      row('Sparse index in memory',c.mem+' MB','at most 32 MB',c.mem<=32)+row('Disk used by SSTables',c.disk+' GB','at most 4 GB',c.disk<=4);
+    return c.reads<=1&&c.sp<=4&&c.mem<=32&&c.disk<=4;}
+  function upd(){L.$('#c24s-v').textContent=SP[+L.$('#c24s').value]+' KB';L.$('#c24-cp').innerHTML=L.ic('layers')+'Background compaction: '+(comp?'on':'off');L.$('#c24-cp').classList.toggle('sel',comp);L.$('#c24-cp').setAttribute('aria-pressed',comp);
+    L.$('#c24-bl').innerHTML=L.ic('eye')+'Bloom filters: '+(bloom?'on':'off');L.$('#c24-bl').classList.toggle('sel',bloom);L.$('#c24-bl').setAttribute('aria-pressed',bloom);pic();table(false);L.$('#c24-x').innerHTML='';}
+  L.$('#c24-cp').onclick=()=>{if(running)return;comp=!comp;upd();};L.$('#c24-bl').onclick=()=>{if(running)return;bloom=!bloom;upd();};L.$('#c24s').oninput=()=>{if(!running)upd();};
+  L.$('#c24-go').onclick=async function(){if(running||L.$('#c24-ok'))return;running=true;this.disabled=true;const c=calc(),stat=[];
+    for(let i=0;i<c.n;i++){stat[i]=bloom?'skip':'read';pic(stat);await L.sleep(c.n>2?120:250);if(!L.$('#c24-pic'))return;}
+    const pass=table(true);if(first){first=false;L.award(pass);}running=false;
+    if(pass){L.$('#c24-x').innerHTML='<span id="c24-ok"></span>';
+      L.sheet('ok','Test passed','Compaction cut 6 files and 12 GB of overwritten pings down to 2 files and 3 GB. Bloom filters let a lookup skip the files that can’t hold the key. And one index key every 4 KB balances the two costs: denser keys eat memory, sparser keys mean longer scans.');L.done();}
+    else{this.disabled=false;L.sheet('no','Not yet','Check the red rows. Without Bloom filters a missing key reads every file. Without compaction the disk and the index stay huge. A dense sparse index eats memory; a very sparse one makes each lookup scan more. Change a setting and run it again.');}};
+  upd();}},
 {part:3,src:'Chapter 3 · Data Structures That Power Your Database',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Hash index or LSM-tree?',['Hash-indexed log','LSM-tree','Both of them'],[
    ['Needs every single key to fit in memory.',0,'The hash map holds every key. An LSM-tree only needs a sparse index in memory.'],
-   ['Can scan all couriers from C-0100 to C-0199 efficiently.',1,'SSTables are sorted by key, so a range is one sequential scan. A hash map keeps no order.'],
+   ['Can scan all couriers from C-0100 to C-0199 efficiently.',1,'SSTables are sorted by key, so a range is one sequential scan per file. A hash map keeps no order.'],
    ['Only ever appends to files, and merges old segments in the background.',2,'Both are log-structured: neither ever modifies a file once it is written.'],
    ['Collects writes in a sorted memtable, then flushes it to disk.',1,'The memtable is how an LSM-tree gets random writes sorted before writing them out.'],
-   ['Often uses a Bloom filter to skip disk reads for missing keys.',1,'A missing key forces an LSM-tree to check every segment. A Bloom filter avoids that.']]);}}
+   ['Often adds Bloom filters so missing keys don’t read every file.',1,'A missing key forces an LSM-tree to check every SSTable. A Bloom filter avoids that.']]);}}
   ]
 });
+LG_STEPS.forEach(st=>{const r=st.run;st.run=L=>{lgPatch(L);return r.call(st,L);};});
 </script>
 </body>
 </html>

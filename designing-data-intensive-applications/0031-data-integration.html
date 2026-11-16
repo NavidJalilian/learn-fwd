@@ -13,110 +13,473 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0031 only. Two hands-on models, reused across the lesson:
+   1. Funnel – lanes of events (log partitions, datacenters, services,
+      an offline phone) merge through a funnel into one consumer. Shows
+      when one log fixes the order and when Ama’s two events can swap.
+   2. Rail   – the third-rail migration: reprocess history into a new
+      view, shift reads with a slider, roll back, remove the old rail.
+   ===================================================================== */
+let SPD=1; /* animation speed; solvers lower it */
+const f1=n=>Math.round(n*10)/10;
+const fmt=n=>Number(n).toLocaleString('en-US');
+const T=(x,y,s,st)=>'<text x="'+f1(x)+'" y="'+f1(y)+'" style="'+st+'">'+s+'</text>';
+const R=(x,y,w,h,rx,st)=>'<rect x="'+f1(x)+'" y="'+f1(y)+'" width="'+f1(w)+'" height="'+f1(h)+'" rx="'+rx+'" style="'+st+'"/>';
+const Ln=(x1,y1,x2,y2,st)=>'<line x1="'+f1(x1)+'" y1="'+f1(y1)+'" x2="'+f1(x2)+'" y2="'+f1(y2)+'" style="'+st+'"/>';
+const ST=(sz,col,anc,wt)=>'font-size:'+sz+'px;fill:'+col+';text-anchor:'+(anc||'middle')+(wt?';font-weight:'+wt:'');
+const SV=(h,inner,label,id)=>'<svg'+(id?' id="'+id+'"':'')+' class="di-svg" viewBox="0 0 320 '+h+'" role="img" aria-label="'+label+'">'+inner+'</svg>';
+const cap=h=>'<p class="di-cap">'+h+'</p>';
+function arw(x1,y1,x2,y2,c,o){o=o||{};const a=Math.atan2(y2-y1,x2-x1),h=7,w=4.2,bx=x2-h*Math.cos(a),by=y2-h*Math.sin(a);
+  return Ln(x1,y1,bx,by,'stroke:'+c+';stroke-width:'+(o.w||1.8)+(o.dash?';stroke-dasharray:'+o.dash:''))+
+   '<polygon points="'+f1(x2)+','+f1(y2)+' '+f1(bx+w*Math.sin(a))+','+f1(by-w*Math.cos(a))+' '+f1(bx-w*Math.sin(a))+','+f1(by+w*Math.cos(a))+'" style="fill:'+c+'"/>';}
+function bx(x,y,w,h,t1,t2,c,o){o=o||{};const plain=c==='soft'||c==='card';
+  const fill=plain?'var(--'+c+')':'var(--'+c+'-bg)',st=plain?'var(--line2)':(c==='ok'?'var(--ok-line)':c==='no'?'var(--no-line)':'var(--'+c+')'),tc=plain?'var(--ink)':'var(--'+c+')';
+  let s=R(x,y,w,h,o.rx||9,'fill:'+fill+';stroke:'+(o.stroke||st)+';stroke-width:'+(o.sw||1.6)+(o.dash?';stroke-dasharray:'+o.dash:''));
+  const cx=x+w/2;
+  if(t2)s+=T(cx,y+h/2-2,t1,ST(o.fs||12,tc,'middle',700))+T(cx,y+h/2+12,t2,ST(11,o.sub||'var(--muted)'));
+  else s+=T(cx,y+h/2+4,t1,ST(o.fs||12,tc,'middle',700));
+  return s;}
+function db(cx,y,w,h,t1,t2,c,fs){const rx=w/2,ry=5,f='var(--'+c+'-bg)',st='var(--'+c+')';
+  return '<path d="M'+f1(cx-rx)+' '+f1(y+ry)+' v'+f1(h-2*ry)+' a'+f1(rx)+' '+ry+' 0 0 0 '+f1(w)+' 0 v-'+f1(h-2*ry)+'" style="fill:'+f+';stroke:'+st+';stroke-width:1.6"/>'+
+   '<ellipse cx="'+f1(cx)+'" cy="'+f1(y+ry)+'" rx="'+f1(rx)+'" ry="'+ry+'" style="fill:'+f+';stroke:'+st+';stroke-width:1.6"/>'+
+   T(cx,y+h/2+(t2?3:7),t1,ST(fs||12,st,'middle',700))+(t2?T(cx,y+h/2+17,t2,ST(11,'var(--muted)')):'');}
+function tape(x,y,cells,c,cw,hi){cw=cw||18;let s='';cells.forEach((t,j)=>{const on=hi===j,cc=on?'h4':c;
+  s+=R(x+j*cw,y,cw-3,18,4,'fill:var(--'+cc+'-bg);stroke:var(--'+cc+');stroke-width:'+(on?2.2:1.2))+T(x+j*cw+(cw-3)/2,y+13,t,ST(11,'var(--'+cc+')','middle',700));});return s;}
+function tok(x,y,d,cls,r){const c=cls==='a'?'h2':'h1';r=r||10;
+  return '<circle cx="'+f1(x)+'" cy="'+f1(y)+'" r="'+r+'" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2"/>'+T(x,y+4,d,ST(r<9?11:12,'var(--'+c+')','middle',700));}
+function lock(x,y,c){return R(x-7,y,14,11,2.5,'fill:'+c)+'<path d="M'+(x-4)+' '+y+' v-4 a4 4 0 0 1 8 0 v4" style="fill:none;stroke:'+c+';stroke-width:2"/>';}
+const tk=(d,cls)=>'<span class="di-tk '+cls+'">'+d+'</span>';
+function goals(id,items){return '<ul class="di-goals" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const allT=(L,id)=>[...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+const waitFor=async(L,fn,n)=>{for(let i=0;i<(n||200)&&!fn();i++)await L.sleep(30);};
+
+const CSS='<style>'+
+ '.di-svg{width:100%;display:block;margin:6px 0 2px;overflow:visible}.di-svg text{font-family:var(--sans)}'+
+ '.di-cap{font-size:15.5px;line-height:1.5;margin:10px 0 4px}'+
+ '.di-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.di-row .btn{min-height:42px;padding:8px 12px;margin:0}.di-row .btn[disabled]{opacity:.45;cursor:default}.di-row .chip{margin:0;min-height:40px}'+
+ '.di-rng{display:grid;grid-template-columns:auto 1fr 48px;gap:10px;align-items:center;font-size:14.5px;margin:6px 0}.di-rng input{width:100%;accent-color:var(--pri);height:30px}.di-rng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.di-merge{background:var(--soft);border-radius:14px;padding:8px 12px;font-size:14.5px;line-height:1.6;margin:6px 0;min-height:40px}'+
+ '.di-mut{color:var(--muted)}'+
+ '.di-tk{display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:26px;border-radius:99px;font-weight:700;font-size:14px;padding:0 5px;vertical-align:middle}'+
+ '.di-tk.a{background:var(--h2-bg);color:var(--h2);border:2px solid var(--h2)}.di-tk.b{background:var(--h1-bg);color:var(--h1);border:2px solid var(--h1)}'+
+ '.di-ev{display:grid;grid-template-columns:30px 1fr;gap:4px 8px;align-items:center;font-size:14.5px;line-height:1.35;background:var(--soft);border-radius:14px;padding:9px 11px;margin:8px 0}'+
+ '.di-key{display:block;font-size:12.5px;color:var(--muted)}'+
+ '.di-out{border-radius:14px;padding:9px 12px;font-size:14.5px;line-height:1.5;margin:6px 0}.di-out.ok{background:var(--ok-bg);color:var(--ok)}.di-out.no{background:var(--no-bg);color:var(--no)}.di-out.info{background:var(--soft);color:var(--ink)}'+
+ '.di-goals{margin:8px 0;padding:0;list-style:none}.di-goals li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.di-goals .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.di-goals li.done{color:var(--ok)}.di-goals li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.di-goals .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.di-stats{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin:8px 0}.di-stats div{background:var(--soft);border-radius:12px;padding:6px 8px;font-size:12px;line-height:1.3;color:var(--muted)}.di-stats b{display:block;font-size:14.5px;color:var(--ink);font-variant-numeric:tabular-nums}.di-stats b.bad{color:var(--no)}'+
+ '.di-leg{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13px;color:var(--muted);margin:2px 0 4px}.di-leg i{display:inline-block;width:14px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}.di-leg i.o{background:var(--h3-bg);border:2px solid var(--h3)}.di-leg i.n{background:var(--h2-bg);border:2px solid var(--h2)}'+
+ '.di-tiles{display:grid;gap:8px;margin:8px 0}.di-tile{display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:start;background:var(--soft);border-radius:14px;padding:9px 11px;font-size:14px;line-height:1.45}.di-tile .ico{width:34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center}.di-tile b{display:block}'+
+ '.di-cmp{display:grid;grid-template-columns:auto 1fr 1fr;gap:5px;font-size:13.5px;line-height:1.35;margin:6px 0}.di-cmp div{background:var(--soft);border-radius:10px;padding:7px 8px}.di-cmp .h{background:none;font-weight:700;color:var(--muted);padding:7px 2px}.di-cmp .l{background:var(--h4-bg);color:var(--h4)}.di-cmp .r{background:var(--h2-bg);color:var(--h2)}'+
+ '.di-stage{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.di-detail{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:64px}'+
+ '.di-tbl{width:100%;border-collapse:collapse;font-size:14px;margin:8px 0}.di-tbl td{padding:6px 6px;border-bottom:1px solid var(--line)}.di-tbl td:last-child{text-align:right;font-weight:700;white-space:nowrap}'+
+ '.di-chips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.di-chips span{font-size:12.5px;font-weight:600;border-radius:99px;padding:4px 10px;background:var(--soft);color:var(--muted)}'+
+ '</style>';
+
+/* ---------- 1. The funnel: lanes of events merging into one consumer ---------- */
+function schedule(p){const out=[];
+  p.toks.forEach((t,i)=>{const b=p.backlog[t.lane]||0,prev=out.filter(x=>x.lane===t.lane),q=prev.length;
+    const tIn=t.t0+1,tOut=Math.max(tIn,b,q?prev[q-1].tOut+0.45:0),tArr=tOut+0.7;
+    let tEnter=tArr;if(t.after!=null&&out[t.after])tEnter=Math.max(tArr,out[t.after].tEnter+0.45);
+    out.push({i,lane:t.lane,q,b,t0:t.t0,tIn,tOut,tArr,tEnter});});
+  return out;}
+const delivered=(t,sc)=>sc.filter(x=>t>=x.tEnter).sort((a,b)=>a.tEnter-b.tEnter).map(x=>x.i);
+const arrival=p=>{const sc=schedule(p);return delivered(1e9,sc);};
+
+function Funnel(L,host,o){
+  const ID=o.id;
+  host.insertAdjacentHTML('beforeend','<svg id="'+ID+'-svg" class="di-svg" viewBox="0 0 320 100" role="img" aria-label="'+(o.aria||'Lanes of events merge through a funnel into the consumer on the right')+'"></svg><div class="di-merge" id="'+ID+'-m" aria-live="polite"></div>');
+  const svg=host.querySelector('#'+ID+'-svg'),mg=host.querySelector('#'+ID+'-m');
+  const F={plan:null,busy:false,sc:null};
+  const alive=()=>svg.isConnected;
+  const lab=o.mergeLabel||'Arrival order at the consumer: ';
+  function geo(p){const n=p.lanes.length,rh=n<=3?42:Math.max(13,Math.floor(156/n)),lh=n*rh,ch=p.cons.length*50-10,H=Math.max(lh+18,ch+18,92),top=(H-lh)/2;
+    return {n,rh,H,top,bot:top+lh,mid:H/2,cy:k=>top+k*rh+rh/2,ccy:c=>H/2-(p.cons.length-1)*25+c*50};}
+  function pos(s,t,g){
+    const y=g.cy(s.lane),ln=F.plan.lanes[s.lane],sx=86+s.q*18;
+    const tail=ln.off?116:Math.max(98+s.q*18,201-s.b*9-s.q*16),front=ln.off?tail:201-s.q*16;
+    if(t<s.t0)return {x:sx,y};
+    if(t<s.tIn)return {x:sx+(tail-sx)*(t-s.t0),y};
+    if(t<s.tOut){const u=(t-s.tIn)/Math.max(.01,s.tOut-s.tIn);return {x:tail+(front-tail)*u,y};}
+    if(t<s.tArr){const u=(t-s.tOut)/0.7;if(u<.35)return {x:front+(216-front)*(u/.35),y};const v=(u-.35)/.65;return {x:216+24*v,y:y+(g.mid-y)*v};}
+    if(t<s.tEnter)return {x:232,y:g.mid-(g.H/2-14),hold:true};
+    return null;}
+  function draw(t){
+    if(!alive()||!F.plan)return;const p=F.plan,g=geo(p),sc=F.sc;let s='';
+    svg.setAttribute('viewBox','0 0 320 '+g.H);
+    s+='<polygon points="216,'+f1(g.top-2)+' 240,'+f1(g.mid-8)+' 240,'+f1(g.mid+8)+' 216,'+f1(g.bot+2)+'" style="fill:var(--soft2);stroke:var(--line2);stroke-width:1.2"/>';
+    p.lanes.forEach((ln,k)=>{const y=g.cy(k),hi=(p.hl||[]).includes(k);
+      if(g.rh>=20)s+=R(74,y-g.rh/2+3,142,g.rh-6,8,'fill:'+(hi?'var(--pri-bg)':'var(--soft)'));
+      else if(hi)s+=R(74,y-g.rh/2+.5,142,g.rh-1,4,'fill:var(--pri-bg)');
+      s+=Ln(74,y,216,y,'stroke:var(--line2);stroke-width:1.4'+(ln.off?';stroke-dasharray:4 4':''));
+      s+=T(69,y+4,ln.name,ST(11,hi?'var(--pri)':'var(--muted)','end',600));
+      const b=p.backlog[k]||0;
+      if(ln.off){if(t<b)s+=T(160,y-9,'offline: waits to sync',ST(11,'var(--no)','middle',600));else if(t>=b&&t<1e8)s+=T(160,y-9,'back online: syncs',ST(11,'var(--ok)','middle',600));}
+      else{const gone=t<0?0:Math.min(b,Math.max(0,Math.floor(t)));for(let j=gone;j<b;j++)s+=R(207-(j-gone)*9,y-4.5,7,9,2,'fill:var(--faint)');}
+    });
+    const d=t<0?[]:delivered(t,sc);
+    p.cons.forEach((c,ci)=>{const y=g.ccy(ci),fl=t>=0&&sc.some(x=>t>=x.tEnter&&t<x.tEnter+.4);
+      s+=Ln(240,g.mid,248,y,'stroke:var(--line2);stroke-width:1.4');
+      s+=R(248,y-21,70,42,10,'fill:var(--card);stroke:'+(fl?'var(--pri)':'var(--line2)')+';stroke-width:'+(fl?3:1.6));
+      s+=T(283,y-4,c.name,ST(11.5,'var(--ink)','middle',700))+T(283,y+12,o.sub?o.sub(ci,d):(c.sub||''),ST(11,'var(--muted)'));});
+    sc.forEach(x=>{const ps=pos(x,t<0?-1:t,g);if(!ps)return;const k=p.toks[x.i];
+      s+=tok(ps.x,ps.y,k.label,k.cls,8);
+      if(ps.hold)s+=T(ps.x-12,ps.y+4,'waits',ST(11,'var(--h1)','end',700));});
+    svg.innerHTML=s;}
+  function set(plan,msg){F.plan=plan;F.sc=schedule(plan);draw(-1);mg.innerHTML=lab+'<span class="di-mut">'+(msg||'not run yet')+'</span>';}
+  function run(){return new Promise(res=>{
+    if(F.busy||!alive()||!F.plan){res(null);return;}
+    F.busy=true;const sc=F.sc=schedule(F.plan),end=Math.max(...sc.map(x=>x.tEnter))+.5,U=(o.unit||230)*SPD,st=performance.now();
+    (function step(){
+      if(!alive()){F.busy=false;res(null);return;}
+      const t=Math.min(end,(performance.now()-st)/U);draw(t);
+      const d=delivered(t,sc);mg.innerHTML=lab+(d.length?d.map(i=>tk(F.plan.toks[i].d,F.plan.toks[i].cls)).join(' then '):'<span class="di-mut">…</span>');
+      if(t<end){setTimeout(step,16);return;}
+      F.busy=false;const r={order:d};if(o.on)o.on(r);res(r);})();});}
+  return {F,set,run,draw,alive,idle:async()=>{for(let i=0;i<300&&F.busy;i++)await L.sleep(30);}};
+}
+
+/* Ama’s two events in the four setups (traffic and hash values are illustrative) */
+const HASH={u:1013,p:1104};
+function backlogFor(n,l1,l2,seed){const b=[];
+  for(let k=0;k<n;k++)b.push(seed?((seed*7919+k*104729+seed*k*31)%97)%7:[2,1,3,0,2,1,3,1,0,2,1,2][k%12]);
+  if(!seed){if(l1!==l2){b[l1]=5;b[l2]=0;}else b[l1]=3;}
+  return b;}
+function amaPlan(mode,o){o=o||{};let lanes,l1,l2,backlog;
+  if(mode==='parts'){const n=o.n||12;lanes=[];for(let k=0;k<n;k++)lanes.push({name:n===1?'Event log':'P'+(k+1)});
+    l1=HASH.u%n;l2=o.route==='user'?l1:HASH.p%n;backlog=backlogFor(n,l1,l2,o.seed||0);}
+  else if(mode==='dc'){lanes=[{name:'Westport'},{name:'Eastvale'},{name:'Nordhaven'}];l1=2;l2=0;backlog=[0,2,5];}
+  else if(mode==='svc'){lanes=[{name:'Preferences'},{name:'Parcel DB'}];l1=0;l2=1;backlog=[5,0];}
+  else{lanes=[{name:'Ama’s phone',off:true},{name:'Server'}];l1=0;l2=1;backlog=[5,0];}
+  return {lanes,backlog,l1,l2,hl:[l1,l2],cons:[{name:'Notifier'}],
+    toks:[{label:'1',d:'①',cls:'a',lane:l1,t0:0},{label:'2',d:'②',cls:'b',lane:l2,t0:1,after:o.fix==='dep'?0:null}]};}
+const notifSub=(ci,d)=>!d.includes(1)?'no text yet':(d.indexOf(0)>=0&&d.indexOf(0)<d.indexOf(1)?'to: Ama':'to: Ama, Jo');
+const joGets=order=>order.indexOf(1)<order.indexOf(0)||order.indexOf(0)<0;
+function laneInfo(p){const a=p.lanes[p.l1].name,b=p.lanes[p.l2].name;
+  return tk('①','a')+' in <b>'+a+'</b> · '+tk('②','b')+' in <b>'+b+'</b> · '+(p.l1===p.l2?'<span style="color:var(--ok);font-weight:700">same lane: order kept</span>':'<span style="color:var(--no);font-weight:700">different lanes: no defined order</span>');}
+function outHTML(order,fix){const jo=joGets(order);
+  if(!jo)return '<div class="di-out ok">The new address was texted to <b>Ama</b> only. Jo heard nothing.</div>';
+  return '<div class="di-out no">② arrived first, while Jo was still on the list, so the notifier texted the new address to <b>Ama and Jo</b>.'+
+   (fix==='cr'?' Conflict resolution later fixes the stored list, but a sent text can’t be unsent.':fix==='lamport'?' The timestamps (41, then 42) give the right order, but ② got here first and the notifier acted on it.':'')+'</div>';}
+const amaEvents=()=>'<div class="di-ev">'+tk('①','a')+'<div>Ama stops sharing tracking with Jo<span class="di-key">key: user Ama</span></div>'+tk('②','b')+'<div>Ama changes their delivery address<span class="di-key">key: parcel OP-48213</span></div>'+
+  '<span></span><span class="di-key">The notifier texts each new address to everyone Ama shares tracking with. Backlogs are illustrative.</span></div>';
+
+/* ---------- 2. The third rail: migrating the tracking view ---------- */
+const STOPS=[0,1,5,10,25,50,100],READS=1000000,BUG=0.02,BUDGET=500;
+function railSVG(st){let s='';
+  for(let x=6;x<318;x+=14)s+=R(x,16,6,74,1.5,'fill:var(--soft2)');
+  s+=Ln(0,24,320,24,'stroke:var(--muted);stroke-width:3.5');
+  s+=st.oldGone?Ln(0,82,320,82,'stroke:var(--line2);stroke-width:2;stroke-dasharray:2 7'):Ln(0,82,320,82,'stroke:var(--h3);stroke-width:3.5');
+  const tx=320*Math.max(0,Math.min(1,st.third||0));
+  if(tx<320)s+=Ln(tx,53,320,53,'stroke:var(--line2);stroke-width:1.5;stroke-dasharray:4 5');
+  if(tx>0)s+=Ln(0,53,tx,53,'stroke:var(--h2);stroke-width:3.5');
+  (st.trains||[]).forEach(tr=>{const x=tr.x;if(x<-60||x>330)return;
+    if(tr.k==='old')s+=R(x,12,54,76,8,'fill:var(--h3-bg);stroke:var(--h3);stroke-width:2')+R(x+9,22,12,10,2,'fill:var(--h3)')+R(x+30,22,12,10,2,'fill:var(--h3)');
+    else{const bad=tr.k==='bad',c=bad?'no':'h2';
+      s+=R(x,12,54,46,8,'fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2')+(bad?T(x+27,41,'✗',ST(17,'var(--no)','middle',700)):R(x+9,22,12,10,2,'fill:var(--h2)')+R(x+30,22,12,10,2,'fill:var(--h2)'));}});
+  return s+(st.extra||'');}
+const railLegend='<div class="di-leg"><span><i class="o"></i>wide train, orange rail = old view</span><span><i class="n"></i>narrow train, teal third rail = new view</span></div>';
+
+function Rail(L,host,o){
+  o=Object.assign({id:'r',ctl:true,budget:false,on:()=>{}},o||{});const ID=o.id;
+  host.insertAdjacentHTML('beforeend',
+   '<svg id="'+ID+'-svg" class="di-svg" viewBox="0 0 320 96" role="img" aria-label="A dual-gauge track: a shared rail, a third rail for the new view and an old rail for the old view"></svg>'+railLegend+
+   '<div class="di-stats" id="'+ID+'-st"></div>'+
+   (o.ctl?'<div class="di-row"><button class="btn pri" id="'+ID+'-rp">'+L.ic('cycle')+'<span id="'+ID+'-rpl">Reprocess history</span></button></div>'+
+    '<div class="di-rng"><label for="'+ID+'-sp">Reads on new view</label><input type="range" id="'+ID+'-sp" min="0" max="6" step="1" value="0"><b id="'+ID+'-spv">0%</b></div>'+
+    '<div class="di-row"><button class="btn" id="'+ID+'-day">'+L.ic('play')+'Run a day</button><button class="btn" id="'+ID+'-rb">Roll back to 0%</button><button class="btn" id="'+ID+'-dr">'+L.ic('x')+'Remove old rail</button></div>':'')+
+   '<div id="'+ID+'-log" aria-live="polite"></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-svg');
+  const alive=()=>svg.isConnected;
+  const D={prog:0,built:false,bug:true,found:false,fixed:false,split:0,drop:false,day:0,err:0,mis:null,clean100:false,logDays:0,lambda:false,streamBug:false,busy:false,trains:null};
+  const S=Object.assign({},D);
+  function idleTrains(){const t=[];if(!S.drop)t.push({x:22,k:'old'});if(S.built||S.drop)t.push({x:224,k:'new'});return t;}
+  function draw(){
+    if(!alive())return;
+    svg.innerHTML=railSVG({third:S.prog,oldGone:S.drop,trains:S.trains||idleTrains()});
+    const pct=STOPS[S.split];
+    const view=S.busy==='rp'?'rebuilding '+Math.round(S.prog*100)+'%':S.built?(S.fixed?(S.lambda&&S.streamBug?'batch fixed':'built, fixed'):'built'):(S.logDays&&S.prog>0?'last 7 days only':'not built');
+    const cells=[['Day',S.day],['New view',view],['Reads on new',pct+'%'],['Error pages',fmt(S.err)+(o.budget?' / '+BUDGET:''),o.budget&&S.err>BUDGET],['Mismatches',S.mis==null?'–':fmt(S.mis),S.mis>0],['Old view',S.drop?'removed':'running',S.drop&&!S.clean100]];
+    $('#'+ID+'-st').innerHTML=cells.map(c=>'<div>'+c[0]+'<b'+(c[2]?' class="bad"':'')+'>'+c[1]+'</b></div>').join('');
+    if(o.ctl){
+      $('#'+ID+'-rpl').textContent=S.lambda&&S.fixed&&S.streamBug?'Fix the stream job too':S.built&&S.found&&!S.fixed?'Fix the parser and reprocess':'Reprocess history';
+      $('#'+ID+'-rp').disabled=!!S.busy||(S.built&&!(S.found&&!S.fixed)&&!(S.lambda&&S.fixed&&S.streamBug));
+      const sp=$('#'+ID+'-sp');sp.value=S.split;sp.disabled=!!S.busy||!S.built||S.drop;$('#'+ID+'-spv').textContent=pct+'%';
+      $('#'+ID+'-day').disabled=!!S.busy;$('#'+ID+'-rb').disabled=!!S.busy||(!S.drop&&S.split===0);$('#'+ID+'-dr').disabled=!!S.busy||S.drop;}
+  }
+  function log(h,kind){if(alive())$('#'+ID+'-log').innerHTML='<div class="fb '+(kind||'info')+'" style="margin-top:6px">'+h+'</div>';}
+  function anim(ms,fn){return new Promise(res=>{const st=performance.now();(function step(){if(!alive()){res(false);return;}const u=Math.min(1,(performance.now()-st)/(ms*SPD));fn(u);draw();if(u<1){setTimeout(step,16);return;}res(true);})();});}
+  async function reprocess(){
+    if(S.busy||!alive())return;
+    if(S.lambda&&S.fixed&&S.streamBug){S.streamBug=false;draw();log('You fixed the same parser a second time, in the stream job. Lambda keeps the logic in two codebases, so every fix is made twice.','ok');o.on({type:'fix2'});return;}
+    if(S.built&&!(S.found&&!S.fixed))return;
+    if(S.built&&S.split>0&&!S.drop){log('Roll back to 0% first, so nobody reads the new view while it is rebuilt.','info');o.on({type:'blocked'});return;}
+    const fixing=S.built&&S.found;S.busy='rp';S.prog=0;
+    const target=S.logDays?0.02:1;
+    if(!(await anim(S.logDays?500:1200,u=>{S.prog=target*u;})))return;
+    S.busy=false;
+    if(S.logDays){S.built=false;draw();log('The event log only keeps 7 days, so only last week’s parcels could be rebuilt: about 2% of the history. You can’t derive a whole new view without the old events. You’re back to simple changes, like adding an optional “flat” field.','no');o.on({type:'short'});return;}
+    S.built=true;
+    if(fixing){S.fixed=true;S.bug=false;S.mis=null;if(S.lambda)S.streamBug=true;}
+    draw();
+    log(fixing?(S.lambda?'Parser fixed in the batch job, and history replayed again. The stream job that handles today’s events is a separate codebase.':'Parser fixed, and all six years of history replayed through it. The new view is rebuilt beside the old one.'):
+      'Replayed six years of address events through the new parser. The new view now sits beside the old one. Nobody reads it yet.','ok');
+    o.on({type:'built',fixed:fixing});}
+  async function runDay(){
+    if(S.busy||!alive())return;
+    S.busy='day';const pct=STOPS[S.split],newReads=(S.built||S.drop)?READS*pct/100:0;
+    const rate=S.bug?BUG:(S.lambda&&S.streamBug?BUG*.1:0),errs=Math.round(newReads*rate);
+    const nNew=pct?Math.max(1,Math.round(7*pct/100)):0,kinds=[];
+    for(let i=0;i<7;i++)kinds.push('old');
+    for(let j=0;j<nNew;j++)kinds[Math.min(6,Math.round(j*7/nNew))]='new';
+    if(S.drop)kinds.fill('new');
+    if(errs){const f=kinds.indexOf('new');if(f>=0)kinds[f]='bad';}
+    if(!(await anim(1300,u=>{S.trains=kinds.map((k,i)=>({k,x:-60-i*66+u*(400+7*66)}));})))return;
+    S.trains=null;S.busy=false;S.day++;S.err+=errs;S.mis=errs;
+    if(errs)S.found=true;
+    S.clean100=pct===100&&!errs;
+    draw();
+    if(!pct)log('All '+fmt(READS)+' reads used the old view. Nothing changed for recipients.','info');
+    else if(errs&&!S.bug)log(fmt(errs)+' error pages, all on today’s parcels. Those come from the stream layer, which runs its own copy of the parser. You only fixed the batch job.','no');
+    else if(errs)log(fmt(newReads)+' reads ('+pct+'%) used the new view. <b>'+fmt(errs)+'</b> showed a broken address: in addresses like “Flat 3, 12 Quay Road” the flat landed in the street field.'+(S.drop?' And there is no old view to send anyone back to.':' The old view still works for everyone else.'),'no');
+    else log('Clean day: '+fmt(newReads)+' reads on the new view and no mismatches.'+(pct===100&&!S.drop?' Everyone is on the new view, so you can remove the old rail.':''),'ok');
+    o.on({type:'day',pct,errs});}
+  function rollback(){
+    if(S.busy||!alive())return;
+    if(S.drop){log('There is no old view to go back to: it was converted in place. Recipients keep seeing errors until a fix is rebuilt.','no');o.on({type:'norollback'});return;}
+    if(!S.split)return;
+    S.split=0;S.clean100=false;draw();log('Rolled back: every read uses the old view again. Recipients are safe while the bug is fixed.','info');o.on({type:'rollback'});}
+  function dropOld(){
+    if(S.busy||!alive()||S.drop)return;
+    if(STOPS[S.split]<100){log('Some reads still use the old view. Move every read to the new view first.','info');return;}
+    if(!S.clean100){log('Run a clean day at 100% first. While the old rail exists, you can still roll back.','info');return;}
+    S.drop=true;draw();log('Old rail removed: the old view is dropped and the migration is done. From now on there is no going back.','ok');o.on({type:'drop'});}
+  function reset(cfg){Object.assign(S,D,cfg||{});S.trains=null;draw();if(alive())$('#'+ID+'-log').innerHTML='';}
+  if(o.ctl){
+    $('#'+ID+'-rp').onclick=reprocess;$('#'+ID+'-day').onclick=runDay;$('#'+ID+'-rb').onclick=rollback;$('#'+ID+'-dr').onclick=dropOld;
+    $('#'+ID+'-sp').oninput=e=>{if(S.busy)return;S.split=+e.target.value;S.clean100=false;draw();o.on({type:'split',pct:STOPS[S.split]});};}
+  reset(o.start);
+  return {S,draw,reset,reprocess,runDay,rollback,dropOld,log,alive,idle:async()=>{for(let i=0;i<300&&S.busy;i++)await L.sleep(30);}};
+}
+const BIGBANG={built:true,prog:1,split:6,drop:true};
+
+/* ---------- dual writes: two writers, two stores, no one decides the order ---------- */
+/* each write: from writer w (0 = ①, 1 = ②) to store s (0 = Parcel DB, 1 = Search), leaves at t0, lands at t1 */
+const DW=[{w:0,s:0,t0:0,t1:.8},{w:1,s:0,t0:.3,t1:1.2},{w:1,s:1,t0:.3,t1:.9},{w:0,s:1,t0:0,t1:1.6}],DWEND=1.9;
+const dwApplied=(t,s)=>DW.filter(x=>x.s===s&&t>=x.t1).sort((a,b)=>a.t1-b.t1).map(x=>x.w);
+function dualSVG(t){
+  const wy=[32,100],sy=[32,100],val=s=>{const a=dwApplied(t,s);return a.length?(a[a.length-1]===0?'…4410':'…4471'):'empty';};
+  let s='';
+  DW.forEach(x=>{s+=Ln(106,wy[x.w],226,sy[x.s],'stroke:var(--line2);stroke-width:1.4');});
+  s+=bx(2,10,86,44,'Merchant API','sets …4410','soft',{fs:11.5})+bx(2,78,86,44,'Support agent','sets …4471','soft',{fs:11.5});
+  s+=tok(98,32,'1','a',8)+tok(98,100,'2','b',8);
+  [['Parcel DB',0],['Search',1]].forEach(([n,k])=>{const fl=DW.some(x=>x.s===k&&t>=x.t1&&t<x.t1+.25);
+    s+=R(226,sy[k]-22,92,44,10,'fill:var(--card);stroke:'+(fl?'var(--pri)':'var(--line2)')+';stroke-width:'+(fl?3:1.6))+
+      T(272,sy[k]-4,n,ST(11.5,'var(--ink)','middle',700))+T(272,sy[k]+12,val(k),ST(11,'var(--muted)'));});
+  DW.forEach(x=>{if(t<x.t0||t>=x.t1)return;const u=(t-x.t0)/(x.t1-x.t0);
+    s+=tok(106+(226-106)*u,wy[x.w]+(sy[x.s]-wy[x.w])*u,x.w?'2':'1',x.w?'b':'a',8);});
+  if(t>=DWEND)s+=T(272,72,'≠ for good',ST(12,'var(--no)','middle',700));
+  return s;}
+
+/* ---------- static pictures ---------- */
+function hubSVG(sel){
+  const N={db:[100,76,120,46,'Parcel DB','system of record','h1'],search:[4,6,100,42,'Support search','keyword lookups','h2'],cache:[216,6,100,42,'Tracking cache','fast repeat reads','h2'],
+   wh:[4,152,100,42,'Warehouse','big reports','h3'],eta:[110,152,100,42,'ETA model','predictions','h3'],notif:[216,152,100,42,'Notifications','texts on change','h4']};
+  let s=arw(120,78,84,50,'var(--line2)')+arw(200,78,236,50,'var(--line2)')+arw(120,122,84,150,'var(--line2)')+arw(160,122,160,150,'var(--line2)')+arw(200,122,236,150,'var(--line2)');
+  Object.keys(N).forEach(k=>{const n=N[k];s+=bx(n[0],n[1],n[2],n[3],n[4],n[5],n[6],{sw:sel===k?3.2:1.6,stroke:sel===k?'var(--pri)':null,fs:12});});
+  return SV(200,s,'Otterpost’s Parcel DB in the middle, with five derived systems around it: support search, tracking cache, warehouse, ETA model and notifications');}
+function billSVG(mode,down,read){let s='';
+  if(mode==='2pc'){
+    s+=bx(4,62,70,44,'Booking',down?'aborted':read?'saved':'app code',down?'no':read?'ok':'soft');
+    s+=arw(74,76,112,44,down?'var(--no)':'var(--line2)')+arw(74,92,112,126,down?'var(--no)':'var(--line2)');
+    s+=db(160,12,96,52,'Parcel DB',down?'waiting':'',down?'h3':'h1');
+    s+=db(160,104,96,52,'Ledger',down?'slow or down':'',down?'no':'h3');
+    s+='<path d="M216 20 h10 v128 h-10" style="fill:none;stroke:var(--h4);stroke-width:2"/>'+T(276,70,'one two-phase',ST(11.5,'var(--h4)','middle',700))+T(276,85,'commit',ST(11.5,'var(--h4)','middle',700))+lock(276,96,'var(--h4)');
+    if(read)s+=down?R(4,122,96,42,10,'fill:var(--soft);stroke:var(--line2);stroke-width:1.6')+T(52,139,'Balance page',ST(11.5,'var(--ink)','middle',700))+T(52,154,'no booking made',ST(11,'var(--muted)')):
+      R(4,122,96,42,10,'fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.6')+T(52,139,'Balance page',ST(11.5,'var(--ok)','middle',700))+T(52,154,'charge shown ✓',ST(11,'var(--ok)'));
+  }else{
+    s+=bx(4,62,58,44,'Booking','saved','ok');
+    s+=arw(62,84,78,84,'var(--line2)');
+    s+=db(110,58,64,52,'Parcel','DB','h1',11.5);
+    s+=arw(142,84,156,84,'var(--line2)');
+    s+=T(180,68,'event log',ST(11,'var(--muted)','middle',600))+tape(158,75,['1','2','3','4'],'h2',18,down?2:null);
+    const L3=down?['Ledger','crashed','no']:read?['Ledger','catching up','h3']:['Ledger','in log order','h3'];
+    s+=arw(230,80,250,32,'var(--line2)')+arw(230,84,250,84,'var(--line2)')+arw(230,88,250,136,'var(--line2)');
+    s+=bx(250,12,68,40,L3[0],L3[1],L3[2])+bx(250,64,68,40,'Search','','h2')+bx(250,116,68,40,'Notifier','','h2');
+    if(down)s+=arw(250,42,206,74,'var(--h4)',{dash:'4 3'})+T(193,114,'re-reads from',ST(11,'var(--h4)','middle',700))+T(193,128,'offset 3',ST(11,'var(--h4)','middle',700));
+    if(read)s+=R(4,122,130,42,10,'fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.6')+T(69,139,'Balance page',ST(11.5,'var(--h3)','middle',700))+T(69,154,'charge not shown yet',ST(11,'var(--muted)'));
+  }
+  return SV(168,s,'Booking flow for Otterpost’s billing ledger: '+(mode==='2pc'?'two-phase commit':'event log')+', ledger '+(down?'down':'up')+(read?', balance page opened':''));}
+function billCap(mode,down,read){
+  if(mode==='2pc'){
+    if(read)return down?'No booking was made, so there is nothing to show.':'Bramble &amp; Bolt books, then opens its balance page: the charge is there. The transaction lets them read their own write.';
+    return down?'The ledger is down, so the commit can’t finish: bookings wait, then abort. Kwame remembers a ledger hiccup stalling a Bramble &amp; Bolt flash sale.':
+      'Today every booking writes to the Parcel DB and the ledger in one two-phase commit. Both agree before the booking returns.';}
+  if(read)return 'The catch: the ledger may not have caught up when Bramble &amp; Bolt looks. With the log, reading your own write isn’t promised by default.';
+  return down?'The booking is saved anyway. When the ledger’s consumer restarts, it re-reads from its last position. Applying a booking it already saw has no extra effect.':
+    'Linh’s idea: write the booking to the Parcel DB only. Its changes flow into the event log, and the ledger follows the log in order, like search and the notifier.';}
+/* railway sidebar: k 0 rival gauges, 1 third rail laid, 2 every train converted, 3 old rail removed; 'strand' = removed too early */
+function railStage(k){
+  const tr=k===0?[{x:24,k:'old'},{x:226,k:'bad'}]:k===1?[{x:24,k:'old'},{x:226,k:'new'}]:k==='strand'?[{x:24,k:'old'},{x:226,k:'new'}]:[{x:24,k:'new'},{x:226,k:'new'}];
+  const extra=k==='strand'?R(20,8,62,84,10,'fill:none;stroke:var(--no);stroke-width:2.5;stroke-dasharray:5 3')+T(51,72,'✗',ST(20,'var(--no)','middle',700)):'';
+  return SV(96,railSVG({third:k===0?0:1,oldGone:k===3||k==='strand',trains:tr,extra}),'Railway track: '+(k===0?'two rival gauges':k===1?'a third rail added, trains of both gauges run':k===2?'every train converted to the standard gauge':k===3?'the old rail removed':'the old rail removed too early, a wide train is stranded'));}
+const RAILS={0:'Early English railways had rival gauges. A train built for one gauge (narrow, ✗) couldn’t run on another’s track.',
+ 1:'After one gauge was chosen in 1846, lines gradually got a third rail. Trains of both gauges now share the line.',
+ 2:'Every train now uses the standard gauge. The old rail carries nobody.',
+ strand:'A wide train still runs on the old rail, and now it’s stuck. Convert every train first.',
+ 3:'Done, but it was expensive, so some gauges survive, like BART’s. Data works the same way: reprocess history into a new model beside the old, then drop the old. Without reprocessing, changes stay small, like a new optional field.'};
+
 Course.lesson({
-  id:'0031', title:'Data integration', minutes:20, icon:'map',
-  goals:['Explain why Otterpost should derive its copies from one ordered log, not dual writes','Say where a single total order breaks down, and why causality still matters','Evolve a derived view gradually by reprocessing history'],
-  parts:['Many tools','Logs vs transactions','Limits of order','Batch and stream'],
-  read:'Read the start of chapter 12 (“Data Integration”) for the full lambda architecture discussion and the railway gauge sidebar.',
+  id:'0031', title:'Data integration', minutes:22, icon:'map',
+  goals:['Explain why Otterpost should derive every copy from one ordered log, not dual writes or distributed transactions','Show where one total order breaks down, and protect an order that matters','Change a data model gradually by reprocessing history into a side-by-side view'],
+  parts:['One ordered log','Logs vs transactions','Limits of order','Reprocess and evolve'],
+  read:'Read the start of chapter 12 (“Data Integration”, up to “Unbundling Databases”) for the lambda architecture discussion and the railway sidebar in full.',
   glossary:{
     cdc:'Change data capture: reading a database’s log of row changes so another system (a warehouse, a search index, a cache) can copy them.',
     dualwrite:'Dual writes: the application itself writes each change to several systems, for example the database and then the search index. Easy to build, but the copies can drift apart.',
     totalorder:'Total order: an ordering where you can compare any two items and say which comes first, like numbers.',
+    tob:'Total order broadcast: a way of sending messages so that none are lost and every node gets them in exactly the same order. Also called atomic broadcast.',
     idempotence:'Idempotence: an operation that has the same effect whether it runs once or several times, so a retry can’t do it twice.',
     eventtime:'Event time vs processing time: event time is when something actually happened (the timestamp inside the event); processing time is when a stream processor gets round to handling it. The two can be far apart.',
+    'logical-clock':'Logical clock: a counter that goes up with each event. It shows which event came before which, not the time of day.',
     'lambda-arch':'Lambda architecture: running a batch system and a separate stream system side by side over the same events. The stream gives a fast, rough view; the batch job later produces a corrected one.'
   },
   cheatsheet:[
     'Chapter 12 is <b>Kleppmann’s opinion</b>: read it as “he argues”, not settled fact.',
-    'No tool fits every use, so you <b>combine tools by deriving data</b>. Know where data is written first and what is derived from what.',
-    'Avoid <b>dual writes</b>. Send all writes through one place that decides a <b>total order</b>, then derive every other copy in that order (CDC or event sourcing).',
-    '<b>Log-based derived data vs distributed transactions:</b> same goal. Logs give up instant read-your-writes but contain faults. Kleppmann favours logs.',
-    'Total order breaks down with <b>partitions, several datacenters, microservices and offline clients</b>. Causal links across systems need care: no simple answer.',
-    'Batch and stream are converging. Keep derivations <b>deterministic</b> and updates <b>asynchronous</b>, so one fault stays local.',
-    '<b>Reprocess history</b> into a new view next to the old one, then shift users gradually, like the railways’ third rail.',
-    '<b>Lambda architecture</b> runs batch and stream side by side; its problems pushed toward one engine with replay, exactly-once and event-time windows.'
+    'No tool fits every job, so you <b>combine tools by deriving data</b>. Know where data is written first and what is derived from what.',
+    '<b>Funnel writes through one log</b> that decides a total order, and let every other copy apply that order (CDC or event sourcing). Avoid dual writes.',
+    '<b>Log vs distributed transaction:</b> log position instead of locks, idempotent retry instead of atomic commit. You lose read-your-writes by default, but a fault stays local.',
+    'One total order breaks with <b>partitions, several datacenters, microservices and offline clients</b>. Routing by key only orders events inside one log. For causal links, one starting point: reference the event the user saw.',
+    'Derive with <b>deterministic functions</b> and update derived systems <b>asynchronously</b>.',
+    '<b>Reprocess history</b> into a new view beside the old one, shift reads gradually, roll back if needed, then drop the old view: the railway’s third rail.',
+    '<b>Lambda</b> runs batch and stream side by side (logic twice, hard merges). Unified engines need replay, exactly-once and event-time windows.'
   ],
   steps:[
-/* ---------- PART 1: MANY TOOLS ---------- */
+/* ---------- PART 1: ONE ORDERED LOG ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s parcel data must serve tracking-page lookups, partial-phone-number searches, monthly on-time reports and ETA predictions. Will one database product be the best tool for all four?</h1>');
-  L.mc(L.card,['Yes, if we pick a good general-purpose one','Probably not, as each job suits a different tool'],1,
-   'Every product, even a “general-purpose” database, is built for some usage pattern. So big applications end up combining several tools. This lesson is about combining them without losing control of the data.',
-   'Every product, even a “general-purpose” database, is built for some usage pattern. Big applications end up combining several tools, and this lesson is about doing that safely.');}},
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost’s parcel data must serve tracking-page lookups, searches by partial phone number, monthly on-time reports and ETA predictions. Will one database product be the best tool for all four?</h1>');
+  L.mc(L.card,['Yes, if we pick a good general-purpose one','Probably not: each job suits a different tool'],1,
+   'Even a “general-purpose” database is built for some usage pattern. So big applications combine several tools. This lesson is about combining them without losing control of the data.',
+   'Even a “general-purpose” database is built for some usage pattern. Big applications end up combining several tools, and this lesson is about doing that safely.');}},
 {part:0,src:'Chapter 12 · The Future of Data Systems',run(L){
-  L.h(L.kick('learn','A chapter of opinions')+'<h1 class="q">The last chapter looks ahead, and says so</h1>'+
-   L.prose('Up to now the book has described how data systems work today. In chapter 12 Kleppmann turns to how he thinks they <i>should</i> work. He writes in the first person, calls it his opinion, and invites you to disagree.')+
-   L.note('So in this lesson and the next three, read each recommendation as “Kleppmann argues…”, not as settled fact.','info')+
-   L.prose('His aim gathers up the whole book. Chapter 1 asked for systems that are reliable, scalable and maintainable. Here he reaches further: applications that are robust, correct, evolvable and, in the end, good for people.'));
+  let s='';for(let i=0;i<11;i++)s+=R(6+i*15,10,12,54,2,'fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.2');
+  s+=T(87,82,'Chapters 1–11',ST(12.5,'var(--ink)','middle',700))+T(87,97,'how data systems work today',ST(11,'var(--muted)'));
+  s+=arw(176,40,198,40,'var(--pri)',{w:2.2});
+  s+=R(202,6,114,72,14,'fill:var(--pri-bg);stroke:var(--pri);stroke-width:1.8')+T(259,28,'Chapter 12',ST(13,'var(--pri)','middle',700))+T(259,46,'how they should be',ST(11.5,'var(--ink)'))+T(259,65,'“I think…”',ST(12.5,'var(--pri)','middle',600)+';font-style:italic');
+  s+=T(259,97,'its aims for applications',ST(11,'var(--muted)','middle',600))+'<path d="M259 102 v8 M42 110 H275" style="fill:none;stroke:var(--line2);stroke-width:1.4"/>';
+  const ch=(x,w,t,c)=>R(x,118,w,26,13,'fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.4')+T(x+w/2,135,t,ST(12,'var(--'+c+')','middle',700));
+  s+=ch(2,58,'robust','h2')+ch(65,64,'correct','h2')+ch(134,76,'evolvable','h2')+ch(215,103,'good for people','h4');
+  L.h(L.kick('learn','A chapter of opinions')+'<h1 class="q">The last chapter looks ahead, and says so</h1>'+CSS+
+   SV(150,s,'Chapters 1 to 11 describe how things are; chapter 12 says how they should be, in the first person')+
+   cap('Until now the book described how data systems work. In chapter 12 Kleppmann says how he thinks they <i>should</i> work, in the first person, and invites you to disagree. So read this lesson as “Kleppmann argues…”.'));
   L.done();}},
-{part:0,src:'Chapter 12 · Data Integration',run(L){
-  L.h(L.kick('learn','Data integration')+'<h1 class="q">One set of data, many different jobs</h1>'+
-   L.prose('For a problem like “store data and look it up later” there is no single right answer, only approaches that suit different circumstances. Each product has to pick one. Trying to do everything in one piece of software almost guarantees doing it badly.')+
-   L.prose('And complex applications use the same data in several ways, so you end up combining tools. Otterpost already does:')+
-   L.list([['box','Parcel DB','The '+L.g('derived','system of record')+' for parcels, merchants and prices.'],['eye','Support search','Finds a parcel from a partial phone number or postcode.'],['trend','Analytics warehouse','On-time and route reports.'],['clock','ETA model','Predicts each parcel’s delivery window.']],1)+
-   '<p class="small" style="margin-top:10px">Kleppmann distrusts claims like “99% of people only need X”: they say more about the speaker’s experience than about the tool. The need for integration shows when you zoom out to a whole organization’s dataflows.</p>');
-  L.done();}},
+{part:0,src:'Chapter 12 · Combining Specialized Tools by Deriving Data',
+ solve:async L=>{['search','db','wh'].forEach(k=>L.$('#h3-'+k).click());},
+ run(L){
+  const INFO={db:['Parcel DB','<b>Good at:</b> being the durable system of record for parcels, merchants and prices. <b>Not built for:</b> rich keyword search. Some databases have simple full-text search, enough for simple apps.'],
+   search:['Support search','<b>Good at:</b> finding a parcel from part of a phone number or postcode. <b>Not built for:</b> being the durable system of record.'],
+   cache:['Tracking cache','<b>Good at:</b> answering the same tracking lookup again and again, fast. It is a copy derived from the original data.'],
+   wh:['Warehouse','<b>Good at:</b> scanning months of deliveries for on-time reports (analytics).'],
+   eta:['ETA model','<b>Good at:</b> predicting delivery windows from history. Machine learning is one more place the same data has to reach.'],
+   notif:['Notifications','<b>Good at:</b> reacting to changes. A status changes, and a text goes out.']};
+  const seen=new Set();
+  L.h(L.kick('learn','Data integration')+'<h1 class="q">One set of data, many jobs</h1>'+CSS+'<div id="h3s">'+hubSVG(null)+'</div>'+
+   '<div class="di-row" id="h3c">'+Object.keys(INFO).map(k=>'<button class="chip" id="h3-'+k+'">'+INFO[k][0]+'</button>').join('')+'</div>'+
+   '<div class="di-detail" id="h3d"><span class="di-mut">Tap a system to see what it’s good at. Try three.</span></div>'+
+   cap('No single tool fits every job, so Otterpost combines several. Kleppmann distrusts claims like “99% of people only need X”: they say more about the speaker than the tool. The need shows when you zoom out to the whole organization.'));
+  Object.keys(INFO).forEach(k=>{L.$('#h3-'+k).onclick=()=>{seen.add(k);L.$('#h3s').innerHTML=hubSVG(k);
+    [...L.$('#h3c').children].forEach(b=>b.classList.toggle('sel',b.id==='h3-'+k));
+    L.$('#h3d').innerHTML='<b>'+INFO[k][0]+'.</b> '+INFO[k][1];if(seen.size>=3)L.done();};});}},
 {part:0,src:'Chapter 12 · Reasoning about dataflows',run(L){
-  L.h(L.kick('learn','Reasoning about dataflows')+'<h1 class="q">Know where data is written first</h1>'+
-   L.prose('When copies of the same data live in several systems, ask two questions: <b>where is data written first?</b> And <b>which copy is derived from which?</b>')+
-   L.flow([['pencil','Write','Parcel DB','the system of record'],['list','Capture',L.g('cdc','Change data capture'),'every change, in order'],['eye','Apply','Support search','same changes, same order']])+
-   L.prose('If change data capture is the <i>only</i> way into the search index, the index is derived entirely from the Parcel DB and stays consistent with it, bugs aside.')+
-   L.note('The danger is '+L.g('dualwrite','dual writes')+': the app writes to both systems itself. Two clients can send conflicting writes that the two systems apply in different orders. Neither system is in charge of the order, so they can stay inconsistent for good.','alert'));
+  let s=bx(4,12,72,42,'Booking','app code','soft')+arw(76,33,98,33,'var(--ink)')+bx(98,12,96,42,'Parcel DB','written first','h1')+arw(194,33,216,33,'var(--ink)');
+  s+=tape(218,24,['1','2','3','4','5'],'h2',19)+T(264,62,'change log (CDC)',ST(11,'var(--h2)','middle',600));
+  s+=arw(250,70,56,132,'var(--h2)')+arw(262,70,160,132,'var(--h2)')+arw(276,70,268,132,'var(--h2)');
+  s+=bx(4,134,100,44,'Support search','applies 1 to 5','h2')+bx(110,134,100,44,'Tracking cache','applies 1 to 5','h2')+bx(216,134,100,44,'Warehouse','applies 1 to 5','h2');
+  s+=arw(22,54,22,132,'var(--no)',{dash:'4 3'})+T(30,92,'dual write ✗',ST(11.5,'var(--no)','start',700))+T(30,106,'no one orders it',ST(11,'var(--no)','start'));
+  L.h(L.kick('learn','Reasoning about dataflows')+'<h1 class="q">Know where data is written first</h1>'+CSS+
+   SV(184,s,'Bookings are written to the Parcel DB first. Its change log feeds support search, the tracking cache and the warehouse in the same order. A dashed red arrow shows a dual write straight from the booking code into search.')+
+   cap('Ask: where is data written first, and what is derived from what? If '+L.g('cdc','change data capture')+' is the only way into search, search is a copy of the Parcel DB (bugs aside). A '+L.g('dualwrite','dual write')+' lets two systems order writes differently, for good.'));
   L.done();}},
-{part:0,src:'Chapter 12 · Reasoning about dataflows',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh maps where Otterpost’s parcel data really comes from</h1>');
-  L.beats(L.card,[
-   ['The question','Linh asks, for every copy of parcel data: where does it come from? The answers are messy. The booking code writes to the Parcel DB and then calls support search directly. A script copies some fields to the notification service.'],
-   ['The rule','Linh proposes that all input goes to one place first, the Parcel DB, which decides a single '+L.g('totalorder','total order')+' for all writes.'],
-   ['The pipes','Every other copy (support search, the tracking cache, the warehouse, notifications) follows the Parcel DB’s change stream through the event log and applies the writes in that same order.'],
-   ['The name','Kleppmann points out this is state machine replication again, the idea behind total order broadcast: same inputs in the same order give the same result. Whether the log comes from CDC or from event sourcing matters less than deciding one order.'],
-   ['The bonus','Updates driven by a log can usually be made deterministic and '+L.g('idempotence','idempotent')+'. If the search updater crashes, it re-reads from where it stopped, and repeats do no harm.']],
-   'Funnel writes through one place that decides the order. Derive every other copy by applying that order.');}},
+{part:0,src:'Chapter 12 · Reasoning about dataflows',
+ solve:async L=>{SPD=.3;L.$('#f5go').click();await L.fun.idle();L.$('#f5rp').click();await L.fun.idle();L.$('#f5dw').click();await waitFor(L,()=>!L.dwBusy);},
+ run(L){
+  SPD=1;let ran=0,replay=false,didReplay=false,didDual=false,fin=false;L.dwBusy=false;
+  L.h(L.kick('ex','One log decides the order')+'<h1 class="q">Two edits to parcel OP-48213’s phone number arrive at once. Send them through one log, then try dual writes.</h1>'+CSS+
+   '<div class="di-ev">'+tk('①','a')+'<div>Merchant API sets the phone <span style="white-space:nowrap">to …4410</span></div>'+tk('②','b')+'<div>Signe’s support agent corrects it <span style="white-space:nowrap">to …4471</span></div></div><div id="f5"></div>'+
+   '<div id="f5dv" hidden><svg id="f5dsvg" class="di-svg" viewBox="0 0 320 132" role="img" aria-label="Dual writes: the merchant API and the support agent each write to the Parcel DB and to search directly, with different network delays"></svg><div class="di-merge" id="f5dm" aria-live="polite"></div></div>'+
+   '<div class="di-row"><button class="btn pri" id="f5go">'+L.ic('play')+'Send both edits</button><button class="btn" id="f5dw">'+L.ic('play')+'Run dual writes</button><button class="btn" id="f5rp" disabled>'+L.ic('cycle')+'Crash search, replay from offset 0</button></div><div id="f5o"></div>');
+  const sub=(ci,d)=>{if(ci===1&&replay)return '…4471';return d.length?(d[d.length-1]===0?'…4410':'…4471'):'empty';};
+  const fun=L.fun=Funnel(L,L.$('#f5'),{id:'f5',sub,mergeLabel:'The log’s order: '});
+  const plan=()=>({lanes:[{name:'Event log'}],backlog:[2],hl:[],cons:[{name:'Search'},{name:'Cache'}],toks:[{label:'1',d:'①',cls:'a',lane:0,t0:0},{label:'2',d:'②',cls:'b',lane:0,t0:1}]});
+  fun.set(plan(),'press Send');
+  const view=v=>{L.$('#f5').hidden=v!=='log';L.$('#f5dv').hidden=v!=='dual';};
+  const busy=()=>fun.F.busy||L.dwBusy;
+  function finish(){if(fin||!didReplay||!didDual)return;fin=true;
+    L.sheet('info','One order, or none','The log fixed one order, and every copy applied it: state machine replication, the idea behind '+L.g('tob','total order broadcast')+'. CDC or event sourcing matters less than deciding one '+L.g('totalorder','total order')+'. Replay is harmless because the update is deterministic and '+L.g('idempotence','idempotent')+'. With dual writes, nobody decides the order.');L.done();}
+  L.$('#f5go').onclick=async()=>{if(busy())return;view('log');replay=false;fun.set(plan(),'press Send');L.$('#f5o').innerHTML='';const r=await fun.run();if(!r)return;ran=1;
+    L.$('#f5o').innerHTML='<div class="di-out ok">Both copies applied ① then ②. Search and the cache both say <b>…4471</b>.</div>';L.$('#f5rp').disabled=false;};
+  L.$('#f5rp').onclick=async()=>{if(!ran||busy())return;view('log');L.$('#f5rp').disabled=true;replay=true;fun.set(plan(),'search restarts at offset 0');const r=await fun.run();if(!r)return;
+    L.$('#f5o').innerHTML='<div class="di-out ok">Search re-read every event, in the same order, and ended at <b>…4471</b> again. Nothing doubled.</div>'+(didDual?'':'<div class="di-out info">Now try <b>Run dual writes</b>: the booking code writes to both systems itself.</div>');
+    didReplay=true;finish();};
+  L.$('#f5dw').onclick=()=>{if(busy())return;L.dwBusy=true;view('dual');L.$('#f5o').innerHTML='';
+    const svg=L.$('#f5dsvg'),dm=L.$('#f5dm'),U=700*SPD,st=performance.now();
+    const ord=(t,k)=>{const a=dwApplied(t,k);return a.length?a.map(w=>w?tk('②','b'):tk('①','a')).join(' then '):'<span class="di-mut">…</span>';};
+    (function step(){
+      if(!svg.isConnected){L.dwBusy=false;return;}
+      const t=Math.min(DWEND,(performance.now()-st)/U);svg.innerHTML=dualSVG(t);
+      dm.innerHTML='Parcel DB: '+ord(t,0)+'<br>Search: '+ord(t,1);
+      if(t<DWEND){setTimeout(step,16);return;}
+      L.dwBusy=false;didDual=true;
+      L.$('#f5o').innerHTML='<div class="di-out no">No one decided the order. The Parcel DB got ① then ② and says <b>…4471</b>; search got ② then ① and says <b>…4410</b>. Nothing will ever reconcile them.</div>'+(didReplay?'':'<div class="di-out info">Now send both edits through the log, then crash search and replay.</div>');
+      finish();})();};}},
 {part:0,src:'Chapter 12 · Reasoning about dataflows',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants new parcels to appear in support search sooner, so the booking code would also write straight into the search index. What’s the risk?</h1>');
   L.mc(L.card,['Search indexes can’t take writes from app code','Two edits could land in different orders and never agree','The event log would fill its disk twice as fast'],1,
    'With dual writes nobody decides one order for both systems. Two edits made at the same time can leave the Parcel DB and search different for good.',
    'Search indexes accept writes fine, and the log isn’t involved here. The real risk is order: with dual writes, two edits made at once can reach the two systems in different orders, and nothing ever reconciles them.');}},
-{part:0,src:'Chapter 12 · Reasoning about dataflows',pts:1,
- solve:async L=>{L.$('#rd').click();L.$('#rl').click();},
- run(L){
-  const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Two edits to one parcel’s phone number arrive at the same moment. Run both designs.</h1>'+
-   L.prose('<b>Edit A</b>: the merchant API sets the phone to …4410. <b>Edit B</b>: Signe’s support agent corrects it to …4471.')+
-   L.lanes([['x','Dual writes','The app writes to the Parcel DB and to search itself.<div class="res" id="ra"></div>',4],
-            ['list','One log','Writes go to the Parcel DB only. Search follows its change stream.<div class="res" id="rb"></div>',2]])+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:14px"><button class="btn" id="rd">'+L.ic('play')+'Run dual writes</button><button class="btn" id="rl">'+L.ic('play')+'Run one log</button></div><div id="rq"></div>');
-  const ask=()=>{const q=L.$('#rq');if(seen.size<2||q.innerHTML)return;q.innerHTML='<h2 class="sub">Why can’t this mismatch happen with one log?</h2>';
-    L.mc(q,['The log delivers writes faster than direct calls','Search rejects any write that arrives too late','Every copy applies writes in the one order the log fixed'],2,
-     'The Parcel DB decides one order (A, then B), and search replays exactly that order. Same inputs, same order, same result.',
-     'Speed and rejection rules don’t help. What helps is one order: the Parcel DB fixes A-then-B, and search applies the same sequence.');};
-  L.$('#rd').onclick=function(){this.disabled=true;seen.add(0);
-    L.$('#ra').innerHTML='Parcel DB gets A, then B: <b>…4471</b><br>Search gets B, then A: <b>…4410</b><br><span style="color:var(--no)">They disagree, and nothing will ever fix it.</span>';ask();};
-  L.$('#rl').onclick=function(){this.disabled=true;seen.add(1);
-    L.$('#rb').innerHTML='Parcel DB orders them A, then B: <b>…4471</b><br>Search replays A, then B: <b>…4471</b><br><span style="color:var(--ok)">Both copies agree.</span>';ask();};}},
 
 /* ---------- PART 2: LOGS VS TRANSACTIONS ---------- */
 {part:1,src:'Chapter 12 · Derived data versus distributed transactions',run(L){
-  L.h(L.kick('learn','Derived data versus distributed transactions')+'<h1 class="q">Two ways to keep systems in step</h1>'+
-   L.prose('The classic way to keep different systems consistent is a distributed transaction (two-phase commit, for example through XA). Kleppmann says it reaches the same goal as log-based derived data, by different means:')+
-   L.lanes([['lock','Distributed transactions','<b>Order:</b> locks.<br><b>Exactly once:</b> atomic commit.<br><b>Timing:</b> usually '+L.g('linearizability','linearizable')+', so you can read your own writes.',4],
-            ['list','Log-based derived data','<b>Order:</b> position in the log.<br><b>Exactly once:</b> deterministic retry and idempotence.<br><b>Timing:</b> updated asynchronously, so no such promise by default.',2]])+
-   L.prose('His view: XA’s poor fault tolerance and performance severely limit it, and a better protocol is unlikely to be widely adopted soon. So log-based derived data is the most promising way to integrate systems. But he won’t just tell people that eventual consistency is inevitable and they must live with it. A later lesson looks at stronger guarantees built on top.'));
+  let s=T(78,14,'Distributed transaction',ST(12,'var(--h4)','middle',700))+T(242,14,'Log-based derived data',ST(12,'var(--h2)','middle',700))+Ln(160,4,160,122,'stroke:var(--line);stroke-width:1.5');
+  s+=db(42,30,64,48,'Parcel DB','','h4',11)+db(116,30,64,48,'Ledger','','h4',11)+lock(79,46,'var(--h4)');
+  s+='<path d="M10 86 v8 h140 v-8" style="fill:none;stroke:var(--h4);stroke-width:2"/>'+T(80,110,'commit both, or neither',ST(11,'var(--h4)','middle',600));
+  s+=tape(168,56,['1','2','3','4','5'],'h2',16)+arw(249,65,264,65,'var(--h2)')+db(292,40,52,48,'Ledger','','h2',11);
+  s+='<path d="M178 51 C 184 36, 222 36, 228 49" style="fill:none;stroke:var(--h2);stroke-width:1.8"/>'+'<polygon points="228,52 222,44 231,45" style="fill:var(--h2)"/>'+T(203,30,'retry',ST(11,'var(--h2)','middle',600));
+  s+=T(242,104,'apply in log order;',ST(11,'var(--h2)','middle',600))+T(242,118,'a retry changes nothing',ST(11,'var(--h2)','middle',600));
+  L.h(L.kick('learn','Derived data versus distributed transactions')+'<h1 class="q">Two ways to keep systems in step</h1>'+CSS+
+   SV(124,s,'Left: two databases locked together by an atomic commit. Right: a numbered log feeding the ledger, with a retry arrow.')+
+   '<div class="di-cmp"><div class="h"></div><div class="l"><b>Transaction</b></div><div class="r"><b>Log</b></div>'+
+   '<div class="h">Order</div><div>locks</div><div>position in the log</div>'+
+   '<div class="h">Exactly once</div><div>atomic commit</div><div>retry + '+L.g('idempotence','idempotence')+'</div>'+
+   '<div class="h">Timing</div><div>usually '+L.g('linearizability','linearizable')+': read your own writes</div><div>updated asynchronously: no such promise by default</div></div>'+
+   cap('Same goal, different means. Kleppmann thinks XA’s poor fault tolerance and performance severely limit it, so building derived data from a log looks like the most promising route. But he won’t just tell people to live with eventual consistency.'));
   L.done();}},
-{part:1,src:'Chapter 12 · Derived data versus distributed transactions',run(L){
-  L.h(L.kick('ex','Otterpost’s billing ledger')+'<h1 class="q">Linh proposes replacing the two-phase commit at booking time</h1>');
-  L.beats(L.card,[
-   ['Today','Since finance got its own billing ledger, every booking writes to the Parcel DB and the ledger in one two-phase commit.'],
-   ['The pain','When the ledger is slow, bookings wait. When it’s down, bookings abort. Kwame remembers a ledger hiccup stalling one of Bramble & Bolt’s flash sales.'],
-   ['Linh’s idea','Write the booking to the Parcel DB only. Its change stream goes into the event log. The ledger, support search and notifications each follow the log in the same order.'],
-   ['Safe repeats','If the ledger’s consumer crashes halfway, it re-reads from its last position in the log. Applying a booking it already saw has no extra effect.'],
-   ['The catch','Bramble & Bolt books a parcel and opens its balance page straight away. The ledger may not have caught up, so for a moment the charge is missing. The log design doesn’t promise read-your-writes by default.']],
-   'Same goal, different trade: the log design keeps bookings flowing when the ledger struggles, but the ledger is updated a little later.');}},
-{part:1,src:'Chapter 12 · Derived data versus distributed transactions',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What does Linh’s log design give up, at least by default?</h1>');
-  L.mc(L.card,['A merchant instantly reading back its own charge','Every booking eventually reaching the ledger','All systems applying bookings in one order'],0,
-   'The ledger is updated asynchronously, so there’s no timing guarantee like reading your own writes. Kleppmann admits this is a real cost.',
-   'The log still delivers every booking, and in one order. What’s missing is timing: right after booking, the merchant may not see its own charge yet.');}},
+{part:1,src:'Chapter 12 · Derived data versus distributed transactions',
+ solve:async L=>{L.$('#b8-down').click();L.$('#b8-log').click();L.$('#b8-bal').click();},
+ run(L){
+  let mode='2pc',down=false,read=false;
+  const seg=(id,lab,opts)=>'<div class="di-row" role="group" aria-label="'+lab+'" id="'+id+'">'+opts.map(o=>'<button class="chip" id="b8-'+o[0]+'" aria-pressed="false">'+o[1]+'</button>').join('')+'</div>';
+  L.h(L.kick('ex','Otterpost’s billing ledger')+'<h1 class="q">Linh proposes replacing the two-phase commit at booking time. Compare the two designs.</h1>'+CSS+
+   goals('g8',['Take the ledger down under <b>two-phase commit</b>','Take the ledger down with the <b>event log</b>','Open the balance page right after booking, <b>with the log</b>'])+
+   '<div id="b8s"></div><p class="di-cap" id="b8c" aria-live="polite"></p>'+
+   seg('b8m','Design',[['2pc','Two-phase commit'],['log','Event log']])+seg('b8l','Ledger',[['up','Ledger up'],['down','Ledger down']])+
+   '<div class="di-row"><button class="btn" id="b8-bal" aria-pressed="false">'+L.ic('eye')+'Bramble &amp; Bolt opens its balance page</button></div>');
+  function show(){
+    L.$('#b8s').innerHTML=billSVG(mode,down,read);L.$('#b8c').innerHTML=billCap(mode,down,read);
+    [['2pc',mode==='2pc'],['log',mode==='log'],['up',!down],['down',down]].forEach(([k,on])=>{const b=L.$('#b8-'+k);b.classList.toggle('sel',on);b.setAttribute('aria-pressed',on);});
+    const bb=L.$('#b8-bal');bb.classList.toggle('sel',read);bb.setAttribute('aria-pressed',read);
+    if(mode==='2pc'&&down)tick(L,'g8',0);if(mode==='log'&&down)tick(L,'g8',1);if(mode==='log'&&read)tick(L,'g8',2);
+    if(allT(L,'g8')&&!L.$('#b8d')){L.$('#b8s').insertAdjacentHTML('afterend','<span id="b8d"></span>');
+      L.sheet('info','Same goal, different trade','The log design keeps bookings flowing when the ledger struggles, but the ledger is updated a little later. A later lesson looks at stronger guarantees built on top of logs.');L.done();}}
+  L.$('#b8-2pc').onclick=()=>{mode='2pc';show();};L.$('#b8-log').onclick=()=>{mode='log';show();};
+  L.$('#b8-up').onclick=()=>{down=false;show();};L.$('#b8-down').onclick=()=>{down=true;show();};
+  L.$('#b8-bal').onclick=()=>{read=!read;show();};
+  show();}},
 {part:1,src:'Chapter 12 · Derived data versus distributed transactions',pts:6,run(L){
   L.h(L.kick('pr','Which approach?')+'<h1 class="q">Sort each description into the approach it belongs to.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Distributed transaction','Log-based derived data'],[
@@ -130,124 +493,246 @@ Course.lesson({
 
 /* ---------- PART 3: LIMITS OF ORDER ---------- */
 {part:2,src:'Chapter 12 · The limits of total ordering',run(L){
-  L.h(L.kick('learn','The limits of total ordering')+'<h1 class="q">One order for everything doesn’t scale forever</h1>'+
-   L.prose('For a small system, one totally ordered log is easy: a single-leader database builds exactly that. As systems grow, Kleppmann lists four places where it breaks down:')+
-   L.list([['layers','Too much for one leader','A total order needs one node to decide it. When scans and GPS pings outgrow one machine, the log is '+L.g('partition','partitioned')+', and the order between partitions is ambiguous.'],
-     ['map','Several datacenters','Westport, Eastvale and Nordhaven each have their own leader, since syncing across datacenters is slow. Events from two datacenters have no defined order.'],
-     ['box','Microservices','Billing and dispatch each keep their own durable state. Events from two services have no defined order.'],
-     ['pointer','Offline clients','The courier app acts before the server confirms, even offline. Phone and server see events in different orders.']],2)+
-   '<p class="small" style="margin-top:10px">Formally, deciding a total order is total order broadcast, which is equivalent to '+L.g('consensus','consensus')+'. Most consensus algorithms assume one node can handle the whole stream. Scaling past that, and working well across regions, is still an open research problem.</p>');
+  const tile=(x,y,t,inner)=>'<g transform="translate('+x+','+y+')">'+R(0,0,154,100,12,'fill:var(--soft)')+T(77,17,t,ST(12,'var(--ink)','middle',700))+inner+'</g>';
+  const q=(x,y)=>T(x,y,'?',ST(17,'var(--no)','middle',700));
+  const t1='<circle cx="26" cy="60" r="14" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+T(26,64,'L',ST(12,'var(--h3)','middle',700))+
+    [42,60,78].map((y,j)=>Ln(40,60,58,y,'stroke:var(--line2);stroke-width:1.4')+Ln(58,y,140,y,'stroke:var(--line2);stroke-width:1.4')+T(68,y-3,'P'+(j+1),ST(11,'var(--muted)','start',600))).join('')+
+    tok(104,42,'1','a',7.5)+tok(92,78,'2','b',7.5)+q(130,66);
+  const dcs=[[34,46,'W'],[120,46,'E'],[77,84,'N']];
+  const t2=Ln(34,46,120,46,'stroke:var(--line2);stroke-dasharray:3 3')+Ln(34,46,77,84,'stroke:var(--line2);stroke-dasharray:3 3')+Ln(120,46,77,84,'stroke:var(--line2);stroke-dasharray:3 3')+
+    dcs.map(d=>'<circle cx="'+d[0]+'" cy="'+d[1]+'" r="13" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+T(d[0],d[1]+4,d[2],ST(12,'var(--h1)','middle',700))).join('')+q(77,52);
+  const t3=bx(8,28,64,26,'Billing','','h2',{fs:11.5})+bx(82,28,64,26,'Dispatch','','h2',{fs:11.5})+db(40,62,36,28,'','','h2')+db(114,62,36,28,'','','h2')+q(77,84);
+  const t4=R(18,26,40,66,8,'fill:var(--card);stroke:var(--ink);stroke-width:1.6')+tok(38,46,'1','a',8)+tok(38,72,'2','b',8)+T(77,64,'≠',ST(18,'var(--no)','middle',700))+
+    R(96,30,50,56,8,'fill:var(--card);stroke:var(--line2);stroke-width:1.6')+tok(121,46,'2','b',8)+tok(121,72,'1','a',8);
+  L.h(L.kick('learn','The limits of total ordering')+'<h1 class="q">One order for everything doesn’t scale forever</h1>'+CSS+
+   SV(210,tile(4,4,'One leader’s limit',t1)+tile(162,4,'Several datacenters',t2)+tile(4,108,'Microservices',t3)+tile(162,108,'Offline clients',t4),
+    'Four tiles: a leader splitting its log into partitions, three datacenters each with a leader, two services each with their own database, and a phone that sees events in a different order from the server')+
+   cap('A single leader can build one totally ordered log, fine for small systems. These four setups break it. Deciding one order is '+L.g('tob','total order broadcast')+' (equivalent to '+L.g('consensus','consensus')+'); scaling it past one node or region is open research.'));
   L.done();}},
-{part:2,src:'Chapter 12 · The limits of total ordering',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh splits the event log into 12 partitions by parcel ID, because one machine can’t keep up. What happens to ordering?</h1>');
-  L.mc(L.card,['Order holds within a partition, not between them','The whole log still keeps one global order','Order is lost everywhere, even for one parcel'],0,
-   'Each partition keeps its own order, and every event for one parcel lands in one partition. But which of two events in different partitions came first is now undefined.',
-   'Partitioning keeps order <i>inside</i> each partition, so one parcel’s events stay in order. Across partitions there is no defined order any more.');}},
-{part:2,src:'Chapter 12 · The limits of total ordering',pts:6,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Is there one defined order?',['Yes, one defined order','No defined order'],[
-   ['Two scans of the same parcel, both routed to that parcel’s log partition.',0,'Routing by parcel ID puts every event for one parcel in one partition, in order.'],
-   ['A merchant edit handled by the Westport leader and another by the Nordhaven leader.',1,'Each datacenter has its own leader. Events from two datacenters have no defined order.'],
-   ['A charge recorded by billing and a route change recorded by dispatch, each in its own database.',1,'Services that each own their durable state give no defined order between their events.'],
-   ['Every change recorded in the single Parcel DB leader’s replication log.',0,'A single-leader database builds exactly such a totally ordered log.'],
-   ['A courier marks a parcel delivered while offline; meanwhile support reschedules it on the server.',1,'A client that acts before the server confirms sees events in a different order from the server.'],
-   ['Two GPS pings from different couriers that land in different log partitions.',1,'The order between two partitions is ambiguous.']]);}},
-{part:2,src:'Chapter 12 · Ordering events to capture causality',run(L){
-  L.h(L.kick('learn','Ordering events to capture causality')+'<h1 class="q">When the order of two events really matters</h1>'+
-   L.prose('Often a missing total order is fine. If two events aren’t causally linked, any order will do. And updates to one object stay in order if all of that object’s events go to the same log partition.')+
-   L.prose('The hard cases cross objects. The book’s example: someone unfriends their ex, <i>then</i> messages their remaining friends complaining about them. Friendships live in one place, messages in another. If the notification service handles the message first, the ex gets notified.')+
-   '<h2 class="sub">No simple answer, only starting points</h2>'+
-   L.list([['Logical timestamps','A total order without coordination. But receivers must still cope with out-of-order events, and extra metadata travels along.'],
-     ['Record what the user saw','Log the state the user saw as an event with a unique ID. Later events reference that ID, recording the dependency.'],
-     ['Conflict resolution','Helps keep stored state right when events arrive out of order. It can’t undo side effects, like a notification already sent.']],3));
-  L.done();}},
-{part:2,src:'Chapter 12 · Ordering events to capture causality',pts:1,
- solve:async L=>{L.$('#in').click();L.$('#sw').click();},
+{part:2,src:'Chapter 12 · The limits of total ordering',
+ solve:async L=>{SPD=.3;setRange(L,'x11n',1);L.$('#x11go').click();await L.fun.idle();setRange(L,'x11n',12);L.$('#x11go').click();await L.fun.idle();},
  run(L){
-  const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Ama stops sharing their tracking with ex-flatmate Jo, <i>then</i> changes their delivery address. Deliver Ama’s two events to the notifier in both orders.</h1>'+
-   L.note('The sharing list lives in a preferences service; addresses live in the Parcel DB. The notifier texts “new address” to everyone on the parcel’s sharing list, so it joins the two streams.','info')+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0 8px"><button class="btn" id="in">'+L.ic('play')+'In Ama’s order</button><button class="btn" id="sw">'+L.ic('play')+'Swapped order</button></div>'+
-   '<div class="res" id="ta"></div><div class="res" id="tb"></div><div id="cq"></div>');
-  const ask=()=>{const q=L.$('#cq');if(seen.size<2||q.innerHTML)return;q.innerHTML='<h2 class="sub">Which starting point could have stopped Jo’s text?</h2>';
-    L.mc(q,['Apply last-write-wins to the sharing list afterwards','Tag the address change with the list version Ama saw','Send address events through a faster log partition'],1,
-     'If the address event records “Ama saw the list without Jo” by its event ID, the dependency travels with it and the notifier can tell the removal must come first. Kleppmann offers this as a starting point, not a complete fix.',
-     'Fixing the stored list later can’t unsend a text: that’s an external side effect. And speed doesn’t link the two events. Recording which list version Ama saw does.');};
-  L.$('#in').onclick=function(){this.disabled=true;seen.add(0);
-    L.$('#ta').innerHTML='<b>In order:</b> 1. Remove Jo, so the list is just Ama. 2. New address, texted to Ama. <span style="color:var(--ok)">Jo hears nothing.</span>';ask();};
-  L.$('#sw').onclick=function(){this.disabled=true;seen.add(1);
-    L.$('#tb').innerHTML='<b>Swapped:</b> 1. New address, while the list still has Jo, so Ama <i>and Jo</i> get the text. 2. Remove Jo: too late. <span style="color:var(--no)">Jo now has Ama’s new address.</span>';ask();};}},
+  SPD=1;let n=12,seed=0;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Linh splits the event log into partitions. When can Ama’s two events swap?</h1>'+CSS+
+   goals('g11',['Run with <b>1 partition</b>: watch the order hold','Find a setting where <b>Jo gets the text</b>'])+amaEvents()+
+   '<div class="di-rng"><label for="x11n">Partitions</label><input type="range" id="x11n" min="1" max="12" step="1" value="12"><b id="x11v">12</b></div>'+
+   '<div class="di-merge" id="x11i"></div><div id="f11"></div>'+
+   '<div class="di-row"><button class="btn pri" id="x11go">'+L.ic('play')+'Run</button><button class="btn" id="x11tr">'+L.ic('cycle')+'New traffic</button></div><div id="x11o"></div>');
+  const fun=L.fun=Funnel(L,L.$('#f11'),{id:'f11',sub:notifSub});
+  let plan;
+  function upd(){plan=amaPlan('parts',{n,seed});fun.set(plan);L.$('#x11v').textContent=n;L.$('#x11i').innerHTML=laneInfo(plan)+(seed?' <span class="di-mut">· traffic #'+seed+'</span>':'');L.$('#x11o').innerHTML='';}
+  L.$('#x11n').oninput=e=>{if(fun.F.busy)return;n=+e.target.value;upd();};
+  L.$('#x11tr').onclick=()=>{if(fun.F.busy)return;seed++;upd();};
+  L.$('#x11go').onclick=async()=>{const r=await fun.run();if(!r)return;const jo=joGets(r.order);L.$('#x11o').innerHTML=outHTML(r.order);
+    if(n===1)tick(L,'g11',0);if(jo)tick(L,'g11',1);
+    if(!jo&&plan.l1!==plan.l2)L.$('#x11o').insertAdjacentHTML('beforeend','<div class="di-out info">This time ① got through first. But they sat in different partitions, so nothing guaranteed it.</div>');
+    if(allT(L,'g11')&&!L.$('#x11d')){L.$('#x11o').insertAdjacentHTML('beforeend','<span id="x11d"></span>');
+      L.sheet('info','Order lives inside a partition','One partition keeps its events in order. Across partitions nothing decides which comes first, so a busy partition can hold ① back while ② slips through. Hashing put both keys in one partition at 7 partitions, by luck. Try New traffic too.');L.done();}};
+  upd();}},
+{part:2,src:'Chapter 12 · The limits of total ordering',pts:1,
+ solve:async L=>{SPD=.3;L.$('#p12').children[1].click();await waitFor(L,()=>L.$('#p12d'));},
+ run(L){
+  SPD=1;let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Peak Week: Linh runs 12 partitions, each event keyed by its own record (user ID or parcel ID). Can Jo still receive Ama’s new address?</h1>'+CSS+
+   amaEvents()+'<div class="di-row" id="p12"></div><div class="di-merge" id="p12i"></div><div id="f12"></div><div id="p12o"></div>');
+  const fun=L.fun=Funnel(L,L.$('#f12'),{id:'f12',sub:notifSub});
+  const plan=amaPlan('parts',{n:12});fun.set(plan,'pick a prediction first');L.$('#p12i').innerHTML=laneInfo(plan);
+  ['No: each partition keeps its events in order','Yes: ① and ② sit in different partitions, so they can swap','No: 12 partitions are faster, so ① gets there first'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');const r=await fun.run();if(!r)return;
+      const ok=j===1;L.award(ok);L.$('#p12o').innerHTML=outHTML(r.order)+'<span id="p12d"></span>';
+      L.sheet(ok?'ok':'no',ok?'Right: they can swap':'Jo got the text','Each partition keeps its own order, but ① went to P6 and ② to P1 because their keys differ. P6 had a backlog, so ② overtook ①. Kleppmann’s example has the same shape: someone unfriends their ex, then messages their friends, and the ex is notified anyway.');L.done();};
+    L.$('#p12').appendChild(b);});}},
+{part:2,src:'Chapter 12 · Ordering events to capture causality',run(L){
+  let s=T(4,14,'What Ama did',ST(12,'var(--muted)','start',700))+tok(18,36,'1','a')+T(34,40,'removes Jo',ST(12,'var(--ink)','start'))+arw(112,36,140,36,'var(--line2)')+tok(156,36,'2','b')+T(172,40,'new address',ST(12,'var(--ink)','start'));
+  s+=T(4,74,'What the notifier saw',ST(12,'var(--muted)','start',700))+tok(18,96,'2','b')+T(34,100,'new address',ST(12,'var(--ink)','start'))+arw(112,96,140,96,'var(--line2)')+tok(156,96,'1','a')+T(172,100,'removes Jo',ST(12,'var(--ink)','start'));
+  s+=R(284,78,26,40,6,'fill:var(--no-bg);stroke:var(--no);stroke-width:2')+T(297,103,'Jo',ST(11,'var(--no)','middle',700))+'<path d="M278 88 l-5 -3 M278 98 h-6 M278 108 l-5 3 M316 88 l5 -3 M316 98 h6 M316 108 l5 3" style="stroke:var(--no);stroke-width:2;stroke-linecap:round"/>';
+  s+=T(4,130,'② reached the notifier first, so Jo was texted.',ST(11.5,'var(--no)','start',600));
+  L.h(L.kick('learn','Ordering events to capture causality')+'<h1 class="q">When the order of two events really matters</h1>'+CSS+
+   SV(138,s,'Ama removed Jo, then changed the address. The notifier saw the address change first and texted Jo.')+
+   cap('Unrelated events can go in any order. The trouble is a causal link across two places, like the book’s user who unfriends an ex, then posts. Kleppmann sees no simple answer, only starting points:')+
+   '<div class="di-tiles">'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h1-bg);color:var(--h1)">'+L.ic('clock')+'</div><div><b>'+L.g('logical-clock','Logical timestamps')+'</b>An order without coordination. Receivers still get events out of order, and extra data travels along.</div></div>'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h2-bg);color:var(--h2)">'+L.ic('eye')+'</div><div><b>Record what the user saw</b>Log it as an event with an ID. Later events reference that ID.</div></div>'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h3-bg);color:var(--h3)">'+L.ic('scale')+'</div><div><b>Conflict resolution</b>Keeps stored state right. Can’t undo a side effect, like a sent text.</div></div></div>');
+  L.done();}},
+{part:2,src:'Chapter 12 · The limits of total ordering',
+ solve:async L=>{SPD=.3;for(const m of ['parts','dc','svc','phone']){L.$('#e14-'+m).click();await L.sleep(20);await L.fun.idle();}},
+ run(L){
+  SPD=1;const tried=new Set();let mode='parts',route='rec';
+  const NOTE={parts:'Too much for one leader: the log is split into 12 partitions. Order holds only inside each one.',
+   dc:'Ama is abroad, so their sharing change goes through Nordhaven’s leader; the parcel lives in Westport. Each datacenter has its own leader, so nothing orders events across them.',
+   svc:'The sharing list lives in the preferences service, addresses in the Parcel DB. Each service keeps its own state and log, so their events have no defined order.',
+   phone:'Ama removed Jo in the app while offline on a train, then changed the address on the website. Ama’s phone saw ① then ②; the server sees ② then ①.'};
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Run Ama’s two events through each limit of total ordering. Then try routing ② by Ama’s user ID.</h1>'+CSS+
+   '<div class="di-row" id="e14p">'+[['parts','One leader’s limit'],['dc','Several datacenters'],['svc','Microservices'],['phone','Offline client']].map(p=>'<button class="chip" id="e14-'+p[0]+'">'+p[1]+'</button>').join('')+'</div>'+
+   '<div class="di-row"><button class="chip" id="e14r" aria-pressed="false">Route ② by Ama’s user ID: off</button></div>'+
+   '<div class="di-merge" id="e14i"></div><div id="f14"></div><div id="e14o"></div>');
+  const fun=L.fun=Funnel(L,L.$('#f14'),{id:'f14',sub:notifSub});
+  function load(){const p=amaPlan(mode,{n:12,route});fun.set(p,'running…');let h=laneInfo(p);
+    if(route==='user')h+='<br>'+(mode==='parts'?'Both events now go to Ama’s partition, so ① stays ahead of ②.':'Routing can’t help here: these are separate logs, with no shared partition to route into.');
+    L.$('#e14i').innerHTML=h;return p;}
+  async function go(m){if(fun.F.busy)return;mode=m;[...L.$('#e14p').children].forEach(b=>b.classList.toggle('sel',b.id==='e14-'+m));
+    load();L.$('#e14o').innerHTML='<div class="di-out info">'+NOTE[m]+'</div>';const r=await fun.run();if(!r)return;
+    L.$('#e14o').insertAdjacentHTML('beforeend',outHTML(r.order));tried.add(m);
+    if(tried.size===4&&!L.$('#e14d')){L.$('#e14o').insertAdjacentHTML('beforeend','<span id="e14d"></span>');
+      L.sheet('info','Four places one order runs out','Partitions, datacenters, services and offline clients each leave ① and ② without a defined order. Routing both events by one key only helps inside one partitioned log. Most consensus algorithms assume one node can order the whole stream.');L.done();}}
+  ['parts','dc','svc','phone'].forEach(m=>{L.$('#e14-'+m).onclick=()=>go(m);});
+  L.$('#e14r').onclick=()=>{if(fun.F.busy)return;route=route==='rec'?'user':'rec';const b=L.$('#e14r');b.classList.toggle('sel',route==='user');b.setAttribute('aria-pressed',route==='user');
+    b.textContent='Route ② by Ama’s user ID: '+(route==='user'?'on':'off');if(tried.size)go(mode);else load();};
+  load();L.$('#e14o').innerHTML='<div class="di-out info">Pick a limit to run it.</div>';}},
+{part:2,src:'Chapter 12 · Ordering events to capture causality',pts:1,
+ solve:async L=>{SPD=.3;L.$('#c15-dep').click();L.$('#c15go').click();await waitFor(L,()=>L.$('#c15d'));},
+ run(L){
+  SPD=1;let fix=null,graded=false;
+  const FIX=[['route','Route both by Ama’s user ID'],['lamport','Add logical timestamps'],['dep','② references the list version Ama saw'],['cr','Resolve conflicts in the list']];
+  const WHY={dep:'② carries the ID of the list version Ama saw, which already left Jo out, so the dependency is recorded in the event and the notifier can see it. One way to use it, shown here: the notifier holds ② until it has that version. The reference travels with the event, across any log, datacenter or service. Kleppmann offers this as a starting point, not a full solution.',
+   route:'One key per partition fixes the partitioned log only. Datacenters, services and an offline phone are separate logs, with no shared partition to route into.',
+   lamport:'Logical timestamps give every event a place in one order without coordination. But ② still arrives first, and the notifier can’t know ① is on its way: receivers must cope with out-of-order events.',
+   cr:'Conflict resolution can fix the stored sharing list later. It can’t unsend a text: a notification is a side effect in the outside world.'};
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Pick one fix that keeps Jo from getting the text in all four setups. It runs live on the microservices setup.</h1>'+CSS+
+   '<div class="di-row" id="c15p">'+FIX.map(f=>'<button class="chip" id="c15-'+f[0]+'">'+f[1]+'</button>').join('')+'</div>'+
+   '<div class="di-row"><button class="btn pri" id="c15go" disabled>'+L.ic('play')+'Run all four setups</button></div><div id="f15"></div><div id="c15o"></div>');
+  const fun=L.fun=Funnel(L,L.$('#f15'),{id:'f15',sub:notifSub});
+  fun.set(amaPlan('svc',{}),'pick a fix');
+  FIX.forEach(f=>{L.$('#c15-'+f[0]).onclick=()=>{if(fun.F.busy)return;fix=f[0];[...L.$('#c15p').children].forEach(b=>b.classList.toggle('sel',b.id==='c15-'+fix));
+    L.$('#c15go').disabled=false;fun.set(amaPlan('svc',{fix}),'press Run');L.$('#c15o').innerHTML='';};});
+  L.$('#c15go').onclick=async()=>{if(!fix||fun.F.busy)return;const f=fix;L.$('#c15go').disabled=true;
+    const r=await fun.run();if(!r)return;L.$('#c15go').disabled=false;
+    const rows=[['parts','12 partitions'],['dc','Several datacenters'],['svc','Microservices'],['phone','Offline client']].map(m=>{
+      const o=arrival(amaPlan(m[0],{n:12,route:f==='route'?'user':'rec',fix:f}));return [m[1],!joGets(o)];});
+    const pass=rows.every(x=>x[1]);
+    L.$('#c15o').innerHTML=outHTML(r.order,f)+'<table class="di-tbl">'+rows.map(x=>'<tr><td>'+x[0]+'</td><td style="color:var(--'+(x[1]?'ok':'no')+')">'+(x[1]?'✓ Jo safe':'✗ Jo texted')+'</td></tr>').join('')+'</table>';
+    if(!graded){graded=true;L.award(pass);}
+    L.$('#c15o').insertAdjacentHTML('beforeend','<span id="c15d"></span>');
+    L.sheet(pass?'ok':'no',pass?'Jo is safe everywhere':'Not in every setup',WHY[f]+(pass?'':' The fix that works everywhere: ② references the list version Ama saw. You can try the others.'));L.done();};}},
 
-/* ---------- PART 4: BATCH AND STREAM ---------- */
+/* ---------- PART 4: REPROCESS AND EVOLVE ---------- */
 {part:3,src:'Chapter 12 · Batch and Stream Processing',run(L){
-  L.h(L.kick('learn','Batch and stream processing')+'<h1 class="q">The tools that put data in all the right places</h1>'+
-   L.prose('Kleppmann sums up the goal of data integration: data should end up in the right form in all the right places. Batch and stream processors do that work. Their outputs are derived datasets: search indexes, materialized views, recommendations, metrics.')+
-   L.prose('The main difference is the input. A stream never ends; a batch job’s input has a known size. Even that line is blurring: Spark runs streams as small batches on a batch engine, and Flink runs batches on a stream engine. Each can imitate the other, though small batches can do poorly with hopping or sliding windows.')+
-   '<h2 class="sub">Maintaining derived state</h2>'+
-   L.lanes([['cycle','Deterministic functions','Inputs never change, outputs are only appended, and the output depends only on the input. Stream processors add fault-tolerant state. This makes recovery and reasoning simpler.',2],
-            ['shield','Asynchronous updates','Derived copies <i>could</i> be updated in the same transaction, like a database index. But asynchrony keeps a fault local. A distributed transaction aborts if any participant fails, spreading the failure.',3]])+
-   '<p class="small" style="margin-top:10px">The same goes for secondary indexes that span partitions: they are most reliable and scalable when maintained asynchronously.</p>');
+  let s=T(4,13,'Batch: known size',ST(11.5,'var(--muted)','start',700))+tape(4,20,['','','','','',''],'h3',15)+R(94,16,4,26,1,'fill:var(--ink)');
+  s+=T(4,81,'Stream: never ends',ST(11.5,'var(--muted)','start',700))+tape(4,88,['','','','','',''],'h2',15)+T(100,102,'…',ST(16,'var(--h2)','start',700));
+  s+=arw(100,30,122,60,'var(--line2)')+arw(112,97,122,84,'var(--line2)')+bx(122,46,72,52,'Processor','transform','h1');
+  const outs=['Search index','Materialized views','Recommendations','Metrics'];
+  outs.forEach((t,j)=>{const y=6+j*36;s+=arw(194,72,210,y+14,'var(--line2)')+bx(210,y,108,28,t,'','h2',{fs:11});});
+  L.h(L.kick('learn','Batch and stream processing')+'<h1 class="q">The tools that put data in the right places</h1>'+CSS+
+   SV(152,s,'A batch of known size and an endless stream both feed a processor, which writes search indexes, materialized views, recommendations and metrics')+
+   '<div class="di-chips"><span>Spark: streams as microbatches</span><span>Flink: batches on a stream engine</span></div>'+
+   cap('Kleppmann’s goal: every piece of data lands in the right shape wherever it is needed. Batch and stream processors do that work. They differ mainly in input, finite or endless, and the engines are blurring (microbatches may struggle with sliding windows).'));
+  L.done();}},
+{part:3,src:'Chapter 12 · Maintaining derived state',run(L){
+  let s=T(4,13,'Search updated inside the same transaction',ST(11.5,'var(--muted)','start',700));
+  s+=bx(4,24,64,44,'Booking','aborted','no')+arw(68,46,86,46,'var(--no)')+R(88,20,230,56,10,'fill:none;stroke:var(--no);stroke-width:1.6;stroke-dasharray:5 4')+
+    bx(96,28,100,40,'Parcel DB','rolled back','no')+bx(208,28,100,40,'Search','down ✗','no');
+  s+=T(4,104,'Search updated asynchronously from the log',ST(11.5,'var(--muted)','start',700));
+  s+=bx(4,114,64,44,'Booking','saved ✓','ok')+arw(68,136,82,136,'var(--line2)')+bx(82,114,80,44,'Parcel DB','✓','ok')+arw(162,136,174,136,'var(--line2)')+tape(174,127,['','',''],'h2',14)+arw(214,136,228,136,'var(--line2)')+bx(228,114,90,44,'Search','down ✗','no');
+  s+=T(273,174,'catches up later',ST(11,'var(--muted)','middle',600));
+  L.h(L.kick('learn','Maintaining derived state')+'<h1 class="q">Pure functions, updated asynchronously</h1>'+CSS+
+   SV(180,s,'Top: search inside the booking transaction fails, so the booking aborts. Bottom: search follows the log, fails alone, and catches up later.')+
+   cap('Derive data with deterministic functions: same input, same output, no other side effects, inputs untouched. Update derived systems asynchronously: a fault stays local, while a distributed transaction aborts if any part fails. Indexes spanning partitions work best this way too.'));
   L.done();}},
 {part:3,src:'Chapter 12 · Maintaining derived state',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab suggests updating support search inside each Parcel DB transaction, “just like an index”. Following Kleppmann’s argument, what happens the day search goes down?</h1>');
-  L.mc(L.card,['Every booking fails too, until search is back','Bookings succeed, and search catches up later','Search quietly loses the bookings it missed'],0,
-   'A transaction spanning both systems aborts if either one fails, so a sick search cluster stops bookings. Updating search asynchronously from the log would have kept the fault inside search.',
-   'That’s how the asynchronous log design behaves. Putting search inside the same transaction means a search outage aborts every booking: the failure spreads.');}},
-{part:3,src:'Chapter 12 · Reprocessing data for application evolution',run(L){
-  L.h(L.kick('learn','Reprocessing data for application evolution')+'<h1 class="q">Reprocessing lets you reshape data, not just patch it</h1>'+
-   L.prose('Stream processing brings new input into derived views quickly. Batch processing can reprocess years of history to build a <i>new</i> view of data you already have.')+
-   L.prose('That matters when the application changes. Without reprocessing, schema changes are limited to simple ones, like adding an optional field or a new type of record, whether the '+L.g('schema','schema')+' is checked on write or on read. With reprocessing you can restructure a dataset into a completely different model.')+
-   L.note('<b>The book’s railway story.</b> Nineteenth-century England had rival track gauges. Once a standard was chosen in 1846, lines were converted by adding a third rail, so trains of both gauges could run during the change. When every train had been converted, the extra rail came out. It was costly, which is why other gauges survive today.','book'));
-  L.done();}},
-{part:3,src:'Chapter 12 · Reprocessing data for application evolution',run(L){
-  L.h(L.kick('ex','A gradual migration')+'<h1 class="q">Linh gives the tracking page a “third rail”</h1>');
-  L.beats(L.card,[
-   ['The need','Bramble & Bolt orders often arrive as three or four parcels. Recipients want one timeline per household, but the tracking view stores one row per parcel. Adding a field won’t fix that.'],
-   ['A second view','Linh replays the event log’s history into a new per-household view. The old per-parcel view keeps running. Both are derived from the same events.'],
-   ['Try it on a few','1% of recipients get the new page. A bug shows up in timelines that cross midnight. Linh sends that 1% back to the old view, fixes the code and replays again.'],
-   ['Turn it up','10%, then 50%, then everyone. At every stage the old view still works, so any step can be undone.'],
-   ['Remove the old rail','Only when nobody reads the old view any more does Linh drop it.']],
-   'Side-by-side views make a big change gradual and reversible. With less risk of irreversible damage, Kleppmann says, you can move faster.');}},
-{part:3,src:'Chapter 12 · Reprocessing data for application evolution',pts:1,run(L){
-  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Zainab wants support search to store addresses as street, building and flat instead of one text field. Put a gradual migration in order.</h1>');
-  L.order(L.card,['Derive the new view alongside the old one','Route a small share of searches to it','Raise the share as bugs get fixed','Drop the old view once nobody uses it'],
-   'Old and new run side by side, so every step can be reversed until the very last one.');}},
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh’s job rebuilds the tracking view from the event log. Tobias adds a line that also texts the recipient whenever the job processes a “delivered” event. The job crashes and replays an hour of events. What happens?</h1>');
+  L.mc(L.card,['The view is rebuilt correctly and nobody notices','Recipients get their “delivered” text a second time','The replay refuses to run until the texts are removed'],1,
+   'The view comes out right, but the text is a side effect outside the job’s output, so the replay sends it again. Deterministic functions with no other side effects are what make replays safe.',
+   'Nothing stops the replay, and the view itself is fine. The problem is the side effect: each replayed “delivered” event sends its text again. Keep derivations pure, with the output as the only effect.');}},
+{part:3,src:'Chapter 12 · Schema Migrations on Railways',
+ solve:async L=>{L.$('#r19-lay').click();L.$('#r19-cv').click();L.$('#r19-rm').click();},
+ run(L){
+  let k=0;
+  L.h(L.kick('learn','Reprocessing data for application evolution')+'<h1 class="q">Reprocessing reshapes data, like a railway’s third rail</h1>'+CSS+
+   '<div id="r19s"></div>'+railLegend.replace('old view','old gauge').replace('new view','standard gauge')+'<p class="di-cap" id="r19c" aria-live="polite"></p>'+
+   '<div class="di-row"><button class="btn pri" id="r19-lay">Lay a third rail</button><button class="btn" id="r19-cv" disabled>Convert the wide trains</button><button class="btn" id="r19-rm" disabled>'+L.ic('x')+'Remove the old rail</button></div>');
+  function show(st){L.$('#r19s').innerHTML=railStage(st);L.$('#r19c').innerHTML=RAILS[st];
+    L.$('#r19-lay').disabled=k>0;L.$('#r19-cv').disabled=k!==1;L.$('#r19-rm').disabled=k<1||k===3;}
+  show(0);
+  L.$('#r19-lay').onclick=()=>{if(k)return;k=1;show(1);};
+  L.$('#r19-cv').onclick=()=>{if(k!==1)return;k=2;show(2);};
+  L.$('#r19-rm').onclick=()=>{if(k===1){show('strand');return;}if(k!==2)return;k=3;show(3);L.done();};}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',
+ solve:async L=>{SPD=.3;const r=L.rail;L.$('#r20-rp').click();await r.idle();setRange(L,'r20-sp',1);L.$('#r20-day').click();await r.idle();L.$('#r20-rb').click();},
+ run(L){
+  SPD=1;
+  L.h(L.kick('pr','Explore')+'<h1 class="q">Linh moves the tracking page to a new address format: street, building and flat instead of one line. Lay the third rail and try it.</h1>'+CSS+
+   goals('g20',['Reprocess history to build the new view','Send some reads to it and run a day','Find a mismatch, then roll back'])+'<div id="r20"></div><p class="small">1,000,000 reads a day and the bug rate are illustrative.</p>');
+  L.rail=Rail(L,L.$('#r20'),{id:'r20',on:e=>{const S=L.rail.S;
+    if(e.type==='built')tick(L,'g20',0);
+    if(e.type==='day'&&e.pct>0)tick(L,'g20',1);
+    if(e.type==='rollback'&&S.found)tick(L,'g20',2);
+    if(allT(L,'g20')&&!L.$('#r20d')){L.$('#r20').insertAdjacentHTML('beforeend','<span id="r20d"></span>');
+      L.sheet('info','Every step is reversible','Both views are derived from the same events, so a small share of readers tested the new one and found the bug. Rolling back cost nothing: the old view never stopped working. Lower risk is what lets you move faster.');L.done();}}});}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',pts:1,
+ solve:async L=>{SPD=.3;L.$('#p21').children[1].click();await waitFor(L,()=>L.$('#p21d'));},
+ run(L){
+  SPD=1;let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias proposes a big-bang switch instead: convert the tracking view in place tonight, and all reads use the new format tomorrow. The parser has the same flat bug. What happens tomorrow?</h1>'+CSS+
+   '<div class="di-row" id="p21"></div><div id="r21"></div><p class="small">1,000,000 reads a day and the 2% bug rate are illustrative.</p>');
+  const rail=L.rail=Rail(L,L.$('#r21'),{id:'r21',ctl:false,start:BIGBANG});
+  ['About 200 recipients see errors, then Linh rolls back','About 20,000 see errors, with no old view to go back to','Nobody sees errors: the old view still serves reads'].forEach((t,j)=>{
+    const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');await rail.runDay();if(!rail.alive())return;await L.sleep(500*SPD);rail.rollback();
+      const ok=j===1;L.award(ok);L.$('#r21').insertAdjacentHTML('beforeend','<span id="p21d"></span>');
+      L.sheet(ok?'ok':'no',ok?'Right: everyone, with no way back':'Everyone hit it, with no way back','Every read went to the new view, so 2% of a million reads broke. The in-place switch destroyed the old view, so there was nothing to roll back to. A gradual migration keeps a working system to go back to at every stage.');L.done();};
+    L.$('#p21').appendChild(b);});}},
 {part:3,src:'Chapter 12 · The lambda architecture',run(L){
-  L.h(L.kick('learn','The lambda architecture')+'<h1 class="q">Two systems, one answer</h1>'+
-   L.prose('If batch reprocesses history and streams handle recent updates, how do you combine them? The '+L.g('lambda-arch','lambda architecture')+' records incoming data as immutable events (much like event sourcing) and derives read-optimized views using two systems side by side:')+
-   L.flow([['flame','Stream layer','e.g. Storm','quick, approximate view',3],['clock','Batch layer','e.g. Hadoop MapReduce','later, corrected view',2]],false)+
-   L.prose('The thinking: batch is simpler and less bug-prone, streams were thought less reliable, and streams can use fast approximate algorithms. Kleppmann credits it with popularizing views derived from immutable events. But he sees three problems:')+
-   L.list([['Logic twice','The same logic must run in two frameworks. Even with shared libraries, you debug, tune and run two systems.'],
-     ['Merging outputs','Easy for a simple count per tumbling window. Much harder for joins, sessions, or output that isn’t a time series.'],
-     ['Incremental batches','Reprocessing everything often is expensive, so batches go hourly. That brings stragglers and windows crossing batch edges, so the batch layer stops being simple.']],4));
+  let s=T(4,62,'events',ST(11.5,'var(--muted)','start',700))+tape(4,70,['','','',''],'h2',18);
+  s+=arw(76,74,110,38,'var(--line2)')+arw(76,84,110,132,'var(--line2)');
+  s+=bx(110,16,120,42,'Stream layer','fast, approximate','h3')+bx(110,112,120,42,'Batch layer','later, corrected','h1');
+  s+=arw(230,38,250,70,'var(--line2)')+arw(230,132,250,100,'var(--line2)')+bx(250,64,68,42,'Merge','read view','h2');
+  s+=T(166,91,'① logic written twice',ST(11,'var(--h4)','middle',700))+T(318,124,'② hard merges',ST(11,'var(--h4)','end',700))+T(170,172,'③ incremental batches get complex',ST(11,'var(--h4)','middle',700));
+  L.h(L.kick('learn','The lambda architecture')+'<h1 class="q">Two systems, one answer</h1>'+CSS+
+   SV(178,s,'Immutable events feed a stream layer and a batch layer, whose outputs are merged into a read view. Three numbered problems are marked.')+
+   cap('The '+L.g('lambda-arch','lambda architecture')+' runs a stream processor (e.g. Storm) for a quick, rough view and a batch job (e.g. Hadoop MapReduce) for a corrected one, betting that batch is less buggy. Kleppmann credits it with popularizing derived views, but sees three problems:')+
+   '<div class="di-tiles"><div class="di-tile"><div class="ico" style="background:var(--h4-bg);color:var(--h4)">①</div><div>Same logic in two frameworks: debug, tune and run two systems.</div></div>'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h4-bg);color:var(--h4)">②</div><div>Merging is easy for a windowed count, hard for joins, sessions or non-time-series output.</div></div>'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h4-bg);color:var(--h4)">③</div><div>Full reprocessing is costly, so batches go hourly, bringing stragglers and window edges.</div></div></div>');
   L.done();}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',
+ solve:async L=>{SPD=.25;for(const k of ['bb','sl','la']){L.$('#e23-'+k).click();await L.sleep(20);await waitFor(L,()=>!L.e23busy,300);}},
+ run(L){
+  SPD=1;const tried=new Set();L.e23busy=false;
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Where does the third rail stop protecting you? Run each case.</h1>'+CSS+
+   '<div class="di-row" id="e23p"><button class="chip" id="e23-bb">Big-bang switch</button><button class="chip" id="e23-sl">Log keeps only 7 days</button><button class="chip" id="e23-la">Lambda: two codebases</button></div><div id="r23"></div>');
+  const rail=L.rail=Rail(L,L.$('#r23'),{id:'r23'});
+  rail.log('Pick a case. Each one loads a starting state and plays the key step.','info');
+  async function go(k){if(L.e23busy||rail.S.busy)return;L.e23busy=true;[...L.$('#e23p').children].forEach(b=>b.classList.toggle('sel',b.id==='e23-'+k));
+    if(k==='bb'){rail.reset(BIGBANG);await rail.runDay();}
+    else if(k==='sl'){rail.reset({logDays:7});await rail.reprocess();}
+    else{rail.reset({lambda:true,built:true,prog:1,found:true});await rail.reprocess();if(rail.alive()){rail.S.split=4;rail.draw();await rail.runDay();}}
+    L.e23busy=false;if(!rail.alive())return;tried.add(k);
+    if(tried.size===3&&!L.$('#e23d')){L.$('#r23').insertAdjacentHTML('beforeend','<span id="e23d"></span>');
+      L.sheet('info','Three limits','No old view means no way back. No history means nothing to reprocess, so changes stay small. And with lambda the same logic lives twice, so one fix leaves the other layer wrong. You can keep playing with the controls.');L.done();}}
+  ['bb','sl','la'].forEach(k=>{L.$('#e23-'+k).onclick=()=>go(k);});}},
+{part:3,src:'Chapter 12 · Reprocessing data for application evolution',pts:1,
+ solve:async L=>{SPD=.25;const r=L.rail;L.$('#r24-rp').click();await r.idle();setRange(L,'r24-sp',1);L.$('#r24-day').click();await r.idle();L.$('#r24-rb').click();
+   L.$('#r24-rp').click();await r.idle();setRange(L,'r24-sp',6);L.$('#r24-day').click();await r.idle();L.$('#r24-dr').click();},
+ run(L){
+  SPD=1;let graded=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Finish the migration, old rail removed, with at most 500 error pages. The parser has a bug you haven’t found yet.</h1>'+CSS+
+   '<div id="r24"></div><div class="di-row"><button class="btn" id="r24x">'+L.ic('cycle')+'Start over</button></div><p class="small">Reads, bug rate and budget are illustrative.</p>');
+  const rail=L.rail=Rail(L,L.$('#r24'),{id:'r24',budget:true,on:e=>{const S=rail.S;
+    if(!graded&&S.err>BUDGET){graded=true;L.award(false);
+      L.sheet('no','Over the budget','Too many readers hit the bug before you found it. Start small: send 1% of reads, find the mismatch, roll back, fix and reprocess, then raise the share. You can start over to practise (no more points).');L.done();}
+    if(e.type==='drop'&&!graded){graded=true;L.award(true);
+      L.sheet('ok','Migrated, reversibly','A small canary found the bug cheaply, the rollback cost nothing, and the old rail came out only after a clean day at 100%. That’s Kleppmann’s gradual migration: you always had a working system to go back to.');L.done();}}});
+  L.$('#r24x').onclick=()=>{if(rail.S.busy)return;rail.reset();};}},
 {part:3,src:'Chapter 12 · Unifying batch and stream processing',run(L){
-  L.h(L.kick('learn','Unifying batch and stream processing')+'<h1 class="q">One engine for history and for live events</h1>'+
-   L.prose('More recent systems give lambda’s benefits without its downsides: batch reprocessing and stream processing in the same system. Kleppmann lists three features this needs. Tap each one.'));
-  L.flips(L.card,[
-   ['Replay history','The engine that handles live events can also replay old ones. Log-based brokers can replay messages, and some stream processors read from a distributed filesystem like HDFS.'],
-   ['Exactly-once semantics','Output is the same as if no fault had happened, even when faults do happen. As in batch jobs, a failed task’s partial output is thrown away.'],
-   ['Event-time windows','Windows go by '+L.g('eventtime','when events happened')+', not when they were processed, since processing time means nothing in a replay. Apache Beam is one API for this.']],
-   'With all three, Linh could rebuild a report by replaying a year of scans through the same stream job that runs live.');}},
+  let s=T(4,16,'History',ST(11.5,'var(--muted)','start',700))+tape(4,22,['','','','',''],'h3',18)+T(4,56,'from a log or HDFS',ST(11,'var(--muted)','start'));
+  s+=T(4,82,'Live events',ST(11.5,'var(--muted)','start',700))+tape(4,88,['','','','',''],'h2',18)+T(96,102,'…',ST(16,'var(--h2)','start',700));
+  s+=arw(94,31,128,58,'var(--line2)')+arw(112,97,128,80,'var(--line2)')+bx(128,44,96,50,'One engine','same code','h1')+arw(224,69,246,69,'var(--line2)')+bx(246,48,72,42,'Views','one output','h2');
+  L.h(L.kick('learn','Unifying batch and stream processing')+'<h1 class="q">One engine for history and for live events</h1>'+CSS+
+   SV(112,s,'History and live events both flow into one engine that produces the views')+
+   cap('Newer systems run reprocessing and live processing in one system, keeping lambda’s benefits without its downsides. That needs three features:')+
+   '<div class="di-tiles"><div class="di-tile"><div class="ico" style="background:var(--h3-bg);color:var(--h3)">'+L.ic('cycle')+'</div><div><b>Replay history</b>Through the same engine, from a log-based broker or a distributed filesystem.</div></div>'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h2-bg);color:var(--h2)">'+L.ic('check')+'</div><div><b>Exactly-once</b>Output as if no fault happened: a failed task’s partial output is thrown away.</div></div>'+
+   '<div class="di-tile"><div class="ico" style="background:var(--h1-bg);color:var(--h1)">'+L.ic('clock')+'</div><div><b>Windows by '+L.g('eventtime','event time')+'</b>Processing time means nothing in a replay. Apache Beam is one API for this.</div></div></div>');
+  L.done();}},
 {part:3,src:'Chapter 12 · Unifying batch and stream processing',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'What’s missing for the replay?',['Replay through one engine','Exactly-once output','Event-time windows'],[
    ['Linh replays a month of scans in 20 minutes, and the on-time report puts the whole month into one hour.',2,'Processing time is meaningless in a replay. Window by when each scan actually happened.'],
    ['A task crashes mid-replay and its half-written counts stay, so some days are counted twice.',1,'Exactly-once means the output looks as if no fault happened, so a failed task’s partial output must be discarded.'],
    ['Last year’s scans sit only in files the stream processor has no way to read.',0,'The engine must be able to replay history, from a log-based broker or a distributed filesystem.'],
-   ['Old scan events were deleted from the event log after a week, so there’s nothing to feed back in.',0,'You can only reprocess what you kept. Replay needs the history to still exist.']]);}},
-{part:3,src:'Chapter 12 · Data Integration',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence states Kleppmann’s approach to data integration.</h1>');
-  L.sentence(L.card,[
-   ['Write to every system directly','Lock all the systems together','Derive every other system'],
-   ['from one ordered log','from the app’s own calls','by hand when they drift'],
-   ['and avoid replaying history','and reprocess history'],
-   ['in one big overnight switch','as side-by-side views']],[2,0,1,1],
-   [['That’s dual writes: nothing decides one order, so the systems can drift apart for good.','That’s distributed transactions. Kleppmann finds XA too fragile and slow for this.'],
-    ['App calls can reach different systems in different orders.','Fixing drift by hand is exactly what deriving from a log avoids.'],
-    ['Without reprocessing you’re stuck with small changes, like adding an optional field.'],
-    ['A sudden switch is hard to undo. Side-by-side views keep every step reversible.']],
-   'Derive every other system from one ordered log, and reprocess history as side-by-side views. That’s the first half of chapter 12 in one line.');}}
+   ['The scans go through a broker that deletes each message once it’s handled, so the engine can’t read last month again.',0,'The engine must be able to replay history. A log-based message broker keeps messages so they can be re-read.']]);}}
   ]
 });
 </script>

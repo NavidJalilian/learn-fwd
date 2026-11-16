@@ -13,14 +13,218 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0014 only. Two hands-on models used across the lesson:
+   1. Partition tiles on node columns: hash-mod-N parcel dots, fixed
+      partition tiles you can drag, dynamic tiles that split by size,
+      and per-node random splits.
+   2. Routing switchboard: a lookup for OP-48213 through any node, a
+      routing tier or a partition-aware client, kept current by a
+      coordination service or by gossip.
+   ===================================================================== */
+const NM='ABCDE';
+const CX=k=>2+k*60;
+document.head.insertAdjacentHTML('beforeend','<style>'+
+ '.rb{margin:2px 0}.rb svg{width:100%;display:block;touch-action:manipulation}.rb svg text{font-family:var(--sans)}.rb svg.drag{touch-action:none}'+
+ '.cap{font-family:var(--serif);font-size:18px;line-height:1.55;margin:14px 0 0}'+
+ '.rbrow{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px}.rbrow .chip,.rbrow .btn{margin:0;min-height:42px}.rbrow .btn[disabled],.rbrow .chip[disabled]{opacity:.45;cursor:default}'+
+ '.rbl{font-size:13px;color:var(--muted);margin:10px 0 0}'+
+ '.rbread{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:10px 0 0;min-height:46px}'+
+ '.rbt{margin:12px 0 0;padding:0;list-style:none}.rbt li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.rbt li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.rbt li.done{color:var(--ok)}.rbt li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.rbt li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.rng{display:grid;grid-template-columns:1fr auto;gap:2px 10px;align-items:center;font-size:14.5px;margin:8px 0}.rng input{grid-column:1/-1;width:100%;accent-color:var(--pri);height:30px;margin:0}.rng b{font-variant-numeric:tabular-nums}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '.tagrow{display:flex;flex-wrap:wrap;gap:6px;margin:10px 0 0}.tag{font-size:13px;line-height:1.4;border-radius:10px;padding:5px 10px;background:var(--soft);color:var(--ink)}.tag b{color:var(--pri-deep);font-weight:600}'+
+ '</style>');
+
+/* ---------- small SVG helpers ---------- */
+const r1=v=>Math.round(v*10)/10;
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+(st||'')+'">'+s+'</text>';
+const F=n=>'font-size:'+n+'px;',B='font-weight:700;',MID='text-anchor:middle;',END='text-anchor:end;',INK='fill:var(--ink);',MUT='fill:var(--muted);';
+const col=c=>'fill:var(--'+c+');';
+function rect(x,y,w,h,fill,stroke,o){o=o||{};return '<rect x="'+r1(x)+'" y="'+r1(y)+'" width="'+r1(w)+'" height="'+r1(h)+'" rx="'+(o.rx==null?8:o.rx)+'" style="fill:'+fill+';stroke:'+(stroke||'none')+';stroke-width:'+(o.sw||1.5)+(o.dash?';stroke-dasharray:'+o.dash:'')+(o.op!=null?';opacity:'+o.op:'')+'"/>';}
+function head(x2,y2,a,c){const h=7,p=s=>r1(x2-h*Math.cos(a+s))+' '+r1(y2-h*Math.sin(a+s));return '<path d="M'+r1(x2)+' '+r1(y2)+'L'+p(.42)+'L'+p(-.42)+'Z" style="fill:'+c+'"/>';}
+function arw(x1,y1,x2,y2,c,o){o=o||{};const a=Math.atan2(y2-y1,x2-x1);
+  return '<line x1="'+r1(x1)+'" y1="'+r1(y1)+'" x2="'+r1(x2-4*Math.cos(a))+'" y2="'+r1(y2-4*Math.sin(a))+'" style="stroke:'+c+';stroke-width:'+(o.w||1.6)+(o.dash?';stroke-dasharray:'+o.dash:'')+'"/>'+head(x2,y2,a,c);}
+function carw(x1,y1,cx,cy,x2,y2,c,o){o=o||{};const a=Math.atan2(y2-cy,x2-cx);
+  return '<path d="M'+r1(x1)+' '+r1(y1)+' Q'+r1(cx)+' '+r1(cy)+' '+r1(x2)+' '+r1(y2)+'" style="fill:none;stroke:'+c+';stroke-width:'+(o.w||1.6)+(o.dash?';stroke-dasharray:'+o.dash:'')+'"/>'+head(x2,y2,a,c);}
+const fig=(id,h,inner,label)=>'<div class="rb"><svg id="'+id+'" viewBox="0 0 300 '+h+'" role="img" aria-label="'+label+'">'+inner+'</svg></div>';
+const cap=t=>'<p class="cap">'+t+'</p>';
+function tween(el,ms,fn){return new Promise(res=>{const t0=performance.now();(function st(){if(!el.isConnected){res();return;}const p=Math.min(1,(performance.now()-t0)/ms),e=p<.5?2*p*p:1-Math.pow(-2*p+2,2)/2;fn(e,p);if(p<1)setTimeout(st,16);else res();})();});}
+const tasks=(id,list)=>'<ul class="rbt" id="'+id+'">'+list.map((g,j)=>'<li id="'+id+j+'"><span class="bx"></span><span>'+g+'</span></li>').join('')+'</ul>';
+function tick(L,id,j){const li=L.$('#'+id+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+const allT=(L,id)=>[...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));
+const rng=(id,label,min,max,val,shown)=>'<label class="rng" for="'+id+'"><span>'+label+'</span><b id="'+id+'-v">'+(shown==null?val:shown)+'</b><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="1" value="'+val+'"></label>';
+function setR(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+const tapSvg=el=>el.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+async function waitFor(L,fn,n){for(let i=0;i<(n||160)&&!fn();i++)await L.sleep(30);}
+/* one node column: header, optional sub line, body frame */
+function colFrame(k,name,h,o){o=o||{};const x=CX(k);
+  return rect(x,0,56,h,o.off?'none':(o.fill||'var(--soft)'),o.off?'var(--line2)':(o.stroke||'var(--line)'),{rx:10,dash:o.off||o.dash?'4 4':0,sw:o.sw})+
+   tx(x+28,16,(o.label||'Node ')+name,F(12)+B+MID+(o.off?MUT:INK))+(o.sub!=null?tx(x+28,30,o.sub,F(11.5)+MID+(o.subc||MUT)):'');}
+
+/* ---------- 1a. hash mod N: 100 parcel dots ---------- */
+const H1000=(()=>{let x=4242;const H=[];for(let k=0;k<1000;k++){x=(x*1103515245+12345)%2147483648;H.push(Math.floor(x/7));}return H;})();
+const movedPct=(a,b)=>H1000.filter(h=>h%a!==h%b).length/10;
+function ModBoard(L,host,id){
+  const TOP=38,H=TOP+70;let N=4;const P=H1000.slice(0,100).map(h=>({h,n:h%4,c:null}));
+  host.insertAdjacentHTML('beforeend',fig(id,H,'<g></g><g></g>','Node columns A to E. Each dot is a parcel, placed on node number hash mod N.'));
+  const svg=host.querySelector('#'+id),gc=svg.children[0],gd=svg.children[1];
+  function layout(){const c=[0,0,0,0,0];P.forEach(p=>{const i=c[p.n]++;p.x=CX(p.n)+8+(i%5)*10;p.y=TOP+5+Math.floor(i/5)*10;});return c;}
+  function frame(){const c=layout();gc.innerHTML=[0,1,2,3,4].map(k=>colFrame(k,NM[k],H-1,{off:k>=N,sub:k<N?String(c[k]):'not added'})).join('');}
+  function dots(){gd.innerHTML=P.map(p=>'<circle cx="'+p.x+'" cy="'+p.y+'" r="3.8" style="fill:'+(p.c||'var(--faint)')+'"/>').join('');}
+  frame();dots();
+  async function setN(n){const old=P.map(p=>({x:p.x,y:p.y,n:p.n}));N=n;
+    P.forEach((p,j)=>{p.n=p.h%N;p.c=p.n===old[j].n?null:(p.n===4?'var(--pri)':'var(--no-strong)');});frame();dots();
+    const cs=[...gd.children],to=P.map(p=>({x:p.x,y:p.y}));
+    cs.forEach((c,j)=>{c.setAttribute('cx',old[j].x);c.setAttribute('cy',old[j].y);});
+    await tween(svg,800,e=>cs.forEach((c,j)=>{c.setAttribute('cx',r1(old[j].x+(to[j].x-old[j].x)*e));c.setAttribute('cy',r1(old[j].y+(to[j].y-old[j].y)*e));}));}
+  return {setN,get N(){return N;}};
+}
+
+/* ---------- 1b. fixed partitions: tiles on node columns ---------- */
+function Tiles(L,host,o){
+  const id=o.id,TOP=36,PH=22,BODY=o.rows*PH+6,H=TOP+BODY+(o.foot?20:4);
+  const S={own:o.own,sel:null,ghosts:o.ghosts||[],hl:new Set(o.hl||[]),drag:null,justDragged:false};
+  host.insertAdjacentHTML('beforeend','<div class="rb"><svg id="'+id+'" class="'+(o.drag?'drag':'')+'" viewBox="0 0 300 '+H+'" role="img" aria-label="Node columns A to E holding partition tiles P1 to P20"><g></g><g></g></svg></div>');
+  const svg=host.querySelector('#'+id),gc=svg.children[0],gt=svg.children[1];
+  const pos=(n,i)=>({x:CX(NM.indexOf(n))+4,y:TOP+3+i*PH});
+  function draw(){
+    let s='';
+    [0,1,2,3,4].forEach(k=>{const n=NM[k],has=!!S.own[n];
+      s+='<g data-col="'+n+'">'+colFrame(k,n,H-1,{off:!has,sub:has?S.own[n].length+' tiles':'not added',subc:has&&o.target&&Math.abs(S.own[n].length-o.target)>(o.tol||0)?'fill:var(--no);font-weight:700':null})+'</g>';});
+    S.ghosts.forEach(g=>{const p=pos(g.n,g.i);s+=rect(p.x,p.y,48,18,'none','var(--line2)',{rx:6,dash:'3 3'})+tx(p.x+24,p.y+13,g.t||'',F(11)+MID+MUT);});
+    gc.innerHTML=s;
+    let t='';
+    Object.keys(S.own).forEach(n=>S.own[n].forEach((p,i)=>{const q=pos(n,i),hl=S.hl.has(p),sel=S.sel===p;
+      t+='<g data-p="'+p+'" style="cursor:'+(o.drag?'grab':'default')+'">'+rect(q.x,q.y,48,18,hl?'var(--pri-bg)':'var(--card)',sel?'var(--pri)':hl?'var(--pri)':'var(--line2)',{rx:6,sw:sel?3:1.5})+
+        tx(q.x+24,q.y+13,'P'+p,F(12)+B+MID+(hl||sel?'fill:var(--pri-deep)':INK))+'</g>';}));
+    gt.innerHTML=t;
+    if(o.onDraw)o.onDraw(S);
+  }
+  async function animate(from){/* from: {p:{x,y}} old positions */
+    const gs=[...gt.children].filter(g=>from[g.dataset.p]);
+    const d=gs.map(g=>{const p=+g.dataset.p,n=Object.keys(S.own).find(k=>S.own[k].includes(p)),q=pos(n,S.own[n].indexOf(p));return {g,dx:from[p].x-q.x,dy:from[p].y-q.y};});
+    d.forEach(v=>v.g.setAttribute('transform','translate('+v.dx+' '+v.dy+')'));
+    await tween(svg,750,e=>d.forEach(v=>v.g.setAttribute('transform','translate('+r1(v.dx*(1-e))+' '+r1(v.dy*(1-e))+')')));
+  }
+  const where=p=>{const n=Object.keys(S.own).find(k=>S.own[k].includes(p));return {n,i:S.own[n].indexOf(p)};};
+  function moveTo(p,n){const w=where(p);if(!S.own[n]||w.n===n){S.sel=null;draw();return false;}
+    S.own[w.n].splice(w.i,1);S.own[n].push(p);S.sel=null;S.hl.add(p);if(o.onMove)o.onMove(p,w.n,n);draw();return true;}
+  if(o.drag){
+    const scale=()=>300/svg.getBoundingClientRect().width;
+    const colAt=cx=>{const x=(cx-svg.getBoundingClientRect().left)*scale(),k=Math.floor((x-2)/60);return k>=0&&k<5?NM[k]:null;};
+    svg.addEventListener('pointerdown',e=>{const g=e.target.closest('[data-p]');if(!g)return;S.drag={p:+g.dataset.p,g,x0:e.clientX,y0:e.clientY,moved:false};try{svg.setPointerCapture(e.pointerId);}catch(_){}});
+    svg.addEventListener('pointermove',e=>{const d=S.drag;if(!d)return;const dx=(e.clientX-d.x0)*scale(),dy=(e.clientY-d.y0)*scale();if(Math.hypot(dx,dy)>5)d.moved=true;if(d.moved){d.g.setAttribute('transform','translate('+r1(dx)+' '+r1(dy)+')');e.preventDefault();}});
+    const up=e=>{const d=S.drag;S.drag=null;if(!d||!d.moved)return;S.justDragged=true;setTimeout(()=>S.justDragged=false,60);const n=colAt(e.clientX);if(!n||!moveTo(d.p,n))draw();};
+    svg.addEventListener('pointerup',up);svg.addEventListener('pointercancel',()=>{S.drag=null;draw();});
+    svg.addEventListener('click',e=>{if(S.justDragged)return;const g=e.target.closest('[data-p]');
+      if(g){const p=+g.dataset.p;S.sel=S.sel===p?null:p;draw();return;}
+      const c=e.target.closest('[data-col]');if(c&&S.sel!=null)moveTo(S.sel,c.dataset.col);});
+  }
+  draw();
+  return {S,draw,animate,moveTo,pos,where,svg};
+}
+
+/* ---------- 2. routing switchboard ---------- */
+function Switch(L,host,o){
+  const id=o.id,H=236,st={mode:o.mode,owner:'C',zk:'C',k:{tier:'C',client:'C',any:'C'},copy:-1,busy:false,rr:0,gossip:!!o.gossip,sub:o.sub!==false,name:o.name||['Tracking','page'],path:null,pathC:'pri',err:null};
+  const ny=n=>52+NM.indexOf(n)*36,NL=n=>[204,ny(n)+15],C0=[78,123];
+  host.insertAdjacentHTML('beforeend','<div class="rb"><svg id="'+id+'" viewBox="0 0 300 '+H+'" role="img" aria-label="Routing diagram: the client on the left, a routing tier in the middle, nodes A to E on the right, the coordination service at the top"><g></g><g></g></svg></div>'+
+    (o.modes?'<div class="rbl">Routing design</div><div class="rbrow" id="'+id+'-m"></div>':'')+
+    '<div class="rbrow"><button class="btn pri" id="'+id+'-q">'+L.ic('eye')+'Look up OP-48213</button><button class="btn" id="'+id+'-mv">'+L.ic('cycle')+'<span>Move P37 to node E</span></button></div>'+
+    '<div class="rbread" id="'+id+'-r" aria-live="polite"></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+id),gb=svg.children[0],fx=svg.children[1];
+  const MODES=[['any','Ask any node'],['tier','Routing tier'],['client','Partition-aware client']];
+  if(o.modes){$('#'+id+'-m').innerHTML=MODES.map(m=>'<button class="chip" id="'+id+'-'+m[0]+'">'+m[1]+'</button>').join('');
+    MODES.forEach(m=>{$('#'+id+'-'+m[0]).onclick=()=>{if(st.busy||st.moving)return;st.mode=m[0];st.path=null;st.err=null;draw();say(m[0]==='any'?'Requests go to any node through a round-robin load balancer. A node that isn’t the owner forwards the request.':m[0]==='tier'?'Every request goes to the routing tier first. It holds no data; it only knows the map and forwards.':'The client keeps its own copy of the map and calls the owner directly.');};});}
+  const say=h=>{$('#'+id+'-r').innerHTML=h;};
+  const known=()=>st.k[st.mode];
+  function draw(){
+    if(!svg.isConnected)return;let s='';
+    /* coordination service or gossip */
+    if(st.gossip)s+=rect(40,4,150,42,'none','var(--line2)',{rx:10,dash:'4 4'})+tx(115,21,'No coordination service',F(12)+B+MID+MUT)+tx(115,37,'nodes gossip changes',F(11.5)+MID+MUT);
+    else s+=rect(40,4,150,42,'var(--h1-bg)','var(--h1)',{rx:10})+tx(115,21,'Coordination service',F(12)+B+MID+col('h1'))+tx(115,38,'official map: P37 → '+st.zk,F(12)+MID+INK);
+    /* faint wiring */
+    const faint='var(--line2)';
+    if(st.mode==='tier'){s+='<line x1="78" y1="123" x2="100" y2="123" style="stroke:'+faint+';stroke-width:1.2"/>';NM.split('').forEach(n=>{s+='<line x1="166" y1="123" x2="204" y2="'+(ny(n)+15)+'" style="stroke:'+faint+';stroke-width:1;stroke-dasharray:2 3"/>';});}
+    else NM.split('').forEach(n=>{s+='<line x1="78" y1="123" x2="204" y2="'+(ny(n)+15)+'" style="stroke:'+faint+';stroke-width:1;stroke-dasharray:2 3"/>';});
+    /* client */
+    const stale=st.mode==='client'&&st.k.client!==st.owner&&st.copy<0;
+    s+=rect(4,96,74,54,'var(--h2-bg)','var(--h2)',{rx:10})+tx(41,114,st.name[0],F(12)+B+MID+col('h2'))+tx(41,128,st.name[1],F(12)+B+MID+col('h2'));
+    if(st.mode==='client')s+=tx(41,143,'P37 → '+st.k.client,F(11.5)+MID+(stale?'fill:var(--no);font-weight:700':INK));
+    s+=tx(41,168,'OP-48213',F(11.5)+MID+MUT)+tx(41,182,'hashes to P37',F(11)+MID+MUT);
+    /* routing tier */
+    if(st.mode==='tier')s+=rect(100,96,66,54,'var(--h3-bg)','var(--h3)',{rx:10})+tx(133,114,'Routing',F(12)+B+MID+col('h3'))+tx(133,128,'tier',F(12)+B+MID+col('h3'))+tx(133,143,'P37 → '+st.k.tier,F(11.5)+MID+INK);
+    /* nodes */
+    NM.split('').forEach(n=>{const y=ny(n),own=n===st.owner;
+      s+=rect(204,y,92,30,own?'var(--ok-bg)':'var(--card)',own?'var(--ok-line)':'var(--line2)',{rx:8})+tx(212,y+19,'Node '+n,F(12)+B+INK);
+      if(own)s+=rect(256,y+7,34,16,'var(--ok-strong)','none',{rx:8})+tx(273,y+19,'P37',F(11)+B+MID+'fill:var(--card)');
+      if(st.copy>=0&&n===st.to)s+=rect(256,y+11,34,8,'var(--line)','none',{rx:4})+rect(256,y+11,34*st.copy,8,'var(--pri)','none',{rx:4});
+      if(st.err===n)s+='<path d="M'+(250)+' '+(y+8)+'l14 14m0 -14l-14 14" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/>';});
+    /* last request path */
+    if(st.path)s+='<polyline points="'+st.path.map(p=>p.join(',')).join(' ')+'" style="fill:none;stroke:var(--'+st.pathC+');stroke-width:2.4;stroke-linejoin:round"/>';
+    gb.innerHTML=s;
+    if(o.modes)MODES.forEach(m=>{const b=$('#'+id+'-'+m[0]);b.classList.toggle('sel',st.mode===m[0]);b.disabled=st.busy||st.moving;});
+    $('#'+id+'-q').disabled=st.busy;$('#'+id+'-mv').disabled=st.busy||st.moving;
+    $('#'+id+'-mv').querySelector('span').textContent='Move P37 to node '+(st.owner==='C'?'E':'C');
+  }
+  const quad=(a,c,b)=>{const out=[];for(let i=0;i<=12;i++){const t=i/12;out.push([r1((1-t)*(1-t)*a[0]+2*(1-t)*t*c[0]+t*t*b[0]),r1((1-t)*(1-t)*a[1]+2*(1-t)*t*c[1]+t*t*b[1])]);}return out;};
+  function fly(pts,c,ms){return new Promise(res=>{if(!svg.isConnected){res();return;}
+    const segs=[];let tot=0;for(let i=1;i<pts.length;i++){const d=Math.hypot(pts[i][0]-pts[i-1][0],pts[i][1]-pts[i-1][1]);segs.push(d);tot+=d;}
+    const dot=document.createElementNS('http://www.w3.org/2000/svg','circle');dot.setAttribute('r',6);dot.setAttribute('style','fill:'+c);fx.appendChild(dot);
+    tween(svg,ms,e=>{let d=e*tot,i=0;while(i<segs.length-1&&d>segs[i]){d-=segs[i];i++;}const f=segs[i]?Math.min(1,d/segs[i]):1;dot.setAttribute('cx',r1(pts[i][0]+(pts[i+1][0]-pts[i][0])*f));dot.setAttribute('cy',r1(pts[i][1]+(pts[i+1][1]-pts[i][1])*f));}).then(()=>{dot.remove();res();});});}
+  async function lookup(){
+    if(st.busy)return null;st.busy=true;st.err=null;st.path=null;draw();
+    const t=known(),copying=st.copy>=0;let pts,hops,msg;
+    if(st.mode==='any'){const e=['A','B','D','E','C'][st.rr++%5];pts=[C0,NL(e)];hops=1;
+      if(e!==t){pts=pts.concat(quad(NL(e),[166,(ny(e)+ny(t))/2+15],NL(t)).slice(1));hops=2;}
+      msg=e===t?'The load balancer happened to pick node '+e+', the node it should go to. <b>1 hop.</b>':'The load balancer picked node '+e+'. Node '+e+' isn’t the owner, so it forwarded the request to node '+t+' and passed the reply back. <b>2 hops.</b>';}
+    else if(st.mode==='tier'){pts=[C0,[100,123],[166,123],NL(t)];hops=2;msg='The routing tier looked up P37 → '+t+' and forwarded the request. <b>2 hops</b>, every time.';}
+    else{pts=[C0,NL(t)];hops=1;msg='The client looked up P37 → '+t+' in its own map and called node '+t+' directly. <b>1 hop.</b>';}
+    await fly(pts,'var(--pri)',600+hops*150);
+    const ok=t===st.owner;
+    if(!svg.isConnected)return null;
+    st.path=pts;st.pathC=ok?'pri':'no';if(!ok)st.err=t;draw();
+    if(ok){await fly(pts.slice().reverse(),'var(--ok-strong)',350);
+      say(msg+(copying?' The copy to node '+st.to+' is still running, so the old owner still serves P37.':' The page shows the parcel.'));}
+    else say('<span class="no-t">Error.</span> Node '+t+' no longer holds P37. '+(st.mode==='client'?'The '+st.name.join(' ').toLowerCase()+' still believes P37 → '+t+'.':'Its map is out of date.'));
+    st.busy=false;draw();const r={type:'lookup',ok,mode:st.mode,moved:st.owner!=='C'||copying,copying,hops};if(o.on)o.on(r);return r;
+  }
+  async function move(){
+    if(st.busy||st.moving)return;st.moving=true;st.err=null;st.path=null;const from=st.owner,to=from==='C'?'E':'C';st.to=to;st.copy=0;draw();
+    say('Copying P37 from node '+from+' to node '+to+'… Until the copy finishes, reads and writes keep going to node '+from+'. Try a lookup now.');
+    await tween(svg,1400,(e,p)=>{st.copy=p;draw();});
+    if(!svg.isConnected)return;
+    while(st.busy)await L.sleep(30);
+    st.copy=-1;st.owner=to;st.path=null;st.err=null;
+    if(st.gossip){draw();const order=NM.split('').filter(n=>n!==to).sort((a,b)=>Math.abs(NM.indexOf(a)-NM.indexOf(to))-Math.abs(NM.indexOf(b)-NM.indexOf(to))||(a<b?-1:1));
+      let prev=to;for(const n of order){await fly(quad([204,ny(prev)+15],[186,(ny(prev)+ny(n))/2+15],[204,ny(n)+15]),'var(--h4)',220);prev=n;}
+      st.k.any=to;say('Copy done. There’s no coordination service: node '+to+' told a neighbour, who told the next, until every node knew (gossip). Any node now forwards P37 to node '+to+'.');}
+    else{st.zk=to;draw();
+      const tg=[];if(st.mode==='tier')tg.push([[115,46],[133,96]]);if(st.sub)tg.push([[95,46],[41,96]]);tg.push([[190,25],[250,52]]);
+      fx.insertAdjacentHTML('beforeend',tg.map(l=>arw(l[0][0],l[0][1],l[1][0],l[1][1],'var(--h1)',{dash:'4 3',w:2})).join(''));
+      await L.sleep(650);if(!svg.isConnected)return;fx.innerHTML='';
+      st.k.tier=to;st.k.any=to;if(st.sub)st.k.client=to;
+      say('Copy done. The coordination service now says <b>P37 → '+to+'</b> and notified everyone who subscribed'+(st.sub?'.':', but the '+st.name.join(' ').toLowerCase()+' loaded its map once at startup and never subscribed. Its map still says P37 → '+from+'.'));}
+    st.moving=false;draw();if(o.on)o.on({type:'move',to});
+  }
+  $('#'+id+'-q').onclick=lookup;
+  $('#'+id+'-mv').onclick=move;
+  draw();say(o.hint||'Tap <b>Look up OP-48213</b>.');
+  return {st,draw,idle:async()=>{for(let i=0;i<200&&(st.busy||st.moving);i++)await L.sleep(30);}};
+}
+
 Course.lesson({
-  id:'0014', title:'Rebalancing and request routing', minutes:20, icon:'compass',
+  id:'0014', title:'Rebalancing and request routing', minutes:22, icon:'compass',
   goals:['Explain why “hash mod N” is a bad way to place data, and what to do instead','Compare fixed, dynamic and per-node partitioning, and decide who should trigger a rebalance','Describe how a request finds the node that holds its partition'],
   parts:['Why rebalance','Strategies','Who decides','Finding data'],
   read:'Read the second half of chapter 6 of the book (from “Rebalancing Partitions”) and its summary.',
   glossary:{
     'rebalancing':'Rebalancing: moving partitions (and the requests that go with them) from one node to another, for example when a node is added, removed or dies.',
     'mod':'Mod: the remainder after dividing. 17 mod 5 is 2. In many programming languages it is written with the % sign.',
+    'pre-split':'Pre-splitting: setting up several partitions on an empty database in advance, so writes are spread out from the start instead of all landing in one partition.',
     'cascading':'Cascading failure: a small fault in one part causes a fault in another, which causes more, like falling dominoes.',
     'service-discovery':'Service discovery: the general problem of finding which machine (address and port) to contact for a service, when that can change over time.',
     'routing-tier':'Routing tier: a layer between clients and database nodes that holds no data itself. It looks up which node owns a request’s partition and forwards the request there.',
@@ -30,11 +234,11 @@ Course.lesson({
   },
   cheatsheet:[
     'A good <b>rebalance</b>: fair load afterwards, the database keeps serving during the move, and no more data moves than needed.',
-    '<b>Never hash mod N</b>: when the node count changes, most keys change node.',
-    '<b>Fixed number of partitions</b>: create many more partitions than nodes, and move whole partitions. Keys never change partition; only the partition-to-node map changes.',
+    '<b>Never hash mod N</b>: when the node count changes, most keys change node (4 → 5 nodes moves about 80%).',
+    '<b>Fixed number of partitions</b>: many more partitions than nodes; move whole partitions. Keys never change partition, only the partition-to-node map does. The count is your node limit.',
     '<b>Dynamic partitioning</b>: split a partition when it grows too big, merge when it shrinks. An empty database starts with one partition unless you pre-split.',
-    '<b>Partitions per node</b>: a fixed number per node; a new node splits random partitions and takes half of each. Needs hash partitioning.',
-    'Fully automatic rebalancing plus automatic failure detection can turn one slow node into a <b>cascading failure</b>. Keep a human in the loop.',
+    '<b>Partitions per node</b>: a new node splits random partitions and takes part of each; fair on average over many partitions. Needs hash partitioning.',
+    'Automatic rebalancing plus automatic failure detection can turn one slow node into a <b>cascading failure</b>. Keep a human in the loop.',
     '<b>Routing</b>: ask any node, go through a routing tier, or use a partition-aware client. A coordination service such as ZooKeeper (or gossip) keeps the map current.',
     '<b>MPP</b> engines split big analytics queries into stages that run in parallel across partitions.'
   ],
@@ -45,127 +249,321 @@ Course.lesson({
   L.mc(L.card,['Right away: new requests will find it on their own','Only once some partitions have moved onto it'],1,
    'An empty node holds no partitions, so no request has a reason to go there. Data, and the requests that follow it, must be moved. That move is called '+L.g('rebalancing','rebalancing')+'.',
    'Requests go to whichever node holds the data they need. An empty node holds nothing yet, so partitions have to move onto it first. That’s rebalancing.');}},
+
 {part:0,src:'Chapter 6 · Rebalancing Partitions',run(L){
+  let s='';
+  [['More queries','add CPUs'],['More data','add disks, RAM'],['A node dies','others take over']].forEach((t,i)=>{const x=2+i*100;
+    s+=rect(x,2,96,44,'var(--h3-bg)','none',{rx:10})+tx(x+48,20,t[0],F(12.5)+B+MID+col('h3'))+tx(x+48,37,t[1],F(11.5)+MID+INK)+arw(x+48,48,x+48,66,'var(--muted)');});
+  for(let k=0;k<5;k++){const x=4+k*59,e=k===4;
+    s+=rect(x,70,54,78,e?'none':'var(--soft)',e?'var(--pri)':'var(--line)',{rx:10,dash:e?'4 3':0})+tx(x+27,86,e?'E · new':NM[k],F(12)+B+MID+(e?col('pri'):INK));
+    for(let i=0;i<3;i++){const y=94+i*16,gone=(k===1||k===3)&&i===2;
+      if(e){if(i<2)s+=rect(x+8,y,38,12,'var(--pri-bg)','var(--pri)',{rx:4});}
+      else s+=rect(x+8,y,38,12,gone?'none':'var(--card)',gone?'var(--line2)':'var(--line2)',{rx:4,dash:gone?'3 2':0});}}
+  s+=carw(4+3*59+46,132,4+3*59+58,150,4+4*59+10,108,'var(--pri)',{dash:'3 3'});
+  s+=carw(4+59+46,132,170,176,4+4*59+12,124,'var(--pri)',{dash:'3 3'});
+  [['Fair load','afterwards'],['Keep serving','during the move'],['Move little','no extra data']].forEach((g,i)=>{const x=2+i*100;
+    s+=rect(x,184,96,62,'var(--ok-bg)','none',{rx:10})+'<circle cx="'+(x+48)+'" cy="198" r="8" style="fill:var(--ok-strong)"/><path d="M'+(x+44)+' 198l3 3l5 -6" style="fill:none;stroke:var(--card);stroke-width:2;stroke-linecap:round;stroke-linejoin:round"/>'+
+      tx(x+48,220,g[0],F(12)+B+MID+col('ok'))+tx(x+48,236,g[1],F(11)+MID+INK);});
   L.h(L.kick('learn','Rebalancing')+'<h1 class="q">Clusters change, so data has to move</h1>'+
-   L.prose('Over time a database needs more CPUs (more queries), more disks and memory (more data), or must cover for a machine that failed. Each of these means moving data and requests from one node to another.')+
-   L.prose('Whatever the partitioning scheme, a rebalance should meet three minimum requirements:')+
-   L.list([['scale','Fair afterwards','Data and requests end up shared fairly between the nodes.'],
-           ['play','Keep serving','The database keeps accepting reads and writes while the move happens.'],
-           ['box','Move only what’s needed','Moving less data makes rebalancing faster and puts less load on the network and disks.']],1));
+   fig('f2',250,s,'Three triggers: more queries, more data, a dead node. Below them, tiles move from nodes B and D to a new node E. At the bottom, three goals: fair load afterwards, keep serving during the move, move no extra data.')+
+   cap('Peak Week brings more queries and more data, and machines die. Each change means moving data and requests between nodes: '+L.g('rebalancing','rebalancing')+'. Whatever the partitioning scheme, a rebalance should meet the three goals at the bottom.'));
   L.done();}},
+
 {part:0,src:'Chapter 6 · Strategies for Rebalancing',run(L){
+  let s='';const res=[6,3,0];
+  [10,11,12].forEach((n,r)=>{const y=r*66,cw=24,x0=6;
+    s+=tx(296,y+14,n+' nodes: <tspan style="fill:var(--pri)">123,456 mod '+n+' = '+res[r]+'</tspan>',F(12.5)+END+B+INK);
+    for(let i=0;i<n;i++){const x=x0+i*cw,hit=i===res[r];s+=rect(x,y+22,cw-3,26,hit?'var(--pri-bg)':'var(--soft)',hit?'var(--pri)':'var(--line)',{rx:6,sw:hit?2.2:1})+tx(x+10.5,y+39,i,F(11.5)+MID+(hit?'fill:var(--pri);font-weight:700':MUT));}
+    if(r<2){const xa=x0+res[r]*cw+10.5,xb=x0+res[r+1]*cw+10.5;s+=carw(xa,y+50,(xa+xb)/2+8,y+62,xb,y+86,'var(--no-strong)',{w:2});}});
   L.h(L.kick('learn','How not to do it')+'<h1 class="q">Tobias’s shortcut: node = hash of key, mod N</h1>'+
-   L.prose('In the last lesson each partition owned a range of hashes. Tobias asks: why not just take the hash '+L.g('mod','mod')+' the number of nodes? With 10 nodes, <i>hash mod 10</i> gives a node number from 0 to 9. Simple.')+
-   L.prose('The problem shows up when N changes. The book follows one key whose hash is 123,456:')+
-   L.flow([['layers','10 nodes','node 6','123,456 mod 10',1],['layers','11 nodes','node 3','123,456 mod 11',2],['layers','12 nodes','node 0','123,456 mod 12',3]])+
-   L.prose('Every time a node is added, this key moves, and so do <b>most</b> other keys. That breaks the third requirement: far more data moves than necessary.'));
+   fig('f3',182,s,'Rows of 10, 11 and 12 nodes. The key with hash 123,456 sits on node 6, then node 3, then node 0.')+
+   cap('Why not take the hash '+L.g('mod','mod')+' the number of nodes? The book follows one key with hash 123,456. Every added node sends it somewhere else: node 6, then 3, then 0. Most other keys move too, which makes rebalancing far too expensive.'));
   L.done();}},
-{part:0,src:'Chapter 6 · Strategies for Rebalancing',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">With hash mod N, a parcel whose hash is 7,777 sits on node 1 of nodes 0–3 (7,777 mod 4 = 1). Kwame adds node 4. Where does the parcel go?</h1>');
-  L.mc(L.card,['It stays where it is, on node 1','It moves to node 2, an old node','It moves to node 4, the new one'],1,
-   '7,777 mod 5 = 2. The parcel moves from one old node to another old node, which does nothing to fill the new one. Pure wasted copying.',
-   'Work it out: 7,777 mod 5 = 2. The parcel leaves node 1 for node 2. Neither is the new node, so this move is pure waste.');}},
+
 {part:0,src:'Chapter 6 · Strategies for Rebalancing',pts:1,
- solve:async L=>{L.$('#pp').children[2].click();L.$('#go4').click();},
+ solve:async L=>{L.$('#p5c2').click();L.$('#p5go').click();await waitFor(L,()=>L.$('#p5r').dataset.done);},
  run(L){
-  let p=null;const O=['About 20%','About half','About 80%'];
-  let x=12345;const H=[];for(let k=0;k<1000;k++){x=(x*1103515245+12345)%2147483648;H.push(x);}
-  const moved=H.filter(h=>h%4!==h%5).length;
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">1,000 parcels, placed with hash mod 4. Kwame adds a fifth node. What share of the parcels will change node?</h1><div id="pp"></div>'+
-   '<div id="sim" hidden><button class="btn pri" id="go4" style="margin:6px 0 10px">'+L.ic('play')+'Add the fifth node</button><div id="dots" style="display:flex;flex-wrap:wrap;gap:5px;max-width:320px"></div><div id="rd" class="small" style="margin-top:10px"></div></div>');
-  L.$('#dots').innerHTML=H.slice(0,40).map(()=>'<span style="width:14px;height:14px;border-radius:50%;background:var(--line2);transition:background .5s"></span>').join('');
-  O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pp').appendChild(b);});
-  L.$('#go4').onclick=function(){this.remove();
-    [...L.$('#dots').children].forEach((d,k)=>{d.style.background=H[k]%4!==H[k]%5?'var(--no-strong)':'var(--ok-strong)';});
-    L.$('#rd').innerHTML='<b style="color:var(--no)">'+(moved/10).toFixed(1)+'% moved</b> (red dots: the first 40 parcels). The least you could move is the new node’s fair share: <b>20%</b>.';
-    L.award(p===2);
-    L.sheet(p===2?'ok':'no',p===2?'You called it!':'About 80% moved','A parcel stays only if its remainder happens to be the same for 4 and for 5. For most parcels it isn’t, so they shuffle between the <i>old</i> nodes too. That is why the hash range is split into partitions instead.');L.done();};}},
+  let pick=null;const O=['About 20%','About half','About 80%'];
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">1,000 parcels sit on 4 nodes by hash mod 4. Kwame adds node E, so it becomes mod 5. What share of the parcels change node?</h1>'+
+   '<div class="rbrow" id="p5c">'+O.map((t,j)=>'<button class="chip" id="p5c'+j+'">'+t+'</button>').join('')+'</div>'+
+   '<p class="rbl">Each dot is one of the first 100 parcels. The number under each node: how many it holds.</p><div id="p5b"></div>'+
+   '<div class="rbrow"><button class="btn pri" id="p5go" disabled>'+L.ic('play')+'Add node E</button></div><div class="rbread" id="p5r">Pick your prediction first.</div>');
+  const bd=ModBoard(L,L.$('#p5b'),'p5s');
+  O.forEach((_,j)=>{L.$('#p5c'+j).onclick=()=>{if(pick!==null)return;pick=j;L.$('#p5c'+j).classList.add('sel');L.$('#p5go').disabled=false;L.$('#p5r').textContent='Now add node E and watch the dots.';};});
+  L.$('#p5go').onclick=async()=>{const b=L.$('#p5go');if(b.disabled)return;b.disabled=true;await bd.setN(5);if(!b.isConnected)return;b.remove();
+    const m=movedPct(4,5);
+    L.$('#p5r').innerHTML='<b class="no-t">'+Math.round(m*10)/10+'% of the 1,000 parcels changed node.</b> Red: moved between old nodes. Purple: moved to E. The least you could move is E’s fair share: <b>20%</b>.';L.$('#p5r').dataset.done=1;
+    L.award(pick===2);
+    L.sheet(pick===2?'ok':'no',pick===2?'You called it: about 80%':'About 80% moved','A parcel stays only if its remainder is the same for 4 and for 5. For most parcels it isn’t, so they shuffle between the <i>old</i> nodes too. (For N to N + 1 nodes, about N out of N + 1 keys move.) That’s why the hash range is cut into partitions instead.');
+    L.done();};}},
 
 /* ---------- PART 2: STRATEGIES ---------- */
 {part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',run(L){
-  L.h(L.kick('learn','Strategy 1: a fixed number of partitions')+'<h1 class="q">Make many more partitions than nodes, then move whole partitions</h1>'+
-   L.prose('Split the data into far more partitions than you have nodes, and give each node several. The book’s example: 10 nodes, 1,000 partitions, about 100 per node.')+
-   L.prose('When a node joins, it <b>steals a few partitions</b> from every existing node until things are fair again. When a node leaves, the reverse happens.')+
-   L.tiers([['lock','Never changes','How many partitions there are, and which partition each key belongs to.'],
-            ['cycle','Changes','Only which node holds which partition.','',true,'The one thing that moves']])+
-   L.note('Copying a partition takes time. Until it finishes, reads and writes keep using the old assignment. And you can give more partitions to more powerful machines. Riak, Elasticsearch, Couchbase and Voldemort work this way.','info'));
+  L.h(L.kick('learn','Strategy 1: a fixed number of partitions')+'<h1 class="q">Make many more partitions than nodes, then move whole partitions</h1><div id="f6"></div>'+
+   '<div class="tagrow"><span class="tag">'+L.ic('lock')+' <b>Key → partition</b> never changes</span><span class="tag">'+L.ic('cycle')+' <b>Partition → node</b> is the only thing that moves</span></div>'+
+   cap('The book’s example: 10 nodes, 1,000 partitions, about 100 each. A new node steals a few whole partitions from every node (dashed: where they were). Riak, Elasticsearch, Couchbase and Voldemort work this way.'));
+  Tiles(L,L.$('#f6'),{id:'f6s',rows:5,own:{A:[1,5,9,13],B:[2,6,10,14],C:[3,7,11,15],D:[4,8,12,16],E:[17,18,19,20]},hl:[17,18,19,20],
+    ghosts:['A','B','C','D'].map(n=>({n,i:4,t:'to E'})),foot:false});
   L.done();}},
-{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',pts:1,
- solve:async L=>{L.$('#addE').click();},
+
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',
+ solve:async L=>{L.$('#e7m0').click();L.$('#e7add').click();await waitFor(L,()=>!L.busy7&&L.$('#e7t0').classList.contains('done'));L.$('#e7m1').click();L.$('#e7add').click();await waitFor(L,()=>allT(L,'e7t')&&!L.busy7);},
  run(L){
-  const own={A:[1,5,9,13,17],B:[2,6,10,14,18],C:[3,7,11,15,19],D:[4,8,12,16,20],E:[]};
-  const draw=(hl)=>{L.$('#cl').innerHTML=Object.keys(own).filter(k=>k!=='E'||own.E.length).map(k=>'<div style="background:var(--soft);border-radius:14px;padding:8px 10px;margin-bottom:8px"><b style="font-size:14px">Node '+k+'</b> <span class="small">'+own[k].length+' partitions</span><div style="margin-top:4px">'+own[k].map(p=>'<span class="chip static'+(hl&&k==='E'?' ok':'')+'" style="font-size:12.5px;padding:4px 8px;margin:0 4px 4px 0">P'+p+'</span>').join('')+'</div></div>').join('');};
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">A toy version of Zainab’s setup: 20 partitions on 4 nodes. Add node E and watch what moves.</h1><div id="cl"></div>'+
-   '<button class="btn pri" id="addE">'+L.ic('play')+'Add node E</button><div id="eq"></div>');
-  draw(false);
-  L.$('#addE').onclick=function(){this.remove();['A','B','C','D'].forEach(k=>own.E.push(own[k].pop()));draw(true);
-    const q=L.$('#eq');q.innerHTML='<p class="small"><b>4 of 20 partitions moved</b>, one from each node: exactly E’s fair share.</p><h2 class="sub">A parcel lived in partition P18. What changed for it?</h2>';
-    L.mc(q,['The node holding its partition changed','It now belongs to a different partition','Nothing at all: P18 stayed on node B'],0,
-     'P18 moved from node B to node E as a whole. The parcel is still in P18; only the partition-to-node map changed.',
-     'Keys never change partition under this strategy. But P18 was one of the four that moved: it went from node B to node E.');};}},
+  let mode=0,bd=null,on=false;L.busy7=false;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Add node E both ways. Which one moves less data?</h1>'+
+   '<div class="rbrow"><button class="chip" id="e7m0">Hash mod N</button><button class="chip" id="e7m1">Fixed partitions</button></div><div id="e7b"></div>'+
+   '<div class="rbrow"><button class="btn pri" id="e7add">'+L.ic('play')+'<span>Add node E</span></button></div><div class="rbread" id="e7r" aria-live="polite"></div>'+
+   tasks('e7t',['Add node E with hash mod N','Add node E with fixed partitions']));
+  const own0=()=>({A:[1,5,9,13,17],B:[2,6,10,14,18],C:[3,7,11,15,19],D:[4,8,12,16,20]});
+  function setup(m){mode=m;on=false;L.$('#e7b').innerHTML='';L.$('#e7m0').classList.toggle('sel',m===0);L.$('#e7m1').classList.toggle('sel',m===1);
+    bd=m===0?ModBoard(L,L.$('#e7b'),'e7s'):Tiles(L,L.$('#e7b'),{id:'e7s',rows:5,own:own0(),foot:false});
+    L.$('#e7add').querySelector('span').textContent='Add node E';
+    L.$('#e7r').innerHTML=m===0?'Each dot is a parcel. Its node is hash mod 4.':'20 partitions (P1–P20), 5 on each node. Each one holds 5% of the data.';}
+  [0,1].forEach(m=>{L.$('#e7m'+m).onclick=()=>{if(L.busy7)return;setup(m);};});
+  L.$('#e7add').onclick=async()=>{if(L.busy7)return;L.busy7=true;L.$('#e7add').disabled=true;const add=!on;on=add;
+    if(mode===0){await bd.setN(add?5:4);
+      L.$('#e7r').innerHTML=add?'<span class="no-t">'+movedPct(4,5)+'% of parcels changed node</span>, most of them between old nodes. E’s fair share is only 20%.':'Back to mod 4: <span class="no-t">'+movedPct(5,4)+'% moved again.</span>';}
+    else{const S=bd.S,from={};
+      if(add){S.own.E=[];['A','B','C','D'].forEach(n=>{const p=S.own[n].pop();from[p]=bd.pos(n,4);S.own.E.push(p);S.hl.add(p);});S.ghosts=['A','B','C','D'].map(n=>({n,i:4,t:'to E'}));}
+      else{['A','B','C','D'].forEach((n,i)=>{const p=S.own.E[i];from[p]=bd.pos('E',i);S.own[n].push(p);});delete S.own.E;S.ghosts=[];S.hl.clear();}
+      bd.draw();await bd.animate(from);
+      L.$('#e7r').innerHTML=add?'<span class="ok-t">4 of 20 partitions moved: 20% of the data</span>, one whole tile from each node. That’s exactly E’s fair share. No parcel changed partition.':'E’s 4 partitions go back home. Again only 20% of the data moves.';}
+    if(!L.$('#e7add'))return;
+    L.$('#e7add').disabled=false;L.$('#e7add').querySelector('span').textContent=on?'Remove node E':'Add node E';
+    if(add)tick(L,'e7t',mode);L.busy7=false;
+    if(allT(L,'e7t')&&!L.e7done){L.e7done=true;L.sheet('info','Whole partitions, not single keys','With hash mod N, about 80% of the data moved. With fixed partitions, only 20%: the minimum. Moving a partition takes time, so until the copy finishes, reads and writes keep using the old assignment. You can even give a bigger machine more partitions so it takes more load.');L.done();}};
+  L.e7done=false;setup(0);}},
+
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',pts:1,
+ solve:async L=>{const g=p=>L.$('#c8s [data-p="'+p+'"]');for(const p of [19,17,18,20]){tapSvg(g(p));L.$('#c8n4').click();await L.sleep(10);}L.$('#c8go').click();},
+ run(L){
+  let moves=0,graded=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Kwame added node E by hand. Balance the cluster: every node within one tile of the others, in as few moves as you can.</h1>'+
+   '<p class="small" style="margin:-6px 0 6px">Drag a tile onto a node, or tap a tile and then a node button. Each tile is 5% of the data; every move copies it across the network.</p><div id="c8b"></div>'+
+   '<div class="rbl">Move the selected tile to</div><div class="rbrow">'+[0,1,2,3,4].map(k=>'<button class="chip" id="c8n'+k+'">Node '+NM[k]+'</button>').join('')+'</div>'+
+   '<div class="rbread" id="c8r" aria-live="polite"></div><div class="rbrow"><button class="btn" id="c8u">'+L.ic('cycle')+'Start over</button><button class="btn pri" id="c8go">'+L.ic('check')+'Check</button></div>');
+  const start=()=>({A:[1,5,9,13,17,19],B:[2,6,10,14,18],C:[3,7,11,15,20],D:[4,8,12,16],E:[]});
+  let tb;
+  const read=()=>{const c=NM.split('').map(n=>tb.S.own[n].length),sp=Math.max(...c)-Math.min(...c);
+    L.$('#c8r').innerHTML='Tiles per node: <b>'+c.join(' · ')+'</b>. Gap between fullest and emptiest: <b class="'+(sp<=1?'ok-t':'no-t')+'">'+sp+'</b> (goal: 1 or less). Moves: <b>'+moves+'</b> = '+moves*5+'% of the data copied.'+(tb.S.sel!=null?' Selected: <b>P'+tb.S.sel+'</b>.':'');return sp;};
+  const build=()=>{L.$('#c8b').innerHTML='';moves=0;tb=Tiles(L,L.$('#c8b'),{id:'c8s',rows:6,target:4,own:start(),drag:true,foot:false,onMove:()=>{moves++;},onDraw:()=>{if(tb&&L.$('#c8r'))read();}});read();};
+  build();
+  [0,1,2,3,4].forEach(k=>{L.$('#c8n'+k).onclick=()=>{if(graded)return;if(tb.S.sel==null){L.$('#c8r').innerHTML='Tap a tile first, then a node.';return;}tb.moveTo(tb.S.sel,NM[k]);};});
+  L.$('#c8u').onclick=()=>{if(!graded)build();};
+  L.$('#c8go').onclick=()=>{if(graded)return;const sp=read();
+    if(sp>1){L.$('#c8r').innerHTML+=' <span class="no-t">Not balanced yet.</span>';return;}
+    graded=true;const ok=moves<=4;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'Balanced in '+moves+' moves':'Balanced, but '+moves+' moves',
+     (ok?'Four moves is the minimum: E’s fair share is 4 tiles, and each came from a node that had too many (2 from A, 1 from B, 1 from C).':'Every move copies 5% of the data over the network. The minimum is 4: take 2 from A, 1 from B and 1 from C, the nodes above the fair share of 4. Moving a tile between two old nodes is wasted copying.')+' Keys never changed partition; only the partition-to-node map did.');
+    L.done();};}},
+
 {part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',run(L){
-  L.h(L.kick('learn','Choosing the number')+'<h1 class="q">The number you pick on day one has to last</h1>'+
-   L.prose('Many databases with fixed partitions never split them, because that keeps operations simple. So the count chosen at setup is also the <b>most nodes</b> you can ever use. Pick it high enough for future growth.')+
-   L.lanes([['alert','Too few, too big','Each partition holds a fixed fraction of the data, so it grows as the data grows. Huge partitions make rebalancing and recovering from a failed node expensive.',3],
-            ['alert','Too many, too small','Every partition carries some management overhead. Too many of them wastes effort.',4]])+
-   L.prose('The best performance comes from partitions that are “just right”. That’s hard to hit with a fixed count when the dataset might stay small or grow a lot.'));
+  let s='';const P=[['Too few','no','Slow to move','and recover'],['Just right','ok','Easy to move,','little overhead'],['Too many','h3','Overhead','for each one']];
+  P.forEach((p,i)=>{const x=2+i*100,c=p[1];
+    s+=tx(x+48,14,p[0],F(12.5)+B+MID+'fill:var(--'+c+')')+rect(x+18,22,60,120,'var(--soft)','var(--line)',{rx:10});
+    if(i===0){s+=rect(x+23,28,50,52,'var(--no-bg)','var(--no)',{rx:6})+tx(x+48,58,'500 GB',F(11.5)+B+MID+col('no'))+rect(x+23,84,50,52,'var(--no-bg)','var(--no)',{rx:6})+tx(x+48,114,'500 GB',F(11.5)+B+MID+col('no'));}
+    if(i===1)for(let j=0;j<5;j++)s+=rect(x+23,28+j*22,50,18,'var(--ok-bg)','var(--ok-line)',{rx:5})+tx(x+48,41+j*22,'10 GB',F(11)+MID+col('ok'));
+    if(i===2)for(let j=0;j<72;j++)s+=rect(x+22+(j%6)*9,27+Math.floor(j/6)*9.4,7,7,'var(--h3-bg)','var(--h3)',{rx:1.5,sw:.8});
+    s+=tx(x+48,160,p[2],F(11.5)+MID+INK)+tx(x+48,175,p[3],F(11.5)+MID+INK);});
+  s+=tx(150,196,'Sizes are illustrative.',F(11)+MID+MUT);
+  L.h(L.kick('learn','Choosing the number')+'<h1 class="q">The count you pick on day one has to last</h1>'+
+   fig('f9',202,s,'Three node columns: two huge 500 GB partitions, five 10 GB partitions, and 72 tiny ones.')+
+   cap('Many fixed-partition databases never split partitions, because that’s simpler to run. So the count chosen at setup is the most nodes you can ever use. And each partition is a fixed slice of the data, so it grows as the data grows.'));
   L.done();}},
-{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Zainab creates 64 fixed partitions for the Parcel DB, on 4 nodes. Years later, Otterpost wants a 100-node cluster. What’s the catch?</h1>');
-  L.mc(L.card,['Each node would hold 25 times more data than now','The database will split partitions to fit the new nodes','Only 64 nodes can hold a partition; the other 36 sit empty'],2,
-   'Whole partitions are the unit of moving. With 64 of them, at most 64 nodes get one. That’s why the count must allow for growth.',
-   'With a fixed count, partitions aren’t split, and a partition can’t be shared between nodes. So 64 partitions means 64 useful nodes at most.');}},
+
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Fixed number of partitions)',pts:1,
+ solve:async L=>{setR(L,'g10n',100);setR(L,'g10d',40);L.$('#g10p1').click();L.$('#g10go').click();},
+ run(L){
+  const PC=[64,1000,100000];let P=64,N=4,D=2,seen=false,graded=false;
+  L.h(L.kick('pr','Edge case: outgrow the count')+'<h1 class="q">Zainab set up the Parcel DB with 64 fixed partitions. Grow it toward Otterpost’s five-year plan: 100 nodes, 40 TB.</h1><p class="small" style="margin:-8px 0 4px">The plan’s numbers are illustrative.</p>'+
+   rng('g10n','Nodes',4,100,4)+rng('g10d','Data',1,40,2,'2 TB')+
+   '<div class="rbl">Partitions, fixed at setup</div><div class="rbrow">'+PC.map((p,j)=>'<button class="chip" id="g10p'+j+'">'+p.toLocaleString('en-US')+'</button>').join('')+'</div>'+
+   '<div id="g10g"></div><div class="rbread" id="g10r" aria-live="polite"></div>'+
+   '<div class="rbrow"><button class="btn pri" id="g10go" hidden>'+L.ic('check')+'Check this count against the plan</button></div>');
+  function draw(){
+    const rows=Math.ceil(N/10),busy=Math.min(N,P),idle=N-busy,base=Math.floor(P/N),extra=P%N;let s='';
+    for(let i=0;i<N;i++){const x=6+(i%10)*29,y=Math.floor(i/10)*29,has=i<busy,c=has?base+(i<extra?1:0):0;
+      s+=has?rect(x,y,26,26,'var(--h2-bg)','var(--h2)',{rx:5,sw:1})+tx(x+13,y+17,c>=1000?Math.round(c/1000)+'k':c,F(c>=100?10.5:11.5)+B+MID+col('h2')):rect(x,y,26,26,'none','var(--no)',{rx:5,sw:1.2,dash:'3 2'})+tx(x+13,y+17,'–',F(12)+B+MID+col('no'));}
+    L.$('#g10g').innerHTML=fig('g10s',rows*29,s,N+' nodes. Each square shows how many partitions that node holds; dashed squares are idle nodes.');
+    const size=D*1000/P,sz=size>=10?Math.round(size).toLocaleString('en-US'):size>=1?size.toFixed(1):size.toFixed(2);
+    const verdict=size>100?'<span class="no-t">huge: slow to move, slow to recover a dead node</span>':size<1?'<span class="no-t">tiny: per-partition overhead adds up</span>':'<span class="ok-t">a workable size</span>';
+    L.$('#g10r').innerHTML='Partitions per node: <b>'+(base?base+(extra?'–'+(base+1):''):'1')+'</b>. '+(idle?'<span class="no-t">'+idle+' nodes sit idle</span>: there’s no partition left to give them.':'Every node has work.')+'<br>Each partition holds <b>'+sz+' GB</b>: '+verdict+'. <span class="small">(Size bands illustrative.)</span>';
+    PC.forEach((p,j)=>L.$('#g10p'+j).classList.toggle('sel',p===P));
+    if(N>64&&!seen){seen=true;L.$('#g10go').hidden=false;}}
+  L.$('#g10n').oninput=e=>{N=+e.target.value;L.$('#g10n-v').textContent=N;draw();};
+  L.$('#g10d').oninput=e=>{D=+e.target.value;L.$('#g10d-v').textContent=D+' TB';draw();};
+  PC.forEach((p,j)=>{L.$('#g10p'+j).onclick=()=>{if(!graded){P=p;draw();}};});
+  L.$('#g10go').onclick=()=>{if(graded)return;graded=true;setR(L,'g10n',100);setR(L,'g10d',40);const ok=P===1000;L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'1,000 fits the plan':P===64?'64 can’t grow that far':'100,000 is too many',
+     (P===64?'With 64 partitions, at most 64 nodes get one, so 36 of the 100 sit idle, and each partition is 625 GB, painful to move or recover. ':P===100000?'Every node is busy, but each partition is a few hundred MB, and every partition carries its own management overhead. ':'All 100 nodes get 10 partitions of about 40 GB. ')+
+     'With a fixed count, choose it high enough for future growth but not so high that overhead takes over. That’s hard when the data might stay small or grow a lot.');
+    L.done();};
+  draw();}},
+
 {part:1,src:'Chapter 6 · Strategies for Rebalancing (Dynamic partitioning)',run(L){
+  let s='';const lim=34,bot=124;
+  s+=tx(48,12,'limit: 10 GB',F(11)+MID+MUT);
+  /* stage 1 */
+  s+=rect(18,18,60,110,'var(--soft)','var(--line)',{rx:10})+'<line x1="14" y1="'+lim+'" x2="82" y2="'+lim+'" style="stroke:var(--no);stroke-width:1.4;stroke-dasharray:4 3"/>'+
+     rect(24,28,48,bot-28,'var(--h3-bg)','var(--h3)',{rx:6})+tx(48,84,'10.4',F(12)+B+MID+col('h3'))+tx(48,98,'GB',F(11)+MID+col('h3'));
+  s+=arw(84,76,104,76,'var(--muted)');
+  /* stage 2 */
+  s+=rect(116,18,60,110,'var(--soft)','var(--line)',{rx:10})+'<line x1="112" y1="'+lim+'" x2="180" y2="'+lim+'" style="stroke:var(--line2);stroke-width:1.2;stroke-dasharray:4 3"/>'+
+     rect(122,30,48,45,'var(--h3-bg)','var(--h3)',{rx:6})+tx(146,57,'5.2 GB',F(11)+B+MID+col('h3'))+rect(122,79,48,45,'var(--h3-bg)','var(--h3)',{rx:6})+tx(146,106,'5.2 GB',F(11)+B+MID+col('h3'));
+  s+=arw(182,76,200,76,'var(--muted)');
+  /* stage 3 */
+  s+=rect(204,18,44,110,'var(--soft)','var(--line)',{rx:10})+rect(252,18,44,110,'var(--soft)','var(--line)',{rx:10})+
+     rect(208,79,36,45,'var(--h3-bg)','var(--h3)',{rx:6})+tx(226,106,'5.2',F(11)+B+MID+col('h3'))+rect(256,79,36,45,'var(--pri-bg)','var(--pri)',{rx:6})+tx(274,106,'5.2',F(11)+B+MID+col('pri'))+
+     tx(226,32,'A',F(12)+B+MID+INK)+tx(274,32,'B',F(12)+B+MID+INK);
+  [['Grows past','the limit',48],['Splits','in half',146],['One half','moves to B',250]].forEach(t=>{s+=tx(t[2],148,t[0],F(12)+B+MID+INK)+tx(t[2],163,t[1],F(11.5)+MID+MUT);});
+  s+=tx(250,178,'(HBase: via HDFS)',F(11)+MID+col('h3'));
+  s+=rect(20,190,260,26,'var(--soft)','none',{rx:13})+tx(150,207,'Shrinks a lot? It merges with a neighbour.',F(12)+MID+INK);
+  s+=tx(150,234,'Sizes are illustrative.',F(11)+MID+MUT);
   L.h(L.kick('learn','Strategy 2: dynamic partitioning')+'<h1 class="q">Split a partition when it gets too big</h1>'+
-   L.prose('With key ranges, fixed boundaries are risky: guess wrong and all the data lands in one partition while the rest stay empty. So key-range databases such as HBase and RethinkDB split partitions as they grow.')+
-   L.flow([['box','Grows','A partition passes the size limit','HBase’s default: 10 GB',1],['layers','Splits','Into two halves, about half the data each','',2],['arrow','Moves','One half can go to another node','',3]])+
-   L.prose('If lots of data is deleted, a small partition can merge with its neighbor. It is much like a B-tree splitting pages. The benefit: the <b>number of partitions follows the data</b>. Little data, few partitions and little overhead. Lots of data, many partitions, each capped in size.')+
-   '<p class="small">It isn’t only for key ranges: MongoDB, since version 2.4, splits dynamically with hash partitioning too.</p>');
+   fig('f11',240,s,'A partition grows past the 10 GB limit, splits into two halves, and one half moves to node B; HBase moves the files through HDFS, its distributed filesystem. Below: a partition that shrinks merges with a neighbour. Sizes are illustrative.')+
+   cap('Key-range databases such as HBase and RethinkDB split partitions as they grow (HBase’s default limit: 10 GB), so the count follows the data. HBase moves the halves through HDFS, its distributed filesystem. MongoDB (since 2.4) also splits hash partitions.'));
   L.done();}},
-{part:1,src:'Chapter 6 · Strategies for Rebalancing (Dynamic partitioning)',pts:1,run(L){
-  L.h(L.kick('pr','A slow start')+'<h1 class="q">Linh launches a new, empty table on a 5-node, dynamically partitioned cluster, keyed by zone and time. For the first weeks, one node does all the writing. Why?</h1>');
-  L.mc(L.card,['An empty table starts as a single partition','Dynamic partitioning never moves partitions','The zone key is a hot spot that will never cool'],0,
-   'With no data, the database can’t know where to draw boundaries, so it starts with one partition. Until the first split, one node takes every write. The fix is <b>pre-splitting</b>: set up initial partitions on the empty table (HBase and MongoDB allow it). For key ranges, that means guessing the key distribution in advance.',
-   'Dynamic partitioning does move halves after a split. The real cause: an empty table begins as one partition, so one node takes every write until the first split. Pre-splitting avoids that.');}},
+
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Dynamic partitioning)',
+ solve:async L=>{for(let i=0;i<3;i++)L.$('#d12w').click();L.$('#d12p1').click();L.$('#d12w').click();},
+ run(L){
+  const LIM=10,GROW=4,TOP=36,PH=23,BODY=4*PH+4,H=TOP+BODY+44,PRE=[[1],[.2,.2,.2,.2,.2],[.6,.1,.1,.1,.1]];
+  let parts,week,last,splits,mode,nid;
+  L.h(L.kick('ex','Edge case: an empty table')+'<h1 class="q">Linh starts a new, empty table of scan history on 5 nodes, split dynamically by zone and time. Write week after week: who does the work?</h1>'+
+   '<div class="rbrow">'+['Start empty','Pre-split into 5','Pre-split, wrong guess'].map((t,j)=>'<button class="chip" id="d12p'+j+'">'+t+'</button>').join('')+'</div>'+
+   '<div id="d12b"></div><div class="rbrow"><button class="btn pri" id="d12w">'+L.ic('play')+'Write a week of scans</button></div><div class="rbread" id="d12r" aria-live="polite"></div>'+
+   tasks('d12t',['Start empty and write until the first split','Try a pre-split']));
+  const sizeOf=n=>parts.filter(p=>p.node===n).reduce((a,p)=>a+p.size,0);
+  const least=()=>NM.split('').map(n=>[n,sizeOf(n),parts.filter(p=>p.node===n).length]).sort((a,b)=>a[1]-b[1]||a[2]-b[2]||(a[0]<b[0]?-1:1))[0][0];
+  function reset(m){mode=m;week=0;splits=0;last=new Set();nid=1;parts=PRE[m].map((w,i)=>({id:nid++,size:0,w,node:NM[i]}));
+    [0,1,2].forEach(j=>L.$('#d12p'+j).classList.toggle('sel',j===m));L.$('#d12w').disabled=false;draw();}
+  function write(){if(week>=12)return;week++;parts.forEach(p=>p.size+=GROW*p.w);last=new Set();let again=true;
+    while(again){again=false;for(const p of parts.slice()){if(p.size>LIM){p.size/=2;p.w/=2;const q={id:nid++,size:p.size,w:p.w,node:least()};parts.splice(parts.indexOf(p)+1,0,q);last.add(p.id);last.add(q.id);splits++;again=true;}}}
+    draw();
+    if(mode===0&&splits)tick(L,'d12t',0);if(mode>0)tick(L,'d12t',1);
+    if(allT(L,'d12t')&&!L.d12){L.d12=true;L.sheet('info','One partition at the start','An empty database starts with a single partition, because it can’t know where to draw boundaries. Until the first split, one node takes every write while the others sit idle. '+L.g('pre-split','Pre-splitting')+' fixes the start (HBase and MongoDB allow it), but with key ranges you must already know what the keys will look like. A wrong guess leaves one node busy until splits catch up.');L.done();}}
+  function draw(){let s='';const tot=parts.reduce((a,p)=>a+p.size,0);
+    NM.split('').forEach((n,k)=>{const mine=parts.filter(p=>p.node===n),ws=mine.reduce((a,p)=>a+p.w,0),x=CX(k);
+      s+=colFrame(k,n,TOP+BODY,{sub:mine.length+(mine.length===1?' tile':' tiles')});
+      mine.slice(0,4).forEach((p,i)=>{const y=TOP+2+i*PH,hl=last.has(p.id);
+        s+=rect(x+4,y,48,20,'var(--card)',hl?'var(--pri)':'var(--line2)',{rx:5,sw:hl?2.4:1.2})+rect(x+4,y,48*Math.min(1,p.size/LIM),20,'var(--h3-bg)','none',{rx:5})+tx(x+28,y+14,p.size.toFixed(1)+' GB',F(11)+B+MID+INK);});
+      if(mine.length>4)s+=tx(x+28,TOP+BODY+2,'+'+(mine.length-4)+' more',F(11)+MID+MUT);
+      s+=rect(x+4,TOP+BODY+8,48,10,'var(--line)','none',{rx:5})+rect(x+4,TOP+BODY+8,48*ws,10,ws>.45?'var(--no-strong)':'var(--h2)','none',{rx:5})+tx(x+28,TOP+BODY+34,Math.round(ws*100)+'%',F(12.5)+B+MID+(ws>.45?col('no'):INK));});
+    L.$('#d12b').innerHTML=fig('d12s',H,s,'Five node columns with partition tiles; each tile fills up toward the 10 GB split limit. Under each column, the share of new writes that node takes.')+'<p class="rbl" style="margin-top:4px">Bars under the nodes: share of new writes each node takes. Growth of 4 GB a week is illustrative.</p>';
+    const busy=Math.max(...NM.split('').map(n=>parts.filter(p=>p.node===n).reduce((a,p)=>a+p.w,0)));
+    L.$('#d12r').innerHTML=week?'Week <b>'+week+'</b>: '+tot.toFixed(0)+' GB in <b>'+parts.length+'</b> partition'+(parts.length>1?'s':'')+'. The busiest node takes <b class="'+(busy>.45?'no-t':'ok-t')+'">'+Math.round(busy*100)+'%</b> of new writes.'+(last.size?' <b>Split!</b> Half of the full partition moved to the least-loaded node.':'')+(week>=12?' (12 weeks is the end of this run.)':''):
+      (mode===0?'The table is empty: one partition, on node A.':mode===1?'Linh set up 5 partitions in advance, one per node.':'Linh pre-split by zone, guessing the key ranges. But 60% of scans fall in the first range.');
+    L.$('#d12w').disabled=week>=12;}
+  [0,1,2].forEach(j=>{L.$('#d12p'+j).onclick=()=>reset(j);});
+  L.$('#d12w').onclick=write;L.d12=false;reset(0);}},
+
 {part:1,src:'Chapter 6 · Strategies for Rebalancing (Partitioning proportionally to nodes)',run(L){
+  let s='';const BOT=124,SEG={A:[30,22,26],B:[24,30,20],C:[28,18,30],D:[22,28,26]},CUT={A:[1,14],C:[2,11],D:[0,12]};
+  NM.split('').forEach((n,k)=>{const x=CX(k),e=n==='E';
+    s+=rect(x,0,56,BOT+6,e?'none':'var(--soft)',e?'var(--pri)':'var(--line)',{rx:10,dash:e?'4 3':0})+tx(x+28,16,'Node '+n,F(12)+B+MID+(e?col('pri'):INK));
+    if(e){let y=BOT;[14,11,12].forEach(h=>{y-=h;s+=rect(x+8,y,40,h,'var(--pri-bg)','var(--pri)',{rx:2,sw:1.2});});return;}
+    let y=BOT;SEG[n].forEach((h,i)=>{const c=CUT[n]&&CUT[n][0]===i?CUT[n][1]:0;y-=h;
+      s+=rect(x+8,y+c,40,h-c,'var(--h2-bg)','var(--h2)',{rx:2,sw:1.2});if(c)s+=rect(x+8,y,40,c,'none','var(--pri)',{rx:2,sw:1.2,dash:'3 2'});});});
+  s+=tx(150,BOT+22,'Dashed: the part of a random partition that E took over',F(11.5)+MID+MUT);
+  [['Fixed count','size grows with the data'],['Dynamic','count grows with the data'],['Per node','count grows with the nodes']].forEach((r,i)=>{const y=BOT+34+i*28;
+    s+=rect(2,y,296,24,i===2?'var(--pri-bg)':'var(--soft)','none',{rx:8})+tx(10,y+16,r[0],F(12)+B+(i===2?'fill:var(--pri-deep)':INK))+tx(104,y+16,r[1],F(12)+INK);});
   L.h(L.kick('learn','Strategy 3: partitions per node')+'<h1 class="q">A fixed number of partitions on each node</h1>'+
-   L.prose('Cassandra and Ketama tie the number of partitions to the number of <b>nodes</b>. Each node holds a fixed number (Cassandra’s default is 256). A new node picks some existing partitions at random, splits each one, and takes over half of each.')+
-   L.prose('Random splits can be unfair, but averaged over hundreds of partitions the new node gets a fair share. (Cassandra 3.0 added another algorithm that avoids unfair splits.) Picking random boundaries needs hash partitioning. This is the closest match to the original meaning of “consistent hashing”.')+
-   L.tiers([['lock','Fixed number','Count stays the same. Partition <b>size</b> grows with the data.'],
-            ['box','Dynamic','Size stays within limits. Partition <b>count</b> grows with the data.'],
-            ['people','Per node','Count grows with the <b>nodes</b>. More data usually means more nodes, so size stays fairly stable.']]));
+   fig('f13',BOT+34+84,s,'Nodes A to D each hold three partitions. New node E holds three pieces, each cut from a random partition on another node. Below, a table: fixed count, size grows with data; dynamic, count grows with data; per node, count grows with nodes.')+
+   cap('Cassandra and Ketama give each node a fixed number of partitions (Cassandra: 256 by default). A new node splits some random partitions and takes over one part of each. So the partition count grows with the nodes.'));
   L.done();}},
+
+{part:1,src:'Chapter 6 · Strategies for Rebalancing (Partitioning proportionally to nodes)',
+ solve:async L=>{setR(L,'k14',0);L.$('#k14a').click();setR(L,'k14',4);L.$('#k14a').click();},
+ run(L){
+  const KS=[2,4,16,64,256],TOP=36,BODY=132,BOT=TOP+BODY,SC=BODY/.6;let k=2,tok=[],after=null,before=null;
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Each node holds k partitions. Add node E: does it get a fair share?</h1>'+
+   rng('k14','Partitions per node (k)',0,4,0,'2')+'<p class="rbl">Bar height: each node’s share of the data. Dashed line: a fair share.</p><div id="k14b"></div>'+
+   '<div class="rbrow"><button class="btn pri" id="k14a">'+L.ic('play')+'<span>Add node E</span></button></div><div class="rbread" id="k14r" aria-live="polite"></div>'+
+   tasks('k14t',['Add node E with 2 partitions per node','Add node E with 256 per node']));
+  const shares=T=>{const s=T.slice().sort((a,b)=>a.t-b.t),o={A:[],B:[],C:[],D:[],E:[]};s.forEach((x,i)=>{const pv=i?s[i-1].t:s[s.length-1].t-1;o[x.n].push(x.t-pv);});return o;};
+  const sum=a=>a.reduce((x,y)=>x+y,0);
+  function gen(){tok=[];'ABCD'.split('').forEach(n=>{for(let i=0;i<k;i++)tok.push({t:Math.random(),n});});before=shares(tok);after=null;}
+  function draw(){const cur=after||before,fair=after?.2:.25;let s='';
+    NM.split('').forEach((n,i)=>{const x=CX(i),off=n==='E'&&!after;s+=colFrame(i,n,BOT+20,{off,sub:off?'not added':null});
+      if(off)return;const segs=cur[n],tot=sum(segs);let y=BOT;
+      if(after&&n!=='E'){const h=Math.min(sum(before[n]),.6)*SC;s+=rect(x+8,BOT-h,40,h,'none','var(--line2)',{rx:2,dash:'3 2'});}
+      if(k<=16)segs.forEach(v=>{const h=Math.min(v*SC,y-TOP);y-=h;if(h>0)s+=rect(x+8,y,40,h,n==='E'?'var(--pri-bg)':'var(--h2-bg)',n==='E'?'var(--pri)':'var(--h2)',{rx:1.5,sw:1});});
+      else{const h=Math.min(tot,.6)*SC;y-=h;s+=rect(x+8,y,40,h,n==='E'?'var(--pri-bg)':'var(--h2-bg)',n==='E'?'var(--pri)':'var(--h2)',{rx:2,sw:1});}
+      s+=tx(x+28,Math.max(TOP+12,y-4),(tot*100).toFixed(1)+'%',F(11.5)+B+MID+(n==='E'?col('pri'):INK));});
+    const fy=BOT-fair*SC;s+='<line x1="0" y1="'+fy+'" x2="300" y2="'+fy+'" style="stroke:var(--ink);stroke-width:1.2;stroke-dasharray:5 4;opacity:.55"/>';
+    L.$('#k14b').innerHTML=fig('k14s',BOT+22,s,'Five node columns; bar height is each node’s share of the hash range. Dashed line: the fair share.');
+    const sh=NM.split('').filter(n=>after||n!=='E').map(n=>sum(cur[n])*100);
+    L.$('#k14r').innerHTML=after?'Node E took <b class="'+(Math.abs(sum(after.E)-.2)<.03?'ok-t':'no-t')+'">'+(sum(after.E)*100).toFixed(1)+'%</b> of the data (fair: 20%). Fullest node: '+Math.max(...sh).toFixed(1)+'%, emptiest: '+Math.min(...sh).toFixed(1)+'%. Dashed outlines: shares before E joined.':
+      'Each node holds '+k+' partitions with random boundaries on the hash range. Node E will cut '+k+' random partitions and take over one part of each.';
+    L.$('#k14a').querySelector('span').textContent=after?'Roll again':'Add node E';}
+  function add(){if(after)gen();const all=tok.concat(Array.from({length:k},()=>({t:Math.random(),n:'E'})));after=shares(all);draw();
+    if(k===2)tick(L,'k14t',0);if(k===256)tick(L,'k14t',1);
+    if(allT(L,'k14t')&&!L.k14){L.k14=true;L.sheet('info','Fair on average, over many partitions','With 2 partitions per node, random cuts often give E far too much or far too little; even the old nodes are uneven. Averaged over hundreds of partitions (Cassandra’s 256), every node ends up near a fair share. Cassandra 3.0 added another algorithm that avoids unfair splits. Cutting at random points needs hash partitioning; this scheme is closest to the original meaning of “consistent hashing”.');L.done();}}
+  L.$('#k14').oninput=e=>{k=KS[+e.target.value];L.$('#k14-v').textContent=k;gen();draw();};
+  L.$('#k14a').onclick=add;L.k14=false;gen();draw();}},
+
 {part:1,src:'Chapter 6 · Strategies for Rebalancing',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which strategy is this?',['Fixed number of partitions','Dynamic partitioning','Partitions per node'],[
    ['Partitions split in two when they grow past a size limit.',1,'Splitting by size is dynamic partitioning.'],
    ['The partition count is set at setup and never changes.',0,'That’s the fixed-number strategy, operationally the simplest.'],
-   ['A joining node splits random partitions and takes half of each.',2,'Random splits per new node: partitioning proportionally to nodes.'],
+   ['A joining node splits random partitions and takes part of each.',2,'Random splits per new node: partitioning proportionally to nodes.'],
    ['Each partition gets bigger as the whole dataset grows.',0,'With a fixed count, each partition is a fixed fraction of the data.'],
    ['A brand-new, empty database starts with a single partition.',1,'With no data, there’s nowhere to draw boundaries until the first split.'],
    ['Adding nodes makes the partitions smaller again.',2,'More nodes, more partitions, so each partition shrinks.']]);}},
 
 /* ---------- PART 3: WHO DECIDES ---------- */
 {part:2,src:'Chapter 6 · Operations: Automatic or Manual Rebalancing',run(L){
+  let s='<defs><linearGradient id="g16" x1="0" x2="1"><stop offset="0" style="stop-color:var(--h4)"/><stop offset="1" style="stop-color:var(--h2)"/></linearGradient></defs>';
+  s+=tx(6,18,'Fully automatic',F(12.5)+B+col('h4'))+tx(294,18,'Fully manual',F(12.5)+B+END+col('h2'))+rect(6,28,288,14,'url(#g16)','none',{rx:7})+
+     tx(6,60,'the system moves',F(11.5)+INK)+tx(6,74,'partitions alone',F(11.5)+INK)+tx(294,60,'an admin sets',F(11.5)+END+INK)+tx(294,74,'every assignment',F(11.5)+END+INK)+
+     '<circle cx="150" cy="35" r="9" style="fill:var(--card);stroke:var(--ink);stroke-width:2"/>'+arw(150,46,150,86,'var(--ink)')+
+     rect(62,90,176,44,'var(--soft)','var(--line2)',{rx:10})+tx(150,108,'Suggests a plan, admin commits',F(12)+B+MID+INK)+tx(150,125,'Couchbase, Riak, Voldemort',F(11.5)+MID+MUT);
+  s+=rect(6,150,288,58,'var(--no-bg)','none',{rx:12})+tx(150,170,'Rebalancing is expensive',F(12.5)+B+MID+col('no'))+tx(150,186,'requests get rerouted and lots of data is copied,',F(11.5)+MID+INK)+tx(150,201,'which can overload the network and the nodes',F(11.5)+MID+INK);
   L.h(L.kick('learn','Automatic or manual?')+'<h1 class="q">Who presses the button to move partitions?</h1>'+
-   L.prose('There is a range between two ends. Fully <b>automatic</b>: the system decides when to move partitions, with no administrator. Fully <b>manual</b>: an administrator sets the partition-to-node map, and it changes only when they change it.')+
-   L.flow([['cycle','Automatic','The system moves partitions by itself','less routine work',1],['eye','In between','The system suggests a plan; a person commits it','Couchbase, Riak, Voldemort',2],['pencil','Manual','An administrator sets every assignment','most control',3]])+
-   L.prose('Automatic is convenient, but unpredictable. Rebalancing is expensive: requests are rerouted and lots of data crosses the network. Done carelessly, it can overload the network or the nodes and slow everything else down while it runs.'));
+   fig('f16',212,s,'A scale from fully automatic to fully manual. In the middle: the system suggests a plan and an admin commits it, as in Couchbase, Riak and Voldemort. Below: rebalancing is expensive.')+
+   cap('There’s a range between two ends. Fully automatic means less routine work, but it’s unpredictable. Done carelessly, a rebalance slows down every other request while it runs.'));
   L.done();}},
+
 {part:2,src:'Chapter 6 · Operations: Automatic or Manual Rebalancing',pts:1,
- solve:async L=>{L.$('#m0').click();L.$('#m1').click();},
+ solve:async L=>{L.$('#a17c1').click();L.$('#a17auto').click();await waitFor(L,()=>!L.$('#a17auto')||L.$('#a17hum'));await waitFor(L,()=>L.$('#a17hum')&&!L.$('#a17hum').disabled);L.$('#a17hum').click();await waitFor(L,()=>L.a17done);},
  run(L){
-  const S=[[['alert','Node 3 is overloaded by a Bramble & Bolt flash sale. It answers slowly.'],['eye','The other nodes decide node 3 is dead.'],['cycle','Automatic rebalancing starts copying node 3’s partitions elsewhere.'],['flame','Node 3 must now also send data. The network fills up. Other nodes slow down.'],['x','More nodes look dead. More rebalancing starts. The overload spreads.']],
-           [['alert','Node 3 is overloaded by a Bramble & Bolt flash sale. It answers slowly.'],['eye','The other nodes decide node 3 is dead.'],['pencil','The system proposes moving node 3’s partitions and waits for approval.'],['person','Kwame checks: node 3 is busy, not dead. The plan is never committed.'],['check','The flash sale ends. Node 3 catches up. Nothing had to move.']]];const seen=new Set();
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Peak Week, 10 am. Node 3 suddenly slows down. Run the same morning twice.</h1><div id="mm"></div><div id="ms" style="margin:6px 0"></div><div id="mq"></div>');
-  ['Fully automatic','A human approves'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.id='m'+j;b.innerHTML=L.ic(j?'person':'cycle')+n;
-    b.onclick=()=>{[...L.$('#mm').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-      L.$('#ms').innerHTML=S[j].map((s,k)=>'<div style="display:flex;gap:10px;align-items:flex-start;padding:7px 0;border-bottom:1px solid var(--line);font-size:14.5px;line-height:1.45'+(k===4?';font-weight:600;color:var(--'+(j?'ok':'no')+')':'')+'">'+L.ic(s[0])+'<span>'+s[1]+'</span></div>').join('');
-      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">Why did automatic rebalancing make node 3’s trouble worse?</h2>';
-        L.mc(q,['Moving its partitions added load to an already slow node','Rebalancing deleted the data that node 3 was holding','The automatic plan picked the wrong partitions to move'],0,
-         'A slow node looks like a dead one. Moving its data adds work to it, to other nodes and to the network, and the problem cascades.',
-         'Nothing was deleted, and which partitions were picked doesn’t matter. The move itself was the problem: copying data loaded a node that was already struggling, and the network too.');}};
-    L.$('#mm').appendChild(b);});}},
+  const T={auto:[
+    [[50,55,95,50,55],['ok','ok','slow','ok','ok'],25,'10:00. A Bramble & Bolt flash sale lands on node C. It slows down, but it’s alive.'],
+    [[50,55,95,50,55],['ok','ok','dead?','ok','ok'],25,'Node C answers too slowly. The other nodes decide it’s dead.'],
+    [[55,85,100,85,60],['ok','busy','dead?','busy','ok'],85,'Automatic rebalancing starts copying node C’s partitions to nodes B and D. Node C must now send data too.'],
+    [[70,98,100,98,75],['ok','dead?','dead?','dead?','ok'],100,'Nodes B and D slow down under the copying. They look dead too, so more rebalancing starts.'],
+    [[96,100,100,100,96],['dead?','dead?','dead?','dead?','dead?'],100,'Requests time out everywhere. One slow node became a cascading failure.']],
+   hum:[
+    [[50,55,95,50,55],['ok','ok','slow','ok','ok'],25,'10:00. The same flash sale lands on node C.'],
+    [[50,55,95,50,55],['ok','ok','dead?','ok','ok'],25,'Node C answers too slowly. The other nodes decide it’s dead.'],
+    [[50,55,95,50,55],['ok','ok','dead?','ok','ok'],25,'The system proposes moving node C’s partitions, and waits for approval.'],
+    [[50,55,80,50,55],['ok','ok','slow','ok','ok'],25,'Kwame looks: node C is busy, not dead. They don’t commit the plan.'],
+    [[50,55,58,50,55],['ok','ok','ok','ok','ok'],25,'The sale ends. Node C catches up. Nothing had to move.']]};
+  let pred=null;L.a17done=false;
+  const TOP=40,BODY=110,H=TOP+BODY+56;
+  function draw(f,copy){let s='';
+    f[0].forEach((ld,k)=>{const x=CX(k),stt=f[1][k],dead=stt==='dead?';
+      s+=colFrame(k,NM[k],TOP+BODY,{dash:dead,stroke:dead?'var(--no)':null,sub:stt,subc:stt==='ok'?'fill:var(--ok);font-weight:700':'fill:var(--no);font-weight:700'});
+      const h=ld/100*(BODY-24),c=ld>=90?'var(--no-strong)':ld>=70?'var(--h3)':'var(--ok-strong)';
+      s+=rect(x+14,TOP+BODY-6-h,28,h,c,'none',{rx:4})+tx(x+28,TOP+BODY-10-h,ld+'%',F(11.5)+B+MID+INK);});
+    if(copy)s+=carw(CX(2)+18,TOP+BODY+1,CX(2)-2,TOP+BODY+22,CX(1)+34,TOP+BODY+3,'var(--pri)',{w:2.2})+carw(CX(2)+38,TOP+BODY+1,CX(3)+2,TOP+BODY+22,CX(3)+22,TOP+BODY+3,'var(--pri)',{w:2.2})+tx(150,TOP+BODY+24,'copying',F(11)+B+MID+col('pri'));
+    const nc=f[2]>=80?'var(--no-strong)':'var(--h2)';
+    s+=rect(2,TOP+BODY+30,296,22,'var(--line)','none',{rx:11})+rect(2,TOP+BODY+30,296*f[2]/100,22,nc,'none',{rx:11})+tx(150,TOP+BODY+45,'Network '+f[2]+'%',F(12)+B+MID+'fill:var(--ink)');
+    return s;}
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Peak Week, 10:00. Node C slows down under a flash sale. With fully automatic rebalancing, what happens next?</h1>'+
+   '<div class="opts" id="a17c">'+['Load moves off node C, and it recovers','The copying adds load, and the trouble spreads'].map((t,j)=>'<button class="chip" id="a17c'+j+'" style="width:100%;margin:0 0 8px">'+t+'</button>').join('')+'</div>'+
+   '<p class="rbl">CPU load per node. Label under the name: what the other nodes think.</p><div id="a17b">'+fig('a17s',H,draw(T.auto[0]),'Five node columns, A to E, with CPU load bars, and a network bar below.')+'</div><p class="rbl" style="margin-top:4px">Load and network numbers are illustrative.</p>'+
+   '<div class="rbread" id="a17r" aria-live="polite">Make your prediction, then run the morning.</div><div class="rbrow" id="a17btn"><button class="btn pri" id="a17auto" disabled>'+L.ic('play')+'Run it: fully automatic</button></div>');
+  const play=async(key)=>{const fr=T[key];for(let i=0;i<fr.length;i++){if(!L.$('#a17s'))return false;L.$('#a17s').innerHTML=draw(fr[i],key==='auto'&&(i===2||i===3));L.$('#a17r').innerHTML='<b>'+(i+1)+'/5</b> '+fr[i][3];if(i<fr.length-1)await L.sleep(520);}return true;};
+  [0,1].forEach(j=>{L.$('#a17c'+j).onclick=()=>{if(pred!==null)return;pred=j;L.$('#a17c'+j).classList.add('sel');L.$('#a17auto').disabled=false;};});
+  L.$('#a17auto').onclick=async()=>{const b=L.$('#a17auto');if(b.disabled)return;b.disabled=true;if(!await play('auto'))return;
+    const ok=pred===1;L.award(ok);
+    L.$('#a17btn').innerHTML='<div class="fb '+(ok?'ok':'no')+'" style="margin:0 0 10px;width:100%">'+(ok?'<b>Right.</b> ':'<b>Not quite.</b> ')+'A slow node looks like a dead one. Moving its data put extra load on it, on other nodes and on the network.</div><button class="btn pri" id="a17hum" disabled>'+L.ic('person')+'Now run it with a human in the loop</button>';
+    setTimeout(()=>{const h=L.$('#a17hum');if(h)h.disabled=false;},300);
+    L.$('#a17hum').onclick=async()=>{const h=L.$('#a17hum');if(h.disabled)return;h.disabled=true;if(!await play('hum'))return;h.remove();L.a17done=true;
+      L.sheet(ok?'ok':'info','Keep a human in the loop','Fully automatic rebalancing combined with automatic failure detection can turn one overloaded node into a '+L.g('cascading','cascading failure')+'. A person approving the plan is slower, but helps prevent surprises like this one.');L.done();};};}},
+
 {part:2,src:'Chapter 6 · Operations: Automatic or Manual Rebalancing',pts:1,run(L){
   L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence is Kwame’s rule for Peak Week.</h1>');
   L.sentence(L.card,[['Keep a human in the loop','Let the cluster decide alone'],['because humans move data faster,','because a slow node can look dead,'],['and moving data is nearly free.','and moving data adds more load.']],[0,1,1],
@@ -174,65 +572,105 @@ Course.lesson({
 
 /* ---------- PART 4: FINDING DATA ---------- */
 {part:3,src:'Chapter 6 · Request Routing',run(L){
+  let s='';
+  const bx=(x,y,w,a,b,c)=>rect(x,y,w,38,'var(--'+c+'-bg)','var(--'+c+')',{rx:9})+tx(x+w/2,y+16,a,F(12)+B+MID+col(c))+tx(x+w/2,y+31,b,F(11)+MID+INK);
+  const R=[['1 · Ask any node',['Node A','not the owner','h3'],'forwards'],['2 · Routing tier',['Routing tier','holds no data','h3'],''],['3 · Partition-aware client',null,'']];
+  R.forEach((r,i)=>{const y=i*70;s+=tx(2,y+12,r[0],F(12.5)+B+col('pri'));
+    if(i===2)s+=bx(2,y+20,70,'Client','+ the map','h2')+arw(72,y+39,232,y+39,'var(--ink)');
+    else s+=bx(2,y+20,70,'Tracking','page','h2')+bx(94,y+20,82,r[1][0],r[1][1],r[1][2])+arw(72,y+39,94,y+39,'var(--ink)')+arw(176,y+39,232,y+39,'var(--ink)');
+    s+=bx(232,y+20,66,'Node C','owns P37','ok');});
+  s+=tx(204,33,'forwards',F(11)+MID+MUT)+tx(204,103,'forwards',F(11)+MID+MUT);
   L.h(L.kick('learn','Request routing')+'<h1 class="q">The tracking page wants OP-48213. Which machine should it call?</h1>'+
-   L.prose('Partitions move during rebalancing, so someone must always know: for this key, which IP address and port? This is a case of '+L.g('service-discovery','service discovery')+', a problem for any software reachable over a network. The book describes three designs:')+
-   L.list([['cycle','Ask any node','The request goes to any node, for example through a round-robin load balancer. If that node doesn’t own the partition, it forwards the request and passes the reply back.'],
-           ['compass','A routing tier','All requests go to a '+L.g('routing-tier','routing tier')+' first. It holds no data; it just knows which node to forward each request to.'],
-           ['person','A partition-aware client','The client knows the partition map itself and connects straight to the right node.']],2)+
-   L.note('In every design, the hard part is the same: how does whoever routes learn that a partition has moved? Everyone must agree, or requests reach the wrong node.','alert'));
+   fig('f19',206,s,'Three designs. 1: the client calls any node, which forwards to the owner, node C. 2: the client calls a routing tier, which forwards to node C. 3: a client that knows the map calls node C directly.')+
+   cap('Partitions move, so someone must always know which IP address and port holds a key. It’s a case of '+L.g('service-discovery','service discovery')+'. In all three designs, the hard part is the same: learning when a partition changes owner.'));
   L.done();}},
+
+{part:3,src:'Chapter 6 · Request Routing',
+ solve:async L=>{const sw=L.sw20;for(const m of ['any','tier','client']){L.$('#s20-'+m).click();L.$('#s20-q').click();await sw.idle();}L.$('#s20-mv').click();await sw.idle();L.$('#s20-q').click();await sw.idle();await waitFor(L,()=>allT(L,'s20t'));},
+ run(L){
+  L.h(L.kick('ex','Try it live')+'<h1 class="q">Look up OP-48213 with all three routing designs. Then move its partition to node E and look it up again.</h1><div id="s20"></div>'+
+   tasks('s20t',['Look it up via any node','Look it up via the routing tier','Look it up via a partition-aware client','Move P37, then look it up']));
+  L.sw20=Switch(L,L.$('#s20'),{id:'s20',mode:'tier',modes:true,hint:'Pick a routing design, then tap <b>Look up OP-48213</b>.',on:r=>{
+    if(r.type==='lookup'&&r.ok){tick(L,'s20t',{any:0,tier:1,client:2}[r.mode]);if(r.moved&&!r.copying)tick(L,'s20t',3);}
+    if(allT(L,'s20t')&&!L.s20){L.s20=true;L.sheet('info','One official map, many readers','In this toy, asking any node took 1 or 2 hops, the routing tier always 2, and the partition-aware client 1. All three found P37 after the move only because each one heard about the change from the coordination service. During the copy, the old owner kept serving.');L.done();}}});
+  L.s20=false;}},
+
 {part:3,src:'Chapter 6 · Request Routing',run(L){
+  let s='';
+  s+=rect(85,4,130,50,'var(--h1-bg)','var(--h1)',{rx:10})+tx(150,22,'ZooKeeper',F(12.5)+B+MID+col('h1'))+tx(150,38,'official map',F(11)+MID+MUT)+tx(150,50,'P37 → C',F(11.5)+B+MID+INK);
+  s+=rect(4,78,76,42,'var(--h3-bg)','var(--h3)',{rx:10})+tx(42,96,'Routing',F(12)+B+MID+col('h3'))+tx(42,112,'tier',F(12)+B+MID+col('h3'));
+  s+=carw(85,24,40,30,40,76,'var(--h1)',{dash:'4 3',w:1.8})+tx(16,42,'notifies',F(11)+col('h1'));
+  s+=carw(80,108,128,116,134,160,'var(--ink)')+tx(72,148,'forwards',F(11)+MUT);
+  NM.split('').forEach((n,k)=>{const x=4+k*59,own=n==='C';s+=rect(x,162,54,36,own?'var(--ok-bg)':'var(--soft)',own?'var(--ok-line)':'var(--line)',{rx:8})+tx(x+27,178,'Node '+n,F(11.5)+B+MID+INK)+(own?tx(x+27,192,'P37',F(11)+B+MID+col('ok')):'');});
+  [[2,170],[3,190],[4,205]].forEach(v=>{s+=arw(4+v[0]*59+27,160,v[1],56,'var(--muted)',{dash:'3 3'});});
+  s+=tx(296,112,'nodes register',F(11)+END+MUT);
+  s+=rect(2,208,296,40,'var(--soft)','none',{rx:10})+tx(150,224,'Built on ZooKeeper: HBase, SolrCloud, Kafka,',F(11.5)+MID+INK)+tx(150,240,'and LinkedIn’s Espresso (through Helix)',F(11.5)+MID+INK);
   L.h(L.kick('learn','Keeping the map current')+'<h1 class="q">A coordination service keeps the official map</h1>'+
-   L.prose('Getting nodes to agree is a consensus problem, and that is hard to build correctly (chapter 9). So many systems lean on a separate '+L.g('coordination-service','coordination service')+' such as ZooKeeper.')+
-   L.flow([['layers','Nodes','Each node registers itself','',1],['lock','ZooKeeper','Holds the official partition-to-node map','',2],['compass','Routing tier','Subscribes; told whenever an owner changes','',3]])+
-   L.prose('HBase, SolrCloud and Kafka use ZooKeeper this way. LinkedIn’s Espresso uses Helix, which relies on ZooKeeper. MongoDB has its own config servers, with mongos processes as its routing tier.')+
-   L.note('Cassandra and Riak skip the outside service: nodes spread changes to each other with a '+L.g('gossip','gossip protocol')+', and any node forwards requests (design 1). That puts more complexity in the nodes. The addresses of the routing tier or nodes themselves change rarely, so plain DNS is often enough for those.','info'));
+   fig('f21',250,s,'ZooKeeper holds the official map, P37 on node C. Nodes register with it. It notifies the routing tier, which forwards requests to node C. Systems built on ZooKeeper: HBase, SolrCloud, Kafka, and LinkedIn’s Espresso through Helix.')+
+   cap('Everyone must agree on the map, and agreement is a hard consensus problem (chapter 9). So many systems use a '+L.g('coordination-service','coordination service')+': nodes register, it keeps the official map, and routers subscribe to changes.'));
   L.done();}},
-{part:3,src:'Chapter 6 · Request Routing',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">A parcel lookup while its partition is moving</h1>');
-  L.beats(L.card,[
-   ['The request','A recipient refreshes the tracking page. The page asks Otterpost’s routing tier for parcel OP-48213.'],
-   ['The lookup','The routing tier hashes the code: partition 37. Its copy of the map says partition 37 lives on node C. It forwards the request there.'],
-   ['The move','Kwame has just added node E, which is copying partition 37 from node C. Until the copy is done, reads and writes keep going to node C, the old owner.'],
-   ['The switch','The copy finishes. The official map in ZooKeeper now says partition 37 is on node E, and ZooKeeper notifies the routing tier.'],
-   ['Next refresh','The routing tier forwards the next request for OP-48213 to node E. The recipient never noticed.']],
-   'Routing stays correct because one service holds the official map and tells the routers whenever it changes.');}},
-{part:3,src:'Chapter 6 · Request Routing',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In the “ask any node” design, a request for OP-48213 lands on node A, which doesn’t hold that parcel’s partition. What does node A do?</h1>');
-  L.mc(L.card,['It rejects the request, so the client retries elsewhere','It forwards the request to the owner and relays the reply','It answers from the copy of the parcel in its own index'],1,
-   'Node A acts as a go-between: it forwards to the node that owns the partition and passes the reply back to the client.',
-   'In this design any node can take any request. If it isn’t the owner, it forwards the request to the node that is and relays the reply.');}},
-{part:3,src:'Chapter 6 · Request Routing',pts:5,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which routing design?',['Ask any node','Routing tier','Partition-aware client'],[
+
+{part:3,src:'Chapter 6 · Request Routing',pts:1,
+ solve:async L=>{
+   L.$('#e22p0').click();await L.sleep(20);L.$('#e22-mv').click();await L.sw22.idle();L.$('#e22-q').click();await L.sw22.idle();
+   L.$('#e22p1').click();await L.sleep(20);L.$('#e22-mv').click();await L.sw22.idle();L.$('#e22-q').click();await L.sw22.idle();
+   await waitFor(L,()=>L.$('#e22o1'));L.$('#e22o1').click();},
+ run(L){
+  let asked=false,ans=false;
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Run both presets: move P37 to node E, then look up OP-48213.</h1>'+
+   '<div class="rbrow"><button class="chip" id="e22p0">Tobias’s merchant API</button><button class="chip" id="e22p1">Gossip, no coordination service</button></div><div id="e22"></div>'+
+   tasks('e22t',['Merchant API: move P37, then look it up','Gossip: move P37, then look it up'])+'<div id="e22q"></div>');
+  function preset(j){L.$('#e22p0').classList.toggle('sel',j===0);L.$('#e22p1').classList.toggle('sel',j===1);L.$('#e22').innerHTML='';
+    L.sw22=Switch(L,L.$('#e22'),j===0?{id:'e22',mode:'client',sub:false,name:['Merchant','API'],hint:'Tobias’s merchant API is a partition-aware client. It loaded the map once, at startup.',on}:{id:'e22',mode:'any',gossip:true,hint:'No ZooKeeper here: nodes tell each other about changes (gossip), and any node forwards requests.',on});}
+  function on(r){if(r.type!=='lookup'||!r.moved||r.copying)return;
+    if(r.mode==='client'&&!r.ok)tick(L,'e22t',0);
+    if(r.mode==='any'&&r.ok)tick(L,'e22t',1);
+    if(allT(L,'e22t')&&!asked){asked=true;const q=L.$('#e22q');q.innerHTML='<h2 class="sub">What would fix Tobias’s merchant API?</h2>'+
+      ['Hash every key again each time it starts','Subscribe to the coordination service’s map','Send every request to the newest node'].map((t,j)=>'<button class="chip" id="e22o'+j+'" style="width:100%;margin:0 0 8px">'+t+'</button>').join('');
+      [0,1,2].forEach(j=>{L.$('#e22o'+j).onclick=()=>{if(ans)return;ans=true;const ok=j===1;L.$('#e22o'+j).classList.add(ok?'ok':'no');if(!ok)L.$('#e22o1').classList.add('ok');L.award(ok);
+        L.sheet(ok?'ok':'no',ok?'Right: subscribe':'It needs to subscribe','The hash still gives the right <i>partition</i>; it’s the partition’s <i>node</i> that changed. A client that subscribes, like the routing tier, is told about every move. Gossip avoids the outside service (Cassandra and Riak) but puts more complexity into every node. Node addresses change rarely, so DNS is often enough to find them.');L.done();};});}}
+  [0,1].forEach(j=>{L.$('#e22p'+j).onclick=()=>{if(L.sw22&&(L.sw22.st.busy||L.sw22.st.copy>=0))return;preset(j);};});
+  preset(0);}},
+
+{part:3,src:'Chapter 6 · Request Routing',pts:6,run(L){
+  L.h(L.kick('pr','Sort them')+'<h1 class="q">Which routing design is each one?</h1>');
+  L.buckets(L.card,['Any node','Routing tier','Aware client'],[
    ['Tobias’s courier app keeps the partition map and calls the owning node directly.',2,'The client itself knows the map, so no go-between is needed.'],
-   ['A load balancer hands each request to the next node in turn; nodes forward when needed.',0,'Any node accepts the request and forwards it if it isn’t the owner.'],
-   ['A layer of servers with no data looks up each owner and forwards requests.',1,'It holds no data, it only routes. That is a routing tier.'],
-   ['Cassandra-style: nodes gossip about changes and forward to the owner.',0,'Gossip keeps every node informed, so any node can forward (design 1).'],
-   ['MongoDB’s mongos processes, reading from config servers.',1,'mongos is MongoDB’s routing tier.']]);}},
-{part:3,src:'Chapter 6 · Request Routing',pts:1,run(L){
-  L.h(L.kick('pr','A routing bug')+'<h1 class="q">Tobias’s merchant API loads the partition map once, at startup, and never refreshes it. Kwame then rebalances onto node E. What goes wrong?</h1>');
-  L.mc(L.card,['Requests for moved partitions are sent to the wrong node','Nothing: the hash of each key hasn’t changed','The API sends every request to node E from then on'],0,
-   'The hash still gives the right <i>partition</i>, but the partition’s <i>node</i> changed. The API should subscribe to the coordination service, as the routing tier does.',
-   'The partition for each key is the same, but some partitions now live on a different node. A map that never refreshes sends those requests to the old owner.');}},
+   ['A round-robin load balancer hands each request to the next node; nodes forward when needed.',0,'Any node accepts the request and forwards it if it isn’t the owner.'],
+   ['A layer of servers with no data looks up each owner and forwards requests.',1,'It holds no data; it only routes. That’s a routing tier.'],
+   ['Cassandra-style: nodes gossip about changes and forward to the owner.',0,'Gossip keeps every node informed, so any node can forward.'],
+   ['MongoDB’s mongos processes, which read from its config servers.',1,'mongos is MongoDB’s routing tier.'],
+   ['Couchbase’s moxi: holds no data and learns routing changes from the cluster nodes.',1,'moxi is Couchbase’s routing tier. Couchbase never rebalances on its own, which keeps the design simpler.']],
+   'Every design needs the same thing: an up-to-date partition map, kept by a coordination service or spread by gossip.');}},
+
 {part:3,src:'Chapter 6 · Parallel Query Execution',run(L){
-  L.h(L.kick('learn','Parallel query execution')+'<h1 class="q">Beyond single-key lookups</h1>'+
-   L.prose('So far: read or write one key, plus scatter/gather for local indexes. That is about the level most NoSQL datastores support.')+
-   L.prose('<b>'+L.g('mpp','Massively parallel processing (MPP)')+'</b> relational databases, often used for analytics, go much further. A typical warehouse query joins, filters, groups and aggregates. The MPP query optimizer breaks it into stages and pieces, and many of them run in parallel on different nodes.')+
-   L.note('Linh’s report “on-time rate per zone, across all of Peak Week” scans a huge share of the data. Queries like that gain the most from running in parallel. The book returns to these techniques in chapter 10.','trend'));
+  let s='';const box=(x,y,w,a,b,c)=>rect(x,y,w,34,'var(--'+c+'-bg)','var(--'+c+')',{rx:8})+tx(x+w/2,y+15,a,F(11.5)+B+MID+col(c))+tx(x+w/2,y+28,b,F(11)+MID+INK);
+  const badge=(y,n)=>'<circle cx="12" cy="'+y+'" r="10" style="fill:var(--muted)"/>'+tx(12,y+4.5,n,F(12)+B+MID+'fill:var(--card)');
+  s+=rect(30,2,268,38,'var(--soft)','var(--line2)',{rx:10})+tx(164,18,'On-time rate per zone,',F(12)+B+MID+INK)+tx(164,33,'all of Peak Week',F(12)+B+MID+INK);
+  for(let k=0;k<4;k++){const cx=61+k*67;s+=arw(164,40,cx,62,'var(--line2)')+box(30+k*67,64,62,'Scan P'+(k+1),'node '+NM[k],'h2');
+    [104,242].forEach(gx=>{s+='<line x1="'+cx+'" y1="98" x2="'+gx+'" y2="136" style="stroke:var(--line2);stroke-width:1.2"/>';});}
+  s+=box(58,136,92,'Group W1–W4','node B','h3')+box(196,136,92,'Group E1–E3','node D','h3');
+  s+=arw(104,170,170,202,'var(--line2)')+arw(242,170,186,202,'var(--line2)')+box(128,204,100,'Combine','one answer','pri');
+  s+=badge(81,1)+badge(153,2)+badge(221,3);
+  L.h(L.kick('learn','Parallel query execution')+'<h1 class="q">One big query, many nodes at once</h1>'+
+   fig('f24',240,s,'Linh’s query is split into three stages: four scans run in parallel on four nodes, two nodes group by zone, and one node combines the result.')+
+   cap('Most NoSQL stores handle single-key reads and writes, plus scatter/gather. '+L.g('mpp','MPP')+' databases for analytics go further: the optimizer splits a query with joins, filters and grouping into stages that run in parallel. Big scans gain most.'));
   L.done();}},
+
 {part:3,src:'Chapter 6 · Parallel Query Execution',pts:1,run(L){
   L.h(L.kick('pr','Last check')+'<h1 class="q">Which Otterpost query gains the most from an MPP engine?</h1>');
   L.mc(L.card,['Show the scans for one parcel on the tracking page','Add a delivered scan to parcel OP-48213','Average delivery time per hub and merchant, last year'],2,
-   'It scans a large part of the data and groups and aggregates it, so splitting it into parallel stages pays off.',
+   'It scans a large part of the data and groups and aggregates it, so splitting it into parallel stages pays off. The book returns to these techniques in chapter 10.',
    'Single-parcel reads and writes touch one key on one partition. MPP shines on big analytics queries that scan, join, group and aggregate lots of data.');}},
+
 {part:3,src:'Chapter 6 · Summary',run(L){
-  L.h(L.kick('learn','The chapter in one screen')+'<h1 class="q">Partitioning, from start to finish</h1>'+
-   L.tiers([['layers','Split','Key range (sorted, easy range scans, hot-spot risk) or hash (even spread, no range scans), or a compound key mixing both.'],
-            ['list','Index','Local index: one-partition writes, scatter/gather reads. Global index: one-partition reads, multi-partition writes.'],
-            ['cycle','Rebalance','Fixed partitions, dynamic splits or partitions per node. Never mod N.'],
-            ['compass','Route','Any node, a routing tier or a smart client, kept current by a coordination service or gossip.']])+
-   L.note('Each partition works mostly on its own, which is what lets the database scale. But what if one write must change two partitions, and only one succeeds? The next chapters take that up.','alert'));
+  let s='';const R=[['Split','h1',['key range','hash','compound']],['Index','h2',['local','global']],['Rebalance','h3',['fixed','dynamic','per node']],['Route','h4',['any node','tier','client']]];
+  R.forEach((r,i)=>{const y=i*58;s+=rect(2,y,296,50,'var(--'+r[1]+'-bg)','none',{rx:12})+'<circle cx="20" cy="'+(y+25)+'" r="11" style="fill:var(--'+r[1]+')"/>'+tx(20,y+29.5,i+1,F(12)+B+MID+'fill:var(--card)')+tx(36,y+29.5,r[0],F(12)+B+col(r[1]));
+    r[2].forEach((p,j)=>{const x=106+j*61;s+=rect(x,y+13,59,24,'var(--card)','var(--'+r[1]+')',{rx:12,sw:1.2})+tx(x+29.5,y+29,p,F(11)+MID+INK);});});
+  s+=tx(150,248,'never hash mod N · keep the map current',F(11.5)+MID+col('no')+'font-weight:600');
+  L.h(L.kick('learn','The chapter in one picture')+'<h1 class="q">Partitioning, from start to finish</h1>'+
+   fig('f26',254,s,'Four steps. Split: key range, hash or compound. Index: local or global. Rebalance: fixed count, dynamic or per node. Route: any node, routing tier or aware client.')+
+   cap('Each partition works mostly on its own, which is what lets a partitioned database scale. But what if one write must change two partitions, and only one succeeds? The next chapters take that on.'));
   L.done();}}
   ]
 });

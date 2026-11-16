@@ -13,11 +13,442 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-const CODE=s=>'<div style="background:var(--soft);border-radius:14px;padding:12px 14px;margin:12px 0;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere">'+s+'</div>';
+/* =====================================================================
+   Lesson 0003 only. The signature model, used across the lesson:
+   Morph – Mrs. Okoro’s parcel OP-48213 as a nested document. Each nested
+           piece (scans, merchant, courier, hubs) can sit inside the
+           document or move out into its own table, linked by an ID.
+           Operations (draw the tracking page, rename the merchant, new
+           courier photo, add a scan, read the status) run against the
+           current shape and count reads, joins, copies and bytes.
+   Plus: a layer stack, a 1975 access-path walker and a postcode
+   schema-change player.
+   ===================================================================== */
+const X=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const wait=ms=>new Promise(r=>setTimeout(r,ms));
+const T=(x,y,t,a)=>'<text x="'+x+'" y="'+y+'" '+(a||'')+'>'+X(t)+'</text>';
+const R=(x,y,w,h,r,st,ex)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+r+'" style="'+st+'" '+(ex||'')+'/>';
+const LN=(x1,y1,x2,y2,st)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="'+st+'"/>';
+const r1=n=>Math.round(n*10)/10;
+function AR(x1,y1,x2,y2,col,dash){const a=Math.atan2(y2-y1,x2-x1),h=6.5,s=.5;
+  const p=(d)=>r1(x2-h*Math.cos(a+d))+','+r1(y2-h*Math.sin(a+d));
+  return LN(x1,y1,r1(x2-4*Math.cos(a)),r1(y2-4*Math.sin(a)),'stroke:var(--'+col+');stroke-width:1.6'+(dash?';stroke-dasharray:4 3':''))+'<polygon points="'+x2+','+y2+' '+p(s)+' '+p(-s)+'" style="fill:var(--'+col+')"/>';}
+const FIG=(vb,body,label)=>'<div class="rd-fig"><svg viewBox="'+vb+'" role="img" aria-label="'+X(label)+'">'+body+'</svg></div>';
+const CAP=t=>'<p class="rd-cap">'+t+'</p>';
+const t11='font-size="11.2" fill="var(--muted)"';
+const CSS='<style>'+
+ '.rd-fig{margin:4px 0 10px}.rd-fig svg{width:100%;max-width:440px;display:block;margin:0 auto}.rd-fig svg text{font-family:var(--sans)}'+
+ '.rd-cap{font-size:16px;line-height:1.55;margin:8px 0 4px}'+
+ '.rd-hint{font-size:13.5px;color:var(--muted);margin:2px 0 6px;line-height:1.45}'+
+ '.rd-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.rd-row .btn,.rd-row .chip{margin:0;min-height:40px}.rd-row .btn[disabled],.rd-row .chip[disabled]{opacity:.55;cursor:default}'+
+ '.rd-tgs{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:6px 0 8px}.rd-tg{margin:0!important;min-height:44px;font-size:13px!important;justify-content:flex-start;gap:7px!important;padding:5px 9px!important;text-align:left;line-height:1.25}'+
+ '.rd-tg b{font-weight:700;display:block;white-space:nowrap}.rd-tg span.n{display:block;white-space:nowrap}.rd-dot{width:10px;height:10px;border-radius:99px;flex:none}'+
+ '.rd-tiles{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:8px 0}'+
+ '.rd-tile{border-radius:12px;padding:7px 9px;background:var(--soft);font-size:12.5px;color:var(--muted);line-height:1.3;border:1.5px solid var(--line)}'+
+ '.rd-tile b{display:block;font-size:13.5px;color:var(--ink);margin-top:2px}'+
+ '.rd-tile.good{background:var(--ok-bg);border-color:var(--ok-line)}.rd-tile.good b{color:var(--ok)}'+
+ '.rd-tile.bad{background:var(--no-bg);border-color:var(--no-line)}.rd-tile.bad b{color:var(--no)}'+
+ '.rd-out{background:var(--soft);border-radius:14px;padding:10px 12px;font-size:14.5px;line-height:1.5;margin:8px 0}'+
+ '.rd-leg{font-size:12.5px;color:var(--muted);margin:2px 0 4px;line-height:1.5}.rd-sq{display:inline-block;width:10px;height:10px;border-radius:2px;border:1.5px solid;vertical-align:-1px;margin:0 3px 0 6px}'+
+ '.rd-tap{cursor:pointer}'+
+ '@keyframes rdin{from{opacity:0;transform:translateX(-46px)}to{opacity:1;transform:none}}.rd-new{animation:rdin .5s cubic-bezier(.2,.8,.2,1) both}'+
+ '@keyframes rddash{from{stroke-dashoffset:100}to{stroke-dashoffset:0}}.rd-lk{stroke-dasharray:100;animation:rddash .6s ease .15s both}'+
+ '@keyframes rdpulse{0%,100%{opacity:1}50%{opacity:.3}}.rd-pulse{animation:rdpulse .5s ease 2}'+
+ '@keyframes rdfill{0%,55%{fill:var(--pri-bg)}100%{fill:var(--card)}}.rd-fl{animation:rdfill 1.2s ease both}'+
+ '.rd-slab{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:left;border-radius:14px;padding:9px 11px;margin:0 0 6px;border:2px solid var(--line);background:var(--card);font-size:14px;line-height:1.35;transition:background .3s,border-color .3s,opacity .3s}'+
+ '.rd-slab .ic{flex:none;width:30px;height:30px;border-radius:9px;display:grid;place-items:center}'+
+ '.rd-slab b{display:block;font-size:14.5px}.rd-slab .who{font-size:12px;color:var(--muted);font-weight:600}.rd-slab small{display:block;font-size:13px;color:var(--ink);margin-top:2px}'+
+ '.rd-slab.hid{background:var(--soft2);border-style:dashed;opacity:.75}.rd-slab.hid small{color:var(--muted);font-style:italic}'+
+ '.rd-slab.cur{border-color:var(--pri);box-shadow:0 0 0 3px var(--pri-bg)}'+
+ 'button.rd-slab.sel{border-color:var(--pri);background:var(--pri-bg)}button.rd-slab.ok{border-color:var(--ok-line);background:var(--ok-bg)}button.rd-slab.no{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.rd-mono{font-family:ui-monospace,Menlo,monospace;font-size:12.5px}'+
+ '.rd-code{background:var(--soft);border-radius:12px;padding:8px 10px;margin:8px 0;font-family:ui-monospace,Menlo,monospace;font-size:12px;line-height:1.6;overflow-wrap:anywhere}'+
+ '.rd-code span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:6px;padding:0 4px;transition:background .3s}.rd-code span.on{background:var(--h3-bg);color:var(--h3);font-weight:600}'+
+ '.rd-ways{display:flex;flex-direction:column;gap:8px;margin:6px 0 10px}.rd-way{display:flex;gap:10px;align-items:center;background:var(--soft);border-radius:14px;padding:8px 10px}'+
+ '.rd-way svg{flex:none;width:92px;height:56px}.rd-way svg text{font-family:var(--sans)}.rd-way b{display:block;font-size:14.5px}.rd-way span{font-size:13.5px;line-height:1.4;color:var(--muted)}'+
+ '.rd-ben{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0 6px}.rd-ben span{font-size:13px;font-weight:600;border-radius:99px;padding:5px 10px;background:var(--h1-bg);color:var(--h1)}'+
+ '</style>';
+
+/* ---------- the signature model: tree-to-tables morph ---------- */
+const HUBS=[['H-1','Westport Central','W. Central'],['H-2','Westport North','W. North']];
+const SC0=[['picked up',-1],['',0],['',1],['on the van',-1]];
+const KC={s:'h2',m:'h1',c:'h3',h:'h4'};
+const KN={s:'Scans',m:'Merchant',c:'Courier',h:'Hubs'};
+const ORD=[...Array(40).keys()].sort((a,b)=>((a*17+5)%41)-((b*17+5)%41));
+function Morph(L,host,o){
+  o=Object.assign({id:'mo',sw:[],ops:[],fleet:false,tiles:[],st:{},kb:2,hint:'',on:()=>{}},o||{});
+  const S=Object.assign({s:1,m:1,c:1,h:1},o.st);
+  const fresh0=()=>({name:'Bramble & Bolt',photo:1,extra:false,stale:'',hot:'',badges:[],fl:null});
+  Object.assign(S,fresh0(),{kb:o.kb});
+  const ID=o.id;let tok=0;
+  const OPS={draw:['play','Draw the tracking page'],ren:['pencil','Rename Bramble & Bolt'],pho:['person','Ravi’s new photo'],scan:['list','Add a scan'],stat:['eye','Read only the status']};
+  host.insertAdjacentHTML('beforeend','<div class="rd-mo">'+
+    (o.sw.length?'<div class="rd-tgs" id="'+ID+'-sw"></div>':'')+
+    (o.hint?'<p class="rd-hint">'+o.hint+'</p>':'')+
+    '<div class="rd-fig"><svg id="'+ID+'-svg" viewBox="0 0 312 260" role="img" aria-label="Parcel OP-48213 drawn as a document, with any pieces moved out into their own tables"></svg></div>'+
+    (o.fleet?'<div id="'+ID+'-fl" hidden><div class="rd-fig" style="margin:0"><svg id="'+ID+'-fls" viewBox="0 0 312 54" role="img" aria-label="Stored parcels that hold the name or photo"></svg></div><p class="rd-leg" id="'+ID+'-leg"></p></div>':'')+
+    (o.ops.length?'<div class="rd-row" id="'+ID+'-ops">'+o.ops.map(k=>'<button class="btn" id="'+ID+'-op-'+k+'">'+L.ic(OPS[k][0])+OPS[k][1]+'</button>').join('')+'</div>':'')+
+    (o.tiles.length?'<div class="rd-tiles" id="'+ID+'-tl" aria-live="polite"></div>':'')+
+    '<div class="rd-out" id="'+ID+'-out" aria-live="polite" hidden></div></div>');
+  const svg=L.$('#'+ID+'-svg');
+  const reads=()=>1+['s','m','c','h'].filter(k=>!S[k]).length;
+  const TL={
+    read:()=>{const n=reads();return ['Draw the tracking page',n+(n===1?' read':' reads')+' · '+(n-1)+(n-1===1?' join':' joins'),n===1?'good':''];},
+    ren:()=>S.m?['Rename the merchant','a copy in every parcel it sent','bad']:['Rename the merchant','change 1 row','good'],
+    pho:()=>S.c?['Ravi’s new photo','a copy in every parcel they carried','bad']:['Ravi’s new photo','change 1 row','good'],
+    hub:()=>S.h?['Rename a hub','a copy in every scan there','bad']:['Rename a hub','change 1 row','good'],
+    scan:()=>S.s?['Add one scan','rewrite the whole '+S.kb+' KB','']:['Add one scan','insert 1 row','good']};
+  function dot(x,y,col){return '<circle cx="'+x+'" cy="'+y+'" r="3.5" style="fill:var(--'+col+')"/>';}
+  function hubBit(x,y,hi,edge,anchorX){
+    let s='<g data-k="h" class="'+(o.sw.includes('h')?'rd-tap':'')+'">';
+    if(S.h){s+=R(x,y,74,17,8.5,'fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.2')+T(x+37,y+12.5,HUBS[hi][2],'font-size="11.2" font-weight="600" text-anchor="middle" fill="var(--h4)"');}
+    else{s+=R(x,y,34,17,5,'fill:var(--card);stroke:var(--h4);stroke-width:1.5;stroke-dasharray:3 2')+T(x+17,y+12.5,HUBS[hi][0],'font-size="11.2" font-weight="700" text-anchor="middle" fill="var(--h4)"')+dot(edge,y+8.5,'h4');}
+    return s+'</g>';}
+  function draw(fresh){
+    fresh=fresh||new Set();
+    const X0=2,W0=128,R0=148,RW=158,top=20;
+    const scans=SC0.concat(S.extra?[['delivered',-1]]:[]);
+    let y=top;const rw={head:y};y+=38;rw.m=y;y+=40;rw.c=y;y+=40;
+    if(S.s){rw.sl=y;y+=18;rw.s=scans.map(()=>{const v=y;y+=20;return v;});y+=4;rw.kb=y;y+=18;}else{rw.sx=y;y+=28;}
+    const docB=y;
+    let yr=top;const cd={};
+    ['m','c','s','h'].forEach(k=>{if(!S[k]){const n=k==='s'?scans.length:2;const h=26+n*19;cd[k]={y:yr,h};yr+=h+10;}});
+    const H=Math.max(docB,yr-10)+6;
+    let g='';
+    g+=T(X0+2,12,S.s?'parcel document':'parcels table · 1 row','font-size="11.2" font-weight="700" fill="var(--pri)"');
+    if(Object.keys(cd).length)g+=T(R0+2,12,'its own tables','font-size="11.2" font-weight="700" fill="var(--muted)"');
+    /* links first, so boxes sit on top of their ends */
+    const lk=(x1,y1,x2,y2,col,k,bend)=>{const c1=bend?x1+bend:x1+(x2-x1)*.55,c2=bend?x2+bend:x2-(x2-x1)*.55;
+      return '<path d="M'+x1+' '+y1+' C'+c1+' '+y1+' '+c2+' '+y2+' '+x2+' '+y2+'" pathLength="100" class="'+(fresh.has(k)?'rd-lk':'')+(S.hot==='lk'+k?' rd-pulse':'')+'" style="fill:none;stroke:var(--'+col+');stroke-width:1.7"/>';};
+    if(!S.m)g+=lk(X0+W0,rw.m+26.5,R0,cd.m.y+11,'h1','m');
+    if(!S.c)g+=lk(X0+W0,rw.c+26.5,R0,cd.c.y+11,'h3','c');
+    if(!S.s)g+=lk(X0+W0,rw.head+14,R0,cd.s.y+11,'h2','s');
+    if(!S.h)scans.forEach((sc,i)=>{if(sc[1]<0)return;const hy=cd.h.y+24+sc[1]*19+9.5;
+      g+=S.s?lk(X0+W0,rw.s[i]+9.5,R0,hy,'h4','h'):lk(R0+RW,cd.s.y+24+i*19+9.5,R0+RW,hy,'h4','h',8);});
+    /* the document */
+    const docHot=S.badges.includes('doc')||(S.hot==='stat'&&S.s)||(S.hot==='rw'&&S.s);
+    g+=R(X0,top,W0,docB-top,12,'fill:var(--card);stroke:var(--pri);stroke-width:'+(docHot?3:1.5),(S.hot==='rw'&&S.s)||(S.hot==='stat'&&S.s)?'class="rd-fl"':'');
+    g+=T(X0+9,rw.head+16,'OP-48213','font-size="13" font-weight="700" fill="var(--ink)"')+T(X0+9,rw.head+31,'to Mrs. Okoro','font-size="11.5" fill="var(--muted)"');
+    ['m','c'].forEach(k=>{const yy=rw[k];
+      let s='<g data-k="'+k+'" class="'+(o.sw.includes(k)?'rd-tap':'')+'">'+R(X0+3,yy,W0-6,38,8,'fill:transparent')+T(X0+9,yy+12,k==='m'?'merchant':'courier',t11);
+      if(S[k]){const st=S.stale===k;const txt=k==='m'?S.name:'Ravi · photo '+S.photo;
+        s+=R(X0+6,yy+17,W0-12,19,9.5,'fill:var(--'+KC[k]+'-bg);stroke:var(--'+(st?'no':KC[k])+');stroke-width:'+(st?2.2:1.2));
+        if(k==='c')s+='<circle cx="'+(X0+16)+'" cy="'+(yy+26.5)+'" r="5" style="fill:var(--'+(S.photo===1?'h3':'card')+');stroke:var(--h3);stroke-width:1.5"/>';
+        s+=T(k==='c'?X0+25:X0+12,yy+30.5,txt+(st?' ✗':''),'font-size="11.2" font-weight="600" fill="var(--'+(st?'no':KC[k])+')"');}
+      else{const idt=k==='m'?'M-17':'C-0017',w=k==='m'?38:50;
+        s+=R(X0+6,yy+17,w,19,6,'fill:var(--card);stroke:var(--'+KC[k]+');stroke-width:1.5;stroke-dasharray:3 2')+T(X0+6+w/2,yy+30.5,idt,'font-size="11.2" font-weight="700" text-anchor="middle" fill="var(--'+KC[k]+')"');
+        s+=T(X0+11+w,yy+30.5,'→ '+(k==='m'?'merchants':'couriers'),t11)+dot(X0+W0,yy+26.5,KC[k]);}
+      g+=s+'</g>';});
+    if(S.s){
+      let s='<g data-k="s" class="'+(o.sw.includes('s')?'rd-tap':'')+'">'+R(X0+3,rw.sl-2,W0-6,rw.kb-rw.sl,8,'fill:transparent')+T(X0+9,rw.sl+12,'scans ('+scans.length+')','font-size="11.2" font-weight="700" fill="var(--h2)"');
+      scans.forEach((sc,i)=>{const yy=rw.s[i],nw=S.extra&&i===4&&S.hot==='rw';
+        s+='<circle cx="'+(X0+12)+'" cy="'+(yy+9.5)+'" r="3" style="fill:var(--h2)"/>';
+        if(sc[1]<0)s+=T(X0+21,yy+13.5,sc[0],'font-size="11.5" fill="var(--'+(nw?'pri':'ink')+')"'+(nw?' font-weight="700"':''));
+        else s+=hubBit(X0+20,yy+1,sc[1],X0+W0);});
+      g+=s+'</g>';
+      const kbl=S.hot==='rw'?'rewrote all ≈'+S.kb+' KB':S.hot==='stat'?'loaded all ≈'+S.kb+' KB':'≈'+S.kb+' KB';
+      g+=T(X0+W0-8,rw.kb+12,kbl,'font-size="11.2" text-anchor="end" '+(S.hot==='rw'||S.hot==='stat'?'font-weight="700" fill="var(--pri)"':'fill="var(--muted)"'));
+    }else{
+      g+='<g data-k="s" class="'+(o.sw.includes('s')?'rd-tap':'')+'">'+R(X0+3,rw.sx,W0-6,26,8,'fill:transparent')+T(X0+9,rw.sx+17,'scans: own table','font-size="11.2" font-style="italic" fill="var(--h2)"')+'</g>'+dot(X0+W0,rw.head+14,'h2');
+    }
+    /* the tables */
+    const card=(k,title,rows)=>{const c=cd[k];let s='<g data-k="'+k+'" class="'+(o.sw.includes(k)?'rd-tap ':'')+(fresh.has(k)?'rd-new':'')+'">';
+      s+=R(R0,c.y,RW,c.h,10,'fill:var(--card);stroke:var(--'+KC[k]+');stroke-width:'+(S.badges.includes(k)?3:1.5));
+      s+=R(R0+1.5,c.y+1.5,RW-3,20,8.5,'fill:var(--'+KC[k]+'-bg)')+T(R0+9,c.y+15,title,'font-size="11.5" font-weight="700" fill="var(--'+KC[k]+')"');
+      rows.forEach((fn,i)=>{s+=fn(c.y+24+i*19,i);});return s+'</g>';};
+    const hl=(yy,on,col)=>on?R(R0+3,yy,RW-6,18,5,'fill:var(--'+(col||'ok')+'-bg)'):'';
+    if(!S.m)g+=card('m','merchants',[yy=>hl(yy,S.hot==='mrow'||S.hot==='lkm')+T(R0+9,yy+13,'M-17','font-size="11.2" font-weight="700" fill="var(--h1)"')+T(R0+40,yy+13,S.name,'font-size="11.2" fill="var(--ink)"'),
+      yy=>T(R0+9,yy+13,'M-18','font-size="11.2" font-weight="700" fill="var(--h1)"')+T(R0+40,yy+13,'Pip & Thistle','font-size="11.2" fill="var(--ink)"')]);
+    if(!S.c)g+=card('c','couriers',[yy=>hl(yy,S.hot==='crow'||S.hot==='lkc')+T(R0+9,yy+13,'C-0017','font-size="11.2" font-weight="700" fill="var(--h3)"')+'<circle cx="'+(R0+62)+'" cy="'+(yy+9)+'" r="5" style="fill:var(--'+(S.photo===1?'h3':'card')+');stroke:var(--h3);stroke-width:1.5"/>'+T(R0+71,yy+13,'Ravi · photo '+S.photo,'font-size="11.2" fill="var(--ink)"'),
+      yy=>T(R0+9,yy+13,'C-0002','font-size="11.2" font-weight="700" fill="var(--h3)"')+'<circle cx="'+(R0+62)+'" cy="'+(yy+9)+'" r="5" style="fill:var(--h3);stroke:var(--h3);stroke-width:1.5"/>'+T(R0+71,yy+13,'Mia · photo 1','font-size="11.2" fill="var(--ink)"')]);
+    if(!S.s)g+=card('s','scans',scans.map((sc,i)=>yy=>hl(yy,(S.hot==='rw'&&i===4)||(S.hot==='stat'&&i===3),'pri')+T(R0+9,yy+13,'OP-48213',t11)+(sc[1]<0?T(R0+70,yy+13,sc[0],'font-size="11.2" fill="var(--ink)"'):hubBit(R0+68,yy+1,sc[1],R0+RW))));
+    if(!S.h)g+=card('h','hubs',HUBS.map(hb=>yy=>T(R0+9,yy+13,hb[0],'font-size="11.2" font-weight="700" fill="var(--h4)"')+T(R0+36,yy+13,hb[1],'font-size="11.2" fill="var(--ink)"')));
+    S.badges.forEach((k,i)=>{const p=k==='doc'?[X0+W0-12,top+12]:[R0+RW-12,cd[k].y+11];
+      g+='<circle cx="'+p[0]+'" cy="'+p[1]+'" r="9" style="fill:var(--pri)"/>'+T(p[0],p[1]+4,String(i+1),'font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--pri-ink)"');});
+    svg.setAttribute('viewBox','0 0 312 '+H);svg.innerHTML=g;
+    const sw=L.$('#'+ID+'-sw');
+    if(sw)sw.innerHTML=o.sw.map(k=>'<button class="chip rd-tg'+(S[k]?'':' sel')+'" data-k="'+k+'" aria-pressed="'+(!S[k])+'"><span class="rd-dot" style="background:var(--'+KC[k]+')"></span><span><span class="n">'+KN[k]+'</span><b>'+(S[k]?'inside':'own table')+'</b></span></button>').join('');
+    const tl=L.$('#'+ID+'-tl');
+    if(tl)tl.innerHTML=o.tiles.map(k=>{const v=TL[k]();return '<div class="rd-tile '+v[2]+'">'+v[0]+'<b>'+v[1]+'</b></div>';}).join('');
+  }
+  function drawFleet(){
+    const box=L.$('#'+ID+'-fl');if(!box)return;
+    if(!S.fl){box.hidden=true;return;}box.hidden=false;
+    const m=S.fl.mode==='m',col=m?'h1':'h3';
+    let g=T(2,11,m?'Bramble & Bolt parcels · 1 square ≈ 1,500':'Parcels Ravi carried · 1 square ≈ 70',t11);
+    const sty={old:'fill:var(--soft2);stroke:var(--line2)',new:'fill:var(--ok-bg);stroke:var(--ok)',stale:'fill:var(--no-bg);stroke:var(--no)',ptr:'fill:var(--card);stroke:var(--'+col+');stroke-dasharray:2 2',ptrnew:'fill:var(--ok-bg);stroke:var(--ok);stroke-dasharray:2 2'};
+    S.fl.cells.forEach((c,i)=>{g+=R(2+(i%20)*15.4,18+Math.floor(i/20)*17,13,13,3,sty[c]+';stroke-width:1.5');});
+    L.$('#'+ID+'-fls').innerHTML=g;
+    const sq=(b,c)=>'<span class="rd-sq" style="background:var(--'+b+');border-color:var(--'+c+')"></span>';
+    L.$('#'+ID+'-leg').innerHTML=S.fl.cells[0].startsWith('ptr')?'Dashed squares hold only the ID and read the current '+(m?'name':'photo')+' through it (numbers illustrative).':sq('soft2','line2')+'old copy'+sq('ok-bg','ok')+'rewritten'+sq('no-bg','no')+'missed (numbers illustrative)';
+  }
+  function out(h){const b=L.$('#'+ID+'-out');if(!b)return;b.hidden=false;b.innerHTML=h;}
+  const live=my=>my===tok&&svg.isConnected;
+  function clear(){Object.assign(S,fresh0());drawFleet();}
+  function set(st,fresh){tok++;clear();Object.assign(S,st);draw(fresh);}
+  function tog(k){if(!o.sw.includes(k))return;tok++;S[k]=S[k]?0:1;clear();draw(new Set(S[k]?[]:[k]));o.on('tog',k);}
+  async function opDraw(){const my=++tok;clear();draw();
+    const pl=['doc'].concat(['m','c','s','h'].filter(k=>!S[k]));
+    for(const p of pl){if(!live(my))return;S.badges.push(p);draw();await wait(230);}
+    if(!live(my))return;const n=pl.length;
+    out(n===1?'<b>1 read.</b> Everything the page needs sits together in one place. That is <b>locality</b>.':'<b>'+n+' reads, '+(n-1)+(n>2?' joins':' join')+'.</b> The page’s pieces live in '+n+' places, so it takes several queries or one multi-table join.');
+    o.on('draw');return true;}
+  async function opCopy(k){const my=++tok;clear();const m=k==='m';
+    S.fl={mode:k,cells:Array(40).fill(S[k]?'old':'ptr')};draw();drawFleet();await wait(250);if(!live(my))return;
+    if(S[k]){
+      for(let i=0;i<34;i++){S.fl.cells[ORD[i]]='new';if(i%2){drawFleet();await wait(45);if(!live(my))return;}}
+      for(let i=34;i<40;i++)S.fl.cells[ORD[i]]='stale';S.stale=k;draw();drawFleet();
+      out(m?'<b>About 51,000 copies rewritten, 9,000 missed.</b> The update job was cut off partway. Those parcels, OP-48213 among them, still say “Bramble & Bolt”.':'<b>Copies rewritten one by one, some missed.</b> The job was cut off partway. OP-48213 still shows Ravi’s old photo.');
+    }else{
+      if(m)S.name='Bramble & Bolt Home';else S.photo=2;S.hot=m?'mrow':'crow';draw();await wait(350);if(!live(my))return;
+      S.hot='lk'+k;draw();S.fl.cells=S.fl.cells.map(()=>'ptrnew');drawFleet();
+      out(m?'<b>1 row changed.</b> Every parcel still holds M-17 and reads the new name through it. Nothing can go stale.':'<b>1 row changed.</b> Every parcel holds C-0017 and shows Ravi’s current photo through it.');}
+    o.on(m?'ren':'pho');return true;}
+  async function opScan(){const my=++tok;clear();draw();await wait(120);if(!live(my))return;
+    S.extra=true;S.hot='rw';draw();
+    out(S.s?'<b>Rewrote the whole ≈'+S.kb+' KB document</b> to add one small scan (sizes illustrative). Only edits that keep a document’s size can be made in place.':'<b>Inserted 1 row</b> (≈100 bytes, illustrative) into the scans table. Nothing else was rewritten.');
+    o.on('scan');return true;}
+  async function opStat(){tok++;clear();S.hot='stat';draw();
+    out(S.s?'<b>Loaded the whole ≈'+S.kb+' KB document</b> to read one line, “on the van”. The database usually loads all of it, even for a small part.':'<b>Read 1 small row:</b> the latest scan in the scans table.');
+    o.on('stat');return true;}
+  const run={draw:opDraw,ren:()=>opCopy('m'),pho:()=>opCopy('c'),scan:opScan,stat:opStat};
+  svg.addEventListener('click',e=>{const t=e.target.closest('[data-k]');if(t)tog(t.dataset.k);});
+  const sw=L.$('#'+ID+'-sw');if(sw)sw.addEventListener('click',e=>{const t=e.target.closest('[data-k]');if(t)tog(t.dataset.k);});
+  o.ops.forEach(k=>{L.$('#'+ID+'-op-'+k).onclick=()=>run[k]();});
+  draw();
+  return {S,draw,set,run,out,tog,cancel:()=>{tok++;}};
+}
+
+/* ---------- the layer stack (screens 2 and 3) ---------- */
+const LAY=[['Real world','A box for Mrs. Okoro, on Ravi’s cargo bike','people, parcels, money','box','h3'],
+ ['Objects in code','Parcel { code, scans [ ] } in the courier app','app developers','pencil','h2'],
+ ['General-purpose data model','A row in a table, a JSON document or a graph','this chapter','layers','pri'],
+ ['Bytes','<span class="rd-mono">4F 50 2D 34 38 32 31 33 …</span>','database engineers','list','h1'],
+ ['Signals','<svg viewBox="0 0 120 14" style="width:120px;height:14px;vertical-align:-2px"><path d="M0 11h10v-8h10v8h6v-8h16v8h8v-8h6v8h14v-8h8v8h10v-8h10v8h16" style="fill:none;stroke:var(--h4);stroke-width:1.6"/></svg> current, light, magnetism','hardware engineers','flame','h4']];
+function slab(L,j,cls,tag){const l=LAY[j];tag=tag||'div';
+  return '<'+tag+' class="rd-slab '+cls+'" data-l="'+j+'"'+(tag==='button'?' aria-pressed="false"':'')+'><span class="ic" style="background:var(--'+(l[4]==='pri'?'pri':l[4])+'-bg);color:var(--'+l[4]+')">'+L.ic(l[3])+'</span><div><b>'+l[0]+'</b><span class="who">'+l[2]+'</span><small>'+(cls.includes('hid')?'hidden below a clean model':l[1])+'</small></div></'+tag+'>';}
+
+/* ---------- static figures ---------- */
+function figTimeline(){
+  const x=y=>r1(8+(y-1965)*5.4);let g='';
+  const bar=(y,a,b,col,op)=>R(x(a),y,x(b)-x(a),9,4.5,'fill:var(--'+col+');opacity:'+(op||1));
+  g+=T(x(1968),19,'Hierarchical · IMS, 1968','font-size="11.5" font-weight="600" fill="var(--h3)"')+T(306,19,'still running','font-size="11.2" text-anchor="end" fill="var(--muted)"')+bar(24,1968,1985,'h3')+bar(24,1985,2018,'h3',.3);
+  g+=T(x(1969),51,'Network · CODASYL','font-size="11.5" font-weight="600" fill="var(--h4)"')+bar(56,1969,1985,'h4');
+  g+=T(x(1970),83,'Relational · Codd, 1970','font-size="11.5" font-weight="600" fill="var(--pri)"')+LN(x(1970),92.5,x(1985),92.5,'stroke:var(--pri);stroke-width:2;stroke-dasharray:3 3')+'<circle cx="'+x(1970)+'" cy="92.5" r="4.5" style="fill:var(--pri)"/>'+bar(88,1985,2015,'pri')+T(x(2015),83,'on top ≈ 25–30 yrs','font-size="11.2" text-anchor="end" fill="var(--muted)"');
+  g+=T(x(1987),115,'Object databases','font-size="11.5" font-weight="600" fill="var(--h2)"')+bar(120,1987,1994,'h2');
+  g+=T(x(2006),147,'XML databases · niche','font-size="11.5" font-weight="600" text-anchor="end" fill="var(--muted)"')+bar(152,2000,2006,'line2');
+  g+=T(x(2009)-8,179,'#NoSQL · 2009','font-size="11.5" font-weight="600" text-anchor="end" fill="var(--no)"')+'<circle cx="'+x(2009)+'" cy="175" r="5" style="fill:var(--no)"/>';
+  g+=LN(x(1965),196,x(2018),196,'stroke:var(--line2);stroke-width:1.5');
+  [1970,1980,1990,2000,2010].forEach(y=>{g+=LN(x(y),192,x(y),200,'stroke:var(--line2);stroke-width:1.5')+T(x(y),213,String(y),'font-size="11.2" text-anchor="middle" fill="var(--muted)"');});
+  return FIG('0 0 312 218',g,'Timeline: hierarchical IMS from 1968, the network model in the 1970s, the relational model from 1970 and on top from the mid-1980s for 25 to 30 years, object databases around 1990, XML databases in the early 2000s, and the NoSQL hashtag in 2009');}
+function cyl(x,y,w,col,label){return '<path d="M'+x+' '+(y+6)+'v24a'+w/2+' 6 0 0 0 '+w+' 0v-24" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:1.5"/><ellipse cx="'+(x+w/2)+'" cy="'+(y+6)+'" rx="'+w/2+'" ry="6" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:1.5"/>'+T(x+w/2,y+48,label,'font-size="11.2" text-anchor="middle" font-weight="600" fill="var(--'+col+')"');}
+function figNoSQL(){let g='';
+  const box=(x,y,a,b,col)=>R(x,y,118,40,10,'fill:var(--'+col+'-bg)')+T(x+59,y+17,a,'font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--'+col+')"')+T(x+59,y+32,b,'font-size="11.2" text-anchor="middle" fill="var(--ink)"');
+  g+=box(2,4,'Bigger scale','huge data or writes','h1')+box(192,4,'Open source','over paid products','h2')+box(2,112,'Special queries','tables handle badly','h3')+box(192,112,'Freer schemas','less rigid shapes','h4');
+  g+=AR(84,46,118,66,'h1')+AR(228,46,194,66,'h2')+AR(84,110,118,92,'h3')+AR(228,110,194,92,'h4');
+  g+=R(106,60,100,40,12,'fill:var(--no-bg);stroke:var(--no);stroke-width:1.5')+T(156,77,'#NoSQL','font-size="13" font-weight="700" text-anchor="middle" fill="var(--no)"')+T(156,92,'2009 hashtag','font-size="11.2" text-anchor="middle" fill="var(--ink)"');
+  g+=LN(2,166,310,166,'stroke:var(--line);stroke-width:1.5')+T(156,184,'Polyglot persistence at Otterpost','font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--ink)"');
+  g+=cyl(26,196,62,'pri','Parcel DB')+cyl(125,196,62,'h3','cache')+cyl(224,196,62,'h2','search index');
+  return FIG('0 0 312 252',g,'Four forces point at the NoSQL hashtag: bigger scale, free and open source, special queries, freer schemas. Below, Otterpost runs a relational Parcel DB beside a cache and a search index');}
+function figMismatch(){let g='';
+  g+=T(2,12,'In the app: one object','font-size="11.2" font-weight="700" fill="var(--h2)"')+R(2,20,110,152,12,'fill:var(--card);stroke:var(--h2);stroke-width:1.5');
+  g+=T(12,40,'parcel','font-size="12" font-weight="700" fill="var(--ink)"')+T(12,56,'code: OP-48213','font-size="11.2" fill="var(--muted)"');
+  g+=R(10,66,94,98,8,'fill:var(--h2-bg)')+T(18,82,'scans: [','font-size="11.2" font-weight="600" fill="var(--h2)"');
+  ['picked up','W. Central','W. North','on the van'].forEach((s,i)=>{g+=R(18,88+i*18,78,15,4,'fill:var(--card)')+T(24,99+i*18,s,'font-size="11.2" fill="var(--ink)"');});
+  g+=AR(118,72,190,72,'pri')+AR(190,104,118,104,'pri')+T(154,64,'save','font-size="11.2" text-anchor="middle" fill="var(--muted)"')+T(154,120,'load','font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+  g+=R(124,132,60,34,8,'fill:var(--pri-bg)')+T(154,146,'ORM','font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--pri)"')+T(154,160,'translates','font-size="11.2" text-anchor="middle" fill="var(--pri)"');
+  g+=T(196,12,'In the DB: rows','font-size="11.2" font-weight="700" fill="var(--h1)"');
+  const tbl=(y,name,rows)=>{let s=R(196,y,114,22+rows.length*17,8,'fill:var(--card);stroke:var(--h1);stroke-width:1.5')+R(197.5,y+1.5,111,19,6.5,'fill:var(--h1-bg)')+T(204,y+15,name,'font-size="11.2" font-weight="700" fill="var(--h1)"');
+    rows.forEach((r,i)=>{s+=LN(198,y+21+i*17,308,y+21+i*17,'stroke:var(--line);stroke-width:1')+T(204,y+34+i*17,r[0],'font-size="11.2" fill="var(--muted)"')+T(276,y+34+i*17,r[1],'font-size="11.2" fill="var(--ink)"');});return s;};
+  g+=tbl(20,'parcels',[['OP-48213','…']])+tbl(72,'scans',[['OP-48213','#1'],['OP-48213','#2'],['OP-48213','#3'],['OP-48213','#4']]);
+  g+=T(156,192,'The gap between them: the impedance mismatch','font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+  return FIG('0 0 312 198',g,'Left, a parcel object in the app with a nested list of four scans. Right, the same data as a parcels table and a scans table. In the middle, an ORM translates both ways');}
+function figTrees(){let g='';
+  const node=(cx,y,w,txt,col)=>R(cx-w/2,y,w,22,8,'fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:1.3')+T(cx,y+15,txt,'font-size="11.2" font-weight="600" text-anchor="middle" fill="var(--'+col+')"');
+  const leaves=(cx,y,n,col)=>{let s='';const w=n*18-4;for(let i=0;i<n;i++){const lx=cx-w/2+i*18;s+=LN(cx,y-10,lx+7,y,'stroke:var(--line2);stroke-width:1.2')+R(lx,y,14,11,3,'fill:var(--'+col+');opacity:.8');}return s;};
+  const tree=(y0,title,root,kids,col)=>{let s=T(2,y0+11,title,'font-size="11.2" font-weight="700" fill="var(--muted)"')+node(156,y0+18,128,root,'pri');
+    kids.forEach(k=>{s+=LN(156,y0+40,k[0],y0+58,'stroke:var(--line2);stroke-width:1.4')+node(k[0],y0+58,k[3]||84,k[1],col)+leaves(k[0],y0+92,k[2],col);});return s;};
+  g+=tree(0,'The book’s résumé','a person’s profile',[[50,'jobs',2],[156,'schools',2],[262,'contact info',2,92]],'h1');
+  g+=LN(2,114,310,114,'stroke:var(--line);stroke-width:1.2');
+  g+=tree(120,'Otterpost’s parcel','OP-48213',[[92,'scans',4],[228,'delivery attempts',1,118]],'h2');
+  g+=T(156,236,'Every item has exactly one parent: a tree','font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+  return FIG('0 0 312 242',g,'Two trees. The book’s résumé: a profile with jobs, schools and contact info. Otterpost’s parcel OP-48213 with four scans and one delivery attempt. Every item has one parent');}
+function figWays(){
+  const sv=b=>'<svg viewBox="0 0 92 56" aria-hidden="true">'+b+'</svg>';
+  const tb=(x,y,w,n,col)=>{let s=R(x,y,w,8+n*8,4,'fill:var(--card);stroke:var(--'+col+');stroke-width:1.3')+R(x+1,y+1,w-2,6,3,'fill:var(--'+col+'-bg)');for(let i=1;i<=n;i++)s+=LN(x+3,y+4+i*8,x+w-3,y+4+i*8,'stroke:var(--line2);stroke-width:1');return s;};
+  const a=sv(tb(4,10,38,3,'h1')+tb(52,4,36,5,'h2')+AR(52,30,44,24,'h2'));
+  const b=sv(R(4,18,84,20,5,'fill:var(--card);stroke:var(--h1);stroke-width:1.3')+LN(34,18,34,38,'stroke:var(--line2)')+R(9,26,20,4,2,'fill:var(--line2)')+R(38,21,30,14,4,'fill:var(--h2-bg)')+T(53,32,'{ }','font-size="11.2" font-weight="700" text-anchor="middle" fill="var(--h2)"')+'<circle cx="72" cy="20" r="7" style="fill:var(--card);stroke:var(--ok);stroke-width:2"/>'+LN(77,25,84,32,'stroke:var(--ok);stroke-width:2.4;stroke-linecap:round'));
+  const c=sv(R(4,18,84,20,5,'fill:var(--card);stroke:var(--h1);stroke-width:1.3')+LN(34,18,34,38,'stroke:var(--line2)')+R(9,26,20,4,2,'fill:var(--line2)')+R(37,21,48,14,3,'fill:var(--soft2)')+T(61,32,'"{…}"','font-size="11.2" text-anchor="middle" fill="var(--muted)"')+'<ellipse cx="46" cy="8" rx="9" ry="5" style="fill:none;stroke:var(--no);stroke-width:1.6"/><circle cx="46" cy="8" r="2" style="fill:var(--no)"/>'+LN(36,14,56,2,'stroke:var(--no);stroke-width:1.8'));
+  const w=(s,t,d)=>'<div class="rd-way">'+s+'<div><b>'+t+'</b><span>'+d+'</span></div></div>';
+  return '<div class="rd-ways">'+w(a,'Separate tables','The classic way: a scans table, each row tagged with the parcel’s ID.')+w(b,'A JSON or XML column','Newer SQL lets the database query and index inside it.')+w(c,'JSON as plain text','The app reads it. To the database it’s just a string.')+'</div>';}
+function figIDs(){let g='';
+  g+=T(2,12,'Name copied into each parcel','font-size="11.2" font-weight="700" fill="var(--h1)"')+T(310,12,'3 copies to change','font-size="11.2" font-weight="700" text-anchor="end" fill="var(--no)"');
+  for(let i=0;i<3;i++){const x=2+i*104;g+=R(x,20,98,46,9,'fill:var(--card);stroke:var(--line2);stroke-width:1.3')+T(x+8,36,'OP-104'+(i+1),'font-size="11.5" font-weight="700" fill="var(--ink)"')+R(x+6,44,86,17,8.5,'fill:var(--h1-bg);stroke:var(--no);stroke-width:1.6')+T(x+49,56.5,'Bramble & Bolt','font-size="11.2" text-anchor="middle" fill="var(--h1)"');}
+  g+=T(2,92,'Parcel stores an ID','font-size="11.2" font-weight="700" fill="var(--h1)"')+T(310,92,'1 place to change','font-size="11.2" font-weight="700" text-anchor="end" fill="var(--ok)"');
+  for(let i=0;i<3;i++){const x=2+i*104;g+=AR(x+78,126,156,160,'h1')+R(x,100,98,30,9,'fill:var(--card);stroke:var(--line2);stroke-width:1.3')+T(x+7,119,'OP-104'+(i+1),'font-size="11.5" font-weight="700" fill="var(--ink)"')+R(x+61,107,34,17,5,'fill:var(--card);stroke:var(--h1);stroke-width:1.4;stroke-dasharray:3 2')+T(x+78,119.5,'M-17','font-size="11.2" font-weight="700" text-anchor="middle" fill="var(--h1)"');}
+  g+=R(46,160,220,26,9,'fill:var(--h1-bg);stroke:var(--ok);stroke-width:1.8')+T(156,177,'merchants: M-17 = Bramble & Bolt','font-size="11.2" font-weight="700" text-anchor="middle" fill="var(--h1)"');
+  return FIG('0 0 312 190',g,'Top: three parcels each hold a copy of the name Bramble & Bolt, three copies to change. Bottom: three parcels hold the ID M-17, all pointing at one merchants row, one place to change');}
+function figJoins(){let g='';
+  g+=T(2,12,'Many-to-one','font-size="11.2" font-weight="700" fill="var(--h1)"');
+  for(let i=0;i<5;i++){const y=22+i*22;g+=LN(42,y+8,96,62,'stroke:var(--h1);stroke-width:1.3')+R(6,y,36,16,4,'fill:var(--soft2);stroke:var(--line2)');}
+  g+=R(96,48,50,28,8,'fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5')+T(121,66,'M-17','font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--h1)"');
+  g+=T(166,12,'Many-to-many','font-size="11.2" font-weight="700" fill="var(--h4)"');
+  const py=[26,60,94],hy=[26,60,94],E=[[0,0],[0,1],[1,0],[1,2],[2,1],[2,2],[2,0]];
+  E.forEach(e=>{g+=LN(210,py[e[0]]+9,262,hy[e[1]]+9,'stroke:var(--h4);stroke-width:1.3');});
+  py.forEach((y,i)=>{g+=R(166,y,44,18,5,'fill:var(--soft2);stroke:var(--line2)')+T(188,y+13,'104'+(i+1),'font-size="11.2" text-anchor="middle" fill="var(--ink)"');});
+  hy.forEach((y,i)=>{g+=R(262,y,46,18,5,'fill:var(--h4-bg);stroke:var(--h4)')+T(285,y+13,'H-'+(i+1),'font-size="11.2" font-weight="700" text-anchor="middle" fill="var(--h4)"');});
+  g+=T(188,128,'parcels','font-size="11.2" text-anchor="middle" fill="var(--muted)"')+T(285,128,'hubs','font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+  g+=LN(2,140,310,140,'stroke:var(--line);stroke-width:1.2');
+  g+=R(2,150,104,24,8,'fill:var(--ok-bg)')+T(54,166,'Relational DB','font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--ok)"')+T(114,166,'joins inside the database: easy','font-size="11.5" fill="var(--ink)"');
+  g+=R(2,182,104,24,8,'fill:var(--h3-bg)')+T(54,198,'Document DB','font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--h3)"')+T(114,198,'weak joins: your code queries','font-size="11.5" fill="var(--ink)"')+T(114,212,'again and again','font-size="11.5" fill="var(--ink)"');
+  return FIG('0 0 312 218',g,'Many-to-one: five parcels point at one merchant M-17. Many-to-many: three parcels and three hubs with crossing links. Below: a relational database joins inside the database; a document database with weak joins makes your code run extra queries');}
+function figHistory(){let g='';
+  const c=(x,y,col)=>'<circle cx="'+x+'" cy="'+y+'" r="7" style="fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:1.5"/>';
+  [[27,50],[77,50]].forEach(p=>{g+=LN(52,20,p[0],p[1],'stroke:var(--h3);stroke-width:1.3');});
+  [[15,80,27],[39,80,27],[65,80,77],[89,80,77]].forEach(p=>{g+=LN(p[2],50,p[0],p[1],'stroke:var(--h3);stroke-width:1.3');});
+  g+=c(52,20,'h3')+c(27,50,'h3')+c(77,50,'h3')+c(15,80,'h3')+c(39,80,'h3')+c(65,80,'h3')+c(89,80,'h3');
+  const A=[130,22],B=[186,22],K=[[122,70],[158,70],[194,70]];
+  K.forEach((k,i)=>{g+=LN(A[0],A[1],k[0],k[1],'stroke:var(--h4);stroke-width:1.3')+(i>0?LN(B[0],B[1],k[0],k[1],'stroke:var(--h4);stroke-width:1.3'):'');});
+  g+='<path d="M130 22 L158 70 L194 70" style="fill:none;stroke:var(--pri);stroke-width:3;stroke-linecap:round;stroke-linejoin:round;opacity:.75"/>';
+  g+=c(A[0],A[1],'h4')+c(B[0],B[1],'h4')+K.map(k=>c(k[0],k[1],'h4')).join('')+T(186,96,'cursor path','font-size="11.2" text-anchor="middle" fill="var(--pri)"');
+  const tb=(x)=>{let s=R(x,10,42,74,6,'fill:var(--card);stroke:var(--pri);stroke-width:1.4')+R(x+1.5,11.5,39,11,4.5,'fill:var(--pri-bg)');for(let i=1;i<6;i++)s+=LN(x+3,12+i*12,x+39,12+i*12,'stroke:var(--line2);stroke-width:1');return s;};
+  g+=tb(216)+tb(266);
+  const lab=(cx,a,b,d,col)=>T(cx,116,a,'font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--'+col+')"')+T(cx,131,b,'font-size="11.2" text-anchor="middle" fill="var(--ink)"')+T(cx,145,d,'font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+  g+=lab(52,'Hierarchical','IMS · 1968','one parent each','h3')+lab(158,'Network','CODASYL','walk links by hand','h4')+lab(262,'Relational','Codd · 1970','just tables','pri');
+  g+=LN(2,154,310,154,'stroke:var(--line);stroke-width:1');
+  const pc=(cx,a,b,col)=>T(cx,171,a,'font-size="11.2" font-weight="600" text-anchor="middle" fill="var(--'+col+')"')+T(cx,185,b,'font-size="11.2" font-weight="600" text-anchor="middle" fill="var(--'+col+')"');
+  g+=pc(52,'great at trees','but no joins','no')+pc(158,'fast on 1970s tape','but hard to change','no')+pc(262,'optimizer picks','the path','ok');
+  return FIG('0 0 312 190',g,'Three models side by side. Hierarchical, IMS from 1968: a tree, one parent each, great at trees but no joins. Network, CODASYL: records with several parents and a cursor path walked by hand, fast on 1970s tape drives but hard to change. Relational, Codd 1970: just tables, and the query optimizer picks the path');}
+function figSpectrum(){let g='';
+  g+=T(80,12,'a tree, read whole','font-size="11.2" fill="var(--muted)"')+T(310,12,'highly connected','font-size="11.2" text-anchor="end" fill="var(--muted)"')+AR(80,22,308,22,'line2');
+  const rows=[['Document','h2',[['simplest','ok'],['joins in|your code','h3'],['awkward','no']]],['Relational','pri',[['shredding:|clumsy','h3'],['joins:|good','ok'],['acceptable','h3']]],['Graph','h4',[['','soft'],['','soft'],['most|natural','ok']]]];
+  rows.forEach((r,i)=>{const y=32+i*44;g+=T(2,y+22,r[0],'font-size="11.5" font-weight="700" fill="var(--'+r[1]+')"');
+    r[2].forEach((s,j)=>{const x=80+j*77;const bg=s[1]==='soft'?'soft2':s[1]+'-bg';g+=R(x,y,73,38,8,'fill:var(--'+bg+')');
+      const ls=s[0].split('|');ls.forEach((t,k)=>{g+=T(x+36.5,y+(ls.length===1?23:17+k*13),t,'font-size="11.2" font-weight="600" text-anchor="middle" fill="var(--'+(s[1]==='soft'?'muted':s[1])+')"');});});});
+  g+=T(155,143,'see next lesson','font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+  return FIG('0 0 312 166',g,'A spectrum from a tree read whole to highly connected data. Document: simplest, then joins in your code, then awkward. Relational: shredding is clumsy, joins are good, acceptable for highly connected. Graph: most natural for highly connected data');}
+function figNested(){let g='';
+  g+=T(2,13,'No direct link to a nested item','font-size="11.5" font-weight="700" fill="var(--ink)"');
+  const pill=(x,w,t,col,st)=>R(x,22,w,26,9,'fill:var(--'+col+'-bg);stroke:var(--'+col+');stroke-width:'+(st||1.3))+T(x+w/2,39.5,t,'font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--'+col+')"');
+  g+=pill(2,84,'OP-48213','pri')+AR(89,35,107,35,'line2')+pill(110,64,'scans','h2')+AR(177,35,195,35,'line2')+pill(198,84,'2nd scan','ok',2.2);
+  g+=T(2,68,'You spell out a path, like an old access path.','font-size="11.2" fill="var(--muted)"')+T(2,84,'Fine while documents stay shallow.','font-size="11.2" font-weight="600" fill="var(--ok)"');
+  return FIG('0 0 312 90',g,'A document cannot point straight at a nested item. To reach one scan you give a path: OP-48213, then scans, then the 2nd scan. That is fine while documents stay shallow');}
+function figConverge(){let g='';
+  g+=R(2,4,148,32,9,'fill:var(--pri-bg)')+T(76,25,'Relational','font-size="13" font-weight="700" text-anchor="middle" fill="var(--pri)"');
+  g+=R(162,4,148,32,9,'fill:var(--h2-bg)')+T(236,25,'Document','font-size="13" font-weight="700" text-anchor="middle" fill="var(--h2)"');
+  const ln=(x,y,t,b)=>T(x,y,t,'font-size="12" '+(b?'font-weight="600" fill="var(--ink)"':'fill="var(--muted)"'));
+  g+=ln(8,56,'+ XML (not MySQL)',1)+ln(8,73,'+ JSON columns',1)+ln(8,90,'PostgreSQL, MySQL, DB2');
+  g+=ln(168,56,'+ joins: RethinkDB',1)+ln(168,73,'+ MongoDB drivers',1)+ln(168,90,'follow refs (slower)');
+  g+='<path d="M76 100 C76 120 110 124 128 132" style="fill:none;stroke:var(--pri);stroke-width:2"/><path d="M236 100 C236 120 202 124 184 132" style="fill:none;stroke:var(--h2);stroke-width:2"/>';
+  g+=R(96,130,120,34,10,'fill:var(--ok-bg);stroke:var(--ok);stroke-width:1.6')+T(156,152,'a hybrid','font-size="13" font-weight="700" text-anchor="middle" fill="var(--ok)"');
+  g+=T(156,188,'Codd’s 1970 model already allowed nesting.','font-size="11.5" text-anchor="middle" fill="var(--muted)"');
+  return FIG('0 0 312 194',g,'Relational databases gained XML columns (most since the mid-2000s, not MySQL) and JSON columns (PostgreSQL 9.3, MySQL 5.7, DB2 10.5). Document databases gained joins: RethinkDB supports them, and MongoDB drivers follow references, more slowly. The two paths meet in a hybrid');}
+
+/* ---------- 1975 access-path walker ---------- */
+function Nav(L,host,onDone){
+  const P=[['1041',0],['1042',1],['1043',0],['1044',1],['1045',1],['1046',0]];
+  let mode=0,cur=-1,idx=false,walked=false,ranIdx=false,tok=0,fin=false;const vis=new Set();let lit=[],litIdx=false;
+  host.insertAdjacentHTML('beforeend','<div class="rd-row" id="nv-md"><button class="chip sel" data-m="0">1975: network</button><button class="chip" data-m="1">Relational</button></div>'+
+    '<div id="nv-q"></div><div class="rd-fig"><svg id="nv-svg" viewBox="0 0 312 200" role="img" aria-label="The parcels as linked records or as a table"></svg></div><div class="rd-row" id="nv-ctl"></div><div class="rd-out" id="nv-out" aria-live="polite"></div>');
+  const svg=L.$('#nv-svg');
+  function drawNet(){let g='';
+    const px=i=>4+i*52;
+    g+=R(4,6,128,28,8,'fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5')+T(68,24,'Bramble & Bolt','font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--h1)"')+T(144,18,'each record points','font-size="11.2" fill="var(--muted)"')+T(144,31,'to the next one','font-size="11.2" fill="var(--muted)"');
+    g+=AR(24,34,24,62,'h1');
+    P.forEach((p,i)=>{if(i<5)g+=AR(px(i)+42,79,px(i+1)-1,79,'h1');});
+    const hx=[64,206];
+    P.forEach((p,i)=>{g+=LN(hx[p[1]]+38,150,px(i)+21,96,'stroke:var(--h4);stroke-width:1.2;stroke-dasharray:4 3');});
+    P.forEach((p,i)=>{const v=vis.has(i),m=v&&p[1]===1;g+=R(px(i),64,42,32,7,'fill:var(--'+(m?'ok-bg':v?'soft2':'card')+');stroke:var(--'+(m?'ok':'line2')+');stroke-width:1.5')+T(px(i)+21,84,p[0],'font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--'+(m?'ok':'ink')+')"');
+      if(v)g+=T(px(i)+21,112,m?'✓':'–','font-size="12" font-weight="700" text-anchor="middle" fill="var(--'+(m?'ok':'muted')+')"');});
+    ['W. Central','W. North'].forEach((h,i)=>{g+=R(hx[i],150,76,28,8,'fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.5')+T(hx[i]+38,168,h,'font-size="11.5" font-weight="700" text-anchor="middle" fill="var(--h4)"');});
+    g+=T(156,196,'Hub links: each parcel has a second parent','font-size="11.2" text-anchor="middle" fill="var(--muted)"');
+    const cx=cur<0?[4,6,128,28]:[px(cur),64,42,32];
+    g+=R(cx[0]-4,cx[1]-4,cx[2]+8,cx[3]+8,10,'fill:none;stroke:var(--pri);stroke-width:3');
+    svg.setAttribute('viewBox','0 0 312 202');svg.innerHTML=g;}
+  function drawRel(){let g='';
+    g+=R(2,4,194,22+P.length*21,9,'fill:var(--card);stroke:var(--pri);stroke-width:1.5')+R(3.5,5.5,191,19,7.5,'fill:var(--pri-bg)');
+    g+=T(10,19,'code','font-size="11.2" font-weight="700" fill="var(--pri)"')+T(76,19,'merchant','font-size="11.2" font-weight="700" fill="var(--pri)"')+T(134,19,'hub','font-size="11.2" font-weight="700" fill="var(--pri)"');
+    P.forEach((p,i)=>{const y=26+i*21,on=lit.includes(i),m=on&&p[1]===1;
+      g+=(on?R(4,y+1,190,19,5,'fill:var(--'+(m?'ok':'pri')+'-bg)'):'')+T(10,y+15,'OP-'+p[0],'font-size="11.2" fill="var(--ink)"')+T(76,y+15,'M-17','font-size="11.2" fill="var(--ink)"')+T(134,y+15,p[1]?'W. North':'W. Central','font-size="11.2" fill="var(--'+(m?'ok':'ink')+')"'+(m?' font-weight="700"':''));});
+    if(idx){g+=R(206,4,104,112,9,'fill:var(--card);stroke:var(--h4);stroke-width:1.5')+R(207.5,5.5,101,19,7.5,'fill:var(--h4-bg)')+T(214,19,'index on hub','font-size="11.2" font-weight="700" fill="var(--h4)"');
+      [['W. Central','1041 1043 1046'],['W. North','1042 1044 1045']].forEach((e,i)=>{const y=32+i*40;g+=(litIdx&&i===1?R(209,y-4,98,36,6,'fill:var(--h4-bg)'):'')+T(214,y+10,e[0],'font-size="11.2" font-weight="700" fill="var(--h4)"')+T(214,y+25,e[1],'font-size="11.2" fill="var(--ink)"');});}
+    svg.setAttribute('viewBox','0 0 312 156');svg.innerHTML=g;}
+  function out(h){L.$('#nv-out').innerHTML=h;}
+  function check(){if(walked&&ranIdx&&!fin){fin=true;onDone();}}
+  function ui(){
+    L.$$('#nv-md .chip').forEach(b=>b.classList.toggle('sel',+b.dataset.m===mode));
+    L.$('#nv-q').innerHTML=mode?'<div class="rd-code"><span>parcels where merchant = M-17</span><span>and hub = W. North</span></div><p class="rd-hint" style="margin-top:-2px">You say <b>what</b> you want. The query optimizer picks the path.</p>':'';
+    const c=L.$('#nv-ctl');
+    if(!mode){c.innerHTML='<button class="btn pri" id="nv-next"'+(cur>=P.length-1?' disabled':'')+'>'+L.ic('arrow')+'Follow the next link</button>';
+      L.$('#nv-next').onclick=()=>{if(cur>=P.length-1)return;cur++;vis.add(cur);const p=P[cur];drawNet();
+        if(cur===P.length-1){walked=true;L.$('#nv-next').disabled=true;out('<b>7 records visited</b> to find 3 parcels. Your code had to know this path. If the path you need doesn’t exist, you change the access paths and rewrite the hand-written query code. Hand-picked paths squeezed speed out of slow 1970s tape drives, but made change hard.');check();}
+        else out('Record '+(cur+2)+' of 7: OP-'+p[0]+' → hub '+(p[1]?'W. North <b>✓ match</b>':'W. Central, not a match')+'. Keep following.');};
+      drawNet();if(cur<0)out('The cursor starts at the merchant record. In this model you reach data only by following links, one record at a time.');}
+    else{c.innerHTML='<button class="btn pri" id="nv-run">'+L.ic('play')+'Run the query</button><button class="btn" id="nv-idx"'+(idx?' disabled':'')+'>'+L.ic('list')+(idx?'Index added':'Add an index on hub')+'</button>';
+      L.$('#nv-run').onclick=async()=>{const my=++tok;lit=[];litIdx=false;drawRel();
+        if(!idx){for(let i=0;i<P.length;i++){lit.push(i);drawRel();await wait(90);if(my!==tok||!svg.isConnected)return;}
+          out('<b>6 rows read.</b> No index on hub yet, so the optimizer reads the whole table. Try adding an index, then run the same query again.');}
+        else{litIdx=true;drawRel();await wait(250);for(const i of [1,3,4]){lit.push(i);drawRel();await wait(140);if(my!==tok||!svg.isConnected)return;}
+          ranIdx=true;out('<b>3 rows read.</b> The optimizer spotted the new index and used it. The query text didn’t change at all.');check();}};
+      L.$('#nv-idx').onclick=()=>{if(idx)return;idx=true;tok++;lit=[];litIdx=false;L.$('#nv-idx').disabled=true;L.$('#nv-idx').innerHTML=L.ic('check')+'Index added';drawRel();out('An index on hub now exists. Your query stays exactly the same. Run it again.');};
+      drawRel();if(!lit.length&&!idx)out('Same parcels, laid out as one table. No links to follow.');}
+  }
+  L.$('#nv-md').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(!b)return;mode=+b.dataset.m;tok++;lit=[];litIdx=false;ui();});
+  ui();
+}
+
+/* ---------- postcode schema change player ---------- */
+function Schema(L,host,onDone){
+  const ROWS=[['OP-4801','14 Kiln Road','WP3 7QA'],['OP-4802','2 Mill Lane','WP1 4RT'],['OP-4803','9 Dock Road','WP2 8LN'],['OP-4804','31 Elm Street','WP3 2HX']];
+  let mode='w',mysql=false,tok=0;const done=new Set();
+  let st={col:false,fill:[],flash:-1,bar:-1,extra:false,derived:-1};
+  host.insertAdjacentHTML('beforeend','<p class="rd-hint" style="margin:0">Who checks the shape?</p><div class="rd-row" id="sc-md"><button class="chip sel" data-m="w">The database, on write</button><button class="chip" data-m="r">Your code, on read</button></div>'+
+    '<div class="rd-row" id="sc-my"></div><div class="rd-fig"><svg id="sc-svg" viewBox="0 0 312 170" role="img" aria-label="Four stored parcels and their postcode field"></svg></div>'+
+    '<div class="rd-code" id="sc-code"></div><div class="rd-row"><button class="btn pri" id="sc-go">'+L.ic('play')+'Add a postcode field</button></div><div class="rd-out" id="sc-out" aria-live="polite"></div>');
+  const svg=L.$('#sc-svg');
+  const CODE={w:[['ALTER TABLE parcels','  ADD COLUMN postcode;'],['UPDATE parcels','  SET postcode = …;  -- every row']],
+    r:[['// new parcels: postcode set on write'],['if (!p.postcode)  // older parcels'],['  p.postcode = lastPart(p.address);']]};
+  function draw(){let g='';const rows=ROWS.concat(st.extra?[['OP-4805','6 Quay Road','WP2 5DF']]:[]);
+    const hasHdr=mode==='w'?st.col:true;
+    g+=T(10,13,mode==='w'?'parcels table':'parcel documents','font-size="11.2" font-weight="700" fill="var(--pri)"');
+    if(hasHdr)g+=T(232,13,'postcode','font-size="11.2" font-weight="700" fill="var(--h3)"');
+    rows.forEach((r,i)=>{const y=20+i*29,fl=st.flash===i,nw=i===4;
+      g+=R(2,y,308,25,7,'fill:var(--'+(fl?'pri-bg':nw?'ok-bg':'card')+');stroke:var(--'+(fl?'pri':nw?'ok':'line2')+');stroke-width:1.3');
+      g+=T(10,y+16.5,r[0],'font-size="11.5" font-weight="700" fill="var(--ink)"')+T(66,y+16.5,r[1]+', '+r[2],'font-size="11.2" fill="var(--muted)"');
+      if(mode==='w'){if(st.col){g+=R(226,y+4,78,17,5,'fill:var(--'+(st.fill[i]?'h3-bg':'soft')+');stroke:var(--h3);stroke-width:1;stroke-dasharray:'+(st.fill[i]?'0':'3 2'))+T(265,y+16,st.fill[i]?r[2]:'empty','font-size="11.2" text-anchor="middle" fill="var(--'+(st.fill[i]?'h3':'muted')+')"'+(st.fill[i]?' font-weight="600"':''));}}
+      else{if(nw)g+=R(226,y+4,78,17,5,'fill:var(--h3-bg);stroke:var(--h3);stroke-width:1')+T(265,y+16,r[2],'font-size="11.2" text-anchor="middle" font-weight="600" fill="var(--h3)"');
+        else if(st.derived===i)g+=R(226,y+4,78,17,5,'fill:var(--card);stroke:var(--h3);stroke-width:1.2;stroke-dasharray:3 2')+T(265,y+16,r[2],'font-size="11.2" text-anchor="middle" font-style="italic" fill="var(--h3)"');
+        else g+=T(265,y+16,'no field','font-size="11.2" text-anchor="middle" fill="var(--muted)"');}});
+    let y=20+rows.length*29+4;
+    if(st.bar>=0){g+=R(2,y,308,10,5,'fill:var(--soft2)')+R(2,y,r1(308*st.bar),10,5,'fill:var(--no)')+T(156,y+24,'MySQL copies the whole table first','font-size="11.2" text-anchor="middle" fill="var(--no)"');y+=30;}
+    svg.setAttribute('viewBox','0 0 312 '+(y+2));svg.innerHTML=g;}
+  function code(on){L.$('#sc-code').innerHTML=CODE[mode].map((g,i)=>'<span'+(on===i?' class="on"':'')+'>'+g.map(l=>X(l).replace(/  /g,'&nbsp;&nbsp;')).join('<br>')+'</span>').join('');}
+  function out(h){L.$('#sc-out').innerHTML=h;}
+  function reset(){tok++;st={col:false,fill:[],flash:-1,bar:-1,extra:false,derived:-1};
+    L.$$('#sc-md .chip').forEach(b=>b.classList.toggle('sel',b.dataset.m===mode));
+    L.$('#sc-my').innerHTML=mode==='w'?'<button class="chip'+(mysql?' sel':'')+'" id="sc-myb" aria-pressed="'+mysql+'">Old MySQL engine: '+(mysql?'on':'off')+'</button>':'';
+    const mb=L.$('#sc-myb');if(mb)mb.onclick=()=>{mysql=!mysql;reset();};
+    L.$('#sc-go').disabled=false;draw();code(-1);
+    out(mode==='w'?'Schema-on-write: the database checks every write against the table’s columns. Adding a field means a migration.':'Schema-on-read: the database stores whatever it’s given. The reading code decides what the fields mean.');}
+  L.$('#sc-md').addEventListener('click',e=>{const b=e.target.closest('[data-m]');if(!b)return;mode=b.dataset.m;reset();});
+  L.$('#sc-go').onclick=async()=>{const my=++tok;const ok=()=>my===tok&&svg.isConnected;L.$('#sc-go').disabled=true;
+    if(mode==='w'){code(0);
+      if(mysql){for(let k=1;k<=10;k++){st.bar=k/10;draw();await wait(90);if(!ok())return;}}
+      st.col=true;st.bar=-1;draw();await wait(300);if(!ok())return;code(1);
+      for(let i=0;i<ROWS.length;i++){st.flash=i;st.fill[i]=true;draw();await wait(230);if(!ok())return;}
+      st.flash=-1;draw();code(-1);done.add(mysql?'wm':'w');
+      out((mysql?'<b>The ALTER copied the whole table</b>: minutes or even hours on a big one. ':'<b>The ALTER took milliseconds</b> on most databases. ')+'<b>The UPDATE rewrote every row</b>, which is slow on a big table. A middle path: skip the UPDATE, leave old rows empty and fill them in when read.');}
+    else{code(0);st.extra=true;draw();await wait(500);if(!ok())return;
+      code(1);st.flash=1;draw();await wait(350);if(!ok())return;code(2);st.derived=1;st.flash=-1;draw();await wait(200);if(!ok())return;done.add('r');
+      out('<b>Nothing was rewritten.</b> New parcels carry a postcode. When code reads an old one like OP-4802, it works the postcode out from the address on the spot.');}
+    if((done.has('w')||done.has('wm'))&&done.has('r'))onDone();};
+  reset();
+}
+
 Course.lesson({
   id:'0003', title:'Relational versus document models', minutes:20, icon:'layers',
-  goals:['Tell when data is a tree that fits one document, and when it needs joins','Explain why IDs and normalization beat copied text, and what history taught us','Choose between schema-on-read and schema-on-write for a real change'],
-  parts:['Why models','Documents','Links','Today'],
+  goals:['Tell when data is a tree that fits one document, and when its links need IDs and joins','Explain why storing IDs beats copying names, and how the 1970s fought the same fight','Choose between schema-on-read and schema-on-write, and know when a document’s locality pays off'],
+  parts:['Layers','Trees','Links','Today'],
   read:'Read the first half of chapter 2 of the book for the LinkedIn résumé example and the full history of IMS and CODASYL.',
   glossary:{
     'data-model':'Data model: the general shape you give your data so a database can store it, such as tables (relational), nested documents, or a graph.',
@@ -33,59 +464,65 @@ Course.lesson({
     'access-path':'Access path: in old network (CODASYL) databases, the chain of links a program had to follow by hand to reach a record.',
     'schema-on-read':'Schema-on-read: the database doesn’t enforce a structure. The code that reads the data assumes one and interprets it at read time.',
     'schema-on-write':'Schema-on-write: the schema is explicit, and the database checks that every write fits it (the traditional relational approach).',
-    'locality':'Locality: data that is read together is stored together, so one read fetches it all.'
+    'locality':'Locality: data that is read together is stored together, so one read fetches it all.',
+    'shredding':'Shredding: splitting a tree-shaped record into several tables, such as a parcels table and a scans table.'
   },
   cheatsheet:[
-    'A <b>data model</b> is a layer: each one hides the messy layer below it. It shapes which tasks are easy and which are awkward.',
-    '<b>Document</b> = a tree of one-to-many items loaded together: one read, good locality, no shredding into tables.',
-    'Store <b>IDs, not copied text</b>, for things many records share. That is normalization: one place to change, no stale copies.',
-    'Many-to-one and many-to-many links need <b>joins</b>. Document databases handle them poorly, so the work moves into your code.',
-    'History repeats: IMS was a tree, CODASYL made you follow <b>access paths</b> by hand, and the relational <b>query optimizer</b> won.',
-    '<b>Schema-on-read</b> (implicit, checked by the reader) suits varied data from outside. <b>Schema-on-write</b> documents and enforces a shared shape.',
-    'Locality only pays when you need most of the document. Keep documents small; avoid writes that grow them.',
-    'The two models are converging: JSON columns in relational databases, joins in some document databases.'
+    'A <b>data model</b> is a layer that hides the one below it. It decides which jobs feel natural and which feel awkward.',
+    'One-to-many items with one parent each form a <b>tree</b>. A document stores the tree whole: one read, good <b>locality</b>.',
+    'Refer to <b>shared</b> things by <b>ID</b>. Copy them instead and every rename must find every copy, or some go stale (that’s why we normalize).',
+    'Many-to-one and many-to-many links need <b>joins</b>. Document databases had weak joins, so the work moved into app code.',
+    'Rule of thumb: <b>embed</b> what one record owns; <b>refer by ID</b> to what many records share.',
+    'History: IMS stored trees, CODASYL made programmers walk <b>access paths</b> by hand, and the relational <b>query optimizer</b> won.',
+    '<b>Schema-on-read</b> (your code interprets on read) suits varied or outside-controlled data. <b>Schema-on-write</b> (the database checks every write) documents and protects a shared shape.',
+    'Locality only pays when you need most of the document: keep documents small. The two models are converging (JSON columns, joins in document databases).'
   ],
   steps:[
-/* ---------- PART 1: WHY MODELS ---------- */
+/* ---------- PART 1: LAYERS ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tobias wants to store each Otterpost parcel as one big JSON blob instead of rows in the Parcel DB. Femi says, “It’s just storage, it won’t change anything.” Is Femi right?</h1>');
-  L.mc(L.card,['Yes, the shape is a detail nobody above it sees','No, the shape makes some jobs easy and others hard'],1,
-   'The way you shape data decides which questions are easy to ask and how much work lands in your own code. That is what this lesson is about.',
-   'The book argues the opposite: the shape of your data changes how the software is written and even how you think about the problem.');}},
-{part:0,src:'Chapter 2 · Data Models and Query Languages',run(L){
-  L.h(L.kick('learn','Data models come in layers')+'<h1 class="q">Every layer hides the one below it</h1>'+
-   L.quote('The limits of my language mean the limits of my world.','Ludwig Wittgenstein, quoted at the start of chapter 2')+
-   L.prose('A '+L.g('data-model','data model')+' is the shape you give your data. The book calls it perhaps the most important part of building software. Most apps stack one model on another:')+
-   L.tiers([['box','The real world','Parcels, couriers, hubs, merchants, money.','what Otterpost deals with'],
-            ['pencil','Objects in code','A <i>Parcel</i> object in the courier app, with a list of scans.','chosen by app developers'],
-            ['layers','A general-purpose model','Tables in the Parcel DB, or JSON documents, or a graph.','what this chapter compares',true,'Chapter 2'],
-            ['list','Bytes','How the database lays those tables out in memory and on disk.','chosen by database engineers'],
-            ['flame','Signals','Electric current, light pulses, magnetic fields.','chosen by hardware engineers']])+
-   '<p class="small" style="margin-top:10px">Each model assumes how it will be used: some jobs feel natural, others are awkward or slow.</p>');
-  L.done();}},
-{part:0,src:'Chapter 2 · Data Models and Query Languages',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The database vendor rewrites how the Parcel DB lays out bytes on disk. What must Otterpost’s app code change?</h1>');
-  L.mc(L.card,['Nothing, since the tables it uses look the same','Its queries, to fit the new byte layout','Its objects, to match the new disk format'],0,
-   'The table model hides the byte layout below it. That clean boundary lets the vendor’s engineers and Otterpost’s developers work without tripping over each other.',
-   'The app talks to tables, not bytes. Each layer hides the one below, so a new byte layout leaves the app untouched.');}},
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Tobias wants to store each Otterpost parcel as one JSON document instead of rows in the Parcel DB. Femi shrugs: “It’s only storage. Nothing else changes.” Is Femi right?</h1>');
+  L.mc(L.card,['Yes: storage is a detail the app never feels','No: the shape makes some jobs easy, others hard'],1,
+   'The shape you give your data decides which questions are easy and how much work lands in your own code. That’s this whole lesson.',
+   'The book argues the opposite: the data model shapes how the software is written, and even how you think about the problem.');}},
+
+{part:0,src:'Chapter 2 · Data Models and Query Languages',
+ solve:async L=>{for(let k=0;k<4;k++){L.$('#ly-go').click();await L.sleep(20);}},
+ run(L){
+  const C=['The real world: a parcel for Mrs. Okoro. Everything below is hidden from it. Lift the lid to see how each layer is built.',
+   'Otterpost’s developers model the world as <b>objects in code</b>: a Parcel with a list of scans. These are specific to the app.',
+   'To store those objects, they’re expressed in a <b>general-purpose '+L.g('data-model','data model')+'</b>: tables, JSON documents or a graph. This chapter compares them.',
+   'The database’s own engineers decided how tables or documents become <b>bytes</b> in memory, on disk and on the network.',
+   'Hardware engineers turn bytes into current, light pulses or magnetic fields. <b>Each layer hides the one below behind a clean model.</b>'];
+  let cur=0;
+  L.h(CSS+L.kick('learn','Data models come in layers')+'<h1 class="q">Follow parcel OP-48213 down through the layers</h1><div id="ly"></div><p class="rd-cap" id="ly-c"></p><div class="rd-row"><button class="btn pri" id="ly-go">'+L.ic('down')+'Lift the lid: one layer down</button></div>');
+  const draw=()=>{L.$('#ly').innerHTML=LAY.map((l,j)=>slab(L,j,j<cur?'':j===cur?'cur':'hid')).join('');L.$('#ly-c').innerHTML=C[cur];};
+  draw();
+  L.$('#ly-go').onclick=()=>{if(cur>=4)return;cur++;draw();
+    if(cur===4){L.$('#ly-go').disabled=true;L.sheet('info','Why layers matter','The clean boundary between layers lets the database vendor’s engineers and Otterpost’s developers each do their job. But every model carries assumptions: some jobs feel natural in it, others awkward or slow. So the choice of model matters.');L.done();}};
+ }},
+
+{part:0,src:'Chapter 2 · Data Models and Query Languages',pts:1,
+ solve:async L=>{L.$('#lt [data-l="3"]').click();L.$('#lt-chk').click();},
+ run(L){
+  const sel=new Set();let tried=false;
+  L.h(CSS+L.kick('try','Check your understanding')+'<h1 class="q">The database vendor changes how the Parcel DB lays out bytes on disk. Tap each layer that changes (it may be just one).</h1><div id="lt"></div><div class="rd-row"><button class="btn pri" id="lt-chk">'+L.ic('check')+'Check</button></div>');
+  L.$('#lt').innerHTML=LAY.map((l,j)=>slab(L,j,'','button')).join('');
+  L.$$('#lt [data-l]').forEach(b=>b.onclick=()=>{if(tried)return;const j=+b.dataset.l;sel.has(j)?sel.delete(j):sel.add(j);b.classList.toggle('sel',sel.has(j));b.setAttribute('aria-pressed',sel.has(j));});
+  L.$('#lt-chk').onclick=()=>{if(tried)return;if(!sel.size){L.err('Tap at least one layer first');return;}tried=true;const ok=sel.size===1&&sel.has(3);
+    L.$$('#lt [data-l]').forEach(b=>{const j=+b.dataset.l;b.classList.remove('sel');if(j===3)b.classList.add('ok');else if(sel.has(j))b.classList.add('no');});
+    L.award(ok);L.sheet(ok?'ok':'no',ok?'Only the bytes layer':'Only the bytes layer changes','The tables Otterpost’s code talks to look exactly the same, so the app, its objects and the real world are untouched. The layer below hides the change. That clean boundary is the point of layering.');L.done();};
+ }},
+
 {part:0,src:'Chapter 2 · Relational Model Versus Document Model',run(L){
-  L.h(L.kick('learn','A short history')+'<h1 class="q">The relational model has outlasted every rival so far</h1>'+
-   L.prose('In 1970 Edgar Codd proposed the <b>relational model</b>: data sits in <i>relations</i> (tables in SQL), and each relation is an unordered collection of <i>tuples</i> (rows). Many doubted it could run fast. By the mid-1980s it was the default, and it stayed on top for 25 to 30 years.')+
-   L.prose('It grew out of business data processing on 1960s and 70s mainframes: <b>transaction processing</b> (sales, bank transfers, airline bookings, warehouse stock) and <b>batch processing</b> (invoices, payroll, reports). Its goal was to hide how data is stored inside a cleaner interface.')+
-   L.list([['Network and hierarchical models','The main rivals in the 1970s and early 80s.'],
-           ['Object databases','Came and went in the late 80s and early 90s.'],
-           ['XML databases','Early 2000s, niche use only.']],3)+
-   '<p class="small" style="margin-top:10px">Each rival came with hype, and none lasted. Relational databases spread far beyond business data, to much of the web.</p>');
+  L.h(CSS+L.kick('learn','A short history')+'<h1 class="q">The relational model has outlasted every rival so far</h1>'+figTimeline()+
+   CAP('Edgar Codd proposed tables of rows in 1970, rooted in business data: sales, bookings, stock, payroll. By the mid-1980s it was the default. Every rival arrived with hype and faded, and relational spread to much of the web.'));
   L.done();}},
+
 {part:0,src:'Chapter 2 · The Birth of NoSQL',run(L){
-  L.h(L.kick('learn','The birth of NoSQL')+'<h1 class="q">A Twitter hashtag that stuck</h1>'+
-   L.prose('“NoSQL” names no technology. It was a catchy hashtag for a 2009 meetup about open source, distributed, nonrelational databases, later reread as <i>Not Only SQL</i>. The book lists four forces behind it:')+
-   L.list([['trend','Scale','Very large datasets or very high write throughput, beyond what relational databases easily handle.'],
-           ['people','Open source','A wide preference for free, open source software over commercial databases.'],
-           ['compass','Special queries','Query operations the relational model doesn’t support well.'],
-           ['cycle','Schema freedom','Frustration with strict relational schemas; a wish for a more dynamic, expressive model.']],2)+
-   L.note('Different jobs need different tools, so relational databases will likely keep running <b>alongside</b> nonrelational stores. That mix is called '+L.g('polyglot','polyglot persistence')+'.','layers'));
+  L.h(CSS+L.kick('learn','The birth of NoSQL')+'<h1 class="q">#NoSQL: a hashtag, not a technology</h1>'+figNoSQL()+
+   CAP('NoSQL began as the hashtag for a 2009 meetup, later reread as “Not Only SQL”. Four forces drove it. Different jobs suit different stores, so relational databases keep running beside others: '+L.g('polyglot','polyglot persistence')+'.'));
   L.done();}},
+
 {part:0,src:'Chapter 2 · The Birth of NoSQL',pts:4,run(L){
   L.h(L.kick('pr','Which force is talking?')+'<h1 class="q">Four Otterpost engineers grumble about the Parcel DB. Match each grumble to the force behind it.</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Scale','Open source','Special queries','Schema freedom'],[
@@ -95,29 +532,38 @@ Course.lesson({
    ['Tobias: “Every new field a merchant sends needs a schema change first.”',3,'That is frustration with restrictive schemas.']],
    'Different needs pull toward different stores. Otterpost already runs a cache and a search index beside the Parcel DB: polyglot persistence.');}},
 
-/* ---------- PART 2: DOCUMENTS ---------- */
+/* ---------- PART 2: TREES ---------- */
 {part:1,src:'Chapter 2 · The Object-Relational Mismatch',run(L){
-  L.h(L.kick('learn','The object-relational mismatch')+'<h1 class="q">Objects in code, rows in tables: something has to translate</h1>'+
-   L.prose('Most app code works with objects. If the data lives in tables, rows and columns, you need an awkward translation layer between the two. That gap is called the '+L.g('impedance','impedance mismatch')+', a term borrowed from electronics. ORM tools (object-relational mappers) cut the boilerplate, but they can’t hide the difference fully.')+
-   L.prose('The book’s example is a résumé on a LinkedIn profile: one person, but <b>many</b> jobs, many schools and many contact details. That is a '+L.g('one-to-many','one-to-many')+' relationship. There are three ways to store it in SQL:')+
-   L.list([['Separate tables','Jobs, education and contacts each get a table that points back to the user. The classic, normalized way.'],
-           ['A structured column','Newer SQL versions allow XML or JSON inside one row, and can query and index inside it.'],
-           ['JSON as plain text','Put the JSON in a text column and let the app read it. The database can’t look inside.']],1));
+  L.h(CSS+L.kick('learn','The object-relational mismatch')+'<h1 class="q">Objects in code, rows in tables: something must translate</h1>'+figMismatch()+
+   CAP('App code works with objects; the Parcel DB stores rows. That gap is the '+L.g('impedance','impedance mismatch')+', a term borrowed from electronics. ORM tools (object-relational mappers) cut the boilerplate but can’t fully hide it.'));
   L.done();}},
+
 {part:1,src:'Chapter 2 · The Object-Relational Mismatch',run(L){
-  L.h(L.kick('ex','Otterpost’s parcel, two ways')+'<h1 class="q">What does it take to draw Mrs. Okoro’s tracking page?</h1>');
-  L.beats(L.card,[
-   ['The parcel','Parcel OP-48213 is going to Mrs. Okoro. Some facts appear <b>once</b>: tracking code, recipient, address, size.'],
-   ['The lists','Other facts come in lists: about 6 <b>scan events</b> (picked up, at hub, out for delivery…) and any <b>delivery attempts</b>. Each belongs to this one parcel.'],
-   ['As tables','The Parcel DB keeps a <i>parcels</i> table, a <i>scans</i> table and an <i>attempts</i> table, each row tagged with the parcel’s ID. To draw the page: three queries, or one messy multi-table join.'],
-   ['As a document','Store one JSON document for the parcel with the scans and attempts nested inside it. To draw the page: <b>one</b> query. Everything sits in one place.'],
-   ['The shape','Parcel at the top, lists hanging below, each item with one parent: a <b>tree</b>. The document makes that tree explicit.']],
-   'One-to-many data forms a tree. A document stores the tree in one place, which gives it better '+L.g('locality','locality')+' than spreading it over several tables.');}},
+  L.h(CSS+L.kick('learn','One-to-many makes a tree')+'<h1 class="q">A résumé and a parcel have the same shape</h1>'+figTrees()+
+   CAP('One person has many jobs and schools: '+L.g('one-to-many','one-to-many')+'. Mrs. Okoro’s parcel is the same: many scans, one parcel. A JSON '+L.g('document-model','document')+' stores the whole tree in one place.'));
+  L.done();}},
+
+{part:1,src:'Chapter 2 · The Object-Relational Mismatch',
+ solve:async L=>{L.$('#e9-op-draw').click();await L.sleep(400);L.$('#e9-sw [data-k="s"]').click();await L.sleep(40);L.$('#e9-op-draw').click();},
+ run(L){
+  const seen=new Set();let fin=false,M=null;
+  L.h(CSS+L.kick('ex','Try it live')+'<h1 class="q">Draw Mrs. Okoro’s tracking page. Then move the scans into their own table and draw it again.</h1><div id="e9"></div>');
+  M=Morph(L,L.$('#e9'),{id:'e9',sw:['s'],ops:['draw'],tiles:['read','scan'],hint:'Tap the <b>Scans</b> switch, or the green scan list, to move it out and back.',
+    on:e=>{if(e!=='draw')return;seen.add(M.S.s);if(seen.size===2&&!fin){fin=true;
+      L.sheet('info','That’s locality','In the document, the whole tree sits in one place, so one read fetches it. Split into tables, the page needs a query per table or a messy multi-table join. The trade: adding a scan now rewrites the whole document, while a table just gets one more row.');L.done();}}});
+ }},
+
+{part:1,src:'Chapter 2 · The Object-Relational Mismatch',run(L){
+  L.h(CSS+L.kick('learn','Lists inside a relational database')+'<h1 class="q">Three ways to keep a parcel’s scans in SQL</h1>'+figWays()+
+   CAP('The first is the classic, normalized design. The second came with later SQL standards; PostgreSQL, MySQL and DB2 support a JSON type. The third hides the data from the database.'));
+  L.done();}},
+
 {part:1,src:'Chapter 2 · The Object-Relational Mismatch',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias saves each parcel’s scans as JSON in a plain <i>text</i> column. Signe’s support team asks the database: “Which parcels got a ‘damaged’ scan this week?” What happens?</h1>');
   L.mc(L.card,['The database answers quickly using its JSON index','The database can’t look inside; code must parse each one','The database rejects the text until it has a schema'],1,
-   'To the database, that column is just a string. Only the app knows it is JSON, so the database can’t query or index what’s inside.',
+   'To the database, that column is just a string. Only the app knows it’s JSON, so the database can’t query or index what’s inside.',
    'A plain text column is opaque. A real JSON or XML column type could be queried and indexed, but plain text can’t be. The app must read and parse every parcel.');}},
+
 {part:1,src:'Chapter 2 · The Object-Relational Mismatch',pts:1,run(L){
   L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence explains why Tobias’s parcel document works well.</h1>');
   L.sentence(L.card,[['Each scan belongs to many parcels,','Each scan belongs to one parcel,'],['so the data forms a tree','so the data forms a web'],['that needs a join to read','that fits inside one document'],['and loads in many reads.','and loads in one read.']],[1,0,1,1],
@@ -126,82 +572,108 @@ Course.lesson({
 
 /* ---------- PART 3: LINKS ---------- */
 {part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',run(L){
-  L.h(L.kick('learn','IDs versus copied text')+'<h1 class="q">Why does a parcel store <i>M-17</i> instead of “Bramble & Bolt”?</h1>'+
-   L.prose('In the book’s résumé, the region and the industry are stored as IDs, not as text. Picking from a fixed list instead of typing free text gives you:')+
-   L.list([['check','Consistency','Same spelling and style everywhere.'],['eye','No ambiguity','Two towns with the same name stay apart.'],['pencil','Easy updates','The name lives in one place, so one change fixes it everywhere.'],['chat','Translation','The list can be shown in each viewer’s language.'],['compass','Better search','The list can know that a zone lies inside a region, which free text can’t tell you.']],2)+
-   L.prose('An ID means nothing to humans, so it never needs to change. Anything meaningful to humans might change one day, and every copy would need updating. Removing those copies is the core of '+L.g('normalization','normalization')+'.'));
+  L.h(CSS+L.kick('learn','IDs versus copied text')+'<h1 class="q">Why does a parcel store M-17 instead of “Bramble & Bolt”?</h1>'+figIDs()+
+   '<div class="rd-ben"><span>Same spelling</span><span>No mix-ups</span><span>Change once</span><span>Easy to translate</span><span>Smarter search</span></div>'+
+   CAP('An ID means nothing to people, so it never needs to change. The name people read can change, so keep it in one place. Removing copies like this is '+L.g('normalization','normalization')+'.'));
   L.done();}},
+
 {part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',pts:1,
- solve:async L=>{L.$('#pp').children[0].click();L.$('#rn').click();},
+ solve:async L=>{L.$('#p14c').children[0].click();},
  run(L){
-  let p=null;const P=['OP-1041','OP-1042','OP-1043','OP-1044','OP-1045','OP-1046'];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt renames itself “Bramble & Bolt Home.” In which design can the rename leave some parcels showing the old name?</h1><div id="pp"></div>'+
-   '<div id="sim" hidden>'+L.lanes([['list','Name copied into each parcel','<div id="ra"></div>',3],['lock','Parcel stores merchant ID','<div class="small" id="mt" style="margin-bottom:6px">merchants: M-17 = Bramble & Bolt</div><div id="rb"></div>',2]])+
-   '<button class="btn pri" id="rn" style="margin-top:12px">'+L.ic('play')+'Rename the merchant</button><div id="rr"></div></div>');
-  const row=(c,t,col)=>'<div style="font-size:13.5px;padding:3px 0;'+(col?'color:'+col:'')+'">'+c+' · '+t+'</div>';
-  const drawA=n=>{L.$('#ra').innerHTML=P.map((c,j)=>row(c,j<n?'Bramble & Bolt Home':'Bramble & Bolt',j<n?'var(--ok)':'')).join('');};
-  const drawB=nw=>{L.$('#rb').innerHTML=P.map(c=>row(c,'M-17'+(nw?' → Home':''),nw?'var(--ok)':'')).join('');};
-  drawA(0);drawB(false);
-  ['Copied name','Merchant ID','Neither'].forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sim').hidden=false;};L.$('#pp').appendChild(b);});
-  L.$('#rn').onclick=function(){this.remove();L.$('#mt').innerHTML='merchants: M-17 = <b style="color:var(--ok)">Bramble & Bolt Home</b>';drawB(true);let n=0;
-    const t=setInterval(()=>{if(!L.$('#ra')){clearInterval(t);return;}n++;drawA(n);
-      if(n>=4){clearInterval(t);L.$('#ra').innerHTML=P.map((c,j)=>row(c,j<4?'Bramble & Bolt Home':'Bramble & Bolt  ✗ stale',j<4?'var(--ok)':'var(--no)')).join('');
-        L.fb(L.$('#rr'),'<b>The update job crashed after four rows.</b> With copies, two parcels still show the old name. With the ID, one row changed and every parcel reads the new name through it.','info');
-        L.award(p===0);
-        L.sheet(p===0?'ok':'no',p===0?'You called it!':'Copies are the risk','Every copy of a human-meaningful name must be rewritten when it changes. That costs extra writes and can leave some copies stale. With an ID the name lives in one place. The price: reading a parcel now needs a lookup, a '+L.g('join','join')+', to fetch the name.');L.done();}},300);};}},
+  let p=null;
+  L.h(CSS+L.kick('pr','Predict, then watch')+'<h1 class="q">Bramble & Bolt renames itself “Bramble & Bolt Home”. In which design can some parcels keep the old name?</h1><div class="rd-row" id="p14c"></div><div id="p14"></div>');
+  const M=Morph(L,L.$('#p14'),{id:'m14',fleet:true,tiles:['ren']});
+  M.out('Pick a prediction. Then watch the rename run in both designs.');
+  const play=async()=>{
+    M.out('<b>Design 1:</b> the name is copied into every parcel. The update job starts…');
+    await M.run.ren();await wait(600);if(!L.$('#p14'))return;
+    M.set({m:0},new Set(['m']));M.out('<b>Design 2:</b> the merchant moves into its own table; parcels keep only M-17.');await wait(500);if(!L.$('#p14'))return;
+    await M.run.ren();if(!L.$('#p14'))return;
+    L.award(p===0);
+    L.sheet(p===0?'ok':'no',p===0?'You called it!':'Copies are the risk','Every copy of a name people read must be rewritten when it changes. That costs extra writes, and a missed copy goes stale. With an ID the name lives in one row. The price: reading a parcel needs a lookup, a '+L.g('join','join')+', to fetch the name.');L.done();};
+  ['Name copied into every parcel','Parcel stores the ID M-17','Neither: the database syncs copies'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$$('#p14c .chip').forEach(x=>{x.disabled=true;});play();};L.$('#p14c').appendChild(b);});
+ }},
+
 {part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',run(L){
-  L.h(L.kick('learn','Where documents struggle')+'<h1 class="q">Shared things need joins, and documents are bad at joins</h1>'+
-   L.prose('Normalizing creates '+L.g('many-to-one','many-to-one')+' links: many parcels point at one merchant, many profiles at one region. Relational databases handle these with joins easily. Many document databases, at the time the book was written, had weak join support or none.')+
-   L.prose('With no joins in the database, you fake them in the app with extra queries. That works, but the join work has moved from the database into your code.')+
-   L.note('Data also tends to get <b>more connected</b> as features are added. In the book’s résumé, companies and schools become pages of their own, and a recommendation must show the writer’s <i>current</i> photo. Both need references to other records, and references need joins.','alert'));
+  L.h(CSS+L.kick('learn','Where documents struggle')+'<h1 class="q">Shared things need joins, and documents are bad at joins</h1>'+figJoins()+
+   CAP('Many parcels point at one merchant: '+L.g('many-to-one','many-to-one')+'. Parcels and hubs: '+L.g('many-to-many','many-to-many')+'. When the book was written, many document databases had weak joins, so the join work moved into app code.'));
   L.done();}},
-{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',run(L){
-  L.h(L.kick('ex','The parcel document grows links')+'<h1 class="q">Tobias’s neat parcel document meets new features</h1>');
-  L.beats(L.card,[
-   ['Version 1','A parcel document with its scans nested inside. A clean tree. One read per tracking page.'],
-   ['Feature: hub pages','Each hub gets its own page with address and opening hours. Scans now need to <b>point</b> at a hub, and a hub is shared by thousands of parcels.'],
-   ['Feature: merchant stats','Bramble & Bolt’s dashboard needs “all our parcels this week.” Each parcel must point at its merchant.'],
-   ['Feature: courier photo','The tracking page shows the courier’s name and current photo. If a courier changes their photo, every parcel must show the new one. So the parcel must point at the courier’s profile.'],
-   ['The result','A parcel passes through several hubs, and each hub handles many parcels. These are '+L.g('many-to-many','many-to-many')+' links. Each one is a reference that needs a join or a follow-up query.']],
-   'Version 1 fit a document perfectly. Features added links that leave the tree, and every link needs a join.');}},
-{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias instead <i>copies</i> the courier’s name and photo into each parcel document. Ravi, a courier, changes their photo. What happens?</h1>');
-  L.mc(L.card,['Every parcel updates itself, since documents link up','The database blocks the change until all copies match','Old parcels show the old photo unless code fixes each copy'],2,
-   'Copying (denormalizing) makes reads simple but puts the job of keeping every copy in step on your code.',
-   'Copies don’t know about each other. The database won’t sync them for you. Your code must find and rewrite every copy, or the old photo stays.');}},
+
+{part:2,src:'Chapter 2 · Many-to-One and Many-to-Many Relationships',
+ solve:async L=>{for(const k of ['h','m','c']){L.$('#f16 [data-f="'+k+'"]').click();await L.sleep(60);}},
+ run(L){
+  const F=[['h','map','Hub pages','Each hub gets its own page with opening hours. Scans now point at hubs, which thousands of parcels share.'],
+           ['m','star','Merchant logo','The tracking page shows the merchant’s current logo, so the parcel must point at the merchant’s record.'],
+           ['c','person','Courier’s current photo','When Ravi changes their photo, every page must show the new one. The parcel points at Ravi’s profile.']];
+  const got=new Set();
+  L.h(CSS+L.kick('ex','The document grows links')+'<h1 class="q">Tobias’s neat parcel document meets three new features</h1><div class="rd-row" id="f16">'+F.map(f=>'<button class="btn" data-f="'+f[0]+'">'+L.ic(f[1])+f[2]+'</button>').join('')+'</div><div id="m16"></div>');
+  const M=Morph(L,L.$('#m16'),{id:'m16',tiles:['read','ren','pho']});
+  M.out('Version 1 is a clean tree: one read per tracking page. Add each feature above and watch the tree.');
+  L.$$('#f16 [data-f]').forEach(b=>b.onclick=()=>{const k=b.dataset.f;if(got.has(k))return;got.add(k);b.disabled=true;b.classList.add('pri');
+    const f=F.find(x=>x[0]===k);M.set({[k]:0},new Set([k]));M.out('<b>'+f[2]+'.</b> '+f[3]);
+    if(got.size===3){L.sheet('info','Data gets more connected','Version 1 fit a document perfectly. Each feature added a link that leaves the tree, and each link needs a join or a follow-up query. The book’s résumé grows the same way: companies and schools become pages of their own, and a recommendation shows its writer’s current photo.');L.done();}});
+ }},
+
+{part:2,src:'Chapter 2 · Data locality for queries',
+ solve:async L=>{const b=L.$$('#lab-pr .chip');for(const j of [0,1,4,5]){b[j].click();await L.sleep(40);}},
+ run(L){
+  const PR=[['One tracking page',{s:1,m:1,c:1,h:1,kb:2},'draw','Documents at their best: everything together, one read.'],
+   ['Merchant renames',{s:1,m:1,c:0,h:0,kb:2},'ren','Copied names must all be rewritten, and some can be missed.'],
+   ['Ravi’s new photo',{s:1,m:0,c:1,h:0,kb:2},'pho','Copied photos don’t update themselves; your code must find every one.'],
+   ['Parcels and hubs',{s:1,m:1,c:1,h:0,kb:2},'draw','Many-to-many: each hub is a reference. With no joins in the database, your code runs the extra lookups itself.'],
+   ['A 20 KB document',{s:1,m:0,c:0,h:0,kb:20},'scan','A tiny scan forces a big rewrite. Keep documents small and avoid writes that grow them.'],
+   ['Read only the status',{s:1,m:0,c:0,h:0,kb:20},'stat','Locality only pays when you need most of the document at once.']];
+  const tried=new Set();let fin=false;
+  L.h(CSS+L.kick('ex','Edge-case lab')+'<h1 class="q">Push the parcel document to its limits</h1><p class="rd-hint">Tap a case. Try at least four. You can also flip the switches yourself.</p><div class="rd-row" id="lab-pr">'+PR.map((p,j)=>'<button class="chip" data-j="'+j+'">'+p[0]+'</button>').join('')+'</div><div id="lab"></div>');
+  const M=Morph(L,L.$('#lab'),{id:'lab',sw:['s','m','c','h'],fleet:true,tiles:['read','ren','pho','scan']});
+  L.$$('#lab-pr .chip').forEach(b=>b.onclick=async()=>{const j=+b.dataset.j,pr=PR[j];tried.add(j);L.$$('#lab-pr .chip').forEach(x=>x.classList.toggle('sel',x===b));
+    M.set(pr[1]);M.out('<b>'+pr[0]+'.</b> '+pr[3]);const fin1=await M.run[pr[2]]();
+    const o=L.$('#lab-out');if(fin1&&o)o.innerHTML='<b>'+pr[0]+'.</b> '+pr[3]+'<br><span class="small">'+o.innerHTML+'</span>';
+    if(tried.size>=4&&!fin){fin=true;L.sheet('info','Where documents win and lose','They win when you read the whole tree at once. They lose on shared things and on big, growing documents. Locality isn’t only for documents: Google’s Spanner, Oracle and Bigtable-style column families can also keep related rows together.');L.done();}});
+ }},
+
+{part:2,src:'Chapter 2 · Relational Versus Document Databases Today',pts:1,
+ solve:async L=>{for(const k of ['s','m','h']){L.$('#c18-sw [data-k="'+k+'"]').click();await L.sleep(20);}L.$('#c18chk').click();},
+ run(L){
+  let tries=0;
+  L.h(CSS+L.kick('pr','Challenge')+'<h1 class="q">Femi’s rules: nothing shared is copied into a parcel, and the tracking page reads as few places as possible.</h1><div id="c18"></div><div class="rd-row"><button class="btn pri" id="c18chk">'+L.ic('check')+'Check my design</button></div>');
+  const M=Morph(L,L.$('#c18'),{id:'c18',sw:['s','m','c','h'],ops:['draw'],tiles:['read','ren','pho','hub'],st:{s:0,m:1,c:0,h:1},hint:'Set each piece inside the document or in its own table, then check.'});
+  L.$('#c18chk').onclick=()=>{const S=M.S;const sh=['m','c','h'].filter(k=>S[k]);const ok=!!S.s&&!sh.length;tries++;
+    if(tries===1)L.award(ok);
+    if(ok)L.sheet('ok',tries===1?'Rules met!':'Now it works','Embed what one parcel owns (its scans). Refer by ID to what many parcels share (merchant, courier, hubs). Four reads, and any rename touches exactly one row.');
+    else L.sheet('no','Not yet',(sh.length?'Still copied: '+sh.map(k=>KN[k].toLowerCase()).join(', ')+'. Many parcels share these, so a rename leaves stale copies. ':'')+(!S.s?'The scans belong to this one parcel only, so nothing can go stale. Moving them out just adds a read (that’s shredding). ':'')+'Adjust and check again, or continue.');
+    L.done();};
+ }},
+
 {part:2,src:'Chapter 2 · Are Document Databases Repeating History?',run(L){
-  L.h(L.kick('learn','Have we been here before?')+'<h1 class="q">The 1970s had the same argument</h1>'+
-   L.prose('The most popular business database of the 1970s was IBM’s IMS, first built for stock-keeping in the Apollo space program and released in 1968. It used the <b>hierarchical model</b>: all data was a tree of records nested in records, much like JSON.')+
-   L.prose('Like document databases, it was good at one-to-many and bad at many-to-many, with no joins. Developers had to copy data or chase references by hand. Two fixes were proposed:')+
-   L.lanes([['map','Network model (CODASYL)','A record may have <b>several parents</b>. Links work like pointers. To reach a record you follow an '+L.g('access-path','access path')+' from a root, link by link. Change the paths and you rewrite lots of query code.',3],
-            ['list','Relational model','Lay the data out in the open: a table is just a set of rows. Read any rows that match a condition. No paths to follow.',2]]));
+  L.h(CSS+L.kick('learn','Have we been here before?')+'<h1 class="q">The 1970s had the same argument</h1>'+figHistory()+
+   CAP('IBM’s IMS, first built to track inventory for the Apollo moon program, stored every record in a tree, much like JSON. Two fixes competed: the network model and the relational model.'));
   L.done();}},
-{part:2,src:'Chapter 2 · Are Document Databases Repeating History?',run(L){
-  L.h(L.kick('learn','Why the relational model won')+'<h1 class="q">The access path still exists, but the database picks it</h1>'+
-   L.prose('In a relational database the '+L.g('optimizer','query optimizer')+' decides which parts of a query run first and which indexes to use. That <i>is</i> an access path, but the database chooses it, not the programmer.')+
-   L.flow([['pencil','Add an index','for a new kind of question'],['cycle','Queries unchanged','no code rewritten'],['check','Optimizer uses it','automatically']])+
-   L.prose('Optimizers are hard to build, but you build one once and every app on the database benefits. Hand-coded paths were efficient on slow 1970s tape drives, yet they made new features hard.')+
-   L.note('<b>And documents today?</b> They went back to the tree for nested records. For many-to-one and many-to-many links they work like relational databases: the linked item has an ID (a <i>foreign key</i> or a <i>document reference</i>), resolved at read time by a join or a follow-up query. They have not gone the CODASYL way.','info'));
-  L.done();}},
+
+{part:2,src:'Chapter 2 · Are Document Databases Repeating History?',
+ solve:async L=>{for(let k=0;k<6;k++){L.$('#nv-next').click();await L.sleep(10);}L.$('#nv-md [data-m="1"]').click();await L.sleep(10);L.$('#nv-idx').click();L.$('#nv-run').click();},
+ run(L){
+  L.h(CSS+L.kick('ex','1975 versus relational')+'<h1 class="q">Find Bramble & Bolt’s parcels that passed Westport North, both ways</h1><div id="nv"></div>');
+  Nav(L,L.$('#nv'),()=>{L.sheet('info','The optimizer picks the path','A relational database still uses an '+L.g('access-path','access path')+', but the '+L.g('optimizer','query optimizer')+' chooses it automatically. Add an index and old queries use it unchanged. An optimizer is hard to build, but it’s built once and every app benefits. Document databases today refer to other records by ID, like relational ones, not like CODASYL.');L.done();});
+ }},
+
 {part:2,src:'Chapter 2 · Are Document Databases Repeating History?',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which model is this?',['Hierarchical (IMS)','Network (CODASYL)','Relational'],[
-   ['Every parcel record sits under exactly one merchant record, and nothing can sit under two parents.',0,'One parent each, one big tree: the hierarchical model.'],
-   ['To find Bramble & Bolt’s late parcels, the code starts at a root record and follows a chain of links, one by one.',1,'Following links by hand from a root is an access path, the network model’s way.'],
+   ['Every parcel record sits under exactly one merchant record. Nothing can have two parents.',0,'One parent each, one big tree: the hierarchical model.'],
+   ['To find late parcels, the code starts at a root record and follows a chain of links, one by one.',1,'Following links by hand from a root is an access path, the network model’s way.'],
    ['Linh adds an index on delivery date, and their existing reports get faster without any edits.',2,'The optimizer picks up new indexes automatically. Queries stay unchanged.'],
-   ['A parcel record links to its merchant and to its hub, so it has two parents.',1,'Several parents per record is exactly what the network model added to the tree.'],
+   ['A parcel record is linked from its merchant and from its hub: two parents.',1,'Several parents per record is exactly what the network model added to the tree.'],
    ['There are no joins, so the team copies the merchant’s name into every parcel.',0,'With a strict tree and no joins, copying data was the usual workaround.'],
-   ['Zainab writes what rows they want, and the database chooses the order to read the tables in.',2,'Declaring what you want and letting the optimizer choose the path is the relational way.']]);}},
+   ['Zainab says which rows they want, and the database chooses which table to read first.',2,'Declaring what you want and letting the optimizer choose the path is the relational way.']]);}},
 
 /* ---------- PART 4: TODAY ---------- */
 {part:3,src:'Chapter 2 · Relational Versus Document Databases Today',run(L){
-  L.h(L.kick('learn','Which gives simpler code?')+'<h1 class="q">It depends on how your data is connected</h1>'+
-   L.lanes([['box','For documents','Schema flexibility, better speed from locality, and a shape closer to the app’s own objects.',2],
-            ['list','For relational','Better joins, and better support for many-to-one and many-to-many links.',3]])+
-   L.list([['A tree, loaded whole','Use documents. Splitting a tree into many tables (<i>shredding</i>) makes clumsy schemas and code. One catch: you can’t point straight at a nested item, only say “the 2nd scan of parcel OP-48213.” Fine if nesting stays shallow.'],
-           ['Lots of many-to-many','Documents get awkward. Copying data means your code must keep the copies consistent. Faking joins in the app is usually slower than a join inside the database.'],
-           ['Highly connected','Documents are awkward, relational is acceptable, and graph models fit best (next lesson).']],1));
+  L.h(CSS+L.kick('learn','Which gives simpler code?')+'<h1 class="q">It depends on how your data connects</h1>'+figSpectrum()+figNested()+
+   CAP('A tree read whole suits documents; splitting it into tables, called '+L.g('shredding','shredding')+', makes clumsy code. Many-to-many links make documents awkward. Highly connected data fits graphs best.'));
   L.done();}},
+
 {part:3,src:'Chapter 2 · Relational Versus Document Databases Today',pts:4,run(L){
   L.h(L.kick('pr','Document or relational?')+'<h1 class="q">For each piece of Otterpost data, which model leads to simpler code?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Document','Relational'],[
@@ -209,51 +681,28 @@ Course.lesson({
    ['Parcels that point at merchants, couriers, hubs and prices',1,'Lots of many-to-one links need joins, which relational databases do well.'],
    ['A log of courier-app events (which screen, when), never joined to anything',0,'The book notes an analytics log of events may never need many-to-many links, so weak joins don’t matter.'],
    ['Courier shifts that dispatch, billing and support all refer to',1,'One record shared by many others is many-to-one. Copying it into documents would leave stale copies.']],
-   'Ask two questions: is it a tree loaded whole, and how many other records point at it?');}},
-{part:3,src:'Chapter 2 · Schema flexibility in the document model',run(L){
-  L.h(L.kick('learn','“Schemaless” is a myth')+'<h1 class="q">There is always a schema. The question is who checks it</h1>'+
-   L.prose('Most document databases don’t enforce a schema. People call them <i>schemaless</i>, but the code that reads the data still assumes certain fields. The schema is implicit.')+
-   L.lanes([['eye',L.g('schema-on-read','Schema-on-read'),'Structure is implicit and only interpreted when data is read. Like type checks that happen while a program runs.',2],
-            ['lock',L.g('schema-on-write','Schema-on-write'),'Structure is explicit; the database checks every write against it. Like type checks done before a program runs.',3]])+
-   L.prose('Neither is right or wrong in general. Schema-on-read helps when records don’t share one shape: many kinds of objects, or a shape set by outside systems you don’t control. When all records should look alike, an enforced schema documents and protects that shape.'));
-  L.done();}},
-{part:3,src:'Chapter 2 · Schema flexibility in the document model',run(L){
-  L.h(L.kick('ex','One change, two ways')+'<h1 class="q">Support search needs the postcode as its own field</h1>');
-  L.beats(L.card,[
-   ['Today','Each parcel stores the delivery address as one line of text, postcode at the end. Signe’s team wants to search by postcode alone.'],
-   ['Schema-on-read','Start writing new parcels with a separate <i>postcode</i> field. In the reading code, add a rule: if an old parcel has no postcode, take it from the end of the address line.'],
-   ['Schema-on-write','Zainab runs a migration on the Parcel DB:'+CODE('ALTER TABLE parcels ADD COLUMN postcode text;\nUPDATE parcels SET postcode = ...;  -- every row')],
-   ['The cost','Adding the column takes milliseconds in most databases. (MySQL was a known exception: it copied the whole table.) The UPDATE is the slow part: every row is rewritten.'],
-   ['A middle path','Zainab can skip the big UPDATE, leave old rows empty, and fill the postcode in when a parcel is read, just like the document approach.']],
-   'Schema changes don’t have to mean downtime. Schema-on-read moves the work into the reading code; schema-on-write does it up front.');}},
-{part:3,src:'Chapter 2 · Schema flexibility in the document model',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Merchants attach their own extras to parcels: one sends “fragile,” one an age check, one a gift message. They change formats without warning. Which fits these extras?</h1>');
-  L.mc(L.card,['Schema-on-write: a column per merchant field','Schema-on-write: reject any unknown field','Schema-on-read: store them, interpret on read'],2,
-   'The shape is set by outside systems you don’t control and varies by merchant. Here a strict schema hurts more than it helps.',
-   'Outside systems decide this shape and change it at will. A strict schema would keep breaking or rejecting merchants’ data. Schema-on-read fits.');}},
-{part:3,src:'Chapter 2 · Data locality for queries',pts:1,
- solve:async L=>{const b=L.$('#acts').children;b[0].click();b[1].click();b[2].click();},
+   'Ask two questions: is it a tree loaded whole, and how many other records point at it? One more limit: a document can’t point straight at a nested item. You say “the 2nd scan of OP-48213”, which is fine while nesting stays shallow.');}},
+
+{part:3,src:'Chapter 2 · Schema flexibility in the document model',
+ solve:async L=>{L.$('#sc-go').click();await L.sleep(1500);L.$('#sc-md [data-m="r"]').click();await L.sleep(20);L.$('#sc-go').click();},
  run(L){
-  const A=[['Show the whole tracking page',['One read: it’s all in one place','Three lookups, more disk seeks'],0],
-           ['Read only the current status',['Loads the whole document anyway','One small row from one table'],1],
-           ['Add one more scan',['Rewrites the whole, bigger document','Inserts one new row'],1]];const seen=new Set();
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">A document is stored as one continuous string. Try each action and see who wins.</h1><div id="acts"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:110px" id="out"><span class="small">Pick an action above.</span></div><div id="lq"></div>');
-  A.forEach((a,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=a[0];b.onclick=()=>{[...L.$('#acts').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);
-    L.$('#out').innerHTML=['One document','Split across tables'].map((n,k)=>'<div style="display:flex;gap:8px;align-items:flex-start;margin:6px 0"><span class="chip static'+(a[2]===k?' ok':'')+'" style="margin:0;flex:0 0 auto;white-space:nowrap">'+(a[2]===k?L.ic('check'):L.ic('clock'))+n+'</span><span class="small" style="padding-top:8px">'+a[1][k]+'</span></div>').join('');
-    if(seen.size===3&&!L.$('#lq').innerHTML){const q=L.$('#lq');q.innerHTML='<h2 class="sub">So when does the parcel document’s locality pay off?</h2>';
-      L.mc(q,['When you read one small field of a big document','When new scans keep being added to it','When you need most of the document at once'],2,
-       'Exactly. The book advises keeping documents small and avoiding writes that make them grow. Locality isn’t only for documents either: some relational databases can store a child table’s rows inside the parent’s.',
-       'The database usually loads the whole document even for one field, and rewrites it whole when it grows. Locality only pays when you need most of it at once.');}};L.$('#acts').appendChild(b);});}},
+  L.h(CSS+L.kick('ex','“Schemaless” is a myth')+'<h1 class="q">Support search needs the postcode as its own field. Add it both ways.</h1>'+
+   '<div id="sc"></div>'+CAP('“Schemaless” is a myth: the reading code still expects certain fields. The real question is who checks the shape, and when.'));
+  Schema(L,L.$('#sc'),()=>{L.sheet('info','Who checks the shape?',L.g('schema-on-write','Schema-on-write')+' is like static, compile-time type checks; '+L.g('schema-on-read','schema-on-read')+' is like dynamic, run-time ones. Neither is right in general. Schema-on-read suits records that differ in shape: many kinds of objects, or shapes set by outside systems. When all records should look alike, an enforced schema documents and protects that shape.');L.done();});
+ }},
+
+{part:3,src:'Chapter 2 · Schema flexibility in the document model',pts:1,run(L){
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Merchants attach their own extras to parcels: one sends “fragile”, one an age check, one a gift message. They change formats without warning. Which fits these extras?</h1>');
+  L.mc(L.card,['Schema-on-write: a column per merchant field','Schema-on-write: reject any unknown field','Schema-on-read: store them, interpret on read'],2,
+   'The shape is set by outside systems you don’t control, and it varies by merchant. Here a strict schema hurts more than it helps.',
+   'Outside systems decide this shape and change it at will. A strict schema would keep breaking or rejecting merchants’ data. Schema-on-read fits.');}},
+
 {part:3,src:'Chapter 2 · Convergence of document and relational databases',pts:1,run(L){
-  L.h(L.kick('learn','The models are converging')+'<h1 class="q">Relational databases learned JSON; document databases learned joins</h1>'+
-   L.list([['list','Relational gets documents','Most relational databases (not MySQL) have handled XML since the mid-2000s. PostgreSQL 9.3, MySQL 5.7 and DB2 10.5 added similar JSON support: query and index inside a document.'],
-           ['box','Documents get joins','RethinkDB supports relational-style joins. Some MongoDB drivers resolve references for you, a join done by the client, usually slower than one inside the database.'],
-           ['book','An old idea','Codd’s original 1970 paper already allowed a value in a row to be a nested table, much like a JSON document.']],4)+
-   L.prose('The book sees a hybrid of the two as a good direction: handle document-like data <i>and</i> run relational queries on it.')+
-   '<div id="fq"><h2 class="sub">Tobias proposes moving the whole Parcel DB to a document database “because the tracking page reads parcels as trees.” What should Zainab suggest?</h2></div>');
-  L.mc(L.$('#fq'),['Move it all; documents are newer and so simpler','Keep it relational; add a JSON column for the extras','Split each parcel into one table per scan type'],1,
-   'Parcels link to merchants, couriers, hubs and credit, which needs joins. The tree-like, merchant-specific extras can live in a JSON column. That is the hybrid the book recommends.',
+  L.h(CSS+L.kick('learn','The models are converging')+'<h1 class="q">Relational learned JSON; documents learned joins</h1>'+figConverge()+
+   CAP('Each side borrowed the other’s strength. The book sees a hybrid as a good direction: handle document-like data and run relational queries on it.')+
+   '<div id="fq"><h2 class="sub">Tobias: “Let’s move the whole Parcel DB to a document database. The tracking page reads parcels as trees.” What should Zainab suggest?</h2></div>');
+  L.mc(L.$('#fq'),['Move it all; documents are newer and simpler','Keep it relational; add a JSON column for extras','Split each parcel into one table per scan type'],1,
+   'Parcels link to merchants, couriers, hubs and credit, which needs joins. The tree-like, merchant-specific extras can live in a JSON column. That’s the hybrid the book likes.',
    'Parcels have many many-to-one links, so a document store would push joins into app code. Keep the Parcel DB relational, and use a JSON column for the tree-like extras.');}}
   ]
 });

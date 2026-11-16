@@ -13,10 +13,271 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0008 only. Two hands-on models used across the lesson:
+   1. Insp – byte inspector: one record encoded six ways by real encoders
+             (JSON, MessagePack, Thrift Binary/Compact, Protocol Buffers,
+             Avro). Every byte is coloured by its role; tap it to read it.
+   2. Hand – schema handshake: the writer’s schema on the left, the
+             reader’s on the right, matched by tag (Thrift / Protocol
+             Buffers) or by name (Avro). Decode shows what each field
+             becomes, and whether a change is backward and forward
+             compatible.
+   ===================================================================== */
+const CSS='<style>'+
+ 'svg text{font-family:var(--sans)}.e8svg{width:100%;display:block;margin:4px 0 2px}'+
+ '.e8row{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0}.e8row .chip{margin:0;padding:7px 11px;font-size:14px;min-height:38px}.e8row .btn{min-height:40px;padding:8px 13px}'+
+ '.e8lbl{font-size:12.5px;font-weight:700;color:var(--muted);margin:10px 0 3px;letter-spacing:.01em}'+
+ '.e8cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:15px;line-height:1.5;margin:10px 0 4px}.e8cap .stp{display:block;font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:2px}'+
+ '.e8leg{display:flex;flex-wrap:wrap;gap:3px 11px;font-size:12px;color:var(--muted);margin:4px 0 6px}.e8leg span{display:inline-flex;align-items:center;gap:4px}.e8leg i{width:11px;height:11px;border-radius:3px;border-bottom:3px solid}'+
+ '.e8th{font-size:14px;font-weight:600;margin:8px 0 3px}.e8th small{font-weight:600;color:var(--h4);margin-left:6px;font-size:12.5px}'+
+ '.e8tape{display:flex;flex-wrap:wrap;gap:2px;padding:7px;background:var(--soft);border-radius:12px}'+
+ '.e8c{width:19px;height:26px;display:inline-flex;align-items:center;justify-content:center;font:600 12px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;border-radius:4px;border-bottom:3px solid;cursor:pointer;user-select:none;-webkit-user-select:none}'+
+ '.e8c.hx{font-size:11px;letter-spacing:-.05em}.e8c.on{outline:2.5px solid var(--ink);position:relative;z-index:1}'+
+ '.r-struct{background:var(--card);color:var(--muted);border-color:var(--line2)}.r-name{background:var(--h4-bg);color:var(--h4);border-color:var(--h4)}.r-tag{background:var(--h2-bg);color:var(--h2);border-color:var(--h2)}.r-len{background:var(--h3-bg);color:var(--h3);border-color:var(--h3)}.r-val{background:var(--h1-bg);color:var(--h1);border-color:var(--h1)}'+
+ '.e8c.pp0{background:var(--h1-bg);color:var(--h1);border-color:var(--h1)}.e8c.pp1{background:var(--h2-bg);color:var(--h2);border-color:var(--h2)}.e8c.pp2{background:var(--h3-bg);color:var(--h3);border-color:var(--h3)}.e8c.pp3{background:var(--h4-bg);color:var(--h4);border-color:var(--h4)}.e8c.ppx{background:var(--no-bg);color:var(--no);border-color:var(--no)}.e8c.ppn{background:var(--card);color:var(--faint);border-color:var(--line)}'+
+ '.e8read{display:flex;gap:6px;align-items:stretch;margin:8px 0 0}.e8nb{min-width:42px;justify-content:center;padding:4px 0!important;font-size:20px!important;line-height:1}.e8rd{flex:1;min-width:0;background:var(--soft);border-radius:12px;padding:8px 11px;font-size:14px;line-height:1.45;min-height:46px}'+
+ '.e8rl{display:inline-block;font-size:11.5px;font-weight:700;border-radius:6px;padding:1px 6px;margin-right:4px;border-bottom:2px solid}'+
+ '.e8bars{margin-top:10px}.e8bh{font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:3px}'+
+ '.e8bar{display:grid;grid-template-columns:104px 1fr 44px;gap:6px;align-items:center;width:100%;background:none;border:2px solid transparent;border-radius:10px;padding:3px 6px;min-height:36px;text-align:left;font-size:13px;color:var(--ink);cursor:pointer;font-family:var(--sans)}'+
+ '.e8bar.sel{border-color:var(--pri);background:var(--pri-bg)}.e8bar b{font-variant-numeric:tabular-nums;text-align:right;font-size:13px}'+
+ '.e8tr{height:16px;background:var(--soft2);border-radius:5px;overflow:hidden}.e8fl{display:block;height:100%;background:var(--h1);border-radius:5px;transition:width .6s ease;position:relative;overflow:hidden}.e8nm{position:absolute;left:0;top:0;bottom:0;background:var(--h4)}'+
+ '.e8sch{border:2px solid var(--line);border-radius:14px;padding:8px 10px;margin:4px 0 8px}.e8sh{font-size:12.5px;font-weight:700;color:var(--muted);margin-bottom:4px}.e8sr{display:flex;align-items:center;gap:7px;font-size:13.5px;padding:4px 6px;border-radius:8px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.e8sr.on{background:var(--h2-bg)}'+
+ '.e8tg{flex:none;min-width:22px;height:22px;border-radius:6px;background:var(--h2-bg);color:var(--h2);font:700 12px/22px var(--sans);text-align:center;border-bottom:2px solid var(--h2)}'+
+ '.e8dir{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:4px 0 8px}'+
+ '.e8d{border:2px solid var(--line);border-bottom-width:3px;border-radius:12px;padding:6px 9px;background:var(--card);text-align:left;font-size:12.5px;color:var(--muted);line-height:1.3;min-height:46px;font-family:var(--sans);cursor:pointer}'+
+ '.e8d b{display:block;font-size:14.5px;color:var(--ink)}.e8d.sel{border-color:var(--pri)}.e8d.ok{background:var(--ok-bg)}.e8d.ok b{color:var(--ok)}.e8d.no{background:var(--no-bg)}.e8d.no b{color:var(--no)}.e8d.sel.ok,.e8d.sel.no{border-color:var(--ink)}'+
+ '.e8hg{position:relative;display:grid;grid-template-columns:minmax(0,1fr) 26px minmax(0,1fr)}.e8hg>svg{position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;overflow:visible}'+
+ '.e8col{display:flex;flex-direction:column;gap:6px;min-width:0}.e8ch{font-size:12px;font-weight:700;color:var(--muted);min-height:30px;line-height:1.25;display:flex;align-items:flex-end}'+
+ '.e8f{display:flex;gap:6px;align-items:flex-start;background:var(--soft);border-radius:10px;padding:6px 7px;min-height:46px;border:2px solid transparent;transition:opacity .3s}'+
+ '.e8f b{font-size:13.5px;display:block;overflow-wrap:anywhere;line-height:1.3}.e8f small{display:block;font-size:11.5px;color:var(--muted);line-height:1.3}.e8f small.e8v{color:var(--ink)}'+
+ '.e8f em{display:block;font-style:normal;font-size:12px;font-weight:600;margin-top:3px;line-height:1.3}.e8f em.ok{color:var(--ok)}.e8f em.bad{color:var(--no)}.e8f em.def{color:var(--h3)}.e8f em.skip{color:var(--muted)}'+
+ '.e8f.bad{border-color:var(--no-line);background:var(--no-bg)}.e8f.nw{border-style:dashed;border-color:var(--pri)}.e8f.dim{opacity:.38}.e8f.hl{border-color:var(--pri);border-style:solid}'+
+ '.e8hn{margin-top:8px}.e8hn .fb{margin:0}'+
+ '.e8m{display:grid;grid-template-columns:66px 1fr 1fr;gap:6px;margin:6px 0}.e8mh{font-size:12px;color:var(--muted);line-height:1.3;display:flex;flex-direction:column;justify-content:flex-end;text-align:center;padding-bottom:2px}.e8mh.l{justify-content:center;text-align:left}.e8mh b{color:var(--ink);font-size:13.5px}'+
+ '.e8mc{min-height:88px;border:2px solid var(--line);border-bottom-width:3px;border-radius:14px;background:var(--card);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;font-size:12.5px;color:var(--muted);padding:6px;text-align:center;line-height:1.25;font-family:var(--sans);cursor:pointer}'+
+ '.e8mc b{font-size:14px;color:var(--ink)}.e8mc.on{border-color:var(--pri);background:var(--pri-bg)}.e8mc.on b{color:var(--pri-deep)}'+
+ '.e8pl{font-size:11.5px;font-weight:700;border-radius:6px;padding:2px 6px;display:inline-block}.v42{background:var(--h3-bg);color:var(--h3)}.v43{background:var(--h1-bg);color:var(--h1)}'+
+ '.tasks{margin:10px 0 0;padding:0;list-style:none}.tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}.tasks li.done{color:var(--ok)}.tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}'+
+ '.e8nr{display:grid;grid-template-columns:118px 1fr;gap:8px;align-items:center;padding:7px 10px;border-radius:10px;background:var(--soft);margin:5px 0;font-size:13px;color:var(--muted)}.e8nr b{font:700 15px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ink);overflow-wrap:anywhere}.e8nr.bad{background:var(--no-bg)}.e8nr.bad b{color:var(--no)}.e8nr.good b{color:var(--ok)}'+
+ '.e8csv{font:600 13px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--soft);border-radius:10px;padding:8px 10px;overflow-wrap:anywhere;margin:6px 0}'+
+ '.e8tb{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;font-size:12.5px;margin:6px 0}.e8tb>div{background:var(--soft);padding:6px 5px;border-radius:6px;overflow-wrap:anywhere;min-height:30px}.e8tb>.hd{background:none;font-weight:700;color:var(--muted);font-size:12px;min-height:0;padding:2px 5px}.e8tb>.bad{background:var(--no-bg);color:var(--no);font-weight:600}'+
+ '.e8kb{display:grid;grid-template-columns:92px 1fr 64px;gap:8px;align-items:center;font-size:13px;margin:6px 0}.e8kb .e8tr{height:20px}.e8kb b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.e8rng{display:grid;grid-template-columns:auto 1fr;gap:10px;align-items:center;font-size:14px;margin:8px 0}.e8rng input{width:100%;accent-color:var(--pri);height:30px}'+
+ '.e8bytes{display:flex;flex-wrap:wrap;gap:4px;margin:3px 0 4px}.e8by{font:600 13px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:7px 7px;border-radius:8px;background:var(--h1-bg);color:var(--h1)}.e8by i{font-style:normal;color:var(--h3);background:var(--h3-bg);border-radius:3px;padding:0 1px;margin-right:1px}.e8by.g{background:var(--soft2);color:var(--muted)}'+
+ '.e8big{font:700 26px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ink)}'+
+ '.e8out{display:flex;flex-direction:column;gap:4px;margin:8px 0}.e8o{display:grid;grid-template-columns:12px 112px 1fr;gap:7px;align-items:center;font-size:13.5px;padding:6px 8px;border-radius:9px;background:var(--soft)}.e8o i{width:12px;height:12px;border-radius:3px}.e8o b{overflow-wrap:anywhere}.e8o.bad{background:var(--no-bg)}.e8o.bad span{color:var(--no);font-weight:600}.e8o.ok span{color:var(--ok);font-weight:600}'+
+ '.e8two{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.e8pan{border:2px solid var(--line);border-radius:14px;padding:8px;min-width:0}.e8ph{font-size:13px;font-weight:700;line-height:1.25;margin-bottom:6px}.e8ph small{font-weight:500;color:var(--muted);font-size:12px}'+
+ '.e8it{font:600 12.5px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:5px 6px;border-radius:7px;background:var(--soft);margin:3px 0;overflow-wrap:anywhere;transition:background .4s}.e8it.nw{background:var(--ok-bg);color:var(--ok)}.e8it.hand{background:var(--h3-bg);color:var(--h3)}.e8it.ret{background:var(--no-bg);color:var(--no);text-decoration:line-through}'+
+ '.e8it small{display:block;font-family:var(--sans);font-weight:600;font-size:11.5px;text-decoration:none}'+
+ '.e8col2{display:inline-block;font:600 12.5px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;padding:4px 7px;border-radius:7px;background:var(--soft);border:1.5px solid var(--line2)}.e8col2.nw{background:var(--ok-bg);border-color:var(--ok-line);color:var(--ok)}'+
+ '.e8pk{display:flex;flex-direction:column;align-items:flex-start;gap:2px;text-align:left}.e8pk small{font-size:12.5px;color:var(--muted);font-weight:400}'+
+ '</style>';
+
+/* ---------- byte encoders (real encodings of a small record) ---------- */
+const ascii=s=>[...s].map(c=>c.charCodeAt(0));
+function uvar(n){const o=[];do{let b=n%128;n=Math.floor(n/128);if(n>0)b+=128;o.push(b);}while(n>0);return o;}
+const zz=n=>n>=0?2*n:-2*n-1, unzz=n=>n%2===0?n/2:-(n+1)/2;
+function be(n,k){const o=[];for(let i=k-1;i>=0;i--)o.push(Math.floor(n/Math.pow(256,i))%256);return o;}
+const Sg=(b,r,l,a,fi)=>({b,r,l,a:!!a,fi});
+const REC={
+ ravi:{lab:'Ravi’s scan',F:[
+  {n:'trackingCode',t:'string',tag:1,v:'OP-48213'},
+  {n:'status',t:'string',tag:2,v:'delivered'},
+  {n:'courierId',t:'string',tag:3,v:'C-0017'},
+  {n:'codCents',t:'long',tag:4,v:2500,u:1}]},
+ book:{lab:'The book’s record',F:[
+  {n:'userName',t:'string',tag:1,v:'Martin'},
+  {n:'favoriteNumber',t:'long',tag:2,v:1337,u:1},
+  {n:'interests',t:'list',tag:3,v:['daydreaming','hacking']}]}};
+const TN={string:'string',long:'whole number',list:'list'};
+function eJSON(F){const s=[Sg(ascii('{'),'struct','Start of the object',1,-1)];
+ F.forEach((f,i)=>{s.push(Sg(ascii('"'+f.n+'":'),'name','The field name “'+f.n+'”, spelled out in full',1,i));
+  const txt=f.t==='string'?'"'+f.v+'"':f.t==='list'?'['+f.v.map(x=>'"'+x+'"').join(',')+']':String(f.v);
+  s.push(Sg(ascii(txt),'val',f.t==='long'?'The number '+f.v+', written as '+txt.length+' digit characters':'The value of '+f.n+', as text',1,i));
+  if(i<F.length-1)s.push(Sg(ascii(','),'struct','A comma between fields',1,-1));});
+ s.push(Sg(ascii('}'),'struct','End of the object',1,-1));return s;}
+function eMP(F){const s=[Sg([0x80|F.length],'struct','“An object with '+F.length+' fields follows”',0,-1)];
+ const str=(t,role,what,i)=>{s.push(Sg([0xa0|t.length],'len','“A string, '+t.length+' bytes long, follows”',0,i));s.push(Sg(ascii(t),role,what,1,i));};
+ F.forEach((f,i)=>{str(f.n,'name','The field name “'+f.n+'”, still spelled out',i);
+  if(f.t==='string')str(f.v,'val','The value “'+f.v+'”',i);
+  else if(f.t==='long'){s.push(Sg([0xcd],'tag','“A 16-bit whole number follows”',0,i));s.push(Sg(be(f.v,2),'val','The number '+f.v+' in 2 bytes',0,i));}
+  else{s.push(Sg([0x90|f.v.length],'len','“A list of '+f.v.length+' items follows”',0,i));f.v.forEach(x=>str(x,'val','The list item “'+x+'”',i));}});
+ return s;}
+const TBt={string:11,long:10,list:15},TCt={string:8,long:6,list:9};
+function eTB(F){const s=[];F.forEach((f,i)=>{s.push(Sg([TBt[f.t],0,f.tag],'tag','Type ('+TN[f.t]+') plus field tag '+f.tag+'. No name.',0,i));
+  if(f.t==='string'){s.push(Sg(be(f.v.length,4),'len','Length '+f.v.length+', as a 4-byte number',0,i));s.push(Sg(ascii(f.v),'val','The value “'+f.v+'”',1,i));}
+  else if(f.t==='long')s.push(Sg(be(f.v,8),'val','The number '+f.v+' in a fixed 8 bytes',0,i));
+  else{s.push(Sg([11].concat(be(f.v.length,4)),'len','“The items are strings, and there are '+f.v.length+'”',0,i));f.v.forEach(x=>{s.push(Sg(be(x.length,4),'len','Length '+x.length,0,i));s.push(Sg(ascii(x),'val','The list item “'+x+'”',1,i));});}});
+ s.push(Sg([0],'struct','“End of the record”',0,-1));return s;}
+function eTC(F){const s=[];let last=0;F.forEach((f,i)=>{const d=f.tag-last;last=f.tag;s.push(Sg([(d<<4)|TCt[f.t]],'tag','Field tag '+f.tag+' and type ('+TN[f.t]+') packed into one byte',0,i));
+  if(f.t==='string'){s.push(Sg(uvar(f.v.length),'len','Length '+f.v.length,0,i));s.push(Sg(ascii(f.v),'val','The value “'+f.v+'”',1,i));}
+  else if(f.t==='long'){const b=uvar(zz(f.v));s.push(Sg(b,'val','The number '+f.v+' as a variable-length integer: '+b.length+' bytes, not 8',0,i));}
+  else{s.push(Sg([(f.v.length<<4)|8],'len','“'+f.v.length+' items, all strings” in one byte',0,i));f.v.forEach(x=>{s.push(Sg(uvar(x.length),'len','Length '+x.length,0,i));s.push(Sg(ascii(x),'val','The list item “'+x+'”',1,i));});}});
+ s.push(Sg([0],'struct','“End of the record”',0,-1));return s;}
+function ePB(F){const s=[];F.forEach((f,i)=>{
+  if(f.t==='list')f.v.forEach(x=>{s.push(Sg([(f.tag<<3)|2],'tag','Tag '+f.tag+' and type, one byte. A repeated field just writes its tag again for each item.',0,i));s.push(Sg(uvar(x.length),'len','Length '+x.length,0,i));s.push(Sg(ascii(x),'val','The list item “'+x+'”',1,i));});
+  else if(f.t==='string'){s.push(Sg([(f.tag<<3)|2],'tag','Tag '+f.tag+' and type, in one byte. The name “'+f.n+'” is never sent.',0,i));s.push(Sg(uvar(f.v.length),'len','Length '+f.v.length,0,i));s.push(Sg(ascii(f.v),'val','The value “'+f.v+'”',1,i));}
+  else{s.push(Sg([(f.tag<<3)|0],'tag','Tag '+f.tag+' and type (whole number), in one byte',0,i));const b=uvar(f.v);s.push(Sg(b,'val','The number '+f.v+' as a variable-length integer: '+b.length+' bytes',0,i));}});
+ return s;}
+function eAV(F){const s=[];F.forEach((f,i)=>{
+  if(f.t==='string'){s.push(Sg(uvar(zz(f.v.length)),'len','Length '+f.v.length+'. Nothing says which field this is, or even that it’s a string.',0,i));s.push(Sg(ascii(f.v),'val','The value “'+f.v+'”',1,i));}
+  else if(f.t==='long'){s.push(Sg([2],'tag','Which branch of the union {null, long}: branch 1, a long',0,i));const b=uvar(zz(f.v));s.push(Sg(b,'val','The number '+f.v+' as a variable-length integer',0,i));}
+  else{s.push(Sg(uvar(zz(f.v.length)),'len','“'+f.v.length+' items follow”',0,i));f.v.forEach(x=>{s.push(Sg(uvar(zz(x.length)),'len','Length '+x.length,0,i));s.push(Sg(ascii(x),'val','The list item “'+x+'”',1,i));});s.push(Sg([0],'struct','“End of the list”',0,i));}});
+ return s;}
+const FMTS=[['json','JSON',eJSON],['mp','MessagePack',eMP],['tb','Thrift Binary',eTB],['tc','Thrift Compact',eTC],['pb','Protocol Buffers',ePB],['av','Avro',eAV]];
+const FN={};FMTS.forEach(f=>FN[f[0]]=f[1]);
+const encode=(rec,fmt)=>FMTS.find(f=>f[0]===fmt)[2](REC[rec].F);
+const sizeOf=s=>s.reduce((a,x)=>a+x.b.length,0), namesOf=s=>s.filter(x=>x.r==='name').reduce((a,x)=>a+x.b.length,0);
+const bytesOf=s=>s.reduce((a,x)=>a.concat(x.b),[]);
+const ROLES=[['name','Field name'],['tag','Tag / type'],['len','Length'],['val','Value'],['struct','Structure']];
+const LEG='<div class="e8leg">'+ROLES.map(r=>'<span><i class="r-'+r[0]+'"></i>'+r[1]+'</span>').join('')+'</div>';
+const hex=b=>(b<16?'0':'')+b.toString(16);
+
+/* ---------- 1. the byte inspector ---------- */
+function Insp(L,host,o){
+ o=Object.assign({id:'i',rec:'ravi',fmt:'json',recs:['ravi','book'],fmts:FMTS.map(f=>f[0]),bars:true,leg:LEG,on:()=>{}},o||{});
+ const ID=o.id,st={rec:o.rec,fmt:o.fmt,sel:-1,segs:[]};
+ host.insertAdjacentHTML('beforeend','<div class="e8i">'+
+  (o.recs.length>1?'<div class="e8row" id="'+ID+'-rec" role="group" aria-label="Record"></div>':'')+
+  (o.fmts.length>1?'<div class="e8row" id="'+ID+'-fmt" role="group" aria-label="Format"></div>':'')+
+  '<div class="e8th" id="'+ID+'-th"></div>'+o.leg+
+  '<div class="e8tape" id="'+ID+'-tape"></div>'+
+  '<div class="e8read"><button class="btn e8nb" id="'+ID+'-pv" aria-label="Previous part">‹</button><div class="e8rd" id="'+ID+'-rd" aria-live="polite"></div><button class="btn e8nb" id="'+ID+'-nx" aria-label="Next part">›</button></div>'+
+  (o.bars?'<div class="e8bars" id="'+ID+'-bars"></div>':'')+'</div>');
+ const $=s=>L.$('#'+ID+'-'+s);
+ function chipRow(box,list,cur,lab,on){if(!box)return;box.innerHTML='';list.forEach(k=>{const b=document.createElement('button');b.className='chip'+(k===cur?' sel':'');b.textContent=lab(k);b.dataset.k=k;b.onclick=()=>on(k);box.appendChild(b);});}
+ function draw(){
+  st.segs=encode(st.rec,st.fmt);st.sel=-1;
+  chipRow($('rec'),o.recs,st.rec,k=>REC[k].lab,k=>{st.rec=k;draw();o.on({type:'rec',rec:k});});
+  chipRow($('fmt'),o.fmts,st.fmt,k=>FN[k],k=>{st.fmt=k;draw();o.on({type:'fmt',fmt:k});});
+  const n=sizeOf(st.segs),nm=namesOf(st.segs);
+  $('th').innerHTML=FN[st.fmt]+' · '+n+' bytes'+(nm?'<small>field names: '+nm+' bytes</small>':'<small style="color:var(--muted)">no field names</small>')+
+   (o.recs.includes('book')?'<span style="display:block;font-size:12px;font-weight:600;color:var(--muted);margin-top:2px">'+(st.rec==='book'?'The book’s record: the book’s byte counts':'Otterpost’s record: counts are illustrative')+'</span>':'');
+  let h='';st.segs.forEach((s,si)=>s.b.forEach(b=>{const pr=s.a&&b>32&&b<127;h+='<span class="e8c r-'+s.r+(pr?'':' hx')+'" data-s="'+si+'">'+L.esc(pr?String.fromCharCode(b):hex(b))+'</span>';}));
+  $('tape').innerHTML=h;
+  $('rd').innerHTML='Tap any byte, or step through with ‹ ›.';
+  if(o.bars){const R=o.fmts.map(f=>{const s=encode(st.rec,f);return [f,sizeOf(s),namesOf(s)];}),mx=Math.max(...R.map(r=>r[1]));
+   $('bars').innerHTML='<div class="e8bh">The same record in each format · pink = field names'+(st.rec==='book'?' · the book’s byte counts':' · illustrative, computed from this lesson’s schema')+'</div>'+R.map(r=>'<button class="e8bar'+(r[0]===st.fmt?' sel':'')+'" data-f="'+r[0]+'"><span>'+FN[r[0]]+'</span><span class="e8tr"><span class="e8fl" style="width:'+(r[1]/mx*100).toFixed(1)+'%"><span class="e8nm" style="width:'+(r[2]/r[1]*100).toFixed(1)+'%"></span></span></span><b>'+r[1]+' B</b></button>').join('');
+   $('bars').querySelectorAll('.e8bar').forEach(b=>b.onclick=()=>{st.fmt=b.dataset.f;draw();o.on({type:'fmt',fmt:st.fmt});});}
+ }
+ function sel(si){const t=$('tape');if(!t)return;si=(si+st.segs.length)%st.segs.length;st.sel=si;
+  let start=0;for(let k=0;k<si;k++)start+=st.segs[k].b.length;const s=st.segs[si],n=s.b.length;
+  t.querySelectorAll('.e8c').forEach(c=>c.classList.toggle('on',+c.dataset.s===si));
+  const R=ROLES.find(r=>r[0]===s.r);
+  $('rd').innerHTML='<span class="e8rl r-'+s.r+'">'+R[1]+'</span><b>'+(n>1?'Bytes '+(start+1)+'–'+(start+n):'Byte '+(start+1))+'</b> · '+s.l;
+  o.on({type:'sel',seg:s,si});}
+ L.$('#'+ID+'-tape').onclick=e=>{const c=e.target.closest('.e8c');if(c)sel(+c.dataset.s);};
+ $('pv').onclick=()=>sel(st.sel<0?st.segs.length-1:st.sel-1);
+ $('nx').onclick=()=>sel(st.sel+1);
+ draw();
+ return {st,sel,draw,bytes:()=>bytesOf(st.segs),
+  paint(ranges){const cs=[...$('tape').querySelectorAll('.e8c')];cs.forEach(c=>c.className=c.className.replace(/ pp\w+/g,''));
+   cs.forEach((c,k)=>{const r=ranges.find(x=>k>=x[0]&&k<x[1]);c.classList.add(r?r[2]:'ppn');});}};
+}
+
+/* ---------- 2. the schema handshake ---------- */
+const show=v=>v===null?'null':Array.isArray(v)?'['+v.map(show).join(', ')+']':typeof v==='string'?'“'+v+'”':String(v);
+const i32=v=>{let x=v%4294967296;if(x>2147483647)x-=4294967296;return x;};
+function resolve(W,R,val,mode){
+ const o={w:W.map(()=>null),r:R.map(()=>null),links:[],ok:true,invalid:''};
+ if(mode==='avro'){const bad=[...W,...R].find(f=>f.def==='null'&&!(f.u||[]).includes('null'));
+  if(bad){o.ok=false;o.invalid='Not allowed: <b>'+bad.n+'</b> has the default null, but null isn’t one of its types. Null can only be a default if it’s a branch of a union, like union {null, string}.';
+   W.forEach((f,i)=>{if(f===bad)o.w[i]=['bad','invalid default'];});R.forEach((f,i)=>{if(f===bad)o.r[i]=['bad','invalid default'];});return o;}}
+ W.forEach((w,wi)=>{const v=val(w);if(v===undefined)return;
+  const ri=R.findIndex(r=>mode==='tag'?r.tag===w.tag:(r.n===w.n||(r.alias||[]).includes(w.n)));
+  if(ri<0){
+   if(mode==='tag'){const s=R.findIndex(r=>r.id===w.id);
+    if(s>=0){o.w[wi]=['bad','tag '+w.tag+' unknown: skipped'];o.r[s]=['bad','empty: its data came under tag '+w.tag];o.ok=false;o.links.push([wi,-1,'bad']);return;}
+    o.w[wi]=['skip','unknown tag '+w.tag+': skipped'];}
+   else o.w[wi]=['skip','not in reader’s schema: ignored'];
+   o.links.push([wi,-1,'skip']);return;}
+  const r=R[ri];let k='ok',t;
+  if(mode==='tag'){
+   if(r.id!==w.id){k='bad';t='misread: '+r.n+' = '+show(v);o.w[wi]=['bad','was '+w.n+'!'];}
+   else if(w.t==='int64'&&r.t==='int32'&&Math.abs(v)>2147483647){k='bad';t='cut to 32 bits: '+i32(v);}
+   else if(w.rule==='rep'&&r.rule!=='rep')t='sees only the last item: '+show(v[v.length-1]);
+   else if(w.rule!=='rep'&&r.rule==='rep')t='a list of one: ['+show(v)+']';
+   else t='read: '+show(v)+(r.n!==w.n?' (new name)':'');
+  }else{
+   const vt=v===null?'null':typeof v==='number'?'long':'string',ts=r.u||[r.t];
+   if(!ts.includes(vt)){k='bad';t='error: can’t read a '+vt;}
+   else t='read: '+show(v)+(r.n!==w.n?' (via alias)':'');
+  }
+  if(k==='bad')o.ok=false;o.r[ri]=[k,t];o.links.push([wi,ri,k]);});
+ R.forEach((r,ri)=>{if(o.r[ri])return;
+  if(mode==='tag'){if(r.rule==='req'){o.r[ri]=['bad','error: required field missing'];o.ok=false;}else o.r[ri]=['def','not set: left empty'];}
+  else if(r.def!==undefined)o.r[ri]=['def','filled with default: '+r.def];
+  else{o.r[ri]=['bad','error: no value, no default'];o.ok=false;}});
+ return o;}
+function Hand(L,host,o){
+ o=Object.assign({id:'h',mode:'tag',dirs:true},o||{});
+ const ID=o.id,H={old:[],nu:[],vals:{},lab:{old:'old code',nu:'new code'},dir:'b',res:null,hl:null};
+ host.insertAdjacentHTML('beforeend','<div class="e8h">'+(o.dirs?'<div class="e8dir" id="'+ID+'-dir"></div>':'')+'<div class="e8hg" id="'+ID+'-g"></div><div class="e8hn" id="'+ID+'-n"></div></div>');
+ const val=f=>f.v!==undefined?f.v:H.vals[f.id];
+ const typ=f=>o.mode==='tag'?(f.rule==='req'?'required':f.rule==='rep'?'repeated':'optional')+' '+f.t:
+  (f.u?'union {'+f.u.join(', ')+'}':f.t)+(f.def!==undefined?' = '+f.def:'')+(f.alias?' · alias “'+f.alias.join(', ')+'”':'');
+ function row(f,r,side,i){const cls=(r&&r[0]==='bad'?' bad':'')+(H.hl?(H.hl.includes(f.id)?' hl':' dim'):'')+(f.isNew&&!(r&&r[0]==='bad')?' nw':'');
+  return '<div class="e8f'+cls+'" id="'+ID+'-'+side+i+'">'+(o.mode==='tag'?'<span class="e8tg">'+f.tag+'</span>':'')+'<div style="min-width:0"><b>'+f.n+'</b><small>'+typ(f)+'</small>'+
+   (side==='w'&&val(f)!==undefined?'<small class="e8v">= '+show(val(f))+'</small>':'')+(r?'<em class="'+r[0]+'">'+r[1]+'</em>':'')+'</div></div>';}
+ function lines(links,colored){const g=L.$('#'+ID+'-g');if(!g)return;const old=g.querySelector('svg');if(old)old.remove();
+  const cw=L.$('#'+ID+'-cw'),cr=L.$('#'+ID+'-cr');if(!cw||!cr)return;const x1=cw.offsetLeft+cw.offsetWidth,x2=cr.offsetLeft;let p='';
+  links.forEach(([wi,ri,k])=>{const a=L.$('#'+ID+'-w'+wi);if(!a)return;const y1=a.offsetTop+a.offsetHeight/2;
+   const col=!colored?'var(--line2)':k==='bad'?'var(--no)':k==='skip'?'var(--faint)':'var(--ok-strong)';
+   if(ri<0){const m=x1+(x2-x1)*.5;p+='<path d="M'+x1+' '+y1+' H'+m+'" style="stroke:'+col+';stroke-width:2.5;stroke-dasharray:3 3;fill:none"/><path d="M'+(m+1)+' '+(y1-4)+'l7 8m0 -8l-7 8" style="stroke:'+col+';stroke-width:2;fill:none;stroke-linecap:round"/>';return;}
+   const b=L.$('#'+ID+'-r'+ri);if(!b)return;const y2=b.offsetTop+b.offsetHeight/2;
+   p+='<path d="M'+x1+' '+y1+' C'+(x1+16)+' '+y1+' '+(x2-16)+' '+y2+' '+x2+' '+y2+'" style="stroke:'+col+';stroke-width:2.5;fill:none"/>';});
+  g.insertAdjacentHTML('beforeend','<svg aria-hidden="true">'+p+'</svg>');}
+ let last=null;
+ function draw(){const g=L.$('#'+ID+'-g');if(!g)return;
+  if(o.dirs){const d=L.$('#'+ID+'-dir');d.innerHTML=['b','f'].map(k=>{const r=H.res&&H.res[k];
+    return '<button class="e8d'+(H.dir===k?' sel':'')+(r?(r.ok?' ok':' no'):'')+'" data-d="'+k+'"><b>'+(k==='b'?'Backward':'Forward')+(r?(r.ok?' ✓':' ✗'):'')+'</b>'+(k==='b'?'new code reads old data':'old code reads new data')+'</button>';}).join('');
+   d.querySelectorAll('button').forEach(b=>b.onclick=()=>H.show(b.dataset.d));}
+  const W=H.dir==='b'?H.old:H.nu,R=H.dir==='b'?H.nu:H.old,res=H.res&&H.res[H.dir];
+  const wl=H.dir==='b'?H.lab.old:H.lab.nu,rl=H.dir==='b'?H.lab.nu:H.lab.old;
+  g.innerHTML='<div class="e8col" id="'+ID+'-cw"><div class="e8ch">Written by '+wl+'</div>'+W.map((f,i)=>row(f,res&&res.w[i],'w',i)).join('')+'</div><div></div>'+
+   '<div class="e8col" id="'+ID+'-cr"><div class="e8ch">Read by '+rl+'</div>'+R.map((f,i)=>row(f,res&&res.r[i],'r',i)).join('')+'</div>';
+  const n=L.$('#'+ID+'-n');n.innerHTML=res&&res.invalid?'<div class="fb no">'+res.invalid+'</div>':'';
+  last=[(res||resolve(W,R,val,o.mode)).links,!!res];
+  requestAnimationFrame(()=>lines(last[0],last[1]));}
+ const redraw=()=>{if(!L.$('#'+ID+'-g')){window.removeEventListener('resize',redraw);return;}if(last)lines(last[0],last[1]);};
+ window.addEventListener('resize',redraw);if(document.fonts&&document.fonts.ready)document.fonts.ready.then(redraw);
+ H.set=(old,nu,vals,lab)=>{H.old=old;H.nu=nu;H.vals=vals||{};if(lab)H.lab=lab;H.res=null;H.hl=null;draw();return H;};
+ H.decode=()=>{H.res={b:resolve(H.old,H.nu,val,o.mode),f:resolve(H.nu,H.old,val,o.mode)};draw();return H.res;};
+ H.show=d=>{H.dir=d;draw();};
+ H.focus=ids=>{H.hl=ids;draw();};
+ H.note=html=>{L.$('#'+ID+'-n').innerHTML=html;};
+ return H;
+}
+
+/* ---------- Otterpost’s scan-event schemas ---------- */
+const fx=(f,ch)=>Object.assign({},f,ch);
+const T={
+ track:{id:'track',tag:1,n:'trackingCode',t:'string',rule:'req'},
+ status:{id:'status',tag:2,n:'status',t:'string',rule:'opt'},
+ courier:{id:'courier',tag:3,n:'courierId',t:'string',rule:'opt'},
+ cod:{id:'cod',tag:4,n:'codCents',t:'int64',rule:'opt'},
+ left:{id:'left',tag:5,n:'leftWith',t:'string',rule:'opt'}};
+const VALS={track:'OP-48213',status:'delivered',courier:'C-0017',cod:2500,left:'no. 12',weight:1200,zone:'W2'};
+const V42=[T.track,T.status,T.courier,T.cod],V43=[...V42,T.left];
+const A={
+ track:{id:'track',n:'trackingCode',t:'string'},
+ status:{id:'status',n:'status',t:'string'},
+ courier:{id:'courier',n:'courierId',t:'string'},
+ left:{id:'left',n:'leftWith',u:['null','string'],def:'null'}};
+const A43=[A.track,A.status,A.courier,A.left];
+
+/* small helpers */
+function tasks(id,items){return '<ul class="tasks" id="'+id+'">'+items.map((t,j)=>'<li id="'+id+'-'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const li=L.$('#'+id+'-'+j);if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').textContent='✓';}}
+const allTicked=(L,id)=>[...L.$('#'+id).children].every(li=>li.classList.contains('done'));
+function wait(L,sel,n){return (async()=>{for(let k=0;k<(n||120)&&!L.$(sel);k++)await L.sleep(30);})();}
+
 Course.lesson({
-  id:'0008', title:'Encoding formats and schema evolution', minutes:20, icon:'layers',
-  goals:['Tell backward from forward compatibility, and say why a change needs both','Explain what goes wrong with built-in, JSON, XML and CSV encodings','Change a Protocol Buffers or Avro schema without breaking old or new code'],
-  parts:['Compatibility','Text formats','Field tags','Avro and schemas'],
+  id:'0008', title:'Encoding formats and schema evolution', minutes:24, icon:'layers',
+  goals:['Tell backward from forward compatibility, and say why a rollout needs both','See where the bytes go in JSON, MessagePack, Thrift, Protocol Buffers and Avro','Change a field-tag or Avro schema without breaking old or new code'],
+  parts:['Old and new','Text and bytes','Field tags','Avro and schemas'],
   read:'Read chapter 4 of the book, from the start to the end of “The Merits of Schemas”, for the byte-by-byte figures of each format.',
   glossary:{
     'rolling-upgrade':'Rolling upgrade: updating a system one machine at a time, so the whole system never has to go down.',
@@ -30,52 +291,65 @@ Course.lesson({
   },
   cheatsheet:[
     'Old and new code, and old and new data, live side by side (rolling upgrades, users who don’t update). You need <b>backward</b> (new code reads old data) and <b>forward</b> (old code reads new data) compatibility.',
-    '<b>Encoding</b> = in-memory objects to bytes; <b>decoding</b> = bytes back to objects.',
-    'Your language’s <b>built-in encoding</b>: locks you in, invites security holes, ignores versioning and is often slow. Only for very short-lived data.',
-    '<b>JSON, XML, CSV</b>: readable and everywhere, but vague about numbers (above 2<sup>53</sup>) and binary data (Base64, +33%). Fine for exchanging data between organizations.',
-    '<b>Thrift and Protocol Buffers</b>: field tags instead of names. Rename freely; never change or reuse a tag; new fields must be optional or have a default.',
-    '<b>Avro</b>: no tags. The reader resolves the <b>writer’s schema</b> against its own <b>reader’s schema</b> by field name. Only add or remove fields that have a default.',
-    'The reader must find the writer’s schema: once per file, a version number per record, or agreed when a connection opens.',
-    'Schemas give you compact data, documentation that can’t go stale, compatibility checks before deploy, and type-checked code.'
+    '<b>Encoding</b> = in-memory objects to a self-contained run of bytes; <b>decoding</b> = back again. Pointers mean nothing to another process.',
+    'Your language’s <b>built-in encoding</b> locks you in, invites security holes, ignores versioning and is often slow. Only for very short-lived data.',
+    '<b>JSON, XML, CSV</b>: readable and everywhere, but vague about numbers (above 2<sup>53</sup>) and binary data (Base64, +33%). Fine for exchange between organizations.',
+    '<b>Binary JSON</b> still spells out every field name (the book’s record: 81 → 66 bytes). Schemas drop the names: Thrift Compact 34, Protocol Buffers 33, Avro 32.',
+    '<b>Thrift and Protocol Buffers</b>: field tags. Rename freely; never change or reuse a tag; new fields optional or with a default; remove only optional fields.',
+    '<b>Avro</b>: no tags. The reader resolves the <b>writer’s schema</b> against its <b>reader’s schema</b> by name. Add or remove only fields with a default. The writer’s schema lives in the file header, as a version number per record, or is agreed per connection.',
+    'Schemas give you compact data, documentation that can’t go stale, compatibility checks before deploy, and type-checked generated code.'
   ],
   steps:[
-/* ---------- PART 1: COMPATIBILITY ---------- */
+/* ---------- PART 1: OLD AND NEW ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Otterpost ships courier app version 43 on Monday. On Wednesday, which app versions are sending scan events to Otterpost’s servers?</h1>');
   L.mc(L.card,['Only version 43, the new one','Version 43 and several older ones'],1,
    'Couriers update their phones when they get round to it, and some take weeks. So old and new versions always run side by side. This whole lesson is about living with that.',
    'Otterpost can’t force every courier’s phone to update at once. Many couriers run old versions for weeks, so old and new versions send data side by side.');}},
-{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',run(L){
-  L.h(L.kick('learn','Change never stops')+'<h1 class="q">New features mean new shapes of data</h1>'+
-   L.quote('Everything changes and nothing stands still.','Heraclitus, the line that opens chapter 4')+
-   L.prose('Most feature changes also change the data: a new field, a new kind of record, or old data shown in a new way. A relational database has exactly one '+L.g('schema','schema')+' at a time, changed by a migration. A schema-on-read database lets old and new formats sit side by side.')+
-   L.prose('Either way, the code that reads and writes the data must change too, and in a big system it can’t change everywhere at once:')+
-   L.lanes([['layers','On servers','A '+L.g('rolling-upgrade','rolling upgrade')+' puts the new version on a few '+L.g('node','nodes')+' at a time, checks it, then moves on. No downtime, so you can release more often.',1],
-            ['person','On phones and desktops','You are at the mercy of the user, who may not install the update for some time.',3]])+
-   '<p class="small" style="margin-top:12px">So old code, new code, old data and new data all exist at the same time.</p>');
-  L.done();}},
-{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',run(L){
-  L.h(L.kick('learn','Two directions')+'<h1 class="q">Compatibility has to work both ways</h1>'+
-   L.lanes([['arrow','Backward compatibility','<b>New code reads old data.</b><br>Usually easy: whoever writes the new code knows the old format, and can keep the old reading code if needed.',2],
-            ['cycle','Forward compatibility','<b>Old code reads new data.</b><br>Trickier: the old code must ignore additions made by a version it has never seen.',4]])+
-   L.note('A way to remember: name it from the <b>reader’s</b> side. Backward = the reader looks back at older data. Forward = an old reader meets data from the future.','bulb')+
-   L.prose('The rest of the lesson asks one question of every format: how does it keep both directions working while the schema changes?'));
-  L.done();}},
-{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',run(L){
-  L.h(L.kick('ex','Otterpost, one ordinary week')+'<h1 class="q">One new field, two directions of trouble</h1>');
-  L.beats(L.card,[
-   ['Monday','Tobias ships courier app v43. Scan events now carry a new field, <code>leftWith</code>, such as “neighbour at no. 12”.'],
-   ['The phones','Ravi updates that evening. Amara won’t update for three weeks. All week, both phones send scan events.'],
-   ['The servers','Kwame rolls the new scan-ingest service out two servers at a time, out of six. For an hour, old and new server code run side by side.'],
-   ['Backward','An upgraded server reads a scan from Amara’s v42 app, with no <code>leftWith</code>. New code, old data: it needs <b>backward</b> compatibility and must cope with the missing field.'],
-   ['Forward','A server not yet upgraded receives Ravi’s v43 scan, with <code>leftWith</code> in it. Old code, new data: it needs <b>forward</b> compatibility and must skip the field, not crash.']],
-   'During any change, both directions happen at once. A format that handles only one of them will break something during the rollout.');}},
-{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">What does forward compatibility mean?</h1>');
-  L.mc(L.card,['Old code can read data that new code wrote','New code can read data that old code wrote'],0,
-   'Forward compatibility is old code coping with data from a newer version, usually by ignoring what it doesn’t know.',
-   'That one is backward compatibility. Forward means old code reading data written by newer code.');}},
-{part:0,src:'Chapter 4 · Encoding and Evolution (opening)',pts:5,run(L){
+
+{part:0,src:'Chapter 4 · Encoding and Evolution',
+ solve:async L=>{for(let k=0;k<3;k++){L.$('#ru-nx').click();await L.sleep(20);}},
+ run(L){
+  const ST=[
+   [0,[42,42,42],'New features usually change the data. Release 43 adds a field to scan events: <code>leftWith</code> (“neighbour at no. 12”). Monday 9:00: everything still runs v42.'],
+   [2,[43,42,42],'Servers get a '+L.g('rolling-upgrade','rolling upgrade')+': a few at a time, checked as they go, no downtime. Kwame upgrades two. Ravi installs app v43 at once.'],
+   [4,[43,42,43],'Four servers done. Mia updates too. On phones the user decides when to update, and Amara hasn’t.'],
+   [6,[43,42,43],'All six servers run v43. Three weeks later, Amara’s phone still runs v42. <b>Old and new code, old and new data: all at once.</b>']];
+  let k=0;
+  L.h(L.kick('learn','Change never stops')+'<h1 class="q">A release doesn’t arrive everywhere at once</h1>'+
+   '<svg class="e8svg" id="ru-s" viewBox="0 0 320 196" role="img" aria-label="Six servers and three couriers’ phones, each labelled with its version"></svg>'+
+   '<div class="e8cap" id="ru-c" aria-live="polite"></div><button class="btn pri" id="ru-nx">Next step ›</button>'+CSS);
+  function draw(){const s=ST[k];let h='<text x="4" y="13" style="font-size:12px;font-weight:600;fill:var(--muted)">Scan-ingest servers</text>'+
+    '<rect x="196" y="4" width="11" height="11" rx="3" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/><text x="211" y="14" style="font-size:12px;fill:var(--muted)">v42</text><rect x="246" y="4" width="11" height="11" rx="3" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.5"/><text x="261" y="14" style="font-size:12px;fill:var(--muted)">v43</text>';
+   for(let i=0;i<6;i++){const c=i<s[0]?'h1':'h3',x=6+i*52;h+='<rect x="'+x+'" y="24" width="44" height="36" rx="8" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2;transition:fill .4s"/><text x="'+(x+22)+'" y="47" style="font-size:13px;font-weight:700;text-anchor:middle;fill:var(--'+c+')">v'+(i<s[0]?43:42)+'</text>';}
+   [['Ravi',60,4],['Amara',160,0],['Mia',260,2]].forEach((p,j)=>{const v=s[1][j],c=v===43?'h1':'h3',sx=6+p[2]*52+22;
+    h+='<path d="M'+p[1]+' 124 L'+sx+' 60" style="stroke:var(--'+c+');stroke-width:2;stroke-dasharray:5 4;fill:none"/>'+
+     '<rect x="'+(p[1]-19)+'" y="124" width="38" height="50" rx="8" style="fill:var(--card);stroke:var(--'+c+');stroke-width:2"/><text x="'+p[1]+'" y="154" style="font-size:12.5px;font-weight:700;text-anchor:middle;fill:var(--'+c+')">v'+v+'</text>'+
+     '<text x="'+p[1]+'" y="191" style="font-size:12px;text-anchor:middle;fill:var(--ink)">'+p[0]+'’s app</text>';});
+   L.$('#ru-s').innerHTML=h;L.$('#ru-c').innerHTML='<span class="stp">Step '+(k+1)+' of 4</span>'+s[2];
+   if(k===3){L.$('#ru-nx').style.display='none';L.done();}}
+  L.$('#ru-nx').onclick=()=>{if(k<3){k++;draw();}};draw();}},
+
+{part:0,src:'Chapter 4 · Encoding and Evolution',
+ solve:async L=>{L.$('#cm-1').click();L.$('#cm-2').click();},
+ run(L){
+  const C=[['Same version','v42 reads what v42 wrote. Nothing new to cope with.'],
+   [L.g('backward-compat','Backward compatibility'),'<b>New code reads old data.</b> An upgraded server reads a scan from Amara’s v42 app, with no <code>leftWith</code>. Usually easy: whoever writes v43 knows the old format.'],
+   [L.g('forward-compat','Forward compatibility'),'<b>Old code reads new data.</b> A server not yet upgraded gets Ravi’s v43 scan. Trickier: the old code must skip a field it has never heard of.'],
+   ['Same version','v43 reads what v43 wrote. No surprise.']];
+  const seen=new Set();
+  const cell=(j,w,r)=>'<button class="e8mc" id="cm-'+j+'"><span><span class="e8pl v'+w+'">data v'+w+'</span></span><span>→</span><span><span class="e8pl v'+r+'">code v'+r+'</span></span></button>';
+  L.h(L.kick('learn','Two directions')+'<h1 class="q">Who wrote the data, and who is reading it?</h1>'+
+   '<div class="e8m"><div></div><div class="e8mh">Read by<b>v42 code</b></div><div class="e8mh">Read by<b>v43 code</b></div>'+
+   '<div class="e8mh l">Written<br>by <b>v42</b></div>'+cell(0,42,42)+cell(1,42,43)+
+   '<div class="e8mh l">Written<br>by <b>v43</b></div>'+cell(2,43,42)+cell(3,43,43)+'</div>'+
+   '<div class="e8cap" id="cm-c" aria-live="polite">Tap each square. During Kwame’s rollout, all four happen at the same time.</div>'+CSS);
+  [0,1,2,3].forEach(j=>{L.$('#cm-'+j).onclick=()=>{[0,1,2,3].forEach(x=>L.$('#cm-'+x).classList.toggle('on',x===j));
+    L.$('#cm-'+j).innerHTML='<b>'+(j===1?'Backward':j===2?'Forward':'Same')+'</b>'+L.$('#cm-'+j).innerHTML.replace(/^<b>.*?<\/b>/,'');
+    L.$('#cm-c').innerHTML='<span class="stp">'+C[j][0]+'</span>'+C[j][1];seen.add(j);
+    if(seen.has(1)&&seen.has(2)&&!seen.has('x')){seen.add('x');L.sheet('info','Name it from the reader’s side','<b>Backward</b>: the new reader looks back at older data. <b>Forward</b>: an old reader meets data from the future. A rollout needs both, because both squares light up at once.');L.done();}};});}},
+
+{part:0,src:'Chapter 4 · Encoding and Evolution',pts:5,run(L){
   L.h(L.kick('pr','Which direction?')+'<h1 class="q">For each situation, which kind of compatibility is needed?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Backward','Forward'],[
    ['Ravi’s phone updates to v43, then sends the scans it saved offline while it was still v42.',0,'The v43 app reads data its own older version wrote: new code, old data.'],
@@ -85,46 +359,113 @@ Course.lesson({
    ['Linh’s new report job reads a parcels export file written last year.',0,'Today’s code reads data written by last year’s code.']],
    'Ask two questions: which code is reading, and which code wrote the data? New reading old is backward; old reading new is forward.');}},
 
-/* ---------- PART 2: TEXT FORMATS ---------- */
-{part:1,src:'Chapter 4 · Formats for Encoding Data',run(L){
+/* ---------- PART 2: TEXT AND BYTES ---------- */
+{part:1,src:'Chapter 4 · Formats for Encoding Data',
+ solve:async L=>{L.$('#ts-a').click();await L.sleep(30);L.$('#ts-b').click();},
+ run(L){
+  const bx=(x,y,w,h,c,lines)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="9" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2"/>'+lines.map((t,j)=>'<text x="'+(x+9)+'" y="'+(y+17+j*15)+'" style="font-size:12px;'+(j?'':'font-weight:700;')+'fill:var(--ink)">'+t+'</text>').join('');
+  const mem=(y,addr)=>bx(6,y,150,56,'h1',['scan','code  OP-48213','courier  ●'])+bx(196,y+6,118,44,'h2',['courier @'+addr,'id  C-0017'])+
+   '<path d="M84 '+(y+43)+' C150 '+(y+43)+' 160 '+(y+28)+' 194 '+(y+28)+'" style="stroke:var(--ink);stroke-width:2;fill:none"/><path d="M188 '+(y+23)+' L195 '+(y+28)+' L188 '+(y+33)+'" style="stroke:var(--ink);stroke-width:2;fill:none"/>';
   L.h(L.kick('learn','Encoding')+'<h1 class="q">Data lives in two shapes</h1>'+
-   L.prose('Inside a program, data sits in objects, lists and hash tables, linked by <b>pointers</b> (memory addresses). That shape is built for the CPU. But a pointer means nothing to another process, so to save data to a file or send it over the network, you must turn it into a self-contained sequence of bytes.')+
-   L.flow([['box','In the phone’s memory','a scan object','points to a parcel object',1],['arrow','Bytes','sent over the network','encode',3],['box','In the server’s memory','a scan object again','decode',2]])+
-   L.prose('Going from memory to bytes is '+L.g('encoding','<b>encoding</b>')+' (also called serialization or marshalling). Going back is <b>decoding</b> (parsing, deserialization).')+
-   '<p class="small">The book says “encoding” because “serializable” means something quite different for transactions (chapter 7). And encoding has nothing to do with encryption.</p>');
-  L.done();}},
-{part:1,src:'Chapter 4 · Language-Specific Formats',run(L){
-  L.h(L.kick('learn','The built-in shortcut')+'<h1 class="q">Your language can already save objects. That’s the trap.</h1>'+
-   L.prose('Java has <code>Serializable</code>, Python has <code>pickle</code>, Ruby has <code>Marshal</code>. They save and restore objects with almost no code. The book lists four deep problems:')+
-   L.list([['lock','Locked to one language','Reading the bytes from another language is very hard. You commit to today’s language for a long time, and can’t easily share data with other organizations.'],
-     ['shield','A security hole','To rebuild objects, the decoder can create any class. If attackers can feed it bytes, they can often run code of their choice on your server.'],
-     ['cycle','Versioning is an afterthought','Forward and backward compatibility are often ignored.'],
-     ['clock','Efficiency is an afterthought','Encoding can be slow and bulky. Java’s built-in serialization is notorious for it.']],4)+
-   '<p class="small" style="margin-top:10px">So use them only for very short-lived purposes, never for data you store or send between systems.</p>');
-  L.done();}},
-{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',run(L){
-  L.h(L.kick('learn','JSON, XML and CSV')+'<h1 class="q">Readable and everywhere, but vague in subtle ways</h1>'+
-   L.prose('These text formats work in every language and people can mostly read them. But they hide four problems:')+
-   L.list([['Numbers','XML and CSV can’t tell the number 42 from the text “42”. JSON can, but it doesn’t separate whole numbers from decimals, or say how precise they are. Whole numbers above 2<sup>53</sup> can come out wrong in JavaScript.'],
-     ['Binary data','JSON and XML handle text well but not raw bytes (like a photo). People turn bytes into text with Base64, which works but is hacky and makes the data 33% bigger.'],
-     ['Schemas are optional','JSON Schema and XML Schema exist but are complicated, and many JSON tools skip them. Then each app must hard-code how to read numbers and Base64.'],
-     ['CSV has no schema','The app decides what each column means. And what if a value contains a comma or a line break? Not every parser follows the escaping rules.']],2)+
-   L.note('Still, they’re good enough for many jobs, especially sending data <b>between organizations</b>. Getting different organizations to agree on anything is the hard part, so a format everyone already knows wins.','info'));
-  L.done();}},
-{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',run(L){
-  L.h(L.kick('ex','A bug at Otterpost')+'<h1 class="q">The parcel ID that changed on its way to the browser</h1>');
-  L.beats(L.card,[
-   ['The setup','Inside Otterpost, every parcel has a 64-bit numeric ID. The merchant API returns it as a JSON number.'],
-   ['The report','Bramble & Bolt’s dashboard shows parcel <b>9007199254740992</b>. Otterpost’s records say <b>9007199254740993</b>. Their support team can’t find the parcel.'],
-   ['The cause','JavaScript reads every JSON number as a floating-point number, which can hold whole numbers exactly only up to 2<sup>53</sup>. This ID is just above that, so it gets rounded.'],
-   ['The book’s case','Twitter hit the same thing with 64-bit tweet IDs. Its API sends each ID twice: once as a number and once as a string of digits.'],
-   ['Otterpost’s fix','Zainab adds the ID as a string next to the number in every API response. Text can’t be rounded.']],
-   'JSON is vague about numbers. If a reader in another language interprets a value differently, the data changes silently.');}},
-{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants to put each proof-of-delivery photo (raw bytes) inside a JSON scan event. What happens?</h1>');
-  L.mc(L.card,['JSON stores the raw bytes exactly as they are','The bytes become Base64 text, about a third bigger','JSON shrinks the photo so that it fits as text'],1,
-   'JSON has no type for raw bytes, so the photo is written as Base64 text, which makes it about 33% bigger.',
-   'JSON only supports text strings, not raw bytes. The usual workaround is Base64, which is hacky and adds about 33% to the size.');}},
+   '<svg class="e8svg" viewBox="0 0 320 244" role="img" aria-label="Objects linked by a pointer in the phone’s memory, encoded to a run of bytes, then decoded into new objects on the server">'+
+   '<text x="4" y="12" style="font-size:12px;font-weight:600;fill:var(--muted)">Ravi’s phone · memory</text>'+mem(18,'0x7f3a')+
+   '<g id="ts-g1" style="opacity:.22;transition:opacity .5s"><text x="160" y="92" style="font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h3)">↓ encode</text>'+
+   '<rect x="6" y="98" width="308" height="28" rx="6" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+
+   '<text x="12" y="116.5" textLength="296" lengthAdjust="spacingAndGlyphs" style="font:600 11.5px ui-monospace,Menlo,monospace;fill:var(--ink)">{"code":"OP-48213","courier":{"id":"C-0017"}}</text>'+
+   '<text x="160" y="141" style="font-size:11.5px;text-anchor:middle;fill:var(--muted)">one self-contained run of bytes (JSON here)</text></g>'+
+   '<g id="ts-g2" style="opacity:.22;transition:opacity .5s"><text x="160" y="161" style="font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)">↓ decode · server memory, rebuilt</text>'+mem(170,'0x2c91')+'</g></svg>'+
+   '<div class="e8row"><button class="btn pri" id="ts-a">Encode it</button><button class="btn" id="ts-b" disabled>Send and decode</button></div>'+
+   L.prose('In memory, objects point at each other by address. An address means nothing to another process. So '+L.g('encoding','<b>encoding</b>')+' (serialization) copies everything into one run of bytes, and <b>decoding</b> (parsing) rebuilds the objects.')+CSS);
+  L.$('#ts-a').onclick=()=>{L.$('#ts-g1').style.opacity=1;L.$('#ts-a').disabled=true;L.$('#ts-b').disabled=false;L.$('#ts-b').classList.add('pri');};
+  L.$('#ts-b').onclick=()=>{L.$('#ts-g2').style.opacity=1;L.$('#ts-b').disabled=true;
+   L.sheet('info','New objects, new addresses','The server’s copy has the same data at a different address. The book says “encoding” because “serialization” means something quite different for transactions (chapter 7). And encoding has nothing to do with encryption.');L.done();};}},
+
+{part:1,src:'Chapter 4 · Language-Specific Formats',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#bi-'+j).click();await L.sleep(40);}for(let k=0;k<60&&!L.$('#bi-done');k++)await L.sleep(30);},
+ run(L){
+  const D=[['Route tool (Python)','✗ can’t read the bytes','Read it in Python','<b>Locked to one language.</b> Reading the bytes from another language is very hard, so a Python route tool, or a partner company, is shut out.'],
+   ['Ingest server','✗ attacker’s code runs','Feed it crafted bytes','<b>A security hole.</b> To rebuild objects, the decoder may create any class it’s told to. Crafted bytes can make it run an attacker’s code.'],
+   ['App v44, new class','✗ no plan for versions','Read it in a newer version','<b>Versioning is an afterthought.</b> These libraries are built for quick saving, and often ignore forward and backward compatibility.'],
+   ['Size and speed','✗ slow and bloated','Measure it','<b>Efficiency is an afterthought.</b> Encoding can be slow and bulky. Java’s own built-in encoding has a bad reputation for this.']];
+  const seen=new Set();
+  let svg='<rect x="4" y="80" width="114" height="78" rx="10" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/><text x="61" y="104" style="font-size:13.5px;font-weight:700;text-anchor:middle;fill:var(--ink)">Courier app</text><text x="61" y="124" style="font-size:13px;text-anchor:middle;fill:var(--ink)">offline queue,</text><text x="61" y="142" style="font-size:13px;text-anchor:middle;fill:var(--ink)">Java built-in</text><g id="bi-dots"></g>';
+  D.forEach((d,j)=>{const y=6+j*60;svg+='<path d="M118 119 C142 119 138 '+(y+25)+' 160 '+(y+25)+'" style="stroke:var(--line2);stroke-width:2;fill:none" id="bi-l'+j+'"/>'+
+   '<rect id="bi-r'+j+'" x="160" y="'+y+'" width="156" height="50" rx="9" style="fill:var(--card);stroke:var(--line2);stroke-width:2"/><text x="169" y="'+(y+21)+'" style="font-size:13px;font-weight:700;fill:var(--ink)">'+d[0]+'</text><text id="bi-t'+j+'" x="169" y="'+(y+39)+'" style="font-size:12.5px;fill:var(--faint)">?</text>';});
+  L.h(L.kick('learn','The built-in shortcut')+'<h1 class="q">Tobias saves the offline scan queue with Java’s own encoder. Send it four places.</h1>'+
+   '<svg class="e8svg" viewBox="0 0 320 244" role="img" aria-label="Java-encoded bytes sent to four destinations">'+svg+'</svg>'+
+   '<div class="e8row" id="bi-b" style="display:grid;grid-template-columns:1fr 1fr"></div><div class="e8cap" id="bi-c" aria-live="polite">Java’s Serializable, Python’s pickle and Ruby’s Marshal save objects with almost no code. Tap each button to see the catch.</div>'+CSS);
+  D.forEach((d,j)=>{const b=document.createElement('button');b.className='btn';b.id='bi-'+j;b.style.justifyContent='center';b.textContent=d[2];
+   b.onclick=()=>{if(seen.has(j))return;seen.add(j);b.disabled=true;
+    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');c.setAttribute('r','6');c.setAttribute('style','fill:var(--h3)');L.$('#bi-dots').appendChild(c);
+    const p=L.$('#bi-l'+j),len=p.getTotalLength(),t0=performance.now();
+    (function step(){if(!c.isConnected)return;const f=Math.min(1,(performance.now()-t0)/450),pt=p.getPointAtLength(len*f);c.setAttribute('cx',pt.x);c.setAttribute('cy',pt.y);
+     if(f<1){requestAnimationFrame(step);return;}c.remove();
+     L.$('#bi-r'+j).setAttribute('style','fill:var(--no-bg);stroke:var(--no);stroke-width:2');const t=L.$('#bi-t'+j);t.textContent=d[1];t.setAttribute('style','font-size:12.5px;font-weight:600;fill:var(--no)');
+     L.$('#bi-c').innerHTML=d[3];
+     if(seen.size===4&&!L.$('#bi-done')){L.$('#bi-c').insertAdjacentHTML('afterend','<span id="bi-done"></span>');
+      L.sheet('info','Handy, but only for short-lived data','Built-in encodings lock you into one language, open a security hole, neglect compatibility and are often slow. The book’s advice: use your language’s built-in encoding only for very transient purposes, never for data you store or send between systems.');L.done();}})();};
+   L.$('#bi-b').appendChild(b);});}},
+
+{part:1,src:'Chapter 4 · JSON, XML, and Binary Variants',
+ solve:async L=>{L.$('#tl-t0').click();for(let k=0;k<5;k++){L.$('#tl-up').click();await L.sleep(10);}L.$('#tl-t1').click();const r=L.$('#tl-kb');r.value=210;r.dispatchEvent(new Event('input'));L.$('#tl-t2').click();L.$('#tl-pz').children[1].click();},
+ run(L){
+  const seen=[0,0,0],TAB=['Big number','Raw bytes','CSV comma'];let tab=0,id=9007199254740989n,dual=false,kb=60,naive=false;
+  L.h(L.kick('ex','Edge cases')+'<h1 class="q">Break JSON and CSV three ways</h1><div class="e8row" id="tl-tabs" role="tablist"></div><div id="tl-p"></div>'+tasks('tl-k',['A parcel ID that changes on the way','A photo that grows as text','An address that splits in two'])+CSS);
+  TAB.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.id='tl-t'+j;b.textContent=t;b.onclick=()=>{tab=j;draw();};L.$('#tl-tabs').appendChild(b);});
+  function mark(j){if(seen[j])return;seen[j]=1;tick(L,'tl-k',j);
+   if(seen.every(Boolean)){L.sheet('info','Flawed, and still everywhere','JSON, XML and CSV do the job in many cases, especially sending data <b>between organizations</b>. There, getting everyone to agree on a format matters more than how pretty or efficient it is. Twitter’s fix for big IDs: send each one twice, as a number and as a string.');L.done();}}
+  function draw(){[...L.$('#tl-tabs').children].forEach((b,j)=>b.classList.toggle('sel',j===tab));const p=L.$('#tl-p');
+   if(tab===0){const s=id.toString(),js=String(Number(s)),bad=js!==s;
+    let g='';for(let d=-4;d<=6;d++){const v=9007199254740992n+BigInt(d),x=16+(d+4)*28.8,b2=String(Number(v.toString()))!==v.toString(),cur=v===id;
+     g+='<line x1="'+x+'" y1="22" x2="'+x+'" y2="40" style="stroke:var(--'+(b2?'no':'ok-strong')+');stroke-width:'+(cur?4:2)+'"/><text x="'+x+'" y="54" style="font-size:11px;text-anchor:middle;fill:var(--'+(cur?'ink':'muted')+');font-weight:'+(cur?700:400)+'">'+(d===0?'2⁵³':(d>0?'+':'−')+Math.abs(d))+'</text>'+(cur?'<path d="M'+(x-6)+' 10 L'+(x+6)+' 10 L'+x+' 19z" style="fill:var(--ink)"/>':'');}
+    p.innerHTML='<svg class="e8svg" viewBox="0 0 320 64" role="img" aria-label="Whole numbers around 2 to the 53rd; green survive, red change">'+g+'<text x="320" y="8" style="font-size:11px;text-anchor:end;fill:var(--muted)">green: exact · red: rounded</text></svg>'+
+     '<div class="e8nr"><span>Otterpost sends</span><b>'+s+'</b></div><div class="e8nr '+(bad?'bad':'good')+'"><span>JavaScript reads</span><b>'+js+(bad?' ✗':' ✓')+'</b></div>'+(dual?'<div class="e8nr good"><span>…and as a string</span><b>"'+s+'" ✓</b></div>':'')+
+     '<div class="e8row"><button class="btn" id="tl-dn" aria-label="Parcel ID minus one">−1</button><button class="btn" id="tl-up" aria-label="Parcel ID plus one">+1</button><button class="chip'+(dual?' sel':'')+'" id="tl-du">Also send it as a string</button></div>'+
+     '<p class="small">JSON doesn’t say whether a number is whole, or how precise it is. JavaScript reads it as floating point, exact only up to 2⁵³. XML and CSV can’t even tell 42 from “42” without a schema.</p>';
+    L.$('#tl-up').onclick=()=>{id+=1n;draw();};L.$('#tl-dn').onclick=()=>{id-=1n;draw();};L.$('#tl-du').onclick=()=>{dual=!dual;draw();};
+    if(bad)mark(0);}
+   else if(tab===1){
+    p.innerHTML='<div class="e8rng"><label for="tl-kb">Signature photo</label><input type="range" id="tl-kb" min="10" max="300" step="10" value="'+kb+'"></div>'+
+     '<div class="e8kb"><span>Raw bytes</span><span class="e8tr"><span class="e8fl" id="tl-f1" style="transition:none"></span></span><b id="tl-n1"></b></div>'+
+     '<div class="e8kb"><span>Base64 text inside JSON</span><span class="e8tr"><span class="e8fl" id="tl-f2" style="background:var(--h4);transition:none"></span></span><b id="tl-n2"></b></div>'+
+     '<p class="small">JSON and XML handle text well but have no type for raw bytes. The usual workaround writes them as Base64 text: hacky, and <b>33% bigger</b>.</p>';
+    const upd=()=>{const b64=Math.ceil(kb*1024/3)*4/1024;L.$('#tl-f1').style.width=(kb/400*100)+'%';L.$('#tl-n1').textContent=kb+' KB';L.$('#tl-f2').style.width=(b64/400*100)+'%';L.$('#tl-n2').textContent=Math.round(b64)+' KB';};
+    L.$('#tl-kb').oninput=e=>{kb=+e.target.value;upd();mark(1);};upd();}
+   else{const line='OP-48213,Mrs. Okoro,"Flat 2, 14 Mill Lane",W2';
+    const cells=naive?line.split(','):['OP-48213','Mrs. Okoro','Flat 2, 14 Mill Lane','W2'];
+    p.innerHTML='<div class="e8lbl">One row of Linh’s export file</div><div class="e8csv">'+L.esc(line)+'</div><div class="e8lbl">The parser</div><div class="e8row" id="tl-pz"><button class="chip'+(naive?'':' sel')+'">Follows the escaping rules</button><button class="chip'+(naive?' sel':'')+'">Splits on every comma</button></div>'+
+     '<div class="e8tb"><div class="hd">code</div><div class="hd">recipient</div><div class="hd">address</div><div class="hd">zone</div>'+cells.slice(0,4).map((c,j)=>'<div class="'+(naive&&j>1?'bad':'')+'">'+L.esc(c)+'</div>').join('')+'</div>'+
+     (naive?'<p class="small" style="color:var(--no)">5 values for 4 columns: “'+L.esc(cells[4])+'” has nowhere to go, and the zone is wrong.</p>':'')+
+     '<p class="small">CSV has no schema: the app decides what each column means. Commas and line breaks inside values need escaping rules, and not every parser follows them.</p>';
+    const z=L.$('#tl-pz').children;z[0].onclick=()=>{naive=false;draw();};z[1].onclick=()=>{naive=true;draw();mark(2);};}}
+  draw();}},
+
+{part:1,src:'Chapter 4 · Binary encoding',pts:1,
+ solve:async L=>{L.$('#pp').children[1].click();await wait(L,'#pp-done',120);},
+ run(L){
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias wants smaller scan events. Which switch shrinks a record more?</h1><p class="small" style="margin-top:-4px">Scan events never leave Otterpost, so the team can pick any format. For small data the gain is tiny; at terabytes it matters.</p><div class="e8row" id="pp" style="display:grid;grid-template-columns:1fr 1fr"></div>'+
+   '<div class="e8bars" id="pp-b"></div><div id="pp-x"></div>'+CSS);
+  const O=[['Binary JSON','MessagePack: same data model, packed as binary'],['A schema with field tags','Each field gets a number; names stay in the schema']];
+  O.forEach((x,j)=>{const b=document.createElement('button');b.className='chip e8pk';b.innerHTML='<b>'+x[0]+'</b><small>'+x[1]+'</small>';b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');run();};L.$('#pp').appendChild(b);});
+  const R=FMTS.map(f=>{const s=f[2](REC.book.F);return [f[1],sizeOf(s),namesOf(s)];});
+  L.$('#pp-b').innerHTML='<div class="e8bh">The book’s sample record (a name, a number, two interests) · pink = field names</div>'+R.map((r,j)=>'<div class="e8bar" style="cursor:default"><span>'+r[0]+'</span><span class="e8tr"><span class="e8fl" id="pp-f'+j+'" style="width:0;transition-delay:'+(j*.28)+'s"><span class="e8nm" style="width:'+(r[2]/r[1]*100).toFixed(1)+'%"></span></span></span><b id="pp-n'+j+'">?</b></div>').join('');
+  function run(){R.forEach((r,j)=>{L.$('#pp-f'+j).style.width=(r[1]/81*100).toFixed(1)+'%';setTimeout(()=>{const n=L.$('#pp-n'+j);if(n)n.textContent=r[1]+' B';},j*280+450);});
+   setTimeout(()=>{if(!L.$('#pp-x'))return;L.award(p===1);L.$('#pp-x').innerHTML='<span id="pp-done"></span>';
+    L.sheet(p===1?'ok':'no',p===1?'Right: drop the names':'The tags win by far','Binary JSON only went from 81 to 66 bytes, because every field name is still inside (the pink). The book doubts that’s worth losing readability. Formats with a schema leave the names out: Thrift’s CompactProtocol 34 bytes, Protocol Buffers 33, Avro 32. Next, look inside the bytes yourself.');L.done();},R.length*280+700);}}},
+
+{part:1,src:'Chapter 4 · Thrift and Protocol Buffers',
+ solve:async L=>{const f=L.$('#ex-fmt').children;f[1].click();f[4].click();f[5].click();L.$('#ex-nx').click();L.$('#ex-nx').click();L.$('#ex-rec').children[1].click();},
+ run(L){
+  const fs=new Set(['json']);let taps=0;
+  L.h(L.kick('ex','Explore')+'<h1 class="q">One record, six formats. Where do the bytes go?</h1><div id="ex"></div>'+tasks('ex-k',['Open three formats','Tap two bytes to read them','Switch to the book’s record'])+CSS);
+  const I=Insp(L,L.$('#ex'),{id:'ex',on:e=>{
+   if(e.type==='fmt'){fs.add(e.fmt);if(fs.size>=3)tick(L,'ex-k',0);}
+   if(e.type==='sel'&&++taps>=2)tick(L,'ex-k',1);
+   if(e.type==='rec'&&e.rec==='book')tick(L,'ex-k',2);
+   if(allTicked(L,'ex-k')&&!L.$('#ex-done')){L.$('#ex-k').insertAdjacentHTML('afterend','<span id="ex-done"></span>');
+    L.sheet('info','What you saw','JSON and MessagePack spell out every field name in every record (pink). Thrift and Protocol Buffers send a small '+L.g('field-tag','tag number')+' instead (teal). Avro sends neither: just lengths and values, one after another.');L.done();}}});}},
+
 {part:1,src:'Chapter 4 · Language-Specific Formats',pts:5,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Name the problem',['Locked to one language','A security hole','Numbers lose precision','Bytes need Base64','CSV escaping breaks'],[
@@ -135,137 +476,247 @@ Course.lesson({
    ['The address “Flat 2, 14 Mill Lane” splits into two columns in an export file.',4,'CSV is vague about commas inside values, and not every parser follows the escaping rules.']]);}},
 
 /* ---------- PART 3: FIELD TAGS ---------- */
-{part:2,src:'Chapter 4 · Binary encoding',run(L){
-  L.h(L.kick('learn','Going binary')+'<h1 class="q">Binary JSON saves less than you’d think</h1>'+
-   L.prose('For data that stays inside one organization, you can pick a more compact or faster format. For small datasets the gain is tiny, but at terabytes it matters.')+
-   L.prose('The first idea is a binary version of JSON, like MessagePack or BSON. They keep JSON’s data model and add some types. But with no schema, <b>every record still spells out its field names</b>.')+
-   L.flow([['pencil','Text JSON','81 bytes','the book’s sample record',1],['box','MessagePack','66 bytes','names still inside',3]])+
-   L.prose('The book finds that small saving may not be worth losing readability. To do much better, you have to stop sending the field names, and for that you need a schema.'));
-  L.done();}},
 {part:2,src:'Chapter 4 · Thrift and Protocol Buffers',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">How a field-tag format encodes one Otterpost scan</h1>');
-  L.beats(L.card,[
-   ['The schema','Tobias describes a scan event in a schema file: field <b>1</b> is <code>trackingCode</code> (text), <b>2</b> is <code>status</code> (text), <b>3</b> is <code>hubCode</code> (text). Thrift and Protocol Buffers both work like this.'],
-   ['Generated code','A code generator turns the schema into classes for the Android app and for the server. Each side calls them to encode and decode.'],
-   ['Encoding','The scan OP-48213, at hub, WP3 becomes: <b>[tag 1, text, 8 long]</b> OP-48213 <b>[tag 2, text, 6 long]</b> at_hub <b>[tag 3, text, 3 long]</b> WP3.'],
-   ['No names','The name <code>trackingCode</code> never appears. The number 1 stands in for it. That’s a '+L.g('field-tag','field tag')+'. If a field isn’t set, it’s simply left out.'],
-   ['Packing tighter','Thrift’s CompactProtocol and Protocol Buffers squeeze tag and type into one byte and use '+L.g('varint','variable-length integers')+'. The book’s number 1337 takes two bytes instead of eight.'],
-   ['Required or optional?','Marking a field “required” changes nothing in the bytes. It only adds a check that fails at runtime if the field is missing, which helps catch bugs.']],
-   'Field-tag formats send each value with a small number, never the field name. The schema maps numbers back to names.');}},
-{part:2,src:'Chapter 4 · Thrift and Protocol Buffers',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">In Protocol Buffers bytes, what tells the reader which field a value belongs to?</h1>');
-  L.mc(L.card,['The field name, written in short form','Nothing at all; the values are in order','A small number, the field’s tag'],2,
-   'Each value carries its field tag (and a type). The schema says which name goes with which tag.',
-   'Field names never appear in the bytes, and the values aren’t identified by order alone. Each one carries its tag number.');}},
-{part:2,src:'Chapter 4 · Thrift and Protocol Buffers',pts:1,
- solve:async L=>{L.$('#pk').children[1].click();L.$('#enc').click();},
+  L.h(L.kick('learn','Field tags')+'<h1 class="q">The bytes carry a number, never the name</h1>'+
+   '<div class="e8sch"><div class="e8sh">Scan event schema (Protocol Buffers, v42)</div>'+V42.map(f=>'<div class="e8sr" id="ft-'+f.tag+'"><span class="e8tg">'+f.tag+'</span><span>'+(f.rule==='req'?'required':'optional')+' '+f.t+' <b>'+f.n+'</b></span></div>').join('')+'<div class="e8sh" style="margin:4px 0 0;font-weight:600">“required” never reaches the bytes. It only adds a runtime check.</div></div><div id="ft"></div>'+
+   L.prose('Thrift and Protocol Buffers both need a schema. Each field gets a number, its '+L.g('field-tag','<b>tag</b>')+', and only the tag goes in the bytes. Tap a byte: its field lights up above.')+CSS);
+  const I=Insp(L,L.$('#ft'),{id:'ftp',fmt:'pb',recs:['ravi'],fmts:['pb'],bars:false,on:e=>{if(e.type!=='sel')return;const tg=e.seg.fi>=0?REC.ravi.F[e.seg.fi].tag:0;V42.forEach(f=>L.$('#ft-'+f.tag).classList.toggle('on',f.tag===tg));}});
+  I.sel(0);L.done();}},
+
+{part:2,src:'Chapter 4 · Thrift and Protocol Buffers',
+ solve:async L=>{const p=L.$('#vi-p').children;p[0].click();p[2].click();p[5].click();},
  run(L){
-  let p=null;const P=['Binary JSON (MessagePack)','A schema with field tags'];
-  const F=[['Text JSON',81],['MessagePack',66],['Thrift Binary',59],['Thrift Compact',34],['Protocol Buffers',33]],C=['var(--h3)','var(--h4)','var(--h1)','var(--h2)','var(--ok-strong)'];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias wants smaller scan events. Which switch shrinks a record more?</h1><div id="pk"></div>'+
-   '<div id="bars" hidden><p class="small" style="margin:10px 0 6px">The book encodes the same small record (a name, a number and two interests) in each format.</p>'+
-   F.map((f,j)=>'<div class="meterrow"><div class="lb">'+f[0]+' <span id="n'+j+'"></span></div><div class="meter"><div id="b'+j+'" style="background:'+C[j]+'"></div></div></div>').join('')+
-   '<button class="btn pri" id="enc" style="margin-top:12px">'+L.ic('play')+'Encode the record</button></div>');
-  P.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#bars').hidden=false;};L.$('#pk').appendChild(b);});
-  L.$('#enc').onclick=function(){this.remove();let k=0;
-    const t=setInterval(()=>{const el=L.$('#b'+k);if(!el){clearInterval(t);return;}el.style.width=Math.round(F[k][1]/81*100)+'%';L.$('#n'+k).textContent='· '+F[k][1]+' bytes';k++;
-      if(k>=F.length){clearInterval(t);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'Right: drop the names':'The tags win by far','Binary JSON only went from 81 to 66 bytes, because every field name is still inside. Formats with a schema and field tags drop the names and get down to 33 or 34 bytes. Avro, next, gets to 32.');L.done();}},280);};}},
-{part:2,src:'Chapter 4 · Field tags and schema evolution',run(L){
-  L.h(L.kick('learn','Changing a tagged schema')+'<h1 class="q">Five changes. Tap each to see the rule.</h1>');
-  L.flips(L.card,[
-   ['Rename a field','<b>Fine.</b> The bytes never contain names, only tags.'],
-   ['Change a field’s tag','<b>Never.</b> Every record already stored would suddenly mean something else.'],
-   ['Add a field','<b>Fine, with a new tag.</b> Old code skips tags it doesn’t know; the type tells it how many bytes to skip (forward). But the new field must be optional or have a default, or new code would reject old records (backward).'],
-   ['Remove a field','<b>Only if it was optional.</b> And never use its tag again: old data with that tag is still out there.'],
-   ['Change a type','<b>Check the docs.</b> 32-bit to 64-bit: new code reads old data fine, but old code may cut a big new value down to 32 bits. In Protocol Buffers, a single field can become “repeated”: old code then sees only the last item.']],
-   'The tag is the field’s identity. Names can change; tags are forever. New fields are optional or have a default.');}},
+  const PR=[63,64,1337,2500,8191,8192,-64,-65],got=new Set();let live=false;
+  L.h(L.kick('ex','Variable-length integers')+'<h1 class="q">How many bytes does a number need?</h1>'+
+   '<div class="e8rng"><label for="vi-r">Number</label><input type="range" id="vi-r" min="-9000" max="9000" step="1" value="2500"></div>'+
+   '<div class="e8row" id="vi-p"></div><div class="e8big" id="vi-v" aria-live="polite"></div>'+
+   '<div class="e8lbl">Thrift BinaryProtocol: always 8 bytes</div><div class="e8bytes" id="vi-8"></div>'+
+   '<div class="e8lbl" id="vi-cl"></div><div class="e8bytes" id="vi-c"></div>'+
+   L.prose('Thrift’s CompactProtocol writes a number in as few bytes as it needs. The top bit of each byte (amber) says “more bytes follow”. −64 to 63 fit in one byte, −8192 to 8191 in two. A '+L.g('varint','variable-length integer')+'.')+
+   tasks('vi-k',['Find a 1-byte number','Find a 2-byte number','Find a 3-byte number'])+CSS);
+  function draw(v){L.$('#vi-v').textContent=v.toLocaleString('en-US');
+   let x=BigInt.asUintN(64,BigInt(v)),b8=[];for(let k=0;k<8;k++){b8.unshift(Number(x&255n));x>>=8n;}
+   L.$('#vi-8').innerHTML=b8.map(b=>'<span class="e8by g">'+hex(b)+'</span>').join('');
+   const c=uvar(zz(v));L.$('#vi-cl').textContent='Thrift CompactProtocol: '+c.length+' byte'+(c.length>1?'s':'');
+   L.$('#vi-c').innerHTML=c.map(b=>{const s=b.toString(2).padStart(8,'0');return '<span class="e8by"><i>'+s[0]+'</i>'+s.slice(1)+'</span>';}).join('');
+   if(!live)return;got.add(c.length);if(got.has(1))tick(L,'vi-k',0);if(got.has(2))tick(L,'vi-k',1);if(got.has(3))tick(L,'vi-k',2);
+   if(got.has(1)&&got.has(2)&&got.has(3)&&!L.$('#vi-done')){L.$('#vi-k').insertAdjacentHTML('afterend','<span id="vi-done"></span>');
+    L.sheet('info','Small numbers, small bytes','The book’s 1337 takes 2 bytes instead of 8. Protocol Buffers packs numbers in a very similar way. Bigger numbers simply use more bytes.');L.done();}}
+  PR.forEach(v=>{const b=document.createElement('button');b.className='chip';b.textContent=v.toLocaleString('en-US').replace('-','−');b.onclick=()=>{L.$('#vi-r').value=v;draw(v);};L.$('#vi-p').appendChild(b);});
+  L.$('#vi-r').oninput=e=>{live=true;draw(+e.target.value);};
+  draw(2500);live=true;}},
+
+{part:2,src:'Chapter 4 · Field tags and schema evolution',
+ solve:async L=>{for(let k=0;k<3;k++){L.$('#hs-nx').click();await L.sleep(20);}},
+ run(L){
+  let k=0;
+  const S=[
+   ()=>{H.set(V42,[...V42,fx(T.left,{isNew:1})],VALS,{old:'v42',nu:'v43'});H.decode();H.show('f');
+     return ['Old code, new data','A v42 server reads Ravi’s v43 scan. Tag 5 is unknown, so it’s <b>skipped</b>. The type annotation tells the parser how many bytes to skip. Forward compatible.'];},
+   ()=>{H.show('b');return ['New code, old data','A v43 server reads Amara’s v42 scan. Tags keep their meaning, so everything reads. <code>leftWith</code> is missing, so it’s simply left empty. Backward compatible.'];},
+   ()=>{H.set(V42,[...V42,fx(T.left,{rule:'req',isNew:1})],VALS,{old:'v42',nu:'v43'});H.decode();H.show('b');
+     return ['What if leftWith were required?','Then every old scan fails the required check. So every field added after the first release must be <b>optional</b> or have a <b>default</b>.'];},
+   ()=>{H.set(V43,[T.track,T.status,T.courier,T.left],VALS,{old:'v43',nu:'v44'});H.decode();H.show('f');
+     return ['Removing a field','Otterpost drops cash on delivery, so v44 removes <code>codCents</code>. Old code just finds it missing. That only works because it was optional, and tag 4 must never be used again.'];}];
+  L.h(L.kick('ex','Schema evolution')+'<h1 class="q">Old and new code meet on the field tags</h1><div id="hs"></div>'+
+   '<div class="e8cap" id="hs-c" aria-live="polite"></div><button class="btn pri" id="hs-nx">Next ›</button>'+CSS);
+  const H=Hand(L,L.$('#hs'),{id:'hs'});
+  function go(){const c=S[k]();L.$('#hs-c').innerHTML='<span class="stp">'+(k+1)+' of 4 · '+c[0]+'</span>'+c[1];if(k===3){L.$('#hs-nx').style.display='none';L.done();}}
+  L.$('#hs-nx').onclick=()=>{if(k<3){k++;go();}};go();}},
+
 {part:2,src:'Chapter 4 · Field tags and schema evolution',pts:1,
- solve:async L=>{const g=L.$('#tg').children;g[0].click();g[1].click();},
+ solve:async L=>{L.$('#pt').children[0].click();await wait(L,'#pt-done',60);},
  run(L){
-  const O=['Reuse tag 5 (it’s free now)','Give it a new tag, 6'],seen=new Set();
-  const R=['<b>Decoded:</b> trackingCode OP-48213 · status delivered · <b>weightGrams 2500</b><br><span style="color:var(--no)">Wrong! That 2500 was $25.00 cash on delivery, not a weight.</span>',
-           '<b>Decoded:</b> trackingCode OP-48213 · status delivered · weightGrams (not set)<br><span style="color:var(--ok)">Tag 5 is unknown now, so it’s skipped. Nothing is misread.</span>'];
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tag 5 was <code>codCents</code>, a cash-on-delivery amount. Otterpost dropped cash on delivery and removed the field. Now Tobias adds <code>weightGrams</code>. Try both choices on a scan stored in 2022.</h1>'+
-   '<div id="tg"></div><div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:72px"><div class="small" style="margin-bottom:6px">Stored 2022 scan: tag 1 = OP-48213 · tag 2 = delivered · tag 5 = 2500</div><div id="out" class="small">Pick a tag above.</div></div><div id="tq"></div>');
-  O.forEach((n,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=n;b.onclick=()=>{[...L.$('#tg').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');seen.add(j);L.$('#out').innerHTML=R[j];
-    if(seen.size===2&&!L.$('#tq').innerHTML){const q=L.$('#tq');q.innerHTML='<h2 class="sub">Which rule did this show?</h2>';
-      L.mc(q,['Never remove a field from a schema','Always make new fields required','Never reuse the tag of a removed field'],2,
-       'Old records with tag 5 still exist. If the tag gets a new meaning, those old values are silently misread as the new field.',
-       'Removing an optional field is allowed, and new fields must <i>not</i> be required. The bug came from giving an old tag a new meaning.');}};L.$('#tg').appendChild(b);});}},
+  let p=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">v44 removes <code>codCents</code> (tag 4) and adds <code>weightGrams</code>. Tobias gives it the free tag 4. A v44 server reads a scan stored in 2025. What does it get?</h1>'+
+   '<div id="pt-h"></div><div class="e8row" id="pt"></div><div id="pt-x"></div>'+CSS);
+  const H=Hand(L,L.$('#pt-h'),{id:'pth'});
+  H.set(V42,[T.track,T.status,T.courier,{id:'weight',tag:4,n:'weightGrams',t:'int64',rule:'opt',isNew:1}],VALS,{old:'a 2025 app',nu:'the v44 draft'});
+  ['weightGrams = 2500','weightGrams left empty','An error: tag 4 is taken'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
+   b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');H.decode();H.show('b');L.award(j===0);L.$('#pt-x').innerHTML='<span id="pt-done"></span>';
+    L.sheet(j===0?'ok':'no',j===0?'Right, and that’s the danger':'It reads 2500 grams, silently','The reader trusts the tag. Old data still says “tag 4 = 2500”, which meant $25.00 cash on delivery. Now it’s a 2.5 kg parcel, with no error. Tap <b>Forward</b>: a v44 weight read by old code becomes a cash charge. Never reuse a removed field’s tag.');L.done();};
+   L.$('#pt').appendChild(b);});}},
+
+{part:2,src:'Chapter 4 · Datatypes and schema evolution',
+ solve:async L=>{const c=L.$('#lb-p').children;for(let j=0;j<4;j++){c[j].click();await L.sleep(20);}},
+ run(L){
+  const P=[
+   ['Add a required field',V43,[...V43,{id:'weight',tag:6,n:'weightGrams',t:'int64',rule:'req',isNew:1}],'b','Backward breaks: old data never had tag 6, so the required check fails. Old code skips tag 6, so forward is fine.'],
+   ['Reuse a removed tag',V43,[T.track,T.status,T.courier,{id:'weight',tag:4,n:'weightGrams',t:'int64',rule:'opt',isNew:1},T.left],'b','Both directions misread, silently: cents become grams and grams become cents. Old data with tag 4 is still out there, so the tag is retired for good.'],
+   ['Remove a required field',V43,[T.status,T.courier,T.cod,T.left],'f','New code skips tag 1 in old data. But old code still requires <code>trackingCode</code> and fails on every new record. A required field can never be removed.'],
+   ['Rename a field',V43,[T.track,fx(T.status,{n:'scanType'}),T.courier,T.cod,T.left],'b','Both fine. The bytes carry tag 2, never the name, so the name is free to change.'],
+   ['int32 → int64',[T.track,{id:'pid',tag:6,n:'parcelId',t:'int32',rule:'opt',v:48213}],[T.track,{id:'pid',tag:6,n:'parcelId',t:'int64',rule:'opt',v:3000000000,isNew:1}],'f','New code fills the missing bits with zeros. Old code still holds the value in 32 bits, so a big new ID is cut down to a wrong number. Check the docs before changing a type.'],
+   ['Optional → repeated',[T.track,T.courier],[T.track,{id:'courier',tag:3,n:'courierIds',t:'string',rule:'rep',v:['C-0017','C-0031'],isNew:1}],'f','Protocol Buffers only. A repeated field is the same tag written again for each item. New code sees old data as a list of one; old code sees only the last item. Thrift has a list type instead: no such change, but nested lists work.']];
+  const seen=new Set();
+  L.h(L.kick('ex','Limits')+'<h1 class="q">Push the field-tag rules to the edge. Try at least four changes.</h1><div class="e8row" id="lb-p"></div><div id="lb"></div>'+CSS);
+  const H=Hand(L,L.$('#lb'),{id:'lbh'});
+  P.forEach((x,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=x[0];b.onclick=()=>{selOne(L.$('#lb-p'),b);
+    H.set(x[1],x[2],VALS,{old:'old code',nu:'new code'});const r=H.decode();H.show(!r.b.ok?'b':!r.f.ok?'f':x[3]);H.note('<div class="fb info">'+x[4]+'</div>');
+    seen.add(j);b.classList.add('ok');
+    if(seen.size>=4&&!L.$('#lb-done')){L.$('#lb-p').insertAdjacentHTML('afterend','<span id="lb-done"></span>');L.sheet('info','The tag is the field’s identity','Names can change; tags are forever. Added fields are optional or have a default. Only optional fields can be removed, and their tags are never reused. Type changes may lose precision.');L.done();}};
+   L.$('#lb-p').appendChild(b);});
+  H.set(V43,V43,VALS,{old:'old code',nu:'new code'});H.note('<p class="small">Pick a change above. The handshake decodes it both ways.</p>');}},
+
+{part:2,src:'Chapter 4 · Field tags and schema evolution',pts:1,
+ solve:async L=>{L.$('#cg-w1').click();L.$('#cg-r1').click();L.$('#cg-s0').click();L.$('#cg-go').click();await wait(L,'#cg-ok',60);},
+ run(L){
+  const st={w:0,r:0,s:1};let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Fix Tobias’s v44 draft so both badges go green</h1>'+
+   '<p class="small" style="margin-top:-4px">v44 must add <code>weightGrams</code>, drop <code>codCents</code> and rename <code>status</code> to <code>scanType</code>.</p>'+
+   '<div class="e8lbl">weightGrams gets tag</div><div class="e8row"><button class="chip" id="cg-w0">4 (now free)</button><button class="chip" id="cg-w1">6 (never used)</button></div>'+
+   '<div class="e8lbl">weightGrams is</div><div class="e8row"><button class="chip" id="cg-r0">required</button><button class="chip" id="cg-r1">optional</button></div>'+
+   '<div class="e8lbl">scanType (was status) gets tag</div><div class="e8row"><button class="chip" id="cg-s0">2 (keep it)</button><button class="chip" id="cg-s1">7 (new name, new tag)</button></div>'+
+   '<div id="cg"></div><button class="btn pri" id="cg-go" style="margin-top:10px">Decode both ways</button>'+CSS);
+  const H=Hand(L,L.$('#cg'),{id:'cgh'});
+  function build(){['w','r','s'].forEach(g=>[0,1].forEach(j=>L.$('#cg-'+g+j).classList.toggle('sel',st[g]===j)));
+   const nu=[T.track,fx(T.status,{n:'scanType',tag:st.s?7:2,isNew:st.s}),T.courier,T.left,{id:'weight',tag:st.w?6:4,n:'weightGrams',t:'int64',rule:st.r?'opt':'req',isNew:1}].sort((a,b)=>a.tag-b.tag);
+   H.set(V43,nu,VALS,{old:'v43',nu:'v44 draft'});}
+  ['w','r','s'].forEach(g=>[0,1].forEach(j=>L.$('#cg-'+g+j).onclick=()=>{st[g]=j;build();}));
+  L.$('#cg-go').onclick=()=>{const r=H.decode(),ok=r.b.ok&&r.f.ok;H.show(!r.b.ok?'b':!r.f.ok?'f':'b');
+   if(first){L.award(ok);first=false;}
+   if(ok){L.$('#cg-go').disabled=true;L.$('#cg-go').insertAdjacentHTML('afterend','<span id="cg-ok"></span>');
+    L.sheet('ok','Both directions work','A brand-new tag (6) for weightGrams, optional, so old scans without it still read. scanType keeps tag 2, because a rename never touches the bytes. codCents is gone, and its tag 4 is retired.');L.done();}
+   else L.sheet('no','Still red','Tap the red badge to see which field fails. Reused tags misread silently, required new fields break old data, and a new tag for a renamed field loses its old values.');};
+  build();}},
 
 /* ---------- PART 4: AVRO AND SCHEMAS ---------- */
-{part:3,src:'Chapter 4 · Avro',run(L){
-  L.h(L.kick('learn','Avro')+'<h1 class="q">No tags at all: just values, one after another</h1>'+
-   L.prose('Avro started in 2009 as part of Hadoop. It also uses a schema, but the schema has <b>no tag numbers</b>, and the bytes hold no field names and no types. A text value is just a length and the letters. The book’s record takes 32 bytes, the smallest yet.')+
-   L.prose('So to decode, you walk through the fields in the order the schema lists them. That only works if you know the <b>exact schema the data was written with</b>.')+
-   L.lanes([['pencil','Writer’s schema','The schema version the program used to <b>encode</b> the data, for example the one built into it.',1],
-            ['eye','Reader’s schema','The schema version the reading program <b>expects</b>. Its code may have been generated from it.',2]])+
-   L.note('The key idea: the two don’t have to be the same, only <b>compatible</b>. When reading, the Avro library compares them side by side and translates the data from the writer’s schema into the reader’s.','bulb'));
-  L.done();}},
-{part:3,src:'Chapter 4 · The writer’s schema and the reader’s schema',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Linh’s job reads an Avro file of parcels from last year</h1>');
-  L.beats(L.card,[
-   ['Two schemas','The file was written with last year’s '+L.g('writers-schema','writer’s schema')+': <code>status</code>, <code>parcelId</code>, <code>merchantId</code>, <code>courierNote</code>. Linh’s ETA job uses today’s '+L.g('readers-schema','reader’s schema')+': <code>parcelId</code>, <code>merchantId</code>, <code>status</code>, <code>timeSlot</code> (default: null).'],
-   ['Order','The fields are in a different order. No problem: Avro matches fields <b>by name</b>.'],
-   ['Writer only','<code>courierNote</code> is in the writer’s schema but not the reader’s. It’s <b>ignored</b>.'],
-   ['Reader only','<code>timeSlot</code> is in the reader’s schema but not the writer’s. It’s <b>filled in with the default</b> from the reader’s schema: null.'],
-   ['Result','Every parcel arrives in exactly the shape Linh’s code expects, even though it was written by a different version.']],
-   'Avro resolves differences at read time: match by name, ignore extra fields, fill missing fields with the reader’s defaults.');}},
+{part:3,src:'Chapter 4 · Avro',
+ solve:async L=>{const c=L.$('#aw-p').children;c[1].click();c[2].click();},
+ run(L){
+  const SC=[['The writer’s exact schema',[{n:'trackingCode',t:'string'},{n:'status',t:'string'},{n:'courierId',t:'string'},{n:'codCents',u:['null','long']}]],
+   ['status and courierId swapped',[{n:'trackingCode',t:'string'},{n:'courierId',t:'string'},{n:'status',t:'string'},{n:'codCents',u:['null','long']}]],
+   ['weightGrams added before codCents',[{n:'trackingCode',t:'string'},{n:'status',t:'string'},{n:'courierId',t:'string'},{n:'weightGrams',t:'long'},{n:'codCents',u:['null','long']}]]];
+  const tried=new Set(),TRUE={};REC.ravi.F.forEach(f=>TRUE[f.n]=f.v);
+  L.h(L.kick('learn','Avro')+'<h1 class="q">No tags, no names: just values in a row</h1><div id="aw"></div>'+
+   '<div class="e8lbl">Decode these bytes with</div><div class="e8row" id="aw-p"></div><div class="e8out" id="aw-o" aria-live="polite"></div>'+
+   L.prose('Avro (2009, from Hadoop) has a schema but no tag numbers. Nothing in the bytes says which field comes next, or its type. You walk the schema in order, so you need the <b>exact</b> schema the writer used.')+CSS);
+  const I=Insp(L,L.$('#aw'),{id:'awi',fmt:'av',recs:['ravi'],fmts:['av'],bars:false,leg:'<div class="e8leg">Ravi’s scan as Avro bytes. Colours: which field the reader assigns each byte to.</div>'});
+  function dec(bytes,schema){let p=0;const out=[];
+   const rv=()=>{let n=0,m=1,b;do{if(p>=bytes.length)throw new Error('ran out of bytes');b=bytes[p++];n+=(b&127)*m;m*=128;}while(b&128);return n;};
+   const rd=t=>{if(t==='null')return null;if(t==='long')return unzz(rv());const len=unzz(rv());if(len<0||p+len>bytes.length)throw new Error('length '+len+' runs past the end');const s=String.fromCharCode(...bytes.slice(p,p+len));p+=len;return s;};
+   for(const f of schema){const s0=p;try{let v;if(f.u){const i=unzz(rv());if(i<0||i>=f.u.length)throw new Error('union branch '+i+' doesn’t exist');v=rd(f.u[i]);}else v=rd(f.t);out.push({n:f.n,v,a:s0,b:p});}
+    catch(e){out.push({n:f.n,err:e.message,a:s0,b:Math.max(p,s0+1)});break;}}
+   return out;}
+  SC.forEach((s,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=s[0];b.onclick=()=>{selOne(L.$('#aw-p'),b);tried.add(j);
+    const out=dec(I.bytes(),s[1]),C=['pp0','pp1','pp2','pp3'];
+    I.paint(out.map((x,k)=>[x.a,x.b,x.err?'ppx':C[k%4]]));
+    L.$('#aw-o').innerHTML=out.map((x,k)=>{const ok=!x.err&&x.n in TRUE&&TRUE[x.n]===x.v;
+     return '<div class="e8o '+(ok?'ok':'bad')+'"><i class="e8c '+(x.err?'ppx':C[k%4])+'" style="width:12px;height:12px;border-bottom-width:2px"></i><b>'+x.n+'</b><span>'+(x.err?'✗ error: '+x.err:(ok?'✓ ':'✗ ')+show(x.v)+(ok?'':x.n in TRUE?' (wrong!)':' (never written)'))+'</span></div>';}).join('');
+    if(tried.has(1)&&tried.has(2)&&!L.$('#aw-done')){L.$('#aw-o').insertAdjacentHTML('afterend','<span id="aw-done"></span>');
+     L.sheet('info','Wrong schema, wrong data','Swapped fields read silently wrong. An extra field steals the next bytes, and the rest falls apart. That’s why Avro’s reader must also know the writer’s schema. Avro’s reward: the book’s record takes just 32 bytes, the smallest of all.');L.done();}};
+   L.$('#aw-p').appendChild(b);});
+  L.$('#aw-p').children[0].click();}},
+
+{part:3,src:'Chapter 4 · The writer’s schema and the reader’s schema',
+ solve:async L=>{for(let k=0;k<2;k++){L.$('#ar-nx').click();await L.sleep(20);}},
+ run(L){
+  let k=0;
+  const S=[[['track','status'],'Order differs','The writer put <code>status</code> first, the reader expects <code>trackingCode</code> first. No problem: Avro matches fields <b>by name</b>.'],
+   [['note'],'Writer only','<code>courierNote</code> is in the '+L.g('writers-schema','writer’s schema')+' but not the reader’s, so it’s <b>ignored</b>.'],
+   [['slot'],'Reader only','<code>timeSlot</code> is in the '+L.g('readers-schema','reader’s schema')+' only, so it’s <b>filled with the reader’s default</b>: null.']];
+  L.h(L.kick('ex','Writer’s and reader’s schema')+'<h1 class="q">Linh’s ETA job reads last year’s parcel file</h1><div id="ar"></div>'+
+   '<div class="e8cap" id="ar-c" aria-live="polite"></div><button class="btn pri" id="ar-nx">Next ›</button>'+CSS);
+  const H=Hand(L,L.$('#ar'),{id:'arh',mode:'avro',dirs:false});
+  H.set([A.status,A.track,{id:'note',n:'courierNote',u:['null','string'],def:'null'}],[A.track,A.status,{id:'slot',n:'timeSlot',u:['null','string'],def:'null'}],
+   {status:'delivered',track:'OP-31907',note:'ring twice'},{old:'last year’s export',nu:'today’s ETA job'});
+  H.decode();
+  function go(){H.focus(S[k][0]);L.$('#ar-c').innerHTML='<span class="stp">'+(k+1)+' of 3 · '+S[k][1]+'</span>'+S[k][2];
+   if(k===2){L.$('#ar-nx').style.display='none';L.sheet('info','Compatible, not identical','The two schemas don’t have to match, only be compatible. The Avro library looks at both side by side and converts the data from the format the writer used into the one the reader expects.');L.done();}}
+  L.$('#ar-nx').onclick=()=>{if(k<2){k++;go();}};go();}},
+
 {part:3,src:'Chapter 4 · The writer’s schema and the reader’s schema',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">The reader’s schema has <code>weightGrams</code> with a default of 0. The writer’s schema has no such field. What does the reader get?</h1>');
   L.mc(L.card,['An error, because the two schemas differ','Whatever bytes come next in the record','The default from its own schema: 0'],2,
    'A field the reader expects but the writer never wrote is filled with the default from the reader’s schema.',
    'The schemas only need to be compatible, not equal, and Avro never guesses from leftover bytes. The missing field gets the reader’s default, 0.');}},
-{part:3,src:'Chapter 4 · Schema evolution rules',run(L){
-  L.h(L.kick('learn','Avro’s rules for change')+'<h1 class="q">Defaults are what make change safe</h1>'+
-   L.prose('In Avro, <b>forward</b> compatibility means a new writer’s schema with an old reader’s schema. <b>Backward</b> means a new reader with an old writer.')+
-   L.list([['check','Add or remove only fields with a default','Add one without a default, and new readers can’t read old data (breaks backward). Remove one without a default, and old readers can’t read new data (breaks forward).'],
-     ['shield','Null is opt-in','A field can be null only if its type is a union that includes null, such as “null or long”. That’s wordier but stops bugs. Avro uses unions and defaults instead of optional and required.'],
-     ['pencil','Renames and unions work one way','The reader’s schema can list aliases for old field names, so renaming is backward compatible but not forward. Adding a type to a union is the same.']],3)+
-   '<p class="small" style="margin-top:10px">Changing a field’s type works if Avro can convert between the two types.</p>');
+
+{part:3,src:'Chapter 4 · Schema evolution rules',pts:6,
+ solve:async L=>{const ans=[0,2,1,1,1,3];for(let j=0;j<6;j++){await wait(L,'#av-q',40);L.$('#av-q').children[ans[j]].click();await L.sleep(20);const n=L.$('#av-nx');if(n)n.click();await L.sleep(20);}},
+ run(L){
+  const OPT=['Both ways','Backward only','Forward only','Neither'];
+  const P=[
+   ['Add weightGrams, default null',[...A43,{id:'weight',n:'weightGrams',u:['null','long'],def:'null',isNew:1}],0,'Old readers ignore it; new readers fill in null for old records. A field with a default is safe both ways.'],
+   ['Add zoneCode, no default',[...A43,{id:'zone',n:'zoneCode',t:'string',isNew:1}],2,'Old readers just ignore it. But new readers find nothing to fill in when reading old data: backward breaks.'],
+   ['Remove courierId (it had no default)',[A.track,A.status,A.left],1,'New readers ignore it in old data. Old readers still expect it in new data and have no default: forward breaks.'],
+   ['Rename status → scanType, with alias “status”',[A.track,fx(A.status,{n:'scanType',alias:['status'],isNew:1}),A.courier,A.left],1,'The new reader finds the old name through the alias. Old readers don’t know the new name. Renames are backward compatible, not forward.'],
+   ['leftWith may now be a locker number',[A.track,A.status,A.courier,fx(A.left,{u:['null','string','long'],v:117,isNew:1})],1,'Adding a branch to a union: new readers handle all three types, old readers can’t read a long. Backward, not forward.'],
+   ['Add hubCode: string, default null',[...A43,{id:'hub',n:'hubCode',t:'string',def:'null',isNew:1}],3,'Null is only allowed if it’s a branch of a union. Avro is explicit about what can be null, which prevents bugs, so it has unions and defaults instead of optional and required.']];
+  let k=0;
+  L.h(L.kick('pr','Predict, then decode')+'<h1 class="q">Six changes to the Avro scan schema. Which reads still work?</h1>'+
+   '<div class="e8cap" id="av-c"></div><div id="av-qw"></div><div id="av"></div><div id="av-x"></div>'+CSS);
+  const H=Hand(L,L.$('#av'),{id:'avh',mode:'avro'});
+  function show1(){const x=P[k];L.$('#av-c').innerHTML='<span class="stp">Change '+(k+1)+' of 6</span><b>'+x[0]+'</b>';L.$('#av-x').innerHTML='';
+   H.set(A43,x[1],VALS,{old:'v43',nu:'v44'});
+   L.$('#av-qw').innerHTML='<div class="e8row" id="av-q" role="group" aria-label="Your prediction"></div>';
+   OPT.forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;b.onclick=()=>pick(j,b);L.$('#av-q').appendChild(b);});}
+  function pick(j,b){const x=P[k],ok=j===x[2];[...L.$('#av-q').children].forEach((c,i)=>{c.disabled=true;if(i===x[2])c.classList.add('ok');else if(c===b)c.classList.add('no');});
+   L.award(ok);const r=H.decode();H.show(!r.b.ok?'b':!r.f.ok?'f':'b');
+   const last=k===P.length-1;
+   L.$('#av-x').innerHTML='<div class="fb '+(ok?'ok':'no')+'" style="margin-top:8px">'+(ok?'Right. ':'It’s '+OPT[x[2]].toLowerCase()+'. ')+x[3]+'</div>'+(last?'':'<button class="btn pri" id="av-nx" style="margin-top:10px">Next change ›</button>');
+   if(last){L.sheet('info','Avro’s rules','Add or remove only fields that have a default. Renames (aliases) and new union branches work backward only. Null must be a branch of a union. Type changes work if Avro can convert the types.');L.done();}
+   else L.$('#av-nx').onclick=()=>{k++;show1();};}
+  show1();}},
+
+{part:3,src:'Chapter 4 · But what is the writer’s schema?',run(L){
+  const rec=(x,y,w,c,t)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="22" rx="5" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.5"/>'+(t?'<text x="'+(x+w/2)+'" y="'+(y+15)+'" style="font-size:11px;font-weight:700;text-anchor:middle;fill:var(--'+c+')">'+t+'</text>':'');
+  let s='<text x="4" y="12" style="font-size:12.5px;font-weight:700;fill:var(--ink)">1 · A big file of similar records</text>'+rec(4,20,54,'h2','schema');
+  for(let j=0;j<9;j++)s+=rec(62+j*28,20,24,'h1','');
+  s+='<text x="4" y="58" style="font-size:11.5px;fill:var(--muted)">Written once at the start (Avro object container file)</text>';
+  s+='<text x="4" y="86" style="font-size:12.5px;font-weight:700;fill:var(--ink)">2 · A database, records written over years</text>';
+  [['v3',94],['v7',120],['v3',146]].forEach(r=>{s+=rec(4,r[1],30,'h2',r[0])+rec(38,r[1],140,'h1','');});
+  s+='<rect x="196" y="100" width="120" height="62" rx="8" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/><text x="256" y="118" style="font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)">schema versions</text><text x="256" y="136" style="font-size:11.5px;text-anchor:middle;fill:var(--h2)">v3 · v7</text><text x="256" y="152" style="font-size:11px;text-anchor:middle;fill:var(--muted)">kept in the database</text>'+
+   '<path d="M180 131 H194" style="stroke:var(--line2);stroke-width:2;fill:none"/><text x="4" y="186" style="font-size:11.5px;fill:var(--muted)">Each record starts with its schema’s version number</text>';
+  s+='<text x="4" y="214" style="font-size:12.5px;font-weight:700;fill:var(--ink)">3 · A network connection</text>'+
+   '<rect x="4" y="224" width="70" height="36" rx="8" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/><text x="39" y="246" style="font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h3)">process</text>'+
+   '<rect x="246" y="224" width="70" height="36" rx="8" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5"/><text x="281" y="246" style="font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h3)">process</text>'+
+   '<path d="M78 233 H242" style="stroke:var(--h2);stroke-width:2;fill:none"/><text x="160" y="229" style="font-size:11px;font-weight:700;text-anchor:middle;fill:var(--h2)">agree on v7 when connecting</text>'+
+   '<path d="M78 252 H242" style="stroke:var(--h1);stroke-width:2;stroke-dasharray:6 4;fill:none"/><text x="160" y="270" style="font-size:11px;text-anchor:middle;fill:var(--muted)">then records only, for the whole connection</text>';
+  L.h(L.kick('learn','Where the writer’s schema lives')+'<h1 class="q">The reader has to find the writer’s schema</h1>'+
+   '<svg class="e8svg" viewBox="0 0 320 276" role="img" aria-label="Three places for the writer’s schema: once per file, a version number per database record, or agreed per network connection">'+s+'</svg>'+
+   L.prose('Sending the whole schema with every record would often outweigh the data. A database of schema versions (a counter or a hash) also documents the data and lets you check compatibility.')+CSS);
   L.done();}},
-{part:3,src:'Chapter 4 · Schema evolution rules',pts:6,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which reads still work?',['Safe both ways','Backward only','Forward only'],[
-   ['Linh adds <code>vanId</code> to the parcels schema, with a default of null.',0,'Old readers ignore it; new readers fill in null for old records. A field with a default is safe both ways.'],
-   ['Linh adds <code>zoneCode</code> with <b>no</b> default.',2,'Old readers just ignore the new field (forward is fine). But new readers find nothing to fill in when reading old data, so backward breaks.'],
-   ['Linh removes <code>hubCode</code>, which had <b>no</b> default.',1,'New readers simply ignore it in old data (backward is fine). Old readers still expect it in new data and have no default, so forward breaks.'],
-   ['Linh renames <code>status</code> to <code>scanType</code>, with the old name as an alias in the reader’s schema.',1,'The new reader can match the old name through the alias. Old readers don’t know the new name, so renaming is backward but not forward compatible.'],
-   ['Linh removes <code>courierNote</code>, which had a default of null.',0,'Old readers fill in the default when it’s missing; new readers ignore it in old data. Safe both ways.'],
-   ['Linh lets <code>weight</code> be “long or text” instead of just “long”.',1,'Adding a branch to a union is backward compatible: new readers handle both. Old readers can’t handle the new text values.']]);}},
+
 {part:3,src:'Chapter 4 · But what is the writer’s schema?',pts:1,run(L){
-  L.h(L.kick('learn','Where the writer’s schema lives')+'<h1 class="q">The reader must find the writer’s schema somehow</h1>'+
-   L.prose('Sending the full schema with every record would often take more space than the data itself. So it depends on the setting:')+
-   L.list([['book','A big file of similar records','Write the schema once at the start of the file. Avro defines a file format for this (object container files).'],
-     ['layers','A database of records written over years','Put a schema version number at the start of each record, and keep every schema version in the database. LinkedIn’s Espresso works this way.'],
-     ['chat','A network connection','Agree on the schema version when the connection opens, then use it for the whole connection.']],1)+
-   '<p class="small" style="margin-top:8px">A database of schema versions is worth having anyway: it documents the data and lets you check compatibility. The version can be a counter or a hash of the schema.</p>'+
-   '<div id="wq"><h2 class="sub">Linh writes one nightly export file of 2 million parcel rows, all with the same schema. Where should the writer’s schema go?</h2></div>');
-  L.mc(L.$('#wq'),['Once, at the very start of the file','In front of every single row, to be safe','In a separate email to the readers'],0,
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Linh writes one nightly export file of 2 million parcel rows, all with the same schema. Where should the writer’s schema go?</h1>');
+  L.mc(L.card,['Once, at the very start of the file','In front of every single row, to be safe','In a separate email to the readers'],0,
    'All rows share one schema, so writing it once at the start of the file is enough. Avro’s object container files do exactly this.',
    'Repeating the schema on every row would waste more space than the data, and readers need it reliably. Write it once at the start of the file.');}},
-{part:3,src:'Chapter 4 · Dynamically generated schemas',pts:1,run(L){
-  L.h(L.kick('learn','Generated schemas and generated code')+'<h1 class="q">Why no tags can be an advantage</h1>'+
-   L.prose('Say you dump a relational database to files. With Avro you can <b>generate</b> the schema from the tables: one record per table, one field per column, named after the column. If a column is added or dropped, just generate a new schema. Fields match by name, so old readers still work.')+
-   L.prose('With Thrift or Protocol Buffers, someone would have to map each column to a tag by hand, and never reuse an old tag. Generated schemas were simply not their design goal.')+
-   L.lanes([['lock','Code generation helps…','in statically typed languages (Java, C++, C#): efficient objects, type checks and autocomplete.',1],
-            ['leaf','…and is optional in Avro','Dynamic languages (JavaScript, Ruby, Python) gain little from it. An Avro file carries its schema, so you can open it like a JSON file.',2]])+
-   '<div id="dq"><h2 class="sub">Why does Avro suit Linh’s Parcel DB export better than Protocol Buffers?</h2></div>');
-  L.mc(L.$('#dq'),['Fields match by name, so there are no tags to assign','Avro files are plain text that people can read','Avro needs no schema for reading at all'],0,
-   'The export can regenerate the schema every night from the tables, with no hand-kept list of column-to-tag numbers.',
-   'Avro is binary and does need the writer’s schema. Its advantage here is matching by name, so a generated schema needs no tag numbers.');}},
+
+{part:3,src:'Chapter 4 · Dynamically generated schemas',
+ solve:async L=>{L.$('#gs-add').click();L.$('#gs-drop').click();},
+ run(L){
+  let cols=['parcel_id','merchant_id','status','hub_code'],pb=[['parcel_id',1,''],['merchant_id',2,''],['status',3,''],['hub_code',4,'']],fresh='';const done=new Set();
+  L.h(L.kick('learn','Generated schemas')+'<h1 class="q">Linh dumps the Parcel DB to Avro files every night</h1>'+
+   '<div class="e8lbl">Parcel DB table: parcels</div><div class="e8row" id="gs-cols"></div>'+
+   '<div class="e8two"><div class="e8pan"><div class="e8ph">Avro schema<br><small>generated from the table each night</small></div><div id="gs-av"></div></div>'+
+   '<div class="e8pan"><div class="e8ph">Protocol Buffers<br><small>column → tag map, kept by hand</small></div><div id="gs-pb"></div></div></div>'+
+   '<div class="e8row"><button class="btn" id="gs-add">+ Add column van_id</button><button class="btn" id="gs-drop">− Drop hub_code</button></div>'+
+   L.prose('Avro fields match by name, so the export can regenerate the schema from the tables every time. With tags, someone has to keep the column-to-tag map, and never reuse a tag.')+CSS);
+  function draw(){L.$('#gs-cols').innerHTML=cols.map(c=>'<span class="e8col2'+(c===fresh?' nw':'')+'">'+c+'</span>').join('');
+   L.$('#gs-av').innerHTML=cols.map(c=>'<div class="e8it'+(c===fresh?' nw':'')+'">'+c+(c===fresh?'<small>generated, nothing to assign</small>':'')+'</div>').join('');
+   L.$('#gs-pb').innerHTML=pb.map(p=>'<div class="e8it'+(p[2]?' '+p[2]:'')+'">'+p[1]+' · '+p[0]+(p[2]==='hand'?'<small>tag picked by hand</small>':p[2]==='ret'?'<small>retired: never reuse 4</small>':'')+'</div>').join('');}
+  function chk(){if(done.size===2&&!L.$('#gs-done')){L.$('#gs-pb').insertAdjacentHTML('afterend','<span id="gs-done"></span>');
+   L.sheet('info','Built for generated schemas','Generated schemas were a design goal for Avro, not for Thrift or Protocol Buffers. They rely on code generation, which helps statically typed languages (Java, C++, C#). In JavaScript, Ruby or Python it adds little. Avro’s is optional: a file carries its writer’s schema, so you can open it like a JSON file.');L.done();}}
+  L.$('#gs-add').onclick=()=>{L.$('#gs-add').disabled=true;cols.push('van_id');fresh='van_id';pb.push(['van_id',5,'hand']);draw();done.add(0);chk();};
+  L.$('#gs-drop').onclick=()=>{L.$('#gs-drop').disabled=true;cols=cols.filter(c=>c!=='hub_code');pb.find(p=>p[0]==='hub_code')[2]='ret';draw();done.add(1);chk();};
+  draw();}},
+
 {part:3,src:'Chapter 4 · The Merits of Schemas',pts:1,run(L){
-  L.h(L.kick('learn','The merits of schemas')+'<h1 class="q">Why the book likes binary formats with a schema</h1>'+
-   L.prose('Their schema languages are simpler than XML Schema or JSON Schema, so they work in many languages. The idea is old: ASN.1, standardized in 1984, used tag numbers too, but it’s complex and badly documented.')+
-   L.list([['box','Compact','They can leave field names out of the data.'],['book','Documentation that stays true','The schema is needed to decode, so it can’t drift out of date.'],['check','Checked before deploy','A database of schemas lets you test forward and backward compatibility first.'],['lock','Type-checked code','Generated code catches mistakes at compile time.']],2)+
-   '<p class="small" style="margin-top:8px">The cost: people can’t read the data until it’s decoded. Overall, you get the flexibility of schemaless JSON with better guarantees and tools.</p>'+
-   '<h2 class="sub">Tap each piece until the sentence is true.</h2><div id="sq"></div>');
+  const box=(x,y,c,lines)=>'<rect x="'+x+'" y="'+y+'" width="150" height="58" rx="10" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:2"/>'+lines.map((t,j)=>'<text x="'+(x+75)+'" y="'+(y+19+j*15)+'" style="font-size:'+(j?11.5:12.5)+'px;'+(j?'':'font-weight:700;')+'text-anchor:middle;fill:var(--'+(j?'ink':c)+')">'+t+'</text>').join('');
+  L.h(L.kick('learn','The merits of schemas')+'<h1 class="q">One schema, four payoffs</h1>'+
+   '<svg class="e8svg" viewBox="0 0 320 214" role="img" aria-label="A schema in the middle, with four benefits around it">'+
+   '<path d="M79 64 L160 107 L241 64 M79 150 L160 107 L241 150" style="stroke:var(--line2);stroke-width:2;fill:none"/>'+
+   box(4,6,'h4',['Compact','no field names','in the bytes'])+box(166,6,'h2',['Docs that stay true','needed to decode,','so never out of date'])+
+   box(4,150,'h3',['Checked before deploy','a database of schemas','tests both directions'])+box(166,150,'h1',['Type-checked code','generated from it','for Java, C++, C#'])+
+   '<rect x="92" y="86" width="136" height="42" rx="12" style="fill:var(--card);stroke:var(--ink);stroke-width:2"/><text x="160" y="105" style="font-size:13px;font-weight:700;text-anchor:middle;fill:var(--ink)">Schema</text><text x="160" y="120" style="font-size:11px;text-anchor:middle;fill:var(--muted)">Protobuf · Thrift · Avro</text></svg>'+
+   L.prose('These schema languages are far simpler than XML Schema or JSON Schema. (ASN.1, from 1984, used tags too, but is complex.) The price: people can’t read the bytes by eye.')+
+   '<h2 class="sub">Tap each piece until the sentence is true.</h2><div id="sq"></div>'+CSS);
   L.sentence(L.$('#sq'),[['The field names','The schema','The Base64 text'],['is needed to decode the data,','is optional for readers,','is kept in a separate wiki,'],['so it never goes out of date.','so it slows every read.','so it must be checked by hand.']],[1,0,0],
    [['Field names are exactly what these formats leave out of the data.','Base64 is a workaround for bytes in JSON, not part of a schema.'],['If readers could skip it, nothing would force it to stay current.','A wiki is the kind of documentation that drifts away from reality.'],['Using a schema doesn’t make reads slow.','The point is that nobody has to check it by hand.']],
-   'Because decoding needs the schema, the schema is documentation that can never quietly fall out of date.');}}
+   'Because decoding needs the schema, it’s documentation that can’t quietly fall out of date. Overall, schema evolution gives you the flexibility of schemaless JSON, with better guarantees and better tools.');}}
   ]
 });
+function selOne(host,b){[...host.children].forEach(x=>x.classList.toggle('sel',x===b));}
 </script>
 </body>
 </html>

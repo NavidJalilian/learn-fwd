@@ -13,12 +13,172 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
-const PG=(keys,hl)=>'<span style="display:inline-flex;gap:4px;border:2px solid var(--line2);border-radius:10px;padding:5px 7px;margin:4px;background:var(--card);flex-wrap:wrap">'+keys.map(k=>'<span style="padding:2px 6px;border-radius:6px;font-weight:600;font-size:14px;'+(k===hl?'background:var(--ok-bg);color:var(--ok)':'background:var(--soft)')+'">'+k+'</span>').join('')+'</span>';
-const TREE=(par,leaves,hl)=>'<div style="background:var(--soft);border-radius:16px;padding:12px;text-align:center"><div class="small">Parent page</div>'+PG(par,hl)+'<div class="small" style="margin-top:8px">Leaf page'+(leaves.length>1?'s':'')+' (room for 4 keys each)</div>'+leaves.map(l=>PG(l,hl)).join('')+'</div>';
+/* =====================================================================
+   Lesson 0006 only. Two hands-on models used across the lesson:
+   1. The splitting page tree: a tiny B-tree (B+tree style: keys live in
+      leaf pages, boundaries are copied up) drawn as fixed-size page cards
+      with empty slots, so splits, growth and half-empty pages are visible.
+   2. The map-band scanner: a grid of Westport with courier dots, where a
+      dragged rectangle is answered by a (latitude, longitude) concatenated
+      index (a whole latitude band) or a spatial index (overlapping boxes).
+   ===================================================================== */
+const KW=38,SH=16;
+const CSS='<style>'+
+ 'svg text{font-family:var(--sans)}'+
+ '.fig{background:var(--soft);border-radius:16px;padding:10px 8px;margin:6px 0 10px}.fig svg{width:100%;display:block}'+
+ '.btrow{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.btrow .chip{margin:0;min-height:40px}.btrow .btn{min-height:42px;padding:8px 12px;white-space:nowrap}'+
+ '.btrow .chip.done{border-color:var(--ok-line)}'+
+ '.cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0;min-height:44px}.cap .stp{font-size:12.5px;font-weight:700;color:var(--muted);display:block;margin-bottom:2px}'+
+ '.rd{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:13.5px;color:var(--muted);margin:6px 2px}.rd b{color:var(--ink);font-variant-numeric:tabular-nums}'+
+ '.lg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:4px 2px}.lg i{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:4px;border:1.5px solid var(--line2)}'+
+ '.rng{display:grid;grid-template-columns:118px 1fr 58px;gap:8px;align-items:center;font-size:14.5px;margin:6px 0}.rng input{width:100%;accent-color:var(--pri);height:30px}.rng b{text-align:right;font-variant-numeric:tabular-nums}'+
+ '.kin{width:86px;font:inherit;font-size:16px;padding:8px 10px;border:2px solid var(--line);border-radius:12px;background:var(--card);color:var(--ink)}'+
+ '.shape{display:block;width:100%;text-align:left;background:var(--card);border:2px solid var(--line);border-bottom-width:3px;border-radius:14px;padding:8px 10px 6px;margin:0 0 8px;color:var(--ink);font:inherit}'+
+ '.shape b{font-size:14.5px}.shape svg{width:100%;display:block;margin-top:4px}.shape.sel{border-color:var(--pri);background:var(--pri-bg)}.shape.ok{border-color:var(--ok-line);background:var(--ok-bg)}.shape.no{border-color:var(--no-line);background:var(--no-bg)}'+
+ '.tasks{margin:8px 0 0;padding:0;list-style:none}.tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none}.tasks li.done{color:var(--ok)}.tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong)}'+
+ '.mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:6px 0 10px}.mini>div{background:var(--soft);border-radius:14px;padding:8px;font-size:13px;line-height:1.4;color:var(--muted)}.mini b{display:block;color:var(--ink);font-size:13.5px;margin-top:4px}.mini svg{width:100%;display:block}'+
+ '.ok-t{color:var(--ok);font-weight:700}.no-t{color:var(--no);font-weight:700}'+
+ '.map svg{touch-action:none;cursor:crosshair;user-select:none;-webkit-user-select:none}'+
+ '</style>';
+
+/* ---------- 1. The splitting page tree ---------- */
+const Lf=k=>({leaf:true,keys:k.slice()});
+const In=(k,kids)=>({leaf:false,keys:k.slice(),kids});
+const Tr=(b,root)=>({b,root});
+function cloneT(t){const c=n=>n.leaf?Lf(n.keys):In(n.keys,n.kids.map(c));return Tr(t.b,c(t.root));}
+function levelsOf(t){const out=[];let row=[t.root];while(row.length){out.push(row);row=row.flatMap(n=>n.leaf?[]:n.kids);}return out;}
+function leafFor(t,k){const path=[];let n=t.root;while(!n.leaf){path.push(n);let i=0;while(i<n.keys.length&&k>=n.keys[i])i++;n=n.kids[i];}path.push(n);return path;}
+function allKeys(t){return levelsOf(t).slice(-1)[0].flatMap(n=>n.keys);}
+/* insert one key; returns what changed (pages written, keys moved up, whether the tree grew) */
+function tIns(t,k){
+  const path=leafFor(t,k),leaf=path.pop();
+  if(leaf.keys.includes(k))return null;
+  leaf.keys.push(k);leaf.keys.sort((a,b)=>a-b);
+  const changed=new Set([leaf]),up=new Set();let node=leaf,grew=false,splits=0;const max=t.b-1;
+  while(node.keys.length>max){
+    splits++;let right,upKey;const m=Math.floor(node.keys.length/2);
+    if(node.leaf){right=Lf(node.keys.slice(m));node.keys=node.keys.slice(0,m);upKey=right.keys[0];}
+    else{upKey=node.keys[m];right=In(node.keys.slice(m+1),node.kids.slice(m+1));node.keys=node.keys.slice(0,m);node.kids=node.kids.slice(0,m+1);}
+    changed.add(right);up.add(upKey);
+    let parent=path.pop();
+    if(!parent){parent=In([],[node]);t.root=parent;grew=true;}
+    const i=parent.kids.indexOf(node);parent.kids.splice(i+1,0,right);parent.keys.splice(i,0,upKey);
+    changed.add(parent);node=parent;
+  }
+  return {leaf,changed,up,grew,splits,pages:changed.size};
+}
+/* the same tree with the key pushed into its leaf but not split yet: the "no room" moment */
+function overflowView(t,k){const c=cloneT(t),p=leafFor(c,k),lf=p[p.length-1];lf.keys.push(k);lf.keys.sort((a,b)=>a-b);return {t:c,leaf:lf};}
+/* one page: a fixed-size card with b-1 slots (empty slots stay visible) */
+function pageSVG(x,y,keys,slots,o){
+  o=o||{};const h=slots*SH+6,x0=x-KW/2;
+  let s='<rect x="'+x0+'" y="'+y+'" width="'+KW+'" height="'+h+'" rx="6" style="fill:'+(o.fill||'var(--card)')+';stroke:'+(o.stroke||'var(--line2)')+';stroke-width:'+(o.sw||1.5)+(o.dash?';stroke-dasharray:'+o.dash:'')+'"/>';
+  const n=Math.max(slots,keys.length);
+  for(let i=0;i<n;i++){
+    const yy=y+3+i*SH,k=keys[i],over=i>=slots,hl=o.hl&&k!=null?o.hl[k]:null;
+    if(k==null){s+='<rect x="'+(x0+6)+'" y="'+(yy+4)+'" width="'+(KW-12)+'" height="'+(SH-8)+'" rx="3" style="fill:var(--soft2)"/>';continue;}
+    if(over)s+='<rect x="'+(x0-2)+'" y="'+(yy+1)+'" width="'+(KW+4)+'" height="'+(SH)+'" rx="4" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.5"/>';
+    else if(hl)s+='<rect x="'+(x0+2.5)+'" y="'+(yy+.5)+'" width="'+(KW-5)+'" height="'+(SH-1)+'" rx="4" style="fill:var(--'+(hl==='up'?'h3':hl==='find'?'pri':'ok')+'-bg)"/>';
+    const col=over?'var(--no)':hl==='up'?'var(--h3)':hl==='new'?'var(--ok)':hl==='find'?'var(--pri-deep)':'var(--ink)';
+    s+='<text x="'+x+'" y="'+(yy+12.5)+'" style="font-size:12px;font-weight:'+(hl||over?700:500)+';text-anchor:middle;fill:'+col+'">'+k+'</text>';
+  }
+  return s;
+}
+/* lay out and draw a whole tree; returns svg inner markup and height */
+function treeSVG(t,o){
+  o=o||{};const lv=levelsOf(t),slots=t.b-1,ph=slots*SH+6,GY=o.gy||26,top=o.top||6,cx=o.cx||160,avail=o.avail||314;
+  const pos=new Map(),leaves=lv[lv.length-1],n=leaves.length;
+  const gap=n>1?Math.min(o.maxGap||26,(avail-n*KW)/(n-1)):0,tot=n*KW+(n-1)*gap,x0=cx-tot/2+KW/2;
+  leaves.forEach((p,i)=>pos.set(p,{x:x0+i*(KW+gap),y:top+(lv.length-1)*(ph+GY)}));
+  for(let d=lv.length-2;d>=0;d--)lv[d].forEach(p=>{const a=pos.get(p.kids[0]).x,b=pos.get(p.kids[p.kids.length-1]).x;pos.set(p,{x:(a+b)/2,y:top+d*(ph+GY)});});
+  let e='',c='';
+  lv.forEach(row=>row.forEach(p=>{if(p.leaf)return;const P=pos.get(p),nk=p.kids.length;
+    p.kids.forEach((k,i)=>{if(o.cut&&o.cut.has(k))return;const K=pos.get(k),sx=P.x-KW/2+6+(KW-12)*(nk>1?i/(nk-1):.5),on=o.path&&o.path.includes(p)&&o.path.includes(k);
+      e+='<line x1="'+sx.toFixed(1)+'" y1="'+(P.y+ph)+'" x2="'+K.x.toFixed(1)+'" y2="'+K.y+'" style="stroke:'+(on?'var(--pri)':'var(--line2)')+';stroke-width:'+(on?2.8:1.3)+'"/>';});}));
+  lv.forEach(row=>row.forEach(p=>{const P=pos.get(p),st={};
+    if(o.changed&&o.changed.has(p)){st.fill='var(--h2-bg)';st.stroke='var(--h2)';st.sw=2.2;}
+    if(o.path&&o.path.includes(p)){st.stroke='var(--pri)';st.sw=2.8;}
+    if(o.over===p){st.stroke='var(--no)';st.sw=2.4;}
+    if(o.orphan===p){st.stroke='var(--no)';st.sw=2;st.dash='4 3';}
+    if(o.ghost&&o.ghost.has(p)){st.fill='var(--soft)';st.dash='3 3';}
+    st.hl=o.hl?o.hl(p):null;
+    c+=pageSVG(P.x,P.y,p.keys,slots,st);}));
+  const h=top+lv.length*ph+(lv.length-1)*GY+(o.over?SH+4:0)+6;
+  return {inner:e+c,h,pos,ph};
+}
+const svgW=(inner,h,label,w)=>'<svg viewBox="0 0 '+(w||320)+' '+h+'" role="img" aria-label="'+label+'">'+inner+'</svg>';
+function drawTree(el,t,o,label){if(!el||!el.isConnected)return null;const r=treeSVG(t,o);el.innerHTML=svgW(r.inner+(o&&o.extra?o.extra(r):''),r.h+(o&&o.padB||0),label||'A B-tree drawn as pages');return r;}
+const hlIns=(k,up)=>p=>{const m={};if(p.leaf&&k!=null)m[k]='new';if(!p.leaf&&up)up.forEach(u=>m[u]='up');return m;};
+const height=t=>levelsOf(t).length;
+const pagesOf=t=>levelsOf(t).reduce((a,r)=>a+r.length,0);
+
+/* small helpers */
+function rng(id,label,min,max,val,step){return '<label class="rng"><span>'+label+'</span><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'"><b id="'+id+'-v">'+val+'</b></label>';}
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+function tasks(id,list){return '<ul class="tasks" id="'+id+'">'+list.map((t,k)=>'<li data-k="'+k+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,k){const li=L.$('#'+id+' li[data-k="'+k+'"]');if(li)li.classList.add('done');}
+function allTicked(L,id){return [...L.$$('#'+id+' li')].every(li=>li.classList.contains('done'));}
+const waitFor=async(L,fn,n)=>{for(let i=0;i<(n||120)&&!fn();i++)await L.sleep(30);};
+function lev(a,b){a=a.toLowerCase();b=b.toLowerCase();const d=[...Array(b.length+1).keys()];
+  for(let i=1;i<=a.length;i++){let prev=d[0];d[0]=i;for(let j=1;j<=b.length;j++){const tmp=d[j];d[j]=Math.min(d[j]+1,d[j-1]+1,prev+(a[i-1]===b[j-1]?0:1));prev=tmp;}}return d[b.length];}
+const fmt=n=>{const f=(v,u)=>parseFloat(v.toPrecision(3))+' '+u;return n>=1e12?f(n/1e12,'trillion'):n>=1e9?f(n/1e9,'billion'):n>=1e6?f(n/1e6,'million'):Math.round(n).toLocaleString('en-US');};
+const bytes=n=>{const u=['bytes','KB','MB','GB','TB','PB','EB'];let i=0;while(n>=1000&&i<u.length-1){n/=1000;i++;}return (n>=100?Math.round(n):Math.round(n*10)/10)+' '+u[i];};
+
+/* ---------- 2. The map-band scanner ---------- */
+const MC=16,MR=12,CELL=20;
+const COURIERS=(()=>{let s=7;const r=()=>{s=(s*9301+49297)%233280;return s/233280;};const out=[];
+  for(let i=0;i<64;i++){const c=Math.floor(r()*MC),w=Math.floor(r()*MR);out.push({c,r:w,x:c*CELL+4+r()*12,y:w*CELL+4+r()*12});}return out;})();
+function MapScan(L,host,o){
+  o=Object.assign({id:'m',mode:'band',on:()=>{}},o||{});
+  const ID=o.id;let mode=o.mode,rect=null,drag=null;
+  host.insertAdjacentHTML('beforeend','<div class="map"><div class="btrow" id="'+ID+'-md"></div><div class="fig" style="padding:6px"><svg id="'+ID+'-s" viewBox="0 0 320 '+(MR*CELL)+'" role="img" aria-label="Map of Westport with courier dots. Drag to draw a search rectangle."></svg></div>'+
+    '<div class="lg"><span><i style="background:var(--h3-bg);border-color:var(--h3)"></i>scanned by the (lat, lon) index</span><span><i style="background:var(--h2-bg);border-color:var(--h2)"></i>scanned by the spatial index</span></div><div class="cap" id="'+ID+'-r" aria-live="polite"></div></div>');
+  const $=s=>host.querySelector(s),svg=$('#'+ID+'-s');
+  const M=[['band','Concatenated (lat, lon) index'],['rtree','Spatial index (R-tree)']];
+  $('#'+ID+'-md').innerHTML=M.map(m=>'<button class="chip'+(m[0]===mode?' sel':'')+'" id="'+ID+'-'+m[0]+'">'+m[1]+'</button>').join('');
+  M.forEach(m=>{$('#'+ID+'-'+m[0]).onclick=()=>{mode=m[0];M.forEach(x=>$('#'+ID+'-'+x[0]).classList.toggle('sel',x[0]===mode));draw();o.on({type:'mode',mode});};});
+  function stats(){if(!rect)return null;const {c0,c1,r0,r1}=rect;
+    const band=(r1-r0+1)*MC;const bx0=Math.floor(c0/2),bx1=Math.floor(c1/2),by0=Math.floor(r0/2),by1=Math.floor(r1/2);
+    const rt=(bx1-bx0+1)*(by1-by0+1)*4;
+    const inR=p=>p.c>=c0&&p.c<=c1&&p.r>=r0&&p.r<=r1;
+    const found=COURIERS.filter(inR).length,bandE=COURIERS.filter(p=>p.r>=r0&&p.r<=r1).length,rtE=COURIERS.filter(p=>Math.floor(p.c/2)>=bx0&&Math.floor(p.c/2)<=bx1&&Math.floor(p.r/2)>=by0&&Math.floor(p.r/2)<=by1).length;
+    return {band,rt,found,bandE,rtE,ratio:band/rt,bx0,bx1,by0,by1};}
+  function draw(){
+    if(!svg.isConnected)return;let s='';const H=MR*CELL,st=stats();
+    s+='<rect x="0" y="0" width="320" height="'+H+'" rx="8" style="fill:var(--card)"/>';
+    s+='<path d="M0 '+(H*.62)+' C 90 '+(H*.5)+', 170 '+(H*.78)+', 320 '+(H*.6)+'" style="fill:none;stroke:var(--h1-bg);stroke-width:14"/>';
+    for(let c=1;c<MC;c++)s+='<line x1="'+c*CELL+'" y1="0" x2="'+c*CELL+'" y2="'+H+'" style="stroke:var(--line);stroke-width:.6"/>';
+    for(let r=1;r<MR;r++)s+='<line x1="0" y1="'+r*CELL+'" x2="320" y2="'+r*CELL+'" style="stroke:var(--line);stroke-width:.6"/>';
+    if(mode==='rtree')for(let bx=0;bx<MC/2;bx++)for(let by=0;by<MR/2;by++){const hit=st&&bx>=st.bx0&&bx<=st.bx1&&by>=st.by0&&by<=st.by1;
+      s+='<rect x="'+(bx*40+1.5)+'" y="'+(by*40+1.5)+'" width="37" height="37" rx="5" style="fill:'+(hit?'var(--h2-bg)':'none')+';stroke:'+(hit?'var(--h2)':'var(--line2)')+';stroke-width:'+(hit?1.6:.8)+';stroke-dasharray:'+(hit?'none':'3 3')+'"/>';}
+    if(st&&mode==='band')s+='<rect x="0" y="'+rect.r0*CELL+'" width="320" height="'+(rect.r1-rect.r0+1)*CELL+'" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.4;opacity:.92"/>';
+    COURIERS.forEach(p=>{const inR=rect&&p.c>=rect.c0&&p.c<=rect.c1&&p.r>=rect.r0&&p.r<=rect.r1;
+      s+='<circle cx="'+p.x.toFixed(1)+'" cy="'+p.y.toFixed(1)+'" r="'+(inR?4.2:3)+'" style="fill:'+(inR?'var(--ok-strong)':'var(--muted)')+'"/>';});
+    if(rect)s+='<rect x="'+rect.c0*CELL+'" y="'+rect.r0*CELL+'" width="'+(rect.c1-rect.c0+1)*CELL+'" height="'+(rect.r1-rect.r0+1)*CELL+'" style="fill:none;stroke:var(--pri);stroke-width:2.6"/>';
+    s+='<text x="6" y="14" style="font-size:11px;font-weight:700;fill:var(--muted)">N ↑ latitude</text><text x="314" y="'+(H-6)+'" style="font-size:11px;font-weight:700;fill:var(--muted);text-anchor:end">longitude →</text>';
+    svg.innerHTML=s;
+    const r=$('#'+ID+'-r');
+    if(!st)r.innerHTML='Drag on the map to draw the dispatch screen’s rectangle.';
+    else r.innerHTML='Couriers in the rectangle: <b>'+st.found+'</b><br>(lat, lon) index scans <b>'+st.band+'</b> cells ('+st.bandE+' couriers)'+(mode==='band'?' ◀':'')+'<br>Spatial index scans <b>'+st.rt+'</b> cells ('+st.rtE+' couriers)'+(mode==='rtree'?' ◀':'')+'<br><span class="small">The band scan reads <b>'+(Math.round(st.ratio*10)/10)+'×</b> as many cells.</span>';
+  }
+  const cell=e=>{const b=svg.getBoundingClientRect();const x=(e.clientX-b.left)*320/b.width,y=(e.clientY-b.top)*(MR*CELL)/b.height;return {c:Math.max(0,Math.min(MC-1,Math.floor(x/CELL))),r:Math.max(0,Math.min(MR-1,Math.floor(y/CELL)))};};
+  const setR=(a,b)=>{rect={c0:Math.min(a.c,b.c),c1:Math.max(a.c,b.c),r0:Math.min(a.r,b.r),r1:Math.max(a.r,b.r)};draw();};
+  svg.addEventListener('pointerdown',e=>{e.preventDefault();drag=cell(e);try{svg.setPointerCapture(e.pointerId);}catch(_){}setR(drag,drag);});
+  svg.addEventListener('pointermove',e=>{if(!drag)return;setR(drag,cell(e));});
+  const end=e=>{if(!drag)return;setR(drag,cell(e));drag=null;o.on({type:'rect',stats:stats(),rect});};
+  svg.addEventListener('pointerup',end);svg.addEventListener('pointercancel',end);
+  draw();
+  async function dragCells(a,b){const bb=svg.getBoundingClientRect(),k=bb.width/320,
+    pt=c=>({clientX:bb.left+(c.c*CELL+CELL/2)*k,clientY:bb.top+(c.r*CELL+CELL/2)*k,bubbles:true,pointerId:1,pointerType:'mouse',isPrimary:true});
+    svg.dispatchEvent(new PointerEvent('pointerdown',pt(a)));await L.sleep(20);svg.dispatchEvent(new PointerEvent('pointermove',pt(b)));await L.sleep(20);svg.dispatchEvent(new PointerEvent('pointerup',pt(b)));await L.sleep(20);}
+  return {stats,dragCells,get mode(){return mode;}};
+}
+
 Course.lesson({
-  id:'0006', title:'B-trees and other indexes', minutes:20, icon:'tree',
-  goals:['Trace how a B-tree finds, updates and splits pages, and how it survives a crash','Weigh B-trees against LSM-trees for a real Otterpost workload','Choose between secondary, covering, multi-column and fuzzy indexes'],
-  parts:['How B-trees work','B-tree or LSM-tree?','More ways in','Fuzzy and in-memory'],
+  id:'0006', title:'B-trees and other indexes', minutes:22, icon:'tree',
+  goals:['Trace how a B-tree finds, inserts and splits pages, and why it stays only a few levels deep','Explain how a B-tree survives crashes, and weigh it against an LSM-tree for a real workload','Choose between secondary, clustered, covering, multi-column and fuzzy indexes, and say why in-memory databases are fast'],
+  parts:['Pages in a tree','Crashes and trade-offs','More ways in','Fuzzy and in-memory'],
   read:'Read chapter 3 from “B-Trees” to the end of “Keeping everything in memory” for the B-tree figures and the full comparison with LSM-trees.',
   glossary:{
     'b-tree':'B-tree: the most widely used index. It splits the data into fixed-size pages arranged as a sorted, balanced tree, and updates pages in place.',
@@ -38,219 +198,497 @@ Course.lesson({
     'edit-distance':'Edit distance: how many single-letter changes (adding, removing or replacing a letter) it takes to turn one word into another.'
   },
   cheatsheet:[
-    '<b>B-tree:</b> fixed-size pages in a sorted, balanced tree. A lookup follows page references from the root to a leaf; three or four levels are usually enough.',
-    '<b>B-tree writes:</b> update a page in place. A full page splits into two half-full pages and the parent gets a new boundary.',
-    '<b>Crash safety:</b> a write-ahead log records each change before the pages are touched. Latches keep threads from seeing half-done pages.',
-    '<b>LSM vs B-tree:</b> LSM-trees usually write faster and store smaller; B-trees read more predictably and keep each key in one place. Test with your own workload.',
-    '<b>Write amplification</b> and compaction backlogs matter under heavy writes. LSM engines usually won’t throttle writes, so monitor them.',
-    '<b>Where rows live:</b> heap file (pointer), clustered index (whole row), covering index (some columns). Copies speed up reads but cost writes.',
+    '<b>B-tree:</b> fixed-size pages (traditionally 4 KB) in a sorted, balanced tree. A lookup reads one page per level, from the root down to a leaf.',
+    '<b>Shallow by design:</b> with a branching factor of several hundred, three or four levels hold almost any database (500 × 500 × 500 × 500 pages of 4 KB ≈ 256 TB).',
+    '<b>Writes:</b> overwrite the page in place. A full page splits into two pages, each half full, and the parent gets a new boundary; a root split adds a level on top.',
+    '<b>Crash safety:</b> append each change to a write-ahead log first and replay it after a crash. Latches stop threads from seeing a half-changed tree.',
+    '<b>LSM vs B-tree:</b> LSM-trees usually write faster and store smaller; B-trees read more predictably and keep each key in one place. Compaction can fall behind silently, so monitor it. Test with your own workload.',
+    '<b>Where rows live:</b> heap file (pointer, one copy), clustered index (whole row), covering index (some columns). Copies speed up reads but cost writes and storage.',
     '<b>Several columns:</b> a concatenated index helps only from its first column. A box on a map needs a multi-dimensional index such as an R-tree.',
-    '<b>In-memory databases</b> are fast mainly because they skip encoding data for disk, and they can still be durable.'
+    '<b>Fuzzy and in-memory:</b> fuzzy search finds keys within an edit distance. In-memory databases win mainly by skipping disk-format encoding, and can still be durable.'
   ],
   steps:[
-/* ---------- PART 1: HOW B-TREES WORK ---------- */
+/* ---------- PART 1: PAGES IN A TREE ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">A printed phone book lists 200,000 Westport names in alphabetical order. To find “Okoro”, what do you do?</h1>');
   L.mc(L.card,['Read every page from the very start','Open near the middle, then narrow it down'],1,
-   'You use the sort order to skip most of the book. The index in this lesson does the same thing, a few page-jumps at a time.',
+   'You use the sort order to skip most of the book. The index in this lesson does the same, a few page-jumps at a time.',
    'Reading every page works, but it ignores the sort order. Opening near the right letter and narrowing down skips almost the whole book. The index in this lesson works that way.');}},
 {part:0,src:'Chapter 3 · B-Trees',run(L){
-  L.h(L.kick('learn','B-trees')+'<h1 class="q">The most widely used index splits data into fixed-size pages</h1>'+
-   L.prose('Log-structured indexes are gaining ground, but the most common index of all is the '+L.g('b-tree','B-tree')+'. Introduced in 1970, it is still the standard index in almost all relational databases, and many nonrelational ones use it too. Zainab’s Parcel DB is a relational database, so its indexes are almost certainly B-trees.')+
-   L.prose('Like SSTables, B-trees keep keys sorted, so lookups and range queries are efficient. That is where the likeness ends:')+
-   L.lanes([['layers','LSM-tree','Variable-size segments, several megabytes or more, always written start to finish and never changed afterwards.',1],
-            ['tree','B-tree','Fixed-size '+L.g('page','pages')+', traditionally 4 KB, read or written one page at a time and overwritten in place. Disks are arranged in fixed-size blocks too.',2]])+
-   L.prose('Each page has an address, so one page can refer to another, like a pointer, but on disk. Those references build a tree of pages.'));
+  let s='<text x="8" y="16" style="font-size:12.5px;font-weight:700;fill:var(--h1)">LSM-tree (last lesson): segments</text>';
+  [[8,104,'8 MB'],[116,48,'3 MB'],[168,70,'5 MB']].forEach(([x,w,t])=>{s+='<rect x="'+x+'" y="26" width="'+w+'" height="26" rx="5" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.4"/><text x="'+(x+w/2)+'" y="43" style="font-size:11.5px;font-weight:600;fill:var(--h1);text-anchor:middle">'+t+'</text>';});
+  s+='<path d="M244 39 h18" style="stroke:var(--h1);stroke-width:2;marker-end:url(#a2)"/><text x="8" y="70" style="font-size:11.5px;fill:var(--muted)">any size · written start to finish · never changed</text>';
+  s+='<text x="8" y="104" style="font-size:12.5px;font-weight:700;fill:var(--h2)">B-tree: fixed-size pages</text>';
+  for(let i=0;i<8;i++){const x=8+i*39,hot=i===5;s+='<rect x="'+x+'" y="132" width="34" height="34" rx="5" style="fill:'+(hot?'var(--h2-bg)':'var(--card)')+';stroke:'+(hot?'var(--h2)':'var(--line2)')+';stroke-width:'+(hot?2.2:1.4)+'"/><text x="'+(x+17)+'" y="153" style="font-size:11.5px;font-weight:600;fill:var(--ink);text-anchor:middle">#'+(i+1)+'</text>';}
+  s+='<path d="M25 130 C 30 112, 96 112, 103 129" style="fill:none;stroke:var(--h2);stroke-width:1.6;marker-end:url(#a2b)"/><path d="M25 130 C 34 106, 210 106, 220 129" style="fill:none;stroke:var(--h2);stroke-width:1.6;marker-end:url(#a2b)"/>';
+  s+='<text x="62" y="184" style="font-size:11.5px;fill:var(--muted)">4 KB each, like the disk’s own blocks</text>';
+  s+='<text x="203" y="200" style="font-size:11.5px;font-weight:700;fill:var(--h2);text-anchor:middle">#6 is overwritten in place</text>';
+  const defs='<defs><marker id="a2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--h1)"/></marker><marker id="a2b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--h2)"/></marker></defs>';
+  L.h(L.kick('learn','B-trees')+'<h1 class="q">The most common index cuts the data into fixed-size pages</h1>'+CSS+
+   '<div class="fig">'+svgW(defs+s,206,'LSM segments of different sizes versus a row of equal 4 KB B-tree pages that point to each other; page 6 is overwritten in place.')+'</div>'+
+   L.prose('The '+L.g('b-tree','B-tree')+' (1970) is still the standard index in almost every relational database, the Parcel DB included. Like SSTables it keeps keys sorted, but in fixed-size '+L.g('page','pages')+' that point to each other and are overwritten in place.'));
   L.done();}},
-{part:0,src:'Chapter 3 · B-Trees',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">Looking up key 251, page by page</h1>');
-  L.beats(L.card,[
-   ['Start at the root','One page is the root, where every lookup begins. It holds a few keys with references to child pages between them: below 100, 100–200, 200–300, and so on. Each child covers one continuous range of keys.'],
-   ['Follow a reference','251 falls between the boundaries 200 and 300, so follow that reference. The page it leads to splits 200–300 into smaller ranges.'],
-   ['Reach a leaf','A hop or two later you reach a <b>leaf page</b> holding individual keys. It stores the value for 251 right there, or a reference to the page where the value lives.'],
-   ['Count the branches','The number of child references on one page is the '+L.g('branching-factor','branching factor')+'. The book’s small drawing uses six. Real databases typically use several hundred.']],
-   'Each page narrows the range, like opening a phone book closer and closer to the right name.');}},
-{part:0,src:'Chapter 3 · B-Trees',run(L){
-  L.h(L.kick('learn','Updates and growth')+'<h1 class="q">Change a page in place, and split it when it’s full</h1>'+
-   L.list([['pencil','Update a key','Find the leaf page that holds it, change the value, and write the page back to the same place. Every reference to that page stays valid.'],
-     ['layers','Add a key','Find the page whose range covers the new key and add it there. If the page has no room, it splits into two half-full pages, and the parent page is updated with the new boundary.'],
-     ['tree','Stay shallow','Splitting keeps the tree balanced: with n keys, its depth grows only with the logarithm of n. Most databases fit in a B-tree three or four levels deep.']],2)+
-   L.note('A four-level tree of 4 KB pages with a branching factor of 500 can hold up to 256 TB.','info'));
-  L.done();}},
-{part:0,src:'Chapter 3 · B-Trees',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame asks how many pages the Parcel DB reads to find one parcel by ID among hundreds of millions. Roughly how many?</h1>');
-  L.mc(L.card,['Three or four, one per level of the tree','About thirty, halving the range each time','Thousands, reading the pages one by one'],0,
-   'With hundreds of references per page, each level multiplies the reach by hundreds. Three or four levels cover hundreds of millions of keys.',
-   'The “B” isn’t for binary: each page branches hundreds of ways, not two, and nothing is read one by one. Three or four levels cover hundreds of millions of keys.');}},
-{part:0,src:'Chapter 3 · B-Trees',pts:1,
- solve:async L=>{L.$('#po').children[1].click();L.$('#ins').click();},
+{part:0,src:'Chapter 3 · B-Trees',
+ solve:async L=>{for(let i=0;i<6&&!L.$('#f3done');i++){const b=L.$('#f3c [data-ok="1"]');if(b)b.click();await L.sleep(40);}},
  run(L){
-  let p=null;
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">The leaf page for keys 200–300 is full. The Parcel DB inserts key 240. What happens?</h1><div id="tv">'+TREE(['…','200','300','…'],[['210','230','251','270']])+'</div>'+
-   '<div id="po" style="margin-top:12px"></div><div id="g2" hidden><button class="btn pri" id="ins">'+L.ic('play')+'Insert 240</button></div>');
-  ['The page stretches to hold five keys','It splits into two half-full pages','Key 240 goes on a new page at the end'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=t;
-    b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#g2').hidden=false;};L.$('#po').appendChild(b);});
-  L.$('#ins').onclick=function(){this.remove();
-    L.$('#tv').innerHTML=TREE(['…','200','240','300','…'],[['210','230'],['240','251','270']],'240')+'<p class="small" style="margin:8px 0 0;text-align:center">Pages written for this one insert: <b>3</b> (two halves and their parent)</p>';
-    L.award(p===1);
-    L.sheet(p===1?'ok':'no',p===1?'You called it':'It splits in two','Pages have a fixed size, so a full page can’t stretch, and keys must stay in sorted order, so nothing goes “at the end.” The page splits into two half-full pages, and the parent gets a new boundary. Notice the cost: one insert rewrote three pages.');L.done();};}},
-{part:0,src:'Chapter 3 · Making B-trees reliable',run(L){
-  L.h(L.kick('learn','Making B-trees reliable')+'<h1 class="q">Overwriting pages is risky, so write the change down first</h1>'+
-   L.prose('A B-tree’s basic write overwrites a page on disk and keeps it at the same location. On a spinning disk that means moving the head and waiting for the right spot to come round. An SSD has to erase and rewrite large blocks at a time.')+
-   L.prose('A split is worse: it overwrites several pages. If the database crashes after writing only some of them, the index is corrupted, for example with an <b>orphan page</b> that no parent points to.')+
-   L.flow([['pencil','1 · Log it','Append the change to the '+L.g('wal','write-ahead log')+'.','also called a redo log',1],['layers','2 · Apply it','Then overwrite the pages of the tree.','',2],['shield','3 · After a crash','Replay the log to bring the tree back to a consistent state.','',3]])+
-   L.prose('Threads using the tree at the same time need care too, or one may see it half-changed. B-trees protect their pages with '+L.g('latch','latches')+' (lightweight locks). Log-structured engines have it easier: they merge in the background and swap old files for new ones in one step.'));
-  L.done();}},
-{part:0,src:'Chapter 3 · B-tree optimizations',run(L){
-  L.h(L.kick('learn','B-tree optimizations')+'<h1 class="q">Decades of tweaks. Tap each one.</h1>');
-  L.flips(L.card,[
-   ['Copy-on-write','Instead of overwriting a page and keeping a WAL, write the changed page somewhere new and make new parent pages that point to it. LMDB does this. It also helps with concurrency.'],
-   ['Shorter keys','Interior pages only need enough of each key to mark a boundary. Abbreviating keys packs more into a page: a higher branching factor and fewer levels.'],
-   ['Leaves in order','Pages can sit anywhere on disk, so a long range scan may need a seek per page. Many engines try to keep leaf pages in sequence on disk, but that’s hard as the tree grows.'],
-   ['Sibling pointers','Each leaf page can point to its left and right neighbours, so a scan walks along in key order without climbing back to the parent.'],
-   ['Fractal trees','Variants that borrow log-structured ideas to cut down on disk seeks. Despite the name, they have nothing to do with fractals.']],
-   'All of these keep the core idea: fixed-size pages in a sorted, balanced tree.');}},
-{part:0,src:'Chapter 3 · Making B-trees reliable',pts:4,run(L){
-  L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Which technique helps?',['Write-ahead log','Latches','Sibling pointers','Shorter keys'],[
-   ['The Parcel DB crashes halfway through a page split. On restart, one page has no parent.',0,'The write-ahead log recorded the split before any page changed. Replaying it repairs the tree.'],
-   ['Two threads change the same page at once, and one of them reads the tree half-changed.',1,'Latches are short locks on parts of the tree, so one thread finishes before the other looks.'],
-   ['A report reads every parcel in ID order and keeps climbing back up to parent pages.',2,'With a pointer to the next leaf, the scan walks straight along the leaves in key order.'],
-   ['Zainab wants more keys on each interior page so the tree needs fewer levels.',3,'Interior keys only mark boundaries, so they can be shortened. More keys per page means a higher branching factor.']]);}},
+  const l=[Lf([105,120,140]),Lf([150,180,201]),Lf([220,251,270]),Lf([310,330,400]),Lf([450,480,520]),Lf([600,700,820])];
+  const t=Tr(4,In([300],[In([150,220],l.slice(0,3)),In([450,600],l.slice(3))]));
+  let cur=t.root;const path=[cur];
+  L.h(L.kick('ex','Find a key')+'<h1 class="q">Find parcel 251 in Zainab’s index. At each page, pick the reference to follow.</h1>'+CSS+
+   '<div class="fig" id="f3"></div><div class="rd" id="f3r"></div><div class="cap" id="f3q" aria-live="polite"></div><div class="btrow" id="f3c"></div>');
+  const ranges=p=>p.kids.map((c,i)=>i===0?'Below '+p.keys[0]:i===p.keys.length?p.keys[i-1]+' or more':p.keys[i-1]+' to '+(p.keys[i]-1));
+  function draw(found){drawTree(L.$('#f3'),t,{path,gy:30,maxGap:16,hl:p=>found&&p===cur?{251:'find'}:null},'A three-level B-tree with branching factor 4. The pages on the path to 251 are outlined.');
+    L.$('#f3r').innerHTML='Pages read: <b>'+path.length+'</b> · Branching factor: <b>4</b> (up to 4 references per page) · IDs shortened to 3 digits';}
+  function step(){
+    if(cur.leaf){draw(true);L.$('#f3c').innerHTML='<span id="f3done"></span>';
+      L.$('#f3q').innerHTML='<span class="stp">Leaf page</span>Found <b>251</b>. A leaf holds the value itself, or a reference to the page where the row lives.';
+      L.sheet('info','Found in '+path.length+' page reads','Each page holds a few boundary keys with references between them, and each reference covers one continuous range of keys. The number of references per page is the '+L.g('branching-factor','branching factor')+'. Here it is 4; in real databases it is typically several hundred.');L.done();return;}
+    draw(false);const rs=ranges(cur);let right=0;while(right<cur.keys.length&&251>=cur.keys[right])right++;
+    L.$('#f3q').innerHTML='<span class="stp">'+(cur===t.root?'Root page':'Next page')+'</span>This page splits its keys at <b>'+cur.keys.join(' and ')+'</b>. Which range holds 251?';
+    L.$('#f3c').innerHTML=rs.map((s,i)=>'<button class="chip" data-i="'+i+'" data-ok="'+(i===right?1:0)+'">'+s+'</button>').join('');
+    [...L.$$('#f3c .chip')].forEach(b=>{b.onclick=()=>{const i=+b.dataset.i;
+      if(i!==right){b.classList.add('no');L.shake(b);L.$('#f3q').innerHTML='<span class="stp">Not that one</span>251 is '+(i<right?'not below '+cur.keys[i]:'below '+cur.keys[i-1])+'. Look for the range that contains it.';return;}
+      cur=cur.kids[i];path.push(cur);step();};});}
+  step();}},
+{part:0,src:'Chapter 3 · B-Trees',
+ solve:async L=>{for(let i=0;i<5&&!L.$('#s4done');i++){L.$('#s4n').click();await waitFor(L,()=>!L.$('#s4n')||!L.$('#s4n').disabled,80);}},
+ run(L){
+  const S=[
+   {t:()=>Tr(4,In([400],[Lf([120,250,310]),Lf([400,520])])),k:null,cap:'<b>Update a value.</b> Find the leaf that holds 250, change the value, and write that page back to the same place. Every reference to the page stays valid.',
+    o:t=>({changed:new Set([t.root.kids[0]]),hl:p=>p.leaf?{250:'find'}:null})},
+   {t:()=>Tr(4,In([400],[Lf([120,250,310]),Lf([400,520])])),k:450,cap:'<b>Add a key, with room.</b> 450 belongs in the page for 400 and up. It has a free slot, so 450 goes in and the page is written back.'},
+   {t:()=>Tr(4,In([400],[Lf([120,250,310]),Lf([400,450,520])])),k:280,cap:'<b>Add a key to a full page.</b> 280 belongs in a page with no free slot. The page splits into two pages, each half full,, and the parent gets the new boundary 280. One insert wrote three pages.'},
+   {t:()=>Tr(4,In([200,280,400],[Lf([120,150]),Lf([200,250,260]),Lf([280,310]),Lf([400,450,520])])),k:255,cap:'<b>The root is full too.</b> Later, 255 splits a leaf, the parent overflows and splits as well, and a new root appears on top. The tree grows from the top, so every leaf stays equally deep.'}];
+  let k=-1,busy=false;
+  L.h(L.kick('learn','How a B-tree changes')+'<h1 class="q">Update in place, split when full</h1>'+CSS+
+   '<div class="fig" id="s4f"></div><div class="lg"><span><i style="background:var(--h2-bg);border-color:var(--h2)"></i>page written</span><span><i style="background:var(--ok-bg)"></i>new key</span><span><i style="background:var(--h3-bg)"></i>boundary moved up</span><span><i style="background:var(--no-bg);border-color:var(--no)"></i>no room</span></div>'+
+   '<div class="cap" id="s4c" aria-live="polite"></div><div class="btrow"><button class="btn pri" id="s4n">Next step <span style="opacity:.6;font-weight:500">1/4</span></button></div>');
+  async function next(){if(busy)return;k++;busy=true;const st=S[k],t=st.t(),b=L.$('#s4n');b.disabled=true;
+    L.$('#s4c').innerHTML='<span class="stp">Step '+(k+1)+' of 4</span>'+st.cap;
+    if(st.k==null)drawTree(L.$('#s4f'),t,Object.assign({gy:30},st.o(t)),'A B-tree with the page holding 250 rewritten in place.');
+    else{const ov=overflowView(t,st.k);
+      if(ov.leaf.keys.length>t.b-1){drawTree(L.$('#s4f'),ov.t,{over:ov.leaf,gy:30,hl:hlIns(st.k)},'The key does not fit in its page.');await L.sleep(800);if(!L.$('#s4f'))return;}
+      const r=tIns(t,st.k);drawTree(L.$('#s4f'),t,{changed:r.changed,gy:30,hl:hlIns(st.k,r.up)},'The B-tree after inserting '+st.k+'.');}
+    busy=false;if(!b.isConnected)return;
+    if(k<S.length-1){b.disabled=false;b.innerHTML='Next step <span style="opacity:.6;font-weight:500">'+(k+2)+'/4</span>';}
+    else{b.remove();L.$('#s4c').insertAdjacentHTML('afterend','<span id="s4done"></span>');
+      L.sheet('info','Balanced by construction','Splitting keeps the tree balanced: with n keys its depth grows only with log n. Most databases fit in a B-tree three or four levels deep. (Deleting a key while keeping the tree balanced is more involved, so we skip it here.)');L.done();}}
+  L.$('#s4n').onclick=next;next();}},
+{part:0,src:'Chapter 3 · B-Trees',
+ solve:async L=>{for(let i=0;i<60&&!L.$('#g5done');i++){const b=L.$('#g5rand');if(b&&!b.disabled)b.click();await L.sleep(30);await waitFor(L,()=>!L.$('#g5rand')||!L.$('#g5rand').disabled,80);}},
+ run(L){
+  const START=[200,420,610,780];let t,busy=false,last=null,note='';
+  L.h(L.kick('pr','Free play')+'<h1 class="q">Grow the index. Insert parcel IDs until the root page splits and the tree gets a new level.</h1>'+CSS+
+   rng('g5b','Branching factor','3','6','4')+
+   '<div class="fig" id="g5f" style="min-height:120px"></div><div class="rd" id="g5r"></div>'+
+   '<div class="btrow"><input class="kin" id="g5k" type="number" inputmode="numeric" min="100" max="999" placeholder="e.g. 333" aria-label="Parcel ID to insert, 100 to 999"><button class="btn pri" id="g5ins">Insert</button><button class="btn" id="g5rand">Random ID</button><button class="btn" id="g5rs">'+L.ic('cycle')+'Reset</button></div>'+
+   '<div class="cap" id="g5c" aria-live="polite"></div>');
+  function fresh(){t=Tr(+L.$('#g5b').value,In([],[Lf([])]));t.root=Lf([]);START.forEach(k=>tIns(t,k));last=null;draw();
+    L.$('#g5c').innerHTML='Pages have <b>'+(t.b-1)+'</b> slots, so splits happen fast. Real pages hold hundreds of keys.';}
+  function draw(r,ov){const target=ov?ov.t:t;
+    drawTree(L.$('#g5f'),target,ov?{over:ov.leaf,hl:hlIns(ov.k)}:r?{changed:r.changed,hl:hlIns(r.k,r.up)}:{},'Your B-tree: '+height(t)+' levels, '+pagesOf(t)+' pages.');
+    L.$('#g5r').innerHTML='Keys <b>'+allKeys(t).length+'</b> · Pages <b>'+pagesOf(t)+'</b> · Levels <b>'+height(t)+'</b>'+(last?' · Last insert wrote <b>'+last.pages+'</b> page'+(last.pages>1?'s':''):'');}
+  async function insert(k){
+    if(busy)return;if(!(k>=100&&k<=999)){L.$('#g5c').innerHTML='Use a whole number from 100 to 999.';return;}
+    if(allKeys(t).includes(k)){L.$('#g5c').innerHTML=k+' is already in the tree. Keys in this index are unique.';return;}
+    const trial=cloneT(t);tIns(trial,k);if(levelsOf(trial).slice(-1)[0].length>8){L.$('#g5c').innerHTML='The screen is full of leaf pages. Tap <b>Reset</b> or change the branching factor to start a fresh tree.';return;}
+    busy=true;['g5ins','g5rand','g5rs'].forEach(id=>L.$('#'+id).disabled=true);
+    const h0=height(t),ov=overflowView(t,k);
+    if(ov.leaf.keys.length>t.b-1){ov.k=k;draw(null,ov);L.$('#g5c').innerHTML='<b>'+k+'</b> has no room in its leaf page…';await L.sleep(650);if(!L.$('#g5f'))return;}
+    const r=tIns(t,k);r.k=k;last=r;draw(r);
+    L.$('#g5c').innerHTML=r.splits===0?'<b>'+k+'</b> fit in a free slot: 1 page written.':r.grew?'<b>'+k+'</b> split a leaf, the split rose to the root, and the root split too: a <b>new level</b> on top. '+r.pages+' pages written.':'<b>'+k+'</b> split '+(r.splits>1?r.splits+' pages':'its leaf')+'. The boundary <b>'+[...r.up].join(', ')+'</b> moved up. '+r.pages+' pages written.';
+    busy=false;['g5ins','g5rand','g5rs'].forEach(id=>{const e=L.$('#'+id);if(e)e.disabled=false;});
+    if(height(t)>h0&&h0>=2&&!L.$('#g5done')){L.$('#g5c').insertAdjacentHTML('afterend','<span id="g5done"></span>');
+      L.sheet('info','The tree grew a level','The root was full, so it split as well, and a new root appeared above it. That’s the only way a B-tree gets taller: from the top. So every leaf is always the same number of pages away from the root. Notice how the pages are often only half full after splits.');L.done();}}
+  L.$('#g5ins').onclick=()=>insert(parseInt(L.$('#g5k').value,10));
+  L.$('#g5k').addEventListener('keydown',e=>{if(e.key==='Enter')insert(parseInt(L.$('#g5k').value,10));});
+  L.$('#g5rand').onclick=()=>{const have=allKeys(t);let k;do{k=100+Math.floor(Math.random()*900);}while(have.includes(k));L.$('#g5k').value=k;insert(k);};
+  L.$('#g5rs').onclick=()=>{if(!busy)fresh();};
+  L.$('#g5b').oninput=()=>{L.$('#g5b-v').textContent=L.$('#g5b').value;if(!busy)fresh();};
+  fresh();}},
+{part:0,src:'Chapter 3 · B-Trees',pts:1,
+ solve:async L=>{L.$('#c6o1').click();await waitFor(L,()=>!!L.$('#c6done'),120);},
+ run(L){
+  const base=()=>Tr(5,In([200,300],[Lf([110,150,180]),Lf([210,230,251,270]),Lf([300,320,350])]));
+  const t=base();let pick=null;
+  const thumb=(par,leaves,o)=>{let s='<text x="4" y="15" style="font-size:12px;font-weight:600;fill:var(--muted)">parent</text>';let x=52;
+    par.forEach(k=>{const up=o.up===k;s+='<rect x="'+x+'" y="2" width="34" height="18" rx="4" style="fill:'+(up?'var(--h3-bg)':'var(--card)')+';stroke:'+(up?'var(--h3)':'var(--line2)')+';stroke-width:1.3"/><text x="'+(x+17)+'" y="15" style="font-size:12px;font-weight:700;text-anchor:middle;fill:'+(up?'var(--h3)':'var(--ink)')+'">'+k+'</text>';x+=38;});
+    if(o.note)s+='<text x="'+(x+2)+'" y="15" style="font-size:11px;fill:var(--muted)">'+o.note+'</text>';
+    const n=leaves.length,gap=Math.min(26,(314-n*KW)/(n-1)),tot=n*KW+(n-1)*gap,x0=160-tot/2+KW/2;
+    leaves.forEach((lk,i)=>{const ch=o.ch&&o.ch.includes(i);s+=pageSVG(x0+i*(KW+gap),28,lk,4,{hl:{240:'new'},stroke:o.over===i?'var(--no)':ch?'var(--h2)':null,fill:ch?'var(--h2-bg)':null,sw:o.over===i||ch?2.2:1.5});});
+    return svgW(s,28+70+(o.over!=null?18:0)+4,'Option: '+o.lbl);};
+  const opts=[['The full page stretches to hold five keys',thumb([200,300],[[110,150,180],[210,230,240,251,270],[300,320,350]],{over:1,lbl:'the middle page holds five keys'})],
+   ['The page splits; the parent gets boundary 240',thumb([200,240,300],[[110,150,180],[210,230],[240,251,270],[300,320,350]],{up:240,ch:[1,2],lbl:'two half-full pages and boundary 240 in the parent'})],
+   ['240 goes on a new page at the end',thumb([200,300],[[110,150,180],[210,230,251,270],[300,320,350],[240]],{ch:[3],note:'+ a 4th reference',lbl:'240 alone on a new last page'})]];
+  L.h(L.kick('try','Predict the shape')+'<h1 class="q">The page for 200–299 is full. Zainab’s Parcel DB inserts 240. Which tree comes out?</h1>'+CSS+
+   '<div class="fig" id="c6f"></div><div id="c6o"></div><div class="rd" id="c6r"></div>');
+  drawTree(L.$('#c6f'),t,{gy:22},'A two-level B-tree with 4 slots per page. The middle leaf holds 210, 230, 251 and 270 and is full.');
+  L.$('#c6o').innerHTML=opts.map((o,j)=>'<button class="shape" id="c6o'+j+'"><b>'+'ABC'[j]+' · '+o[0]+'</b></button>').join('');
+  opts.forEach((o,j)=>{L.$('#c6o'+j).onclick=async()=>{if(pick!==null)return;pick=j;L.$('#c6o'+j).classList.add('sel');
+    const ov=overflowView(t,240);drawTree(L.$('#c6f'),ov.t,{over:ov.leaf,gy:22,hl:hlIns(240)},'240 has no room in the full page.');
+    L.$('#c6r').innerHTML='Inserting 240…';await L.sleep(700);if(!L.$('#c6f'))return;
+    const r=tIns(t,240);drawTree(L.$('#c6f'),t,{changed:r.changed,gy:22,hl:hlIns(240,r.up)},'After the insert: two half-full leaves and a parent with boundaries 200, 240 and 300.');
+    L.$('#c6r').innerHTML='Pages written for this one insert: <b>'+r.pages+'</b> (two halves and their parent)';
+    opts.forEach((q,i)=>L.$('#c6o'+i).insertAdjacentHTML('beforeend',q[1]));
+    const ok=j===1;L.$('#c6o'+j).classList.remove('sel');L.$('#c6o'+j).classList.add(ok?'ok':'no');if(!ok)L.$('#c6o1').classList.add('ok');
+    L.$('#c6r').insertAdjacentHTML('afterend','<span id="c6done"></span>');L.award(ok);
+    L.sheet(ok?'ok':'no',ok?'You called it':'It splits in two','Pages have a fixed size, so a full page can’t stretch, and keys must stay sorted, so nothing goes “at the end”. The page splits into two pages, each half full, and the parent gets the boundary 240. The cost: one insert overwrote three pages.');L.done();};});}},
+{part:0,src:'Chapter 3 · B-Trees',pts:1,
+ solve:async L=>{L.$('#p7o0').click();await waitFor(L,()=>!!L.$('#p7done'),150);},
+ run(L){
+  const BV=[2,3,5,10,50,100,250,500,1000];let pick=null,pg=4096;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Kwame asks: with a branching factor of 500 and a few hundred million parcels, how many pages does one lookup read?</h1>'+CSS+
+   '<div class="btrow" id="p7o"></div><div id="p7w" hidden><div class="fig" id="p7f"></div><div class="cap" id="p7c" aria-live="polite"></div><div id="p7k" hidden>'+
+   rng('p7b','Branching factor',0,BV.length-1,7)+rng('p7l','Levels',1,6,4)+'<div class="btrow" id="p7p"><button class="chip sel" data-p="4096">4 KB pages</button><button class="chip" data-p="16384">16 KB pages</button></div></div></div>');
+  ['Three or four','About thirty','Thousands'].forEach((s,j)=>{L.$('#p7o').insertAdjacentHTML('beforeend','<button class="chip" id="p7o'+j+'">'+s+'</button>');});
+  function draw(b,lv,upto){
+    const rows=[];let pages=1;for(let d=1;d<=lv;d++){rows.push(pages);pages*=b;}const reach=pages;
+    const H=26+lv*30+30;let s='';const W=140,mx=Math.log10(Math.max(reach,10));
+    rows.forEach((p,d)=>{if(d>=upto)return;const y=20+d*30,w=Math.max(6,W*Math.log10(Math.max(p,1)+1)/mx);
+      s+='<text x="4" y="'+(y+16)+'" style="font-size:12.5px;font-weight:700;fill:var(--muted)">Level '+(d+1)+'</text><rect x="58" y="'+y+'" width="'+w.toFixed(1)+'" height="22" rx="5" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.3"/><text x="'+(62+w)+'" y="'+(y+16)+'" style="font-size:12.5px;font-weight:600;fill:var(--ink)">'+fmt(p)+' page'+(p>1?'s':'')+'</text>';});
+    if(upto>=lv){const y=20+lv*30;s+='<text x="4" y="'+(y+16)+'" style="font-size:12.5px;font-weight:700;fill:var(--ok)">Reach</text><text x="58" y="'+(y+16)+'" style="font-size:12.5px;font-weight:700;fill:var(--ok)">'+fmt(reach)+' references → '+bytes(reach*pg)+'</text>';}
+    s+='<text x="4" y="12" style="font-size:11.5px;fill:var(--muted)">One page read per level · log-scale bars</text>';
+    L.$('#p7f').innerHTML=svgW(s,H,'Each level multiplies the number of pages by the branching factor.');
+    const need=Math.ceil(Math.log(1e9)/Math.log(b)-1e-9);
+    L.$('#p7c').innerHTML='Branching factor <b>'+b+'</b>, <b>'+lv+'</b> level'+(lv>1?'s':'')+': a lookup reads <b>'+lv+' page'+(lv>1?'s':'')+'</b> and reaches <b>'+bytes(reach*pg)+'</b> of '+(pg/1024)+' KB pages. To reach a billion keys it needs <b>'+need+'</b> levels.';}
+  const upd=()=>{const b=BV[+L.$('#p7b').value],lv=+L.$('#p7l').value;L.$('#p7b-v').textContent=b;L.$('#p7l-v').textContent=lv;draw(b,lv,99);};
+  [0,1,2].forEach(j=>{L.$('#p7o'+j).onclick=async()=>{if(pick!==null)return;pick=j;L.$('#p7o'+j).classList.add('sel');L.$('#p7w').hidden=false;
+    for(let u=1;u<=5;u++){draw(500,4,u);await L.sleep(320);if(!L.$('#p7f'))return;}
+    const ok=j===0;L.award(ok);L.$('#p7o'+j).classList.remove('sel');L.$('#p7o'+j).classList.add(ok?'ok':'no');if(!ok)L.$('#p7o0').classList.add('ok');
+    L.$('#p7k').hidden=false;upd();L.$('#p7k').insertAdjacentHTML('beforeend','<span id="p7done"></span>');
+    L.sheet(ok?'ok':'no',ok?'Three or four it is':'Only three or four','Each level multiplies the reach by 500: 500, 250,000, 125 million, 62.5 billion. Hundreds of millions of parcels sit three or four levels down, so a lookup reads three or four pages. The book’s figure: with 500 children per page and 4 KB pages, four levels reach up to 256 TB. Now drag the branching factor down to 2 and watch the levels pile up.');L.done();};});
+  L.$('#p7b').oninput=upd;L.$('#p7l').oninput=upd;
+  [...L.$$('#p7p .chip')].forEach(c=>{c.onclick=()=>{pg=+c.dataset.p;[...L.$$('#p7p .chip')].forEach(x=>x.classList.toggle('sel',x===c));upd();};});}},
 
-/* ---------- PART 2: B-TREE OR LSM-TREE? ---------- */
-{part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',run(L){
-  L.h(L.kick('learn','The rule of thumb')+'<h1 class="q">LSM-trees tend to write faster, B-trees tend to read faster</h1>'+
-   L.prose('B-tree engines are generally more mature, but '+L.g('lsm','LSM-trees')+' have interesting performance. As a rough rule, LSM-trees are typically faster for writes, and B-trees are thought to be faster for reads. An LSM read may have to check several structures and '+L.g('sstable','SSTables')+' at different stages of compaction.')+
-   L.note('<b>But test it.</b> Benchmarks are often inconclusive and sensitive to the details of the workload. Measure with your own workload before you decide.','flask')+
-   L.prose('One idea matters for both: '+L.g('write-amp','write amplification')+'. One write to the database can turn into several writes to disk over time:')+
-   L.lanes([['tree','B-tree','Writes each change at least twice: to the WAL, then to the page, and again if the page splits. It writes a whole page even if only a few bytes changed.',2],
-            ['layers','LSM-tree','Writes data again and again as SSTables are compacted and merged.',1]])+
-   '<p class="small" style="margin-top:10px">It matters on SSDs, which wear out after a limited number of overwrites, and in write-heavy apps, where the disk’s write rate caps how many writes per second you get.</p>');
+/* ---------- PART 2: CRASHES AND TRADE-OFFS ---------- */
+{part:1,src:'Chapter 3 · Making B-trees reliable',run(L){
+  const t=Tr(5,In([200,300],[Lf([110,150]),Lf([210,230]),Lf([240,251,270]),Lf([300,320])]));
+  const orph=t.root.kids[2];
+  const r=treeSVG(t,{cut:new Set([orph]),orphan:orph,gy:30,avail:200,cx:104,maxGap:12,changed:new Set([t.root.kids[1]])});
+  let s=r.inner;const P=r.pos.get(orph);
+  s+='<text x="'+P.x+'" y="'+(P.y-6)+'" style="font-size:11px;font-weight:700;fill:var(--no);text-anchor:middle">orphan</text>';
+  s+='<text x="104" y="'+(r.h+14)+'" style="font-size:11.5px;fill:var(--muted);text-anchor:middle">⚡ crash before the parent was written</text>';
+  s+='<text x="214" y="14" style="font-size:12px;font-weight:700;fill:var(--h4)">Write-ahead log</text>';
+  [['#41 split','200–299 at 240'],['#42 parent','add 240']].forEach((e,j)=>{const y=24+j*44;s+='<rect x="214" y="'+y+'" width="100" height="38" rx="6" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.4"/><text x="222" y="'+(y+16)+'" style="font-size:11px;font-weight:700;fill:var(--h4)">'+e[0]+'</text><text x="222" y="'+(y+30)+'" style="font-size:11px;fill:var(--h4)">'+e[1]+'</text>';});
+  s+='<path d="M264 116 C 262 140, 230 150, 200 134" style="fill:none;stroke:var(--h4);stroke-width:1.8;stroke-dasharray:4 3;marker-end:url(#a8)"/><text x="264" y="154" style="font-size:11px;font-weight:700;fill:var(--h4);text-anchor:middle">replay on restart</text>';
+  const defs='<defs><marker id="a8" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--h4)"/></marker></defs>';
+  L.h(L.kick('learn','Making B-trees reliable')+'<h1 class="q">Overwriting pages is risky, so write the change down first</h1>'+CSS+
+   '<div class="fig">'+svgW(defs+s,Math.max(r.h+22,160),'A crash in the middle of a split leaves an orphan page that no parent points to. A write-ahead log beside it records the split so it can be replayed.')+'</div>'+
+   L.prose('A split overwrites three pages. Crash after two and one page is orphaned: the index is corrupt. So B-trees first append each change to a '+L.g('wal','write-ahead log')+', then replay it after a crash.'));
   L.done();}},
-{part:1,src:'Chapter 3 · Advantages of LSM-trees · Downsides of LSM-trees',run(L){
-  L.h(L.kick('learn','Pros and cons')+'<h1 class="q">What each design does well</h1>'+
-   L.lanes([['trend','LSM-tree strengths','<p style="margin:0 0 8px"><b>Higher write throughput</b>, often: sometimes lower write amplification, and it writes compact SSTables in sequence instead of overwriting several pages. A big deal on spinning disks.</p><p style="margin:0"><b>Smaller files.</b> B-trees leave unused space in pages after splits (fragmentation). LSM-trees rewrite files to remove it, and compress better.</p>',1],
-            ['alert','LSM-tree weak spots','<p style="margin:0 0 8px"><b>Compaction gets in the way.</b> A request may wait while the disk finishes merging. Averages barely change, but high percentiles can get quite slow. B-trees are more predictable.</p><p style="margin:0"><b>It can fall behind.</b> Flushing and '+L.g('compaction','compaction')+' share the disk. If merging can’t keep up, unmerged files pile up and reads slow down. Engines usually don’t slow incoming writes, so you must monitor this.</p>',4]])+
-   L.note('<b>A B-tree keeps each key in exactly one place.</b> That suits strong transactions: many databases lock ranges of keys, and in a B-tree those locks attach straight to the tree. B-trees aren’t going away; log-structured indexes are increasingly popular in new datastores.','tree'));
-  L.done();}},
-{part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias’s ping store takes a flood of writes all day and is read far less. The Parcel DB needs strong transactions on ranges of keys. Which first guess fits the rule of thumb?</h1>');
-  L.mc(L.card,['Both should use B-trees','Pings: B-tree. Parcel DB: LSM-tree','Pings: LSM-tree. Parcel DB: B-tree'],2,
-   'Heavy writes favour an LSM-tree. Range locks for transactions favour a B-tree, where each key lives in one place. Then test both guesses with the real workload.',
-   'A flood of writes is where LSM-trees usually shine, while transactions that lock key ranges suit a B-tree. Treat it as a first guess, and test it with the real workload.');}},
-{part:1,src:'Chapter 3 · Downsides of LSM-trees',pts:1,
- solve:async L=>{L.$('#nd').click();await L.sleep(1500);L.$('#pk').click();await L.sleep(1500);},
+{part:1,src:'Chapter 3 · Making B-trees reliable',
+ solve:async L=>{for(let p=0;p<4;p++){L.$('#e9p'+p).click();await waitFor(L,()=>L.$('#e9p'+p).classList.contains('done'),140);}},
  run(L){
   const seen=new Set();let busy=false;
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias’s ping store is an LSM-tree. Run a normal day, then Peak Week, and watch the files waiting to be merged.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px 16px;margin:8px 0 12px"><div class="small" id="lbl">Compaction can merge a steady amount per hour. Press a button to start.</div>'+
-   '<div class="meterrow"><div class="lb">Unmerged SSTables</div><div class="meter"><div id="m0" style="background:var(--h2)"></div></div></div>'+
-   '<div class="meterrow"><div class="lb">Disk used</div><div class="meter"><div id="m1" style="background:var(--h3)"></div></div></div>'+
-   '<p class="small" id="rd" style="margin:6px 0 0"></p></div>'+
-   '<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="nd">'+L.ic('play')+'Normal day</button><button class="btn pri" id="pk">'+L.ic('flame')+'Peak Week (3× writes)</button></div><div id="q"></div>');
-  const go=(peak)=>{if(busy)return;busy=true;let t=0;
-    L.$('#lbl').textContent=peak?'Peak Week: writes arrive three times faster':'Normal day';
-    const iv=setInterval(()=>{const m0=L.$('#m0');if(!m0){clearInterval(iv);return;}t++;
-      const segs=peak?3+2*t:(t%2?4:3),disk=peak?30+5.5*t:30+0.1*t;
-      m0.style.width=Math.round(segs/25*100)+'%';L.$('#m1').style.width=Math.round(disk)+'%';
-      L.$('#rd').innerHTML='<b>'+segs+'</b> files waiting · disk <b>'+Math.round(disk)+'%</b> · '+(peak?'<span style="color:var(--no)">reads slowing: more files to check</span>':'reads steady');
-      if(t>=10){clearInterval(iv);busy=false;seen.add(peak);
-        if(seen.size===2&&!L.$('#q').innerHTML){const q=L.$('#q');q.innerHTML='<h2 class="sub">The engine won’t slow down incoming writes by itself. What should Kwame set up before Peak Week?</h2>';
-          L.mc(q,['Wait for the engine to throttle writes itself','Alerts on unmerged files and free disk space','Switch compaction off until the rush is over'],1,
-           'Typical SSTable engines keep accepting writes even when compaction falls behind, so only monitoring catches the pile-up before the disk fills.',
-           'The engine usually won’t throttle writes, and switching compaction off makes the pile grow faster. Watch the number of unmerged files and the free disk space, and act early.');}}},120);};
-  L.$('#nd').onclick=()=>go(false);L.$('#pk').onclick=()=>go(true);}},
+  L.h(L.kick('ex','Edge-case lab')+'<h1 class="q">Insert 240 into the full page, then break things. Run all four cases.</h1>'+CSS+
+   '<div class="btrow" id="e9b"></div><div class="fig" id="e9f"></div><div class="cap" id="e9c" aria-live="polite">Pick a case. Each plays out step by step.</div>');
+  const P=[['Crash, no log','wal0'],['Crash, with log','wal1'],['2 threads, no latch','lat0'],['2 threads, latch','lat1']];
+  L.$('#e9b').style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px';
+  L.$('#e9b').innerHTML=P.map((p,j)=>'<button class="chip" id="e9p'+j+'">'+p[0]+'</button>').join('');
+  const L0=()=>[Lf([110,150]),Lf([210,230,251,270]),Lf([300,320])];
+  function scene(stage,kind){
+    // stage: 0 start, 1 left half written, 2 right half written, 3 parent written
+    const a=Lf([110,150]),c=Lf([300,320]);let t,o={gy:30,maxGap:18,avail:300};
+    if(stage===0){const ls=L0();t=Tr(5,In([200,300],ls));}
+    else{const left=Lf([210,230]),right=Lf([240,251,270]);
+      if(stage===1){t=Tr(5,In([200,300],[a,left,c]));o.changed=new Set([left]);}
+      else if(stage===2){t=Tr(5,In([200,300],[a,left,right,c]));o.cut=new Set([right]);o.changed=new Set([left,right]);o.orphan=right;}
+      else{t=Tr(5,In([200,240,300],[a,left,right,c]));o.changed=new Set([t.root]);}}
+    return {t,o};}
+  function render(stage,kind,extra){
+    const {t,o}=scene(stage,kind);if(extra&&extra.path)o.path=extra.path(t);if(extra&&extra.hl)o.hl=extra.hl;
+    const r=treeSVG(t,o);let s=r.inner;const W0=r.h+6;
+    const wal=kind==='wal1'&&extra&&extra.wal;
+    s+='<text x="8" y="'+(W0+14)+'" style="font-size:12px;font-weight:700;fill:var(--h4)">Write-ahead log</text>';
+    if(kind==='wal0')s+='<text x="120" y="'+(W0+14)+'" style="font-size:11.5px;fill:var(--muted)">none: pages are overwritten directly</text>';
+    else if(kind==='wal1')s+=wal?'<rect x="120" y="'+(W0+2)+'" width="190" height="18" rx="5" style="fill:var(--h4-bg);stroke:var(--h4);stroke-width:1.3"/><text x="126" y="'+(W0+15)+'" style="font-size:11px;font-weight:700;fill:var(--h4)">#41 split 200–299 at 240</text>':'<text x="120" y="'+(W0+14)+'" style="font-size:11.5px;fill:var(--muted)">empty</text>';
+    else if(kind!=='idle')s+='<text x="120" y="'+(W0+14)+'" style="font-size:11.5px;fill:var(--muted)">(not part of this case)</text>';
+    if(extra&&extra.tag)s+='<text x="312" y="14" style="font-size:12px;font-weight:700;fill:'+(extra.tagCol||'var(--no)')+';text-anchor:end">'+extra.tag+'</text>';
+    if(extra&&extra.orphanLbl&&o.orphan){const p=r.pos.get(o.orphan);s+='<text x="'+p.x+'" y="'+(p.y-5)+'" style="font-size:11px;font-weight:700;fill:var(--no);text-anchor:middle">orphan</text>';}
+    L.$('#e9f').innerHTML=svgW(s,W0+24,'The B-tree during the split, with the write-ahead log below.');}
+  const cap=(n,h)=>{const c=L.$('#e9c');if(c)c.innerHTML='<span class="stp">'+n+'</span>'+h;};
+  const toLeaf=k=>t=>leafFor(t,k);
+  async function play(kind){
+    const S=async ms=>{await L.sleep(ms);return !!L.$('#e9f');};
+    if(kind==='wal0'||kind==='wal1'){
+      const w=kind==='wal1';
+      render(0,kind,{wal:false});cap('Step 1','240 needs a split: three pages to overwrite (left half, right half, parent). Each overwrite is real hardware work: a disk head moves into place, or an SSD erases and rewrites a large block.');if(!await S(550))return false;
+      if(w){render(0,kind,{wal:true});cap('Step 2','First, the change is appended to the log. Appending is safe: nothing in the tree is touched yet.');if(!await S(550))return false;}
+      render(1,kind,{wal:w});cap(w?'Step 3':'Step 2','Left half overwritten.');if(!await S(450))return false;
+      render(2,kind,{wal:w,tag:'⚡ power cut',orphanLbl:true});cap(w?'Step 4':'Step 3','Right half written to a new page… and the power fails before the parent is updated.');if(!await S(600))return false;
+      if(!w){render(2,kind,{wal:false,tag:'restart',orphanLbl:true,path:toLeaf(251)});cap('After restart','Look up 251: the parent still sends 200–299 to the left page, which now holds only 210 and 230. <span class="no-t">251 is lost</span> on an orphan page no parent points to. The index is corrupt.');}
+      else{render(3,kind,{wal:true,tag:'restart: replay log',tagCol:'var(--h4)',path:toLeaf(251),hl:p=>p.leaf&&p.keys.includes(251)?{251:'find'}:null});cap('After restart','The database replays the log, finishes the parent page, and the tree is consistent again. <span class="ok-t">251 is found.</span>');}
+    }else{
+      const lt=kind==='lat1';
+      render(0,kind,{tag:lt?'🔒 A holds the latch':'',tagCol:'var(--h2)'});cap('Step 1','Thread A starts splitting the page for 200–299 to insert 240.'+(lt?' It takes a latch (a lightweight lock) on the pages it is changing.':''));if(!await S(550))return false;
+      render(1,kind,{tag:lt?'🔒 A holds the latch':'',tagCol:'var(--h2)'});cap('Step 2','Thread A has rewritten the left half. The right half and the parent are not done yet.');if(!await S(550))return false;
+      if(!lt){render(1,kind,{tag:'B reads now',path:toLeaf(251)});cap('Step 3','Thread B looks up 251 right now and follows the old parent to a page holding only 210 and 230. <span class="no-t">B answers “not found”</span>, though 251 exists.');if(!await S(650))return false;
+        render(3,kind,{});cap('Step 4','Thread A finishes. The tree is fine, but B already saw it half-changed and gave a wrong answer.');}
+      else{render(1,kind,{tag:'B waits ⏳',tagCol:'var(--h3)'});cap('Step 3','Thread B wants 251 but must wait for the latch.');if(!await S(550))return false;
+        render(3,kind,{tag:'latch released',tagCol:'var(--ok)',path:toLeaf(251),hl:p=>p.leaf&&p.keys.includes(251)?{251:'find'}:null});cap('Step 4','A finishes and releases the latch. B reads the finished tree: <span class="ok-t">251 is found.</span>');}
+    }
+    return true;}
+  P.forEach((p,j)=>{L.$('#e9p'+j).onclick=async()=>{if(busy)return;busy=true;P.forEach((_,q)=>L.$('#e9p'+q).classList.toggle('sel',q===j));
+    const ok=await play(p[1]);busy=false;if(!ok)return;const b=L.$('#e9p'+j);b.classList.remove('sel');b.classList.add('done');seen.add(j);
+    if(seen.size===4&&!L.$('#e9done')){L.$('#e9c').insertAdjacentHTML('afterend','<span id="e9done"></span>');
+      L.sheet('info','Two dangers of updating in place','A crash can leave a half-done change, so B-trees log each change first and replay the log after a crash. Threads need '+L.g('latch','latches')+' so none sees the tree half-changed. Log-structured engines have it easier: they merge in the background without touching what queries read, then swap old segments for new ones in one atomic step.');L.done();}};});
+  render(0,'idle',{});}},
+{part:1,src:'Chapter 3 · B-tree optimizations',run(L){
+  const pg=(x,y,w,h,t,st)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="4" style="fill:'+(st&&st.f||'var(--card)')+';stroke:'+(st&&st.s||'var(--line2)')+';stroke-width:1.4'+(st&&st.d?';stroke-dasharray:3 3':'')+'"/>'+(t?'<text x="'+(x+w/2)+'" y="'+(y+h/2+4)+'" style="font-size:12px;font-weight:600;text-anchor:middle;fill:'+(st&&st.c||'var(--ink)')+'">'+t+'</text>':'');
+  const ar='<defs><marker id="a10" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--h2)"/></marker></defs>';
+  const cow=ar+pg(20,6,40,22,'P',{d:1,f:'var(--soft)',c:'var(--muted)'})+pg(90,6,40,22,'P′',{f:'var(--h2-bg)',s:'var(--h2)'})+pg(20,58,40,22,'old',{d:1,f:'var(--soft)',c:'var(--muted)'})+pg(90,58,40,22,'new',{f:'var(--h2-bg)',s:'var(--h2)'})+
+    '<line x1="40" y1="28" x2="40" y2="56" style="stroke:var(--line2);stroke-dasharray:3 3"/><line x1="110" y1="28" x2="110" y2="55" style="stroke:var(--h2);stroke-width:1.6;marker-end:url(#a10)"/>';
+  const sk=pg(6,10,138,24,'',{})+'<text x="12" y="27" style="font-size:12px;fill:var(--muted)">Okafor | Okoro | Silva</text>'+pg(6,52,138,24,'',{f:'var(--h2-bg)',s:'var(--h2)'})+'<text x="12" y="69" style="font-size:12px;font-weight:700;fill:var(--h2)">Oka | Oko | Si | Ta</text><text x="75" y="46" style="font-size:12px;fill:var(--muted);text-anchor:middle">↓</text>';
+  const sib='<defs><marker id="a10b" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--h2)"/></marker></defs>'+pg(55,6,40,20,'',{})+[0,1,2].map(i=>pg(8+i*50,56,34,22,['1–3','4–6','7–9'][i],{})).join('')+
+    '<line x1="75" y1="26" x2="25" y2="55" style="stroke:var(--line2)"/><line x1="75" y1="26" x2="75" y2="55" style="stroke:var(--line2)"/><line x1="75" y1="26" x2="125" y2="55" style="stroke:var(--line2)"/>'+
+    '<path d="M43 67 h13" style="stroke:var(--h2);stroke-width:2;marker-end:url(#a10b)"/><path d="M93 67 h13" style="stroke:var(--h2);stroke-width:2;marker-end:url(#a10b)"/>';
+  const ord='<text x="4" y="17" style="font-size:12px;fill:var(--muted)">scattered</text>'+[3,0,2,1].map((v,i)=>pg(60+i*22,4,18,16,String(v+1),{})).join('')+'<text x="4" y="55" style="font-size:12px;font-weight:700;fill:var(--h2)">in order</text>'+[0,1,2,3].map(i=>pg(60+i*22,42,18,16,String(i+1),{f:'var(--h2-bg)',s:'var(--h2)'})).join('');
+  const box=(svg,t,s)=>'<div>'+svgW(svg,84,t,150)+'<b>'+t+'</b>'+s+'</div>';
+  L.h(L.kick('learn','B-tree optimizations')+'<h1 class="q">Decades of tweaks, same core idea</h1>'+CSS+
+   '<div class="mini">'+box(cow,'Copy-on-write','Write the changed page elsewhere, plus new parents. No WAL needed (LMDB).')+box(sk,'Shorter keys','Interior keys only mark boundaries, so abbreviate them: more per page, fewer levels.')+
+    box(sib,'Sibling pointers','Leaves point to their neighbours, so scans don’t climb back up.')+box(ord,'Leaves in order on disk','Fewer disk seeks on long scans, but hard to keep as the tree grows.')+'</div>');
+  L.done();}},
+{part:1,src:'Chapter 3 · B-tree optimizations',pts:4,run(L){
+  L.h('<div id="qk"></div>');
+  L.quick(L.$('#qk'),'Which tweak helps?',['Copy-on-write','Shorter interior keys','Sibling pointers','Leaves in order on disk'],[
+   ['A nightly report reads every parcel in ID order and keeps climbing back up to parent pages to find the next leaf.',2,'With a pointer to the neighbouring leaf, the scan walks straight along the leaves in key order.'],
+   ['Zainab wants more keys on each interior page, so the tree needs fewer levels.',1,'Interior keys only have to mark boundaries between ranges, so they can be abbreviated. More keys per page means a higher branching factor and fewer levels.'],
+   ['Instead of overwriting a page and keeping a log, the engine writes the changed page to a new place and builds new parent pages that point to it.',0,'That’s copy-on-write, as in LMDB. The old version stays intact until the new one is linked in, which also helps with concurrency.'],
+   ['A long range scan needs a disk seek for every page, because the leaves are scattered all over the disk.',3,'Many engines try to keep leaf pages in sequential order on disk, though that’s hard to keep up as the tree grows. LSM-trees find it easier: merging rewrites big sorted segments in one go. Some B-tree variants, such as fractal trees (nothing to do with fractals), even borrow log-structured ideas to cut disk seeks.']]);}},
+{part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',run(L){
+  const seg=(x,y,w,t,c,d)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="26" rx="5" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.4'+(d?';stroke-dasharray:4 3':'')+'"/><text x="'+(x+w/2)+'" y="'+(y+17)+'" style="font-size:11px;font-weight:700;fill:var(--'+c+');text-anchor:middle">'+t+'</text>';
+  let s='<text x="4" y="14" style="font-size:12px;font-weight:600;fill:var(--muted)">One small status change becomes…</text>';
+  s+='<text x="4" y="40" style="font-size:12.5px;font-weight:700;fill:var(--h2)">B-tree</text>'+seg(4,48,44,'WAL','h4')+seg(52,48,150,'the whole 4 KB page','h2')+seg(206,48,110,'+ split pages','h2',1);
+  s+='<text x="4" y="94" style="font-size:11px;fill:var(--muted)">some engines write each page twice (power-cut safety)</text>';
+  s+='<text x="4" y="122" style="font-size:12.5px;font-weight:700;fill:var(--h1)">LSM-tree</text>'+seg(4,130,44,'WAL','h4')+seg(52,130,70,'SSTable','h1')+seg(126,130,92,'merged again','h1')+seg(222,130,94,'and again…','h1',1);
+  s+='<text x="4" y="176" style="font-size:11px;fill:var(--muted)">compaction rewrites the data several times over its life</text><text x="316" y="14" style="font-size:11px;fill:var(--muted);text-anchor:end">not to scale</text>';
+  L.h(L.kick('learn','The rule of thumb')+'<h1 class="q">LSM-trees tend to write faster, B-trees tend to read faster</h1>'+CSS+
+   '<div class="fig">'+svgW(s,184,'One write to the database turns into several writes to disk in both engines.')+'</div>'+
+   L.prose('That’s '+L.g('write-amp','write amplification')+': it wears out SSDs and can cap writes per second. '+L.g('lsm','LSM')+' reads are slower because they check several '+L.g('sstable','SSTables')+'. Benchmarks are fickle, so test your own workload.'));
+  L.done();}},
+{part:1,src:'Chapter 3 · Advantages of LSM-trees · Downsides of LSM-trees',pts:1,
+ solve:async L=>{L.$('#d13l1').click();L.$('#d13k0').click();L.$('#d13s0').click();await L.sleep(30);L.$('#d13k1').click();await L.sleep(30);L.$('#d13s1').click();L.$('#d13go').click();await waitFor(L,()=>!!L.$('#d13done'),150);},
+ run(L){
+  const S={load:1,disk:'hdd',db:'small',files:3,free:70,hours:0,busy:false};
+  L.h(L.kick('pr','See it happen')+'<h1 class="q">Tobias’s ping store is an LSM-tree. Zainab asks: would a B-tree cope as well? Kwame replays the load on both.</h1>'+CSS+
+   '<div class="btrow" id="d13l"><button class="chip sel" id="d13l0">Normal day</button><button class="chip" id="d13l1">Peak Week (3× writes)</button></div>'+
+   '<div class="btrow" id="d13k"><button class="chip sel" id="d13k0">Spinning disks</button><button class="chip" id="d13k1">SSDs</button></div>'+
+   '<div class="btrow" id="d13s"><button class="chip sel" id="d13s0">Young database</button><button class="chip" id="d13s1">Large database</button></div>'+
+   '<div class="fig" id="d13f"></div><div class="lg"><span><i style="background:var(--h4-bg);border-color:var(--h4)"></i>WAL</span><span><i style="background:var(--h2-bg);border-color:var(--h2)"></i>B-tree pages</span><span><i style="background:var(--h1-bg);border-color:var(--h1)"></i>LSM writes</span><span><i style="background:var(--h3-bg);border-color:var(--h3)"></i>compaction</span><span><i style="background:var(--no-bg);border-color:var(--no)"></i>over the limit</span></div><div class="btrow"><button class="btn pri" id="d13go">'+L.ic('play')+'Run 6 hours</button></div><div class="cap" id="d13c" aria-live="polite"></div>'+
+   tasks('d13t',['Peak Week on spinning disks','Peak Week on SSDs','Peak Week with a large database: run 6 hours'])+'<div id="d13q"></div>');
+  function model(){const u=10*S.load,pageK=S.disk==='hdd'?6.25:2.2;
+    return {bw:u*1,bp:u*pageK,li:u*1.5,lc:u*(S.db==='large'?3.5:1.5)};}
+  function draw(){
+    const m=model(),X=12,PX=2;// 100% = 200px
+    const bt=m.bw+m.bp,lAvail=Math.max(0,100-m.li),lGot=Math.min(m.lc,lAvail),short=m.lc-lGot;
+    const bar=(y,parts)=>{let x=X,s='';parts.forEach(p=>{if(p[0]<=0)return;const w=Math.min(p[0]*PX,300-x);if(w<=0)return;s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="24" style="fill:var(--'+p[1]+'-bg);stroke:var(--'+p[1]+');stroke-width:1.2'+(p[2]?';stroke-dasharray:4 3':'')+'"/>';if(w>34)s+='<text x="'+(x+w/2)+'" y="'+(y+16)+'" style="font-size:11px;font-weight:700;fill:var(--'+p[1]+');text-anchor:middle">'+p[3]+'</text>';x+=w;});return s;};
+    let s='<text x="'+X+'" y="14" style="font-size:11.5px;fill:var(--muted)">disk write bandwidth · illustrative</text>';
+    s+='<line x1="'+(X+200)+'" y1="22" x2="'+(X+200)+'" y2="122" style="stroke:var(--ink);stroke-width:1.6;stroke-dasharray:4 3"/><text x="'+(X+204)+'" y="132" style="font-size:11px;font-weight:700;fill:var(--ink)">100%: disk limit</text>';
+    s+='<text x="'+X+'" y="36" style="font-size:12.5px;font-weight:700;fill:var(--h2)">B-tree · '+Math.round(bt)+'% busy</text>'+bar(42,[[m.bw,'h4',0,'WAL'],[Math.min(m.bp,100-m.bw),'h2',0,'pages'],[Math.max(0,bt-100),'no',1,'over!']]);
+    s+='<text x="'+X+'" y="88" style="font-size:12.5px;font-weight:700;fill:var(--h1)">LSM-tree · '+Math.round(m.li+m.lc)+'% needed</text>'+bar(94,[[m.li,'h1',0,'writes'],[lGot,'h3',0,'compact'],[short,'no',1,'behind']]);
+    const fy=144;s+='<text x="'+X+'" y="'+(fy+14)+'" style="font-size:11.5px;fill:var(--muted)">unmerged SSTables</text>';
+    for(let i=0;i<Math.min(S.files,26);i++)s+='<rect x="'+(130+(i%13)*14)+'" y="'+(fy+(i>=13?13:0))+'" width="11" height="10" rx="2" style="fill:var(--'+(i>=3?'no':'h1')+'-bg);stroke:var(--'+(i>=3?'no':'h1')+');stroke-width:1"/>';
+    L.$('#d13f').innerHTML=svgW(s,172,'Disk bandwidth bars for the B-tree and the LSM-tree, and a pile of unmerged SSTables.');
+    const bMsg=bt>100?'<span class="no-t">B-tree: the disk can’t keep up.</span> Every write costs a whole page, written at random spots; only about '+Math.round(100/bt*100)+'% of the writes get through on time.':'<span class="ok-t">B-tree keeps up</span> ('+Math.round(bt)+'% busy). Reads stay steady.';
+    const lMsg=short>0?'<span class="no-t">LSM-tree: '+L.g('compaction','compaction')+' can’t keep up.</span> New writes still get the bandwidth (the engine doesn’t slow them down), so unmerged files pile up: <b>'+S.files+'</b> files, disk <b>'+S.free+'%</b> free. Reads check every file.':'<span class="ok-t">LSM-tree keeps up</span> ('+Math.round(m.li+m.lc)+'% busy): it writes compact files in sequence.'+(m.li+m.lc>80?' Busy compaction can still slow a few requests at high percentiles.':'');
+    L.$('#d13c').innerHTML=bMsg+'<br>'+lMsg;}
+  function sel(row,id){[...L.$$('#'+row+' .chip')].forEach(c=>c.classList.toggle('sel',c.id===id));}
+  function check(){if(S.load===3&&S.disk==='hdd'&&S.db==='small')tick(L,'d13t',0);if(S.load===3&&S.disk==='ssd'&&S.db==='small')tick(L,'d13t',1);}
+  const set=(k,v,row,id)=>()=>{if(S.busy)return;S[k]=v;S.files=3;S.free=70;sel(row,id);check();draw();};
+  L.$('#d13l0').onclick=set('load',1,'d13l','d13l0');L.$('#d13l1').onclick=set('load',3,'d13l','d13l1');
+  L.$('#d13k0').onclick=set('disk','hdd','d13k','d13k0');L.$('#d13k1').onclick=set('disk','ssd','d13k','d13k1');
+  L.$('#d13s0').onclick=set('db','small','d13s','d13s0');L.$('#d13s1').onclick=set('db','large','d13s','d13s1');
+  L.$('#d13go').onclick=async()=>{if(S.busy)return;S.busy=true;L.$('#d13go').disabled=true;const m=model(),short=m.lc-Math.min(m.lc,Math.max(0,100-m.li));
+    for(let h=0;h<6;h++){await L.sleep(230);if(!L.$('#d13f'))return;if(short>0){S.files+=Math.round(short/12);S.free=Math.max(4,S.free-Math.round(short/5));}draw();}
+    S.busy=false;L.$('#d13go').disabled=false;check();
+    if(S.load===3&&S.db==='large'&&short>0)tick(L,'d13t',2);
+    if(allTicked(L,'d13t')&&!L.$('#d13done')){L.$('#d13q').innerHTML='<span id="d13done"></span><h2 class="sub">The LSM engine won’t slow incoming writes by itself. What should Kwame set up before Peak Week?</h2>';
+      L.mc(L.$('#d13q'),['Wait for the engine to throttle writes on its own','Alerts on unmerged files and free disk space','Switch compaction off until the rush is over'],1,
+       'SSTable engines usually keep accepting writes even when compaction falls behind, so only monitoring catches the pile-up before the disk fills. And the B-tree? On spinning disks its random page writes hit the limit first; on SSDs the gap shrinks, because SSD firmware turns random writes into sequential ones.',
+       'The engine usually won’t throttle writes, and switching compaction off makes the pile grow faster. Watch the number of unmerged files and the free disk space, and act early. Note also: on SSDs the B-tree’s gap shrinks, because SSD firmware turns random writes into sequential ones.');}};
+  draw();}},
+{part:1,src:'Chapter 3 · Downsides of LSM-trees',run(L){
+  const H=[10,11,9,10,12,16,44,30,46,15,10,9,11,10],W=[12,13,12,12,13,12,13,12,13,12,12,13,12,12];
+  let s='<text x="4" y="14" style="font-size:11.5px;fill:var(--muted)">each bar = one request’s response time · illustrative</text>';
+  s+='<text x="4" y="36" style="font-size:12.5px;font-weight:700;fill:var(--h1)">LSM-tree</text>';
+  s+='<rect x="116" y="26" width="106" height="20" rx="5" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.4"/><text x="169" y="40" style="font-size:11px;font-weight:700;fill:var(--h3);text-anchor:middle">disk compacting</text>';
+  s+='<line x1="116" y1="46" x2="116" y2="112" style="stroke:var(--h3);stroke-width:1;stroke-dasharray:3 3"/><line x1="222" y1="46" x2="222" y2="112" style="stroke:var(--h3);stroke-width:1;stroke-dasharray:3 3"/>';
+  H.forEach((h,i)=>{const x=14+i*21,slow=h>20;s+='<rect x="'+x+'" y="'+(112-h)+'" width="12" height="'+h+'" rx="2" style="fill:var(--'+(slow?'no':'h1')+'-bg);stroke:var(--'+(slow?'no':'h1')+');stroke-width:1.2"/>';});
+  s+='<line x1="4" y1="112" x2="316" y2="112" style="stroke:var(--line2)"/><text x="232" y="74" style="font-size:11px;font-weight:700;fill:var(--no)">these few wait</text><text x="232" y="88" style="font-size:11px;fill:var(--no)">for the disk</text>';
+  s+='<text x="4" y="138" style="font-size:12.5px;font-weight:700;fill:var(--h2)">B-tree</text><text x="316" y="138" style="font-size:11px;font-weight:700;fill:var(--h2);text-anchor:end">steady</text>';
+  W.forEach((h,i)=>{const x=14+i*21;s+='<rect x="'+x+'" y="'+(170-h)+'" width="12" height="'+h+'" rx="2" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.2"/>';});
+  s+='<line x1="4" y1="170" x2="316" y2="170" style="stroke:var(--line2)"/><text x="4" y="188" style="font-size:11px;fill:var(--muted)">time →</text>';
+  L.h(L.kick('learn','Compaction gets in the way')+'<h1 class="q">A busy disk makes a few LSM requests slow</h1>'+CSS+
+   '<div class="fig">'+svgW(s,194,'Response times over time. LSM-tree requests that arrive while the disk is compacting take much longer; B-tree requests stay about the same.')+'</div>'+
+   L.prose('The disk can do only so much. A request that arrives mid-'+L.g('compaction','compaction')+' waits. Average speed barely moves, but the slowest requests (high percentiles) can be very slow. B-trees are more predictable.'));
+  L.done();}},
+{part:1,src:'Chapter 3 · Downsides of LSM-trees',run(L){
+  let s='<text x="4" y="14" style="font-size:12.5px;font-weight:700;fill:var(--h2)">B-tree</text><text x="166" y="14" style="font-size:12.5px;font-weight:700;fill:var(--h1)">LSM-tree</text>';
+  s+=pageSVG(40,34,[240,251,270],3,{hl:{251:'find'},stroke:'var(--h2)',sw:2})+'<rect x="16" y="24" width="48" height="66" rx="8" style="fill:none;stroke:var(--h3);stroke-width:2;stroke-dasharray:5 3"/><text x="70" y="44" style="font-size:11px;font-weight:700;fill:var(--h3)">🔒 lock on</text><text x="70" y="58" style="font-size:11px;font-weight:700;fill:var(--h3)">240–270</text><text x="70" y="78" style="font-size:11px;fill:var(--muted)">251: one place</text>';
+  [['memtable','251 = v3'],['SSTable 2','251 = v2'],['SSTable 1','251 = v1']].forEach((e,j)=>{const y=24+j*24;s+='<rect x="166" y="'+y+'" width="150" height="20" rx="5" style="fill:'+(j?'var(--h1-bg)':'var(--pri-bg)')+';stroke:var(--h1);stroke-width:1.2"/><text x="172" y="'+(y+14)+'" style="font-size:11px;font-weight:600;fill:var(--ink)">'+e[0]+'</text><text x="310" y="'+(y+14)+'" style="font-size:11px;font-weight:700;fill:var(--h1);text-anchor:end">'+e[1]+'</text>';});
+  s+='<line x1="0" y1="104" x2="320" y2="104" style="stroke:var(--line)"/>';
+  s+=pageSVG(26,118,[300],3,{})+pageSVG(70,118,[400,410],3,{})+pageSVG(114,118,[500],3,{})+'<text x="4" y="186" style="font-size:11px;fill:var(--muted)">half-empty pages after splits</text>';
+  [[166,118,120],[166,140,92],[166,162,64]].forEach(([x,y,w],j)=>{s+='<rect x="'+x+'" y="'+y+'" width="'+w+'" height="16" rx="4" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:1.2"/>';});
+  s+='<text x="166" y="194" style="font-size:11px;fill:var(--muted)">compact, compressed</text>';
+  L.h(L.kick('learn','Where each key lives')+'<h1 class="q">One place for each key, or several copies</h1>'+CSS+
+   '<div class="fig">'+svgW(s,200,'A B-tree keeps key 251 in one page, where a range lock can attach. An LSM-tree holds three versions of 251 in different files. Below: B-tree pages are half empty after splits, LSM files are compact.')+'</div>'+
+   L.prose('A B-tree keeps each key in exactly one place, so transaction locks on key ranges attach straight to the tree. An LSM-tree holds several copies, but rewrites its files compactly, so they compress better and waste less disk.'));
+  L.done();}},
 {part:1,src:'Chapter 3 · Comparing B-Trees and LSM-Trees',pts:6,run(L){
   L.h(L.kick('pr','Which design gets the point?')+'<h1 class="q">Zainab lists pros for a design review. Which engine does each one belong to?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['LSM-tree','B-tree'],[
    ['Usually sustains a higher rate of writes',0,'It writes compact SSTables in sequence, and sometimes has lower write amplification.'],
-   ['More predictable response times at high percentiles',1,'There is no background compaction competing with requests for the disk.'],
-   ['Smaller files on disk, with less fragmentation',0,'Rewriting SSTables removes gaps, and sorted files compress well.'],
+   ['More predictable response times at high percentiles',1,'No background compaction competes with requests for the disk.'],
+   ['Smaller files on disk, with less fragmentation',0,'Rewriting SSTables removes the gaps, and sorted files compress well.'],
    ['Each key exists in exactly one place',1,'An LSM-tree may hold several copies of a key in different segments.'],
    ['Locks on key ranges can attach right to the index',1,'Because each key lives in one place, range locks sit directly on the tree.'],
    ['Needs monitoring in case merging falls behind',0,'A compaction backlog is an LSM problem, and engines usually won’t throttle writes.']],
-   'Neither design wins everywhere. Know the trade-offs, then test with your own workload.');}},
+   'Neither design wins everywhere. B-tree engines are more mature, ingrained in databases and give consistently good performance for many workloads; log-structured indexes are increasingly popular in new datastores. Know the trade-offs, then test with your own workload.');}},
 
 /* ---------- PART 3: MORE WAYS IN ---------- */
 {part:2,src:'Chapter 3 · Other Indexing Structures',run(L){
-  L.h(L.kick('learn','Secondary indexes')+'<h1 class="q">Most tables need more than one way in</h1>'+
-   L.prose('So far every index has been like a <b>primary key</b> index: the key identifies exactly one row, and other records refer to that row by it.')+
-   L.prose('A '+L.g('secondary-index','secondary index')+' indexes another column. Zainab adds one on the parcels table’s merchant column, so the merchant dashboard can list one shop’s parcels quickly. Secondary indexes are often crucial for fast joins, too.')+
-   L.prose('The twist: their keys aren’t unique. Bramble & Bolt has many parcels. There are two ways to handle that:')+
-   L.list([['A list per key','Each key’s value is the list of matching row IDs, like a postings list in full-text search.'],
-     ['Make each key unique','Append the row ID to the key, as in “merchant M-17, parcel OP-4471”.']],3)+
-   '<p class="small" style="margin-top:10px">Both B-trees and log-structured indexes can serve as secondary indexes.</p>');
+  const rows=[['OP-48213','M-17'],['OP-48214','M-4'],['OP-48215','M-17'],['OP-48216','M-9'],['OP-48217','M-17']];
+  let s='<text x="4" y="14" style="font-size:12px;font-weight:700;fill:var(--ink)">parcels</text><text x="4" y="30" style="font-size:11px;fill:var(--muted)">id</text><text x="78" y="30" style="font-size:11px;fill:var(--muted)">merchant</text>';
+  rows.forEach((r,j)=>{const y=36+j*22,hot=r[1]==='M-17';s+='<rect x="2" y="'+y+'" width="124" height="20" rx="4" style="fill:'+(hot?'var(--h3-bg)':'var(--card)')+';stroke:var(--line2);stroke-width:1"/><text x="8" y="'+(y+14)+'" style="font-size:11px;fill:var(--ink)">'+r[0]+'</text><text x="80" y="'+(y+14)+'" style="font-size:11px;font-weight:'+(hot?700:400)+';fill:'+(hot?'var(--h3)':'var(--ink)')+'">'+r[1]+'</text>';});
+  s+='<text x="140" y="14" style="font-size:12px;font-weight:700;fill:var(--h2)">Index on merchant: two ways</text>';
+  s+='<text x="140" y="34" style="font-size:11px;font-weight:700;fill:var(--muted)">① a list per key</text><rect x="140" y="40" width="178" height="22" rx="5" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.2"/><text x="146" y="55" style="font-size:11px;fill:var(--ink)"><tspan style="font-weight:700">M-17</tspan> → 48213, 48215, 48217</text>';
+  s+='<text x="140" y="84" style="font-size:11px;font-weight:700;fill:var(--muted)">② make each key unique</text>';
+  ['M-17 · OP-48213','M-17 · OP-48215','M-17 · OP-48217'].forEach((k,j)=>{const y=90+j*22;s+='<rect x="140" y="'+y+'" width="178" height="20" rx="5" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:1.2"/><text x="146" y="'+(y+14)+'" style="font-size:11px;font-weight:600;fill:var(--ink)">'+k+'</text>';});
+  s+='<text x="4" y="164" style="font-size:11px;fill:var(--muted)">Bramble &amp; Bolt (M-17) has many parcels, so the key repeats.</text>';
+  L.h(L.kick('learn','Secondary indexes')+'<h1 class="q">Most tables need more than one way in</h1>'+CSS+
+   '<div class="fig">'+svgW(s,172,'A parcels table and an index on the merchant column, built either as a list of parcel IDs per merchant or as unique keys with the parcel ID appended.')+'</div>'+
+   L.prose('A '+L.g('secondary-index','secondary index')+' finds rows by another column and speeds up joins. Keys repeat, so it keeps a list of row IDs per key, or appends the row ID. B-trees and LSM-trees both work.'));
   L.done();}},
-{part:2,src:'Chapter 3 · Storing values within the index',run(L){
-  L.h(L.kick('learn','Where the row lives')+'<h1 class="q">An index can hold a pointer, the whole row, or something in between</h1>'+
-   L.tiers([['pointer','Pointer into a heap file','The index stores a reference. Rows sit in a '+L.g('heap-file','heap file')+', in no particular order. Every index points to the one copy, so nothing is duplicated.','A common choice for that reason.'],
-            ['box','Clustered index','The whole row is stored inside the '+L.g('clustered-index','index')+', saving the extra hop to the heap.','MySQL’s InnoDB always clusters the primary key. SQL Server allows one clustered index per table.'],
-            ['layers','Covering index','Stores <i>some</i> of the table’s columns in the '+L.g('covering-index','index')+', so certain queries are answered from the index alone.','The index is said to “cover” those queries.']])+
-   L.note('<b>Copies cost something.</b> Clustered and covering indexes speed up reads, but they take more storage, slow down writes, and make the database work harder to keep the copies consistent.','alert')+
-   '<p class="small">A heap detail: if an updated row no longer fits in its old spot, it moves. Then either every index is updated, or a forwarding pointer is left behind.</p>');
-  L.done();}},
-{part:2,src:'Chapter 3 · Storing values within the index',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">The tracking page’s busiest query</h1>');
-  L.beats(L.card,[
-   ['The query','When the tracking page’s cache misses, it asks the Parcel DB: “status and ETA for OP-4471.” On delivery day this happens a lot.'],
-   ['With a pointer','The index on tracking code gives a location in the heap file. A second hop reads the whole row, about 30 columns, just to get two of them.'],
-   ['With a covering index','Zainab adds status and ETA to the index as included columns. Now the index alone answers the query.'],
-   ['The price','Every status change now updates the index as well as the row, and the index takes more space. For a page that is read far more than it changes, that’s a good trade.']],
-   'Store data inside an index only where read speed is worth the extra writes and storage.');}},
-{part:2,src:'Chapter 3 · Storing values within the index',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Which index answers “status and ETA for OP-4471” without touching the table at all?</h1>');
-  L.mc(L.card,['Tracking code, pointing into the heap file','Status, pointing into the heap file','Tracking code, including status and ETA'],2,
-   'It covers the query: the key finds the entry, and the included columns hold the answer.',
-   'A pointer means one more hop into the heap file, and an index on status can’t find a tracking code. Only the index that includes status and ETA covers the query.');}},
-{part:2,src:'Chapter 3 · Multi-column indexes',run(L){
-  L.h(L.kick('learn','Several columns at once')+'<h1 class="q">One key from several columns, or a true multi-dimensional index</h1>'+
-   L.prose('A '+L.g('concat-index','concatenated index')+' joins several columns into one key, in a fixed order. Think of a paper phone book sorted by (last name, first name):')+
-   L.list([['check','Last name','Every Okoro? Yes: they all sit together.'],['check','Last and first name','Nia Okoro? Yes.'],['x','First name only','Every Nia? No help: the Nias are scattered through the whole book.']],2)+
-   L.prose('Some queries need <b>two ranges at once</b>. A map shows a rectangle, and the app wants every point inside it: latitude between two values <i>and</i> longitude between two values. A normal B-tree or LSM index gives a strip (the right latitudes at any longitude), not the box.')+
-   L.prose('One fix turns both coordinates into one number with a space-filling curve and uses a normal B-tree. More commonly, a spatial index such as an <b>R-tree</b> is used. It isn’t only for maps: (date, temperature) for weather records, or (red, green, blue) for product colours, work the same way.'));
-  L.done();}},
-{part:2,src:'Chapter 3 · Multi-column indexes',pts:4,run(L){
+{part:2,src:'Chapter 3 · Storing values within the index',
+ solve:async L=>{for(const j of [1,2,0]){L.$('#v17m'+j).click();await L.sleep(30);}L.$('#v17w').click();await waitFor(L,()=>!!L.$('#v17done'),100);},
+ run(L){
+  const seen=new Set();let mode=0,flash=false;
+  const M=[['Pointer to heap file'],['Clustered: whole row'],['Covering: + status, ETA']];
+  L.h(L.kick('ex','Where the row lives')+'<h1 class="q">The tracking page asks for “status and ETA of OP-48213”. Switch what the index leaf holds.</h1>'+CSS+
+   '<div class="btrow" id="v17b">'+M.map((m,j)=>'<button class="chip'+(j===0?' sel':'')+'" id="v17m'+j+'">'+m[0]+'</button>').join('')+'</div>'+
+   '<div class="fig" id="v17f"></div><div class="cap" id="v17c" aria-live="polite"></div><div class="btrow"><button class="btn" id="v17w" style="white-space:normal">'+L.ic('pencil')+'Scan: OP-48213 out for delivery</button></div>');
+  function draw(){
+    const ar='<defs><marker id="a17" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--pri)"/></marker><marker id="a17g" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--line2)"/></marker></defs>';
+    let s=ar+'<text x="6" y="14" style="font-size:12px;font-weight:700;fill:var(--h2)">Index on tracking code</text>';
+    ['root','page'].forEach((n,j)=>{const y=24+j*38;s+='<rect x="20" y="'+y+'" width="56" height="26" rx="5" style="fill:var(--card);stroke:var(--pri);stroke-width:2.2"/><text x="48" y="'+(y+17)+'" style="font-size:11px;font-weight:600;fill:var(--ink);text-anchor:middle">'+n+'</text><line x1="48" y1="'+(y+26)+'" x2="48" y2="'+(y+37)+'" style="stroke:var(--pri);stroke-width:2.2"/>';});
+    const ly=100,lw=mode===1?194:mode===2?186:140;
+    const wr=flash&&(mode!==0);
+    s+='<rect x="6" y="'+ly+'" width="'+lw+'" height="'+(mode===1?62:40)+'" rx="6" style="fill:'+(wr?'var(--h2-bg)':'var(--card)')+';stroke:var(--pri);stroke-width:2.2"/><text x="12" y="'+(ly+15)+'" style="font-size:11px;font-weight:700;fill:var(--muted)">leaf entry</text>';
+    if(mode===0)s+='<text x="12" y="'+(ly+31)+'" style="font-size:11.5px;font-weight:600;fill:var(--ink)">OP-48213 → heap #7</text>';
+    if(mode===1)s+='<text x="12" y="'+(ly+31)+'" style="font-size:11.5px;font-weight:600;fill:var(--ink)">OP-48213 · whole row:</text><text x="12" y="'+(ly+47)+'" style="font-size:11px;fill:var(--ink)">status, ETA, address, weight,</text><text x="12" y="'+(ly+59)+'" style="font-size:11px;fill:var(--ink)">merchant… every column</text>';
+    if(mode===2)s+='<text x="12" y="'+(ly+31)+'" style="font-size:11.5px;font-weight:600;fill:var(--ink)">OP-48213 · <tspan style="fill:var(--ok)">status · ETA</tspan> → #7</text>';
+    const hx=212;s+='<text x="'+hx+'" y="14" style="font-size:12px;font-weight:700;fill:'+(mode===1?'var(--muted)':'var(--h4)')+'">Heap file</text>';
+    if(mode===1)s+='<rect x="'+hx+'" y="24" width="102" height="150" rx="6" style="fill:var(--soft);stroke:var(--line2);stroke-dasharray:4 3"/><text x="'+(hx+51)+'" y="94" style="font-size:11px;fill:var(--muted);text-anchor:middle">no heap: rows</text><text x="'+(hx+51)+'" y="108" style="font-size:11px;fill:var(--muted);text-anchor:middle">live in the index</text>';
+    else for(let i=0;i<7;i++){const y=24+i*21,hot=i===6,on=hot&&(mode===0),fw=hot&&flash;s+='<rect x="'+hx+'" y="'+y+'" width="102" height="18" rx="4" style="fill:'+(fw?'var(--h2-bg)':on?'var(--pri-bg)':'var(--card)')+';stroke:'+(on||fw?'var(--pri)':'var(--line2)')+';stroke-width:'+(on?2:1)+'"/><text x="'+(hx+6)+'" y="'+(y+13)+'" style="font-size:11px;fill:var(--ink)">#'+(i+1)+(hot?' OP-48213 row':' row')+'</text>';}
+    if(mode===0)s+='<path d="M146 120 C 176 120, 180 156, '+(hx-3)+' 159" style="fill:none;stroke:var(--pri);stroke-width:2.2;marker-end:url(#a17)"/><text x="160" y="186" style="font-size:11px;font-weight:700;fill:var(--pri);text-anchor:middle">extra hop</text>';
+    if(mode===2)s+='<path d="M192 120 C 200 140, 200 156, '+(hx-3)+' 159" style="fill:none;stroke:var(--line2);stroke-width:1.4;stroke-dasharray:4 3;marker-end:url(#a17g)"/><text x="104" y="160" style="font-size:11px;font-weight:700;fill:var(--ok);text-anchor:middle">answered from the index</text>';
+    L.$('#v17f').innerHTML=svgW(s,194,'The index path, the leaf entry and the heap file for the chosen kind of index.');
+    const R=[['4 (3 in the index + 1 in the heap)','1: the heap row (the index keeps pointing to it)','none: one copy of each row. If a row grows and must move, every index is updated or a forwarding pointer is left behind.'],
+             ['3: the row is in the leaf','1: the row inside the index','whole rows in the index. In MySQL’s InnoDB the primary key is always clustered; SQL Server allows one clustered index per table.'],
+             ['3: status and ETA are in the leaf','2: the heap row and the index entry','two extra columns in the index. It covers this query, not others.']][mode];
+    L.$('#v17c').innerHTML='Pages read <span class="small">(illustrative: a 3-level index)</span>: <b>'+R[0]+'</b><br>Places to update on a status change: <b>'+R[1]+'</b><br><span class="small">Extra storage: '+R[2]+'</span>';}
+  M.forEach((m,j)=>{L.$('#v17m'+j).onclick=()=>{mode=j;flash=false;seen.add(j);[...L.$$('#v17b .chip')].forEach((c,q)=>c.classList.toggle('sel',q===j));draw();done();};});
+  L.$('#v17w').onclick=async()=>{flash=true;draw();seen.add('w');await L.sleep(700);if(!L.$('#v17f'))return;flash=false;draw();done();};
+  function done(){if(seen.has(0)&&seen.has(1)&&seen.has(2)&&seen.has('w')&&!L.$('#v17done')){L.$('#v17c').insertAdjacentHTML('afterend','<span id="v17done"></span>');
+    L.sheet('info','Copies trade writes for reads','A '+L.g('heap-file','heap file')+' keeps one copy of each row, so many indexes can point at it, at the cost of an extra hop. A '+L.g('clustered-index','clustered index')+' stores the whole row in the index. A '+L.g('covering-index','covering index')+' stores just some columns, enough to answer certain queries alone. Copies speed up reads but cost storage, slow writes, and take extra work to keep consistent.');L.done();}}
+  seen.add(0);draw();}},
+{part:2,src:'Chapter 3 · Storing values within the index',pts:4,run(L){
   L.h('<div id="qk"></div>');
-  L.quick(L.$('#qk'),'Index on (merchant, booking date)',['It helps','It can’t help'],[
-   ['List every parcel Bramble & Bolt has ever booked.',0,'Merchant is the first column, so all of Bramble & Bolt’s entries sit together.'],
-   ['List every parcel booked on 3 December, for any merchant.',1,'The date is the second column. Like first names in a phone book, those entries are scattered under every merchant.'],
-   ['List Bramble & Bolt’s parcels booked on 3 December.',0,'Both columns, in the index’s order: like finding one last-name and first-name pair.'],
-   ['Find which merchant booked parcel OP-4471.',1,'This searches by tracking code, which isn’t in this index at all. The primary key index handles it.']]);}},
-{part:2,src:'Chapter 3 · Multi-column indexes',pts:1,run(L){
-  L.h(L.kick('pr','Pick the index')+'<h1 class="q">Dispatch wants every courier inside the rectangle shown on a map of Westport. Which index fits?</h1>');
-  L.mc(L.card,['A spatial index such as an R-tree','A concatenated index on (latitude, longitude)','Two separate one-column B-tree indexes'],0,
-   'A multi-dimensional index narrows both coordinates at once, and an R-tree is the common choice.',
-   'A concatenated index is sorted by latitude first, so like a one-column index it narrows only one coordinate: you get a strip, not the box. A spatial index such as an R-tree narrows both at once.');}},
+  L.quick(L.$('#qk'),'Where should the row live?',['Heap file + pointers','Clustered index','Covering index'],[
+   ['The parcels table has five secondary indexes, and Zainab doesn’t want five copies of every row.',0,'Each index stores a pointer into the heap file, so the row exists only once.'],
+   ['Signe’s support screen looks up recipient name and postcode by tracking code, thousands of times an hour, and never needs anything else.',2,'Put those two columns in the tracking-code index as included columns. The index covers the query: no hop to the row.'],
+   ['The engine stores each parcel’s entire row inside the primary key index, and other indexes refer to the primary key.',1,'That’s a clustered index, as InnoDB always does for the primary key.'],
+   ['A parcel’s notes grow, the row no longer fits in its spot and moves, and a forwarding pointer is left behind.',0,'Forwarding pointers are a heap-file trick: the old location points to the new one, so the indexes don’t all need updating.']]);}},
+{part:2,src:'Chapter 3 · Multi-column indexes',
+ solve:async L=>{for(let j=0;j<3;j++){L.$('#b19q'+j).click();await L.sleep(30);}},
+ run(L){
+  const book=[['Adeyemi','Bo'],['Adeyemi','Nia'],['Brandt','Ola'],['Chen','Nia'],['Chen','Wu'],['Okoro','Ada'],['Okoro','Nia'],['Okoro','Tunde'],['Silva','Kai'],['Silva','Nia']];
+  const Q=[['Last name “Okoro”',r=>r[0]==='Okoro',r=>r[0]==='Okoro'],['“Okoro, Nia”',r=>r[0]==='Okoro'&&r[1]==='Nia',r=>r[0]==='Okoro'&&r[1]==='Nia'],['First name “Nia”',r=>r[1]==='Nia',()=>true]];
+  const seen=new Set();
+  L.h(L.kick('ex','Several columns')+'<h1 class="q">A concatenated index on (last name, first name) is a phone book. Try three searches.</h1>'+CSS+
+   '<div class="btrow" id="b19b">'+Q.map((q,j)=>'<button class="chip" id="b19q'+j+'">'+q[0]+'</button>').join('')+'</div><div class="fig" id="b19f"></div><div class="cap" id="b19c" aria-live="polite">Pick a search. Amber rows must be read; green rows match.</div>');
+  function draw(q){let s='<text x="8" y="14" style="font-size:11px;font-weight:700;fill:var(--muted)">sorted by last name, then first name</text>';
+    book.forEach((r,j)=>{const y=22+j*22,read=q&&q[2](r),hit=q&&q[1](r);
+      s+='<rect x="4" y="'+y+'" width="312" height="19" rx="4" style="fill:'+(hit?'var(--ok-bg)':read?'var(--h3-bg)':'var(--card)')+';stroke:'+(hit?'var(--ok-line)':read?'var(--h3)':'var(--line)')+';stroke-width:1.2"/><text x="12" y="'+(y+14)+'" style="font-size:12px;font-weight:'+(hit?700:500)+';fill:var(--ink)">'+r[0]+', '+r[1]+'</text>';});
+    L.$('#b19f').innerHTML=svgW(s,246,'A phone book sorted by last name then first name, with the rows a search must read highlighted.');}
+  Q.forEach((q,j)=>{L.$('#b19q'+j).onclick=()=>{[...L.$$('#b19b .chip')].forEach((c,k)=>c.classList.toggle('sel',k===j));draw(q);seen.add(j);
+    const read=book.filter(q[2]).length,hit=book.filter(q[1]).length;
+    L.$('#b19c').innerHTML=['All the Okoros sit together: read <b>'+read+'</b> rows, one contiguous run.','Both columns, in the index’s order: straight to <b>'+hit+'</b> row.','The Nias are scattered under every last name. The sort order is no help: read all <b>'+read+'</b> rows to find '+hit+'.'][j];
+    if(seen.size===3&&!L.$('#b19done')){L.$('#b19c').insertAdjacentHTML('afterend','<span id="b19done"></span>');
+      L.sheet('info','Only from the first column','A '+L.g('concat-index','concatenated index')+' joins columns into one key, in a fixed order. It helps for the first column, or the first and second together, but not for the second alone. Zainab’s index on (merchant, booking date) finds all of Bramble & Bolt’s parcels, or theirs on 3 December, but not every merchant’s parcels on 3 December.');L.done();}};});
+  draw(null);}},
+{part:2,src:'Chapter 3 · Multi-column indexes',
+ solve:async L=>{const m=L.map6;await m.dragCells({c:2,r:2},{c:4,r:4});L.$('#m20-rtree').click();await L.sleep(30);await m.dragCells({c:9,r:6},{c:11,r:8});await L.sleep(30);},
+ run(L){
+  let rects=0,modes=new Set(['band']);
+  L.h(L.kick('pr','Free play')+'<h1 class="q">Dispatch wants every courier inside a box on the Westport map. Draw boxes, and compare the two indexes.</h1>'+CSS+'<div id="m20"></div>'+tasks('m20t',['Draw a box with the (lat, lon) index','Draw a box with the spatial index']));
+  L.map6=MapScan(L,L.$('#m20'),{id:'m20',on:e=>{if(e.type==='mode')modes.add(e.mode);if(e.type==='rect'){rects++;tick(L,'m20t',L.map6.mode==='band'?0:1);}
+    if(allTicked(L,'m20t')&&!L.$('#m20done')){L.$('#m20t').insertAdjacentHTML('afterend','<span id="m20done"></span>');
+      L.sheet('info','A strip versus a box','A normal B-tree or LSM index, even on (latitude, longitude), narrows only one coordinate: you get every courier in a band of latitudes, at any longitude. A multi-dimensional index narrows both at once. One option squeezes both coordinates into one number with a space-filling curve and uses a normal B-tree; more commonly a spatial index such as an R-tree is used (PostGIS does this). The boxes here are simplified.');L.done();}}});}},
+{part:2,src:'Chapter 3 · Multi-column indexes',pts:1,
+ solve:async L=>{await L.map7.dragCells({c:5,r:0},{c:5,r:11});L.$('#m21go').click();await L.sleep(30);},
+ run(L){
+  let first=true;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Find a box where the (lat, lon) index scans at least 6× as many cells as the spatial index. Then check it.</h1>'+CSS+'<div id="m21"></div><div class="btrow"><button class="btn pri" id="m21go">'+L.ic('check')+'Check my box</button></div>');
+  L.map7=MapScan(L,L.$('#m21'),{id:'m21',mode:'band'});
+  L.$('#m21go').onclick=()=>{const st=L.map7.stats();if(!st){L.err('Draw a box on the map first');return;}
+    const ok=st.ratio>=6;if(first){L.award(ok);first=false;}
+    if(ok){L.$('#m21go').disabled=true;L.sheet('ok','That’s the worst case for a band','The (lat, lon) index reads '+st.band+' cells; the spatial index reads '+st.rt+'. A box that’s narrow east to west but tall north to south still forces a scan of every longitude in its latitudes. Multi-dimensional indexes aren’t only for maps: (date, temperature) for weather records, or (red, green, blue) for product colours, work the same way.');L.done();}
+    else L.sheet('no','Only '+(Math.round(st.ratio*10)/10)+'× so far','The (lat, lon) index scans a whole band of latitudes, whatever the box’s width. Which shape of box wastes the most of that band? Try another, then check again.');};}},
 
 /* ---------- PART 4: FUZZY AND IN-MEMORY ---------- */
 {part:3,src:'Chapter 3 · Full-text search and fuzzy indexes',run(L){
-  L.h(L.kick('learn','Fuzzy search')+'<h1 class="q">When the search word isn’t exact</h1>'+
-   L.prose('Every index so far finds an exact key or a sorted range of keys. None can find <i>similar</i> keys, such as misspelled words. Fuzzy search needs other techniques.')+
-   L.list([['book','Full-text features','Search engines can expand a word to its synonyms, ignore grammatical variations of a word, and find words that appear near each other.'],
-     ['pencil','Typos','Lucene can find words within a given '+L.g('edit-distance','edit distance')+'. A distance of 1 means one letter added, removed or replaced.'],
-     ['tree','How it works','Lucene’s small in-memory index is an automaton over the characters of the keys, similar to a trie. It can be turned into a Levenshtein automaton, which finds words within an edit distance efficiently.']],3)+
-   '<p class="small" style="margin-top:10px">Other fuzzy techniques lean toward document classification and machine learning.</p>');
+  const keys=['Okafor','Okonkwo','Okorie','Okoro','Okoye'];
+  let s='<text x="4" y="14" style="font-size:12px;font-weight:700;fill:var(--h2)">Sorted index</text>';
+  keys.forEach((k,j)=>{const y=24+j*26+(j>=2?14:0);s+='<rect x="4" y="'+y+'" width="92" height="22" rx="5" style="fill:'+(k==='Okoro'?'var(--ok-bg)':'var(--card)')+';stroke:var(--line2);stroke-width:1.2"/><text x="12" y="'+(y+15)+'" style="font-size:12px;fill:var(--ink)">'+k+'</text>';});
+  s+='<line x1="4" y1="80" x2="120" y2="80" style="stroke:var(--no);stroke-width:2;stroke-dasharray:4 3"/><text x="102" y="76" style="font-size:11px;font-weight:700;fill:var(--no)">“Okora”?</text><text x="102" y="92" style="font-size:11px;fill:var(--no)">no such key</text>';
+  s+='<text x="168" y="14" style="font-size:12px;font-weight:700;fill:var(--h4)">Letter automaton</text><text x="168" y="27" style="font-size:11px;fill:var(--muted)">(like a trie)</text>';
+  const N=[['O',180,52],['k',214,52],['a',248,40],['o',248,76],['n',282,52],['r',282,76],['y',282,104],['o',308,64],['i',308,90]];
+  const E=[[0,1],[1,2],[1,3],[3,4],[3,5],[3,6],[5,7],[5,8]];
+  E.forEach(([a,b])=>{s+='<line x1="'+N[a][1]+'" y1="'+N[a][2]+'" x2="'+N[b][1]+'" y2="'+N[b][2]+'" style="stroke:'+([0,1,3,5,7].includes(b)&&[0,1,3,5].includes(a)?'var(--ok-strong)':'var(--line2)')+';stroke-width:1.6"/>';});
+  N.forEach((n,j)=>{const on=[0,1,3,5,7].includes(j);s+='<circle cx="'+n[1]+'" cy="'+n[2]+'" r="10" style="fill:'+(on?'var(--ok-bg)':'var(--card)')+';stroke:'+(on?'var(--ok-strong)':'var(--line2)')+';stroke-width:1.5"/><text x="'+n[1]+'" y="'+(n[2]+4)+'" style="font-size:11.5px;font-weight:700;fill:var(--ink);text-anchor:middle">'+n[0]+'</text>';});
+  s+='<text x="168" y="134" style="font-size:11px;fill:var(--muted)">walk it, allowing</text><text x="168" y="148" style="font-size:11px;fill:var(--muted)">one wrong letter:</text><text x="168" y="166" style="font-size:11.5px;font-weight:700;fill:var(--ok)">O-k-o-r-a ≈ O-k-o-r-o</text>';
+  L.h(L.kick('learn','Fuzzy search')+'<h1 class="q">When the search word isn’t exact</h1>'+CSS+
+   '<div class="fig">'+svgW(s,176,'An exact sorted index has no key Okora. A trie-like letter automaton can be walked allowing one wrong letter and reaches Okoro.')+'</div>'+
+   L.prose('Exact and range indexes can’t find <i>similar</i> keys. Lucene walks a trie-like letter automaton to find words within an '+L.g('edit-distance','edit distance')+'. Search engines also match synonyms, word forms and nearby words.'));
   L.done();}},
-{part:3,src:'Chapter 3 · Full-text search and fuzzy indexes',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">A caller tells Signe’s team their name is “Okora”. The parcel is filed under “Okoro”. What is the edit distance?</h1>');
-  L.mc(L.card,['0: the search treats them as equal','1: one letter is replaced','2: one letter removed, one added'],1,
-   'Swap the last letter and you’re done: one edit. A fuzzy search allowing distance 1 finds the parcel.',
-   'Edit distance counts the fewest single-letter changes needed. Replacing the final “a” with “o” is one change, so the distance is 1.');}},
+{part:3,src:'Chapter 3 · Full-text search and fuzzy indexes',pts:1,
+ solve:async L=>{setRange(L,'z23d',1);await L.sleep(20);L.$('#z23go').click();},
+ run(L){
+  const Q='Okora',names=['Okoro','Kora','Okoye','Okorie','Okafor','Silva'];let first=true;
+  L.h(L.kick('pr','Fuzzy dial')+'<h1 class="q">A caller tells Signe their name is “Okora”. The parcel is filed under Mrs. Okoro. Set the smallest edit distance that finds it.</h1>'+CSS+
+   '<div class="fig" id="z23f"></div>'+rng('z23d','Max distance',0,3,0)+'<div class="cap" id="z23c" aria-live="polite"></div><div class="btrow"><button class="btn pri" id="z23go">'+L.ic('check')+'Search with this distance</button></div>');
+  function draw(){const d=+L.$('#z23d').value;L.$('#z23d-v').textContent=d;
+    let s='<text x="4" y="14" style="font-size:11px;font-weight:700;fill:var(--muted)">query</text>';
+    [...Q].forEach((ch,j)=>{s+='<rect x="'+(44+j*26)+'" y="2" width="22" height="22" rx="4" style="fill:'+(j===4?'var(--h3-bg)':'var(--card)')+';stroke:'+(j===4?'var(--h3)':'var(--line2)')+';stroke-width:1.4"/><text x="'+(55+j*26)+'" y="18" style="font-size:12.5px;font-weight:700;fill:var(--ink);text-anchor:middle">'+ch+'</text>';});
+    s+='<text x="182" y="18" style="font-size:11px;fill:var(--muted)">1 edit = add, drop or</text><text x="182" y="30" style="font-size:11px;fill:var(--muted)">change one letter</text>';
+    names.forEach((n,j)=>{const dist=lev(Q,n),hit=dist<=d,y=40+j*24;
+      s+='<rect x="4" y="'+y+'" width="312" height="20" rx="5" style="fill:'+(hit?(n==='Okoro'?'var(--ok-bg)':'var(--h2-bg)'):'var(--card)')+';stroke:'+(hit?(n==='Okoro'?'var(--ok-line)':'var(--h2)'):'var(--line)')+';stroke-width:1.2"/><text x="12" y="'+(y+14)+'" style="font-size:12px;font-weight:'+(hit?700:500)+';fill:var(--ink)">'+n+(n==='Okoro'?' (Mrs. Okoro’s parcel)':'')+'</text><text x="308" y="'+(y+14)+'" style="font-size:11px;fill:var(--muted);text-anchor:end">'+(hit?'distance '+dist:'not matched')+'</text>';});
+    L.$('#z23f').innerHTML=svgW(s,188,'The query Okora and six names in the support search, each with its edit distance.');
+    const hits=names.filter(n=>lev(Q,n)<=d);
+    L.$('#z23c').innerHTML=d===0?'Distance 0 is an exact match: <b>nothing found</b>.':'Matches: <b>'+hits.join(', ')+'</b> ('+hits.length+' names).';}
+  L.$('#z23d').oninput=draw;draw();
+  L.$('#z23go').onclick=()=>{const d=+L.$('#z23d').value,ok=d===1;if(first){L.award(ok);first=false;}
+    if(ok){L.$('#z23go').disabled=true;L.sheet('ok','One edit finds it','Replacing one letter turns Okora into Okoro: distance 1. It also pulls in Kora (one letter removed), so Signe’s team still checks the address. A wider distance brings in more noise. Other fuzzy techniques lean toward document classification and machine learning.');L.done();}
+    else L.sheet('no',d===0?'Nothing found':'It works, but it’s noisy',d===0?'Distance 0 means exact keys only, the way normal indexes work, and there’s no “Okora”. Allow some edits and search again.':'Distance '+d+' finds Mrs. Okoro, but also names that are further away. Okora to Okoro takes only one replaced letter. Try a smaller distance.');};}},
 {part:3,src:'Chapter 3 · Keeping everything in memory',run(L){
-  L.h(L.kick('learn','Keeping everything in memory')+'<h1 class="q">If the data fits in RAM, why bother with disk structures?</h1>'+
-   L.prose('All these structures exist because disks are awkward. We put up with them for two reasons: disks are <b>durable</b> (their contents survive a power cut) and <b>cheaper per gigabyte</b> than RAM. As RAM gets cheaper, many datasets fit in memory, perhaps spread over several machines.')+
-   L.list([['Cache only','Some, like Memcached, are only caches: losing the data on a restart is acceptable.'],
-     ['Durable','Others survive restarts using battery-powered RAM, a log of changes on disk, periodic snapshots, or copies on other machines. Reads are still served entirely from memory.'],
-     ['Why faster','Not because they skip disk reads: with enough memory, the operating system caches a disk-based database’s blocks anyway. They win by skipping the work of encoding in-memory structures into a form that can be written to disk.'],
-     ['New data models','Redis offers structures such as priority queues and sets, which are hard to build with disk-based indexes.']],4)+
-   '<p class="small" style="margin-top:10px">Research on “anti-caching” moves the least recently used records to disk when memory runs out, and loads them back when needed. The indexes must still fit in memory.</p>');
+  const bx=(x,y,w,h,t,c,sub)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="6" style="fill:var(--'+c+'-bg);stroke:var(--'+c+');stroke-width:1.4"/><text x="'+(x+w/2)+'" y="'+(y+(sub?16:h/2+4))+'" style="font-size:11.5px;font-weight:700;fill:var(--'+c+');text-anchor:middle">'+t+'</text>'+(sub?'<text x="'+(x+w/2)+'" y="'+(y+30)+'" style="font-size:11px;fill:var(--'+c+');text-anchor:middle">'+sub+'</text>':'');
+  const ar='<defs><marker id="a24" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" style="fill:var(--muted)"/></marker></defs>';
+  const A=(x1,y1,x2,y2)=>'<line x1="'+x1+'" y1="'+y1+'" x2="'+x2+'" y2="'+y2+'" style="stroke:var(--muted);stroke-width:1.6;marker-end:url(#a24)"/>';
+  let s=ar+'<text x="4" y="14" style="font-size:12px;font-weight:700;fill:var(--ink)">Disk-based engine, all of it cached by the OS</text>';
+  s+=bx(4,22,98,40,'RAM','h2','disk-format pages')+A(104,42,118,42)+bx(120,22,92,40,'decode','no','encode again')+A(214,42,228,42)+bx(230,22,86,40,'query','h1');
+  s+='<text x="4" y="92" style="font-size:12px;font-weight:700;fill:var(--ink)">In-memory database</text>';
+  s+=bx(4,100,190,40,'RAM','ok','data structures, as they are')+A(196,120,228,120)+bx(230,100,86,40,'query','h1');
+  s+=A(99,142,99,154)+bx(4,156,190,34,'disk: append-only log','h4')+'<text x="204" y="172" style="font-size:11px;fill:var(--muted)">for durability only;</text><text x="204" y="186" style="font-size:11px;fill:var(--muted)">reads never touch it</text>';
+  L.h(L.kick('learn','Keeping everything in memory')+'<h1 class="q">The speed isn’t from skipping disk reads</h1>'+CSS+
+   '<div class="fig">'+svgW(s,196,'A disk-based engine with everything cached still decodes disk-format pages. An in-memory database reads its data structures directly and writes only a log to disk.')+'</div>'+
+   L.prose('With enough RAM, the operating system caches a disk engine’s blocks anyway. In-memory databases win by skipping the encoding into a disk format. They can still be durable: a log, snapshots, replicas or battery-backed RAM.'));
   L.done();}},
 {part:3,src:'Chapter 3 · Keeping everything in memory',pts:1,run(L){
   L.h(L.kick('pr','Myth check')+'<h1 class="q">Tobias says: “The Parcel DB fits in RAM, so the operating system already caches all of it. An in-memory database couldn’t be any faster.” Are they right?</h1>');
-  L.mc(L.card,['No: the in-memory one skips encoding work','Yes: both serve everything from memory','No: in-memory databases never touch disk'],0,
-   'Even with every block cached, a disk-based engine still pays to encode its data structures in a form fit for disk. Skipping that is the in-memory database’s main speed advantage.',
-   'Many in-memory databases do write a log or snapshots to disk for durability. Their edge comes from not encoding data structures for disk, not from avoiding disk reads.');}}
+  L.mc(L.card,['Yes: both serve everything from memory','No: in-memory databases never touch disk','No: the in-memory one skips encoding work'],2,
+   'Even with every block cached, a disk-based engine still pays to encode its structures in a form fit for disk. Skipping that is the in-memory database’s edge. Keeping everything in memory also allows data models that are hard on disk, like Redis’s priority queues and sets. Some, like Memcached, are only caches that may lose data on restart; research on “anti-caching” moves the least recently used records to disk when memory runs out.',
+   'The cache does remove disk reads, but a disk-based engine still encodes its structures for disk; skipping that is the in-memory edge. And many in-memory databases do write a log or snapshots to disk for durability: reads just never need it. Some, like Memcached, are only caches; others, like Redis, offer structures such as priority queues and sets that are hard to build on disk.');}}
   ]
 });
 </script>

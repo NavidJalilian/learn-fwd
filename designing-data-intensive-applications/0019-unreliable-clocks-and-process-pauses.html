@@ -13,11 +13,331 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0019 only. Two hands-on models used across the lesson:
+   1. Skewed rulers – a "true time" ruler on top and one ruler per machine,
+      shifted by that machine's clock error. Used for drift and NTP sync,
+      time-of-day vs monotonic, last write wins, packets that "arrive before
+      they were sent", and (as bands) confidence intervals and Spanner's wait.
+   2. Lease bar – Planner 1's loop (check lease → compute → write) with a
+      pause pin, drawn against real time and the lease held at the lock service.
+   ===================================================================== */
+const T0=36042000,X0=14,X1=316;           /* 10:00:42.000 as ms since midnight; drawable x range */
+const pad=n=>String(n).padStart(2,'0');
+const STEPS=[0.01,0.02,0.05,0.1,0.2,0.5,1,2,5,10,20,50,100,200,500,1e3,2e3,5e3,1e4,15e3,3e4,6e4,12e4,3e5,6e5,18e5,36e5];
+const pickStep=raw=>STEPS.find(s=>s>=raw-1e-9)||36e5;
+const HALVES=[10,20,30,50,100,200,300,500,1e3,2e3,3e3,5e3,1e4,2e4,3e4,5e4,1e5,2e5,3e5,5e5,1e6,2e6,5e6];
+const pickHalf=m=>HALVES.find(h=>h>=m*1.3)||5e6;
+const dayms=r=>((r%864e5)+864e5)%864e5;
+function fmtR(r,step){r=dayms(r);
+  if(step>=1000){const q=Math.round(r/1000),h=Math.floor(q/3600)%24,m=Math.floor(q/60)%60,s=q%60;return pad(h)+':'+pad(m)+(step>=6e4?'':':'+pad(s));}
+  const d=Math.max(0,Math.ceil(-Math.log10(step/1000)-1e-9));return (r/1000%60).toFixed(d);}
+function fmtFull(r,dec){r=dayms(r);const h=Math.floor(r/36e5),m=Math.floor(r/6e4)%60,s=r/1000%60;return pad(h)+':'+pad(m)+':'+(s<10?'0':'')+s.toFixed(dec);}
+function fmtDur(o){const a=Math.abs(o);
+  if(a<0.0005)return '0';if(a<1)return Math.round(a*1000)+' µs';if(a<100)return (+a.toFixed(1))+' ms';if(a<1000)return Math.round(a)+' ms';
+  if(a<6e4)return (+(a/1000).toFixed(1))+' s';if(a<36e5)return (+(a/6e4).toFixed(1))+' min';if(a<864e5)return (+(a/36e5).toFixed(1))+' h';return (+(a/864e5).toFixed(1))+' days';}
+const fmtOff=o=>Math.abs(o)<0.0005?'±0':(o<0?'−':'+')+fmtDur(o);
+const tx=(x,y,t,st)=>'<text x="'+(+x).toFixed(1)+'" y="'+(+y).toFixed(1)+'" style="'+(st||'')+'">'+t+'</text>';
+const M12='font-size:12px;fill:var(--muted)',I12='font-size:12px;fill:var(--ink)';
+const B=(c,s)=>'font-size:'+(s||13)+'px;font-weight:700;fill:'+c;
+function arw(x1,y1,x2,y2,col,w,dash){const a=Math.atan2(y2-y1,x2-x1),h=8,f=n=>n.toFixed(1);
+  return '<line x1="'+f(x1)+'" y1="'+f(y1)+'" x2="'+f(x2-5*Math.cos(a))+'" y2="'+f(y2-5*Math.sin(a))+'" style="stroke:'+col+';stroke-width:'+(w||2)+(dash?';stroke-dasharray:'+dash:'')+'"/>'+
+   '<path d="M'+f(x2)+' '+f(y2)+'L'+f(x2-h*Math.cos(a-.45))+' '+f(y2-h*Math.sin(a-.45))+'L'+f(x2-h*Math.cos(a+.45))+' '+f(y2-h*Math.sin(a+.45))+'z" style="fill:'+col+'"/>';}
+const hatch=(id,col)=>'<defs><pattern id="'+id+'" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" style="fill:var(--card)"/><line x1="0" y1="0" x2="0" y2="7" style="stroke:'+(col||'var(--line2)')+';stroke-width:3"/></pattern></defs>';
+const box=(x,y,w,h,fill,stroke,rx,extra)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="'+(rx==null?8:rx)+'" style="fill:'+fill+';stroke:'+(stroke||'none')+';stroke-width:1.6'+(extra||'')+'"/>';
+
+const CSS='<style>'+
+ '.ck{margin:8px 0 4px}.ck svg{width:100%;height:auto;display:block}.ck svg text{font-family:var(--sans)}'+
+ '.ck-rng{display:grid;grid-template-columns:100px 1fr 74px;gap:8px;align-items:center;margin:4px 0}.ck-rng label{color:var(--muted);font-weight:600;font-size:13.5px;line-height:1.25}'+
+ '.ck-rng input{width:100%;accent-color:var(--pri);height:34px;margin:0}.ck-rng b{text-align:right;font-variant-numeric:tabular-nums;font-size:14px}'+
+ '.ck-row{display:flex;flex-wrap:wrap;gap:8px;margin:8px 0}.ck-row .chip,.ck-row .btn{margin:0;min-height:42px}.ck-row .chip{padding:7px 11px;font-size:14px}'+
+ '.ck-cap{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.5;margin:8px 0}'+
+ '.ck-out{border-radius:12px;padding:9px 12px;font-size:14.5px;line-height:1.45;margin:8px 0;background:var(--soft)}.ck-out.no{background:var(--no-bg);color:var(--no)}.ck-out.ok{background:var(--ok-bg);color:var(--ok)}'+
+ '.ck-lbl{font-size:12.5px;font-weight:700;color:var(--muted);letter-spacing:.03em;margin:10px 0 2px;text-transform:uppercase}'+
+ '.ck-tasks{margin:6px 0 4px;padding:0;list-style:none}.ck-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:4px 0;color:var(--muted)}'+
+ '.ck-tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}.ck-tasks li .bx svg.i{visibility:hidden}.ck-tasks li.done .bx svg.i{visibility:visible}'+
+ '.ck-tasks li.done{color:var(--ok)}.ck-tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.ck-tasks li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.ck-dots{display:flex;gap:6px;justify-content:center;margin:6px 0}.ck-dots i{width:9px;height:9px;border-radius:9px;background:var(--line2)}.ck-dots i.on{background:var(--pri)}'+
+ '.ck-code{background:var(--soft);border-radius:12px;padding:9px 12px;font-family:ui-monospace,Menlo,monospace;font-size:12.5px;line-height:1.65;overflow-wrap:anywhere;margin:6px 0}'+
+ '.ck-pair{border-top:2px solid var(--line);padding:8px 0 2px;margin:8px 0}.ck-pair .ck-row{margin:4px 0 8px}'+
+ '.ck-svg-drag{touch-action:none;cursor:ew-resize}'+
+ '</style>';
+
+/* ---------- small UI helpers ---------- */
+function rng(id,label,min,max,val,step){return '<div class="ck-rng"><label for="'+id+'">'+label+'</label><input type="range" id="'+id+'" min="'+min+'" max="'+max+'" step="'+(step||1)+'" value="'+val+'"><b id="'+id+'-v"></b></div>';}
+function setRange(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input',{bubbles:true}));}
+async function waitFor(L,sel,ms){for(let i=0;i<(ms||4500)/30&&!L.$(sel);i++)await L.sleep(30);}
+function tasks(L,id,items){return '<ul class="ck-tasks" id="'+id+'">'+items.map((t,j)=>'<li id="'+id+'-'+j+'"><span class="bx">'+L.ic('check')+'</span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tick(L,id,j){const e=L.$('#'+id+'-'+j);if(e)e.classList.add('done');}
+function chipRow(host,labels,on,sel){labels.forEach((t,j)=>{const b=document.createElement('button');b.className='chip'+(j===sel?' sel':'');b.innerHTML=t;b.onclick=()=>on(j,b);host.appendChild(b);});}
+function selOnly(host,b){[...host.children].forEach(x=>x.classList.toggle('sel',x===b));}
+
+/* =====================================================================
+   1. Skewed rulers. A machine whose clock is `off` ms ahead reads (t + off)
+   at true time t, so its tick labelled r sits above true time r − off.
+   ===================================================================== */
+/* part: 'body' (box and ticks), 'labels' (tick labels, with a halo so a needle drawn in between never runs through them), or both */
+function rulerRow(r,y,X,o,part){
+  const off=r.off||0,st=r.step||o.step,mi=st/5,dy=r.dy||0,fmt=r.fmt||o.fmt||fmtR,v0=r.v0!=null?r.v0:o.v0,v1=r.v1!=null?r.v1:o.v1;
+  const lab=r.lab||o.lab||Math.max(1,Math.ceil((String(fmt(v0+off,st)).length*6.9+10)/(st/(v1-v0)*(X1-X0))));
+  const k0=Math.ceil((v0+off)/mi-1e-9),k1=Math.floor((v1+off)/mi+1e-9);
+  let s='';
+  if(part==='labels'){const halo=';paint-order:stroke;stroke:'+(r.bg||'var(--soft)')+';stroke-width:5px;stroke-linejoin:round';
+    for(let k=k0;k<=k1;k++){const rr=k*mi,x=X(rr-off),mj=((k%5)+5)%5===0,kk=Math.round(k/5);
+      if(mj&&((kk%lab)+lab)%lab===0&&x>X0+17&&x<X1-17)s+=tx(x,y+dy+41,fmt(rr,st),I12+';text-anchor:middle'+halo+(r.hot&&r.hot(rr)?';fill:var(--no);font-weight:700':''));}
+    return s;}
+  if(o.knock){s+=box(X0-3,y+1,r.name.replace(/&[a-z]+;/g,'x').length*7.3+6,15,'var(--card)','none',3);if(r.read)s+=box(X1-r.read.length*6.3-4,y+1,r.read.length*6.3+7,15,'var(--card)','none',3);}
+  s+=tx(X0,y+12,r.name,B(r.col,12.5));
+  if(r.read)s+=tx(X1,y+12,r.read,M12+';text-anchor:end');
+  s+=box(X0-4,y+17+dy,X1-X0+8,29,r.bg||'var(--soft)',r.stroke||'var(--line)',7);
+  if(r.band)s+=box(X(r.band[0]).toFixed(1),y+18+dy,Math.max(2,X(r.band[1])-X(r.band[0])).toFixed(1),27,r.col,r.col,4,';fill-opacity:.2;stroke-dasharray:4 3');
+  for(let k=k0;k<=k1;k++){const x=X(k*mi-off),mj=((k%5)+5)%5===0;
+    s+='<line x1="'+x.toFixed(1)+'" y1="'+(y+17+dy)+'" x2="'+x.toFixed(1)+'" y2="'+(y+dy+(mj?27:22))+'" style="stroke:'+(mj?'var(--ink)':'var(--line2)')+';stroke-width:'+(mj?1.4:1)+'"/>';}
+  return part==='body'?s:s+rulerRow(r,y,X,o,'labels');}
+/* o: {v0,v1,step,lab,fmt,rows:[{name,col,off,read,bg,stroke,band,dy}],needle,gaps:{i:px},under(X,ys),over(X,ys),rh,aria} */
+function rulers(o){
+  const RH=o.rh||54,top=o.needle!=null?20:4,ys=[];let y=top;
+  o.rows.forEach((r,i)=>{y+=(o.gaps&&o.gaps[i])||0;ys.push(y);y+=RH+(r.extra||0);});
+  const H=y+(o.pad||2),X=t=>X0+(t-o.v0)/(o.v1-o.v0)*(X1-X0);
+  let s=o.under?o.under(X,ys):'';
+  o.rows.forEach((r,i)=>{s+=rulerRow(r,ys[i],X,o,o.needle!=null?'body':null);});
+  if(o.needle!=null){const x=X(o.needle).toFixed(1);s+='<line x1="'+x+'" y1="13" x2="'+x+'" y2="'+(H-3)+'" style="stroke:var(--pri);stroke-width:2;stroke-opacity:.85"/><path d="M'+(x-6)+' 4h12l-6 9z" style="fill:var(--pri)"/>'+tx(+x+9,13,'now',B('var(--pri)',12));
+    o.rows.forEach((r,i)=>{s+=rulerRow(r,ys[i],X,o,'labels');});}
+  if(o.over)s+=o.over(X,ys);
+  return '<svg viewBox="0 0 330 '+H+'" role="img" aria-label="'+(o.aria||'Clock rulers: one true-time ruler and one ruler per machine, shifted by that machine’s clock error')+'">'+s+'</svg>';}
+const trueRow=(read)=>({name:'True time',col:'var(--pri)',bg:'var(--pri-bg)',stroke:'var(--pri)',off:0,read:read||''});
+
+/* time-of-day vs monotonic while timing a 3 s query; NTP steps the clock back 5 s at t = 1.5 s */
+function timingFig(t,fin){
+  const tod=u=>36007000+u*1000-(u>=1.5?5000:0),mono=u=>5000000+u*1000;
+  const rows=[{name:'Time-of-day clock',col:'var(--h3)',v0:36001500,v1:36010500,f:tod,fmt:r=>fmtR(r,1000),start:tod(0),end:tod(3),jump:t>=1.5},
+              {name:'Monotonic clock',col:'var(--h2)',v0:4997500,v1:5006500,f:mono,fmt:r=>String(Math.round(r/1000)),start:mono(0),end:mono(3)}];
+  let s='';
+  rows.forEach((r,i)=>{const y=i*118,X=v=>X0+(v-r.v0)/(r.v1-r.v0)*(X1-X0),cur=r.f(t);
+    const row={name:r.name,col:r.col,off:0,read:(r.jump?'reset −5 s · ':'')+'reads '+(i?(cur/1000).toFixed(1)+' s':fmtFull(cur,1)),dy:20,fmt:r.fmt,lab:2};
+    s+=rulerRow(row,y,X,{v0:r.v0,v1:r.v1,step:1000});
+    if(r.jump){const a=X(36008500),b=X(36003500);s+='<path d="M'+a.toFixed(1)+' '+(y+36)+'Q'+((a+b)/2).toFixed(1)+' '+(y+12)+' '+(b+4).toFixed(1)+' '+(y+33)+'" style="fill:none;stroke:var(--no);stroke-width:2;stroke-dasharray:5 3"/>'+
+      '<path d="M'+(b-1).toFixed(1)+' '+(y+37)+'l2 -10 l7 6z" style="fill:var(--no)"/>';}
+    const xs=X(r.start),xc=X(cur);
+    s+='<path d="M'+(xs-6).toFixed(1)+' '+(y+76)+'l6 -9 6 9z" style="fill:var(--ok-strong)"/>'+tx(xs,y+90,'start',B('var(--ok)',12)+';text-anchor:middle');
+    s+='<path d="M'+(xc-7).toFixed(1)+' '+(y+30)+'h14l-7 9z" style="fill:var(--pri)"/><line x1="'+xc.toFixed(1)+'" y1="'+(y+38)+'" x2="'+xc.toFixed(1)+'" y2="'+(y+66)+'" style="stroke:var(--pri);stroke-width:2.5"/>';
+    if(fin){const xe=X(r.end),d=(r.end-r.start)/1000,bad=d<0;
+      s+='<path d="M'+(xe-6).toFixed(1)+' '+(y+76)+'l6 -9 6 9z" style="fill:'+(bad?'var(--no)':'var(--pri)')+'"/>'+tx(xe,y+90,'end',B(bad?'var(--no)':'var(--pri)',12)+';text-anchor:middle');
+      s+=arw(xs,y+100,xe,y+100,bad?'var(--no)':'var(--ok-strong)',2.2)+tx((xs+xe)/2,y+114,'end − start = '+(d<0?'−':'')+Math.abs(d).toFixed(1)+' s',B(bad?'var(--no)':'var(--ok)',13)+';text-anchor:middle');}});
+  return '<svg viewBox="0 0 330 236" role="img" aria-label="Two clocks timing the same 3-second query. The time-of-day clock is reset back 5 seconds halfway.">'+s+'</svg>';}
+
+/* ---------- static teaching figures ---------- */
+function phonesFig(){
+  const ph=(x,name,col,stamp)=>box(x,6,150,80,'var(--card)',col,14)+tx(x+14,28,name,B(col,13))+tx(x+14,47,'scan OP-48213',M12)+tx(x+14,73,stamp,B('var(--ink)',16)+';font-variant-numeric:tabular-nums');
+  return '<svg viewBox="0 0 330 92" role="img" aria-label="Two phones, stamps 10:00:00.120 and 10:00:00.118">'+ph(6,'Ravi’s phone','var(--h1)','10:00:00.120')+ph(174,'Mia’s phone','var(--h4)','10:00:00.118')+'</svg>';}
+function figQuestions(){
+  let s='<line x1="14" y1="64" x2="316" y2="64" style="stroke:var(--line2);stroke-width:2"/>';
+  s+='<line x1="52" y1="56" x2="52" y2="72" style="stroke:var(--h2);stroke-width:2.5"/><line x1="156" y1="56" x2="156" y2="72" style="stroke:var(--h2);stroke-width:2.5"/>';
+  s+='<path d="M52 48v-8h104v8" style="fill:none;stroke:var(--h2);stroke-width:2.5"/>'+tx(104,30,'How long?',B('var(--h2)',14)+';text-anchor:middle')+tx(52,88,'request sent',M12+';text-anchor:middle')+tx(156,88,'reply',M12+';text-anchor:middle');
+  s+='<line x1="250" y1="64" x2="250" y2="40" style="stroke:var(--h3);stroke-width:2.5"/><path d="M250 40h26l-6 6 6 6h-26z" style="fill:var(--h3)"/><circle cx="250" cy="64" r="5.5" style="fill:var(--h3)"/>'+tx(250,30,'When?',B('var(--h3)',14)+';text-anchor:middle')+tx(250,88,'delivered 14:32',M12+';text-anchor:middle');
+  s+=tx(104,104,'a duration',B('var(--h2)',12)+';text-anchor:middle')+tx(250,104,'a point in time',B('var(--h3)',12)+';text-anchor:middle');
+  s+='<line x1="14" y1="122" x2="316" y2="122" style="stroke:var(--line);stroke-width:1;stroke-dasharray:3 4"/>';
+  s+=tx(14,146,'Machine A',B('var(--ink)',12))+'<line x1="86" y1="142" x2="316" y2="142" style="stroke:var(--line2);stroke-width:2"/>';
+  s+=tx(14,206,'Machine B',B('var(--ink)',12))+'<line x1="86" y1="202" x2="316" y2="202" style="stroke:var(--line2);stroke-width:2"/>';
+  s+='<circle cx="110" cy="142" r="5" style="fill:var(--pri)"/>'+tx(118,137,'sent',B('var(--pri)',12));
+  [[170,.35],[215,.35],[262,.35]].forEach(p=>{s+=arw(110,146,p[0],198,'var(--pri)',1.6,'4 4').replace('stroke-width:1.6','stroke-width:1.6;stroke-opacity:'+p[1]);});
+  s+=arw(110,146,215,198,'var(--pri)',2.4)+tx(215,222,'arrives later, but how much later?',B('var(--pri)',12)+';text-anchor:middle');
+  return '<svg viewBox="0 0 330 228" role="img" aria-label="Top: a duration between request and reply, and a point in time when a parcel was delivered. Bottom: a message from machine A arrives at machine B after an unknown delay.">'+s+'</svg>';}
+function figTwoClocks(){
+  const chart=(y,title,col,sub,pts,extra)=>{let s=tx(14,y+14,title,B(col,13.5))+tx(316,y+14,sub,M12+';text-anchor:end');
+    s+='<line x1="30" y1="'+(y+24)+'" x2="30" y2="'+(y+104)+'" style="stroke:var(--line2);stroke-width:1.5"/><line x1="30" y1="'+(y+104)+'" x2="316" y2="'+(y+104)+'" style="stroke:var(--line2);stroke-width:1.5"/>';
+    s+=tx(24,y+64,'reading',M12+';text-anchor:middle;writing-mode:vertical-rl')+tx(316,y+118,'real time →',M12+';text-anchor:end');
+    s+='<polyline points="'+pts+'" style="fill:none;stroke:'+col+';stroke-width:3;stroke-linejoin:round"/>'+(extra||'');return s;};
+  let s=chart(0,'Time-of-day clock','var(--h3)','date and time','38,96 170,52',
+    '<line x1="170" y1="52" x2="170" y2="84" style="stroke:var(--no);stroke-width:2.2;stroke-dasharray:4 3"/><polyline points="170,84 310,40" style="fill:none;stroke:var(--h3);stroke-width:3"/>'+tx(178,99,'NTP reset: jumps back',B('var(--no)',12)));
+  s+=chart(128,'Monotonic clock','var(--h2)','e.g. time since boot','38,226 170,198 310,172',tx(40,160,'only moves forward',B('var(--h2)',12))+tx(40,175,'NTP may speed or slow it (≤ 0.05%)',M12));
+  return '<svg viewBox="0 0 330 250" role="img" aria-label="Two charts of clock reading against real time. The time-of-day clock drops when NTP resets it. The monotonic clock only rises.">'+s+'</svg>';}
+function quartz(x,y){return box(x,y,22,14,'var(--soft)','var(--line2)',3)+'<path d="M'+(x+3)+' '+(y+7)+'q2.5 -6 5 0t5 0t5 0" style="fill:none;stroke:var(--ink);stroke-width:1.4"/>';}
+function figNTP(){
+  let s=box(62,6,206,32,'var(--h3-bg)','var(--h3)',10)+tx(165,27,'GPS receiver / atomic clock',B('var(--h3)',12)+';text-anchor:middle');
+  [65,165,265].forEach(x=>{s+=arw(165,38,x,64,'var(--line2)',1.6)+box(x-46,64,92,28,'var(--soft)','var(--line2)',8)+tx(x,83,'NTP server',I12+';text-anchor:middle');});
+  [['Node A','var(--h1)','a bit fast'],['Node C','var(--h2)','a bit slow'],['Ravi’s phone','var(--h4)','anyone’s guess']].forEach((m,j)=>{const x=65+j*100;
+    s+=arw(x,92,x,124,'var(--line2)',1.6)+box(x-48,124,96,62,'var(--card)',m[1],10)+tx(x,143,m[0],B(m[1],12.5)+';text-anchor:middle')+quartz(x-11,150)+tx(x,180,m[2],M12+';text-anchor:middle');});
+  s+=tx(165,205,'each machine counts time with its own quartz crystal',M12+';text-anchor:middle');
+  return '<svg viewBox="0 0 330 212" role="img" aria-label="A GPS receiver feeds NTP servers, which feed node A, node C and Ravi’s phone. Each machine has its own quartz clock.">'+s+'</svg>';}
+function figSilent(){
+  const srv=(x,y,col)=>box(x,y,34,44,'var(--card)',col,6)+'<line x1="'+(x+7)+'" y1="'+(y+12)+'" x2="'+(x+27)+'" y2="'+(y+12)+'" style="stroke:'+col+';stroke-width:2"/><line x1="'+(x+7)+'" y1="'+(y+22)+'" x2="'+(x+27)+'" y2="'+(y+22)+'" style="stroke:'+col+';stroke-width:2"/>';
+  let s=box(4,4,156,116,'var(--no-bg)','var(--no-line)',14)+box(170,4,156,116,'var(--soft)','var(--line)',14);
+  s+=tx(16,24,'Broken network card',B('var(--no)',12.5))+srv(16,36,'var(--no)')+'<path d="M24 64l18 18m0 -18l-18 18" style="stroke:var(--no);stroke-width:3;stroke-linecap:round"/>';
+  s+=tx(60,54,'stops working',B('var(--ink)',12))+tx(60,70,'alarms fire',I12)+tx(60,86,'fixed fast',I12);
+  s+=tx(182,24,'Broken clock',B('var(--h3)',12.5))+srv(182,36,'var(--ok)')+'<path d="M190 70l6 6 12 -13" style="fill:none;stroke:var(--ok);stroke-width:3;stroke-linecap:round"/>';
+  s+=tx(226,54,'looks fine',B('var(--ink)',12))+tx(226,70,'drifts away',I12)+tx(226,86,'loses data',I12)+tx(226,102,'quietly',I12);
+  s+=tx(14,146,'Clock-offset monitor',B('var(--ink)',12.5));
+  const base=226,lim=176;
+  s+='<line x1="14" y1="'+lim+'" x2="316" y2="'+lim+'" style="stroke:var(--no);stroke-width:1.6;stroke-dasharray:5 4"/>'+tx(316,lim-5,'limit',B('var(--no)',12)+';text-anchor:end');
+  [['A',12],['B',20],['C',66],['D',8],['E',16]].forEach((n,j)=>{const x=40+j*46,bad=n[1]>50;s+=box(x,base-n[1],24,n[1],bad?'var(--no-bg)':'var(--h2-bg)',bad?'var(--no)':'var(--h2)',4)+tx(x+12,base+16,'node '+n[0],I12+';text-anchor:middle');});
+  s+=tx(178,166,'C: remove it',B('var(--no)',12));
+  s+='<line x1="14" y1="'+base+'" x2="316" y2="'+base+'" style="stroke:var(--line2);stroke-width:1.5"/>';
+  return '<svg viewBox="0 0 330 248" role="img" aria-label="A broken network card is noticed fast; a broken clock looks fine. A monitor charts each node’s clock offset; node C is past the limit and gets removed.">'+s+'</svg>';}
+function figLWW(){
+  let s=box(10,8,128,50,'var(--h1-bg)','var(--h1)',12)+tx(74,28,'Node A',B('var(--h1)',13)+';text-anchor:middle')+tx(74,47,'clock correct',M12+';text-anchor:middle');
+  s+=box(192,8,128,50,'var(--h2-bg)','var(--h2)',12)+tx(256,28,'Node C',B('var(--h2)',13)+';text-anchor:middle')+tx(256,47,'clock correct',M12+';text-anchor:middle');
+  s+=arw(74,58,135,140,'var(--h1)',2.2)+arw(256,58,195,140,'var(--h2)',2.2);
+  s+=box(14,84,96,40,'var(--card)','var(--h1)',8)+tx(62,100,'“loading”',B('var(--ink)',12)+';text-anchor:middle')+tx(62,116,'stamp 42.001',I12+';text-anchor:middle');
+  s+=box(220,84,96,40,'var(--card)','var(--h2)',8)+tx(268,100,'“departed”',B('var(--ink)',12)+';text-anchor:middle')+tx(268,116,'stamp 42.003',I12+';text-anchor:middle');
+  s+=box(80,140,170,58,'var(--soft)','var(--line2)',12)+tx(165,158,'Node B keeps the highest',B('var(--ink)',12.5)+';text-anchor:middle')+tx(165,176,'stamp: “departed”',B('var(--ok)',12.5)+';text-anchor:middle')+tx(165,192,'“loading” is dropped',M12+';text-anchor:middle');
+  return '<svg viewBox="0 0 330 204" role="img" aria-label="Node A writes loading, stamped 42.001. Node C writes departed, stamped 42.003. Node B keeps departed, the highest stamp.">'+s+'</svg>';}
+function figLWWProblems(){
+  let s=tx(14,16,'1 · Writes vanish',B('var(--ink)',13.5));
+  const X=v=>66+(v-41.9995)/0.0075*244;
+  s+=tx(14,44,'real',M12)+tx(14,96,'stamp',M12)+'<line x1="60" y1="40" x2="316" y2="40" style="stroke:var(--line2);stroke-width:1.5"/><line x1="60" y1="92" x2="316" y2="92" style="stroke:var(--line2);stroke-width:1.5"/>';
+  [[42.000,42.005,'A','var(--h1)',''],[42.002,42.002,'C','var(--h2)','✗'],[42.004,42.004,'C','var(--h2)','✗'],[42.006,42.006,'C','var(--h2)','✓']].forEach(w=>{const a=X(w[0]),b=X(w[1]);
+    s+='<line x1="'+a.toFixed(1)+'" y1="40" x2="'+b.toFixed(1)+'" y2="92" style="stroke:'+w[3]+';stroke-width:2.5"/><circle cx="'+a.toFixed(1)+'" cy="40" r="6" style="fill:'+w[3]+'"/><circle cx="'+b.toFixed(1)+'" cy="92" r="6" style="fill:'+w[3]+'"/>'+tx(a,30,w[2],B(w[3],12)+';text-anchor:middle');
+    if(w[4])s+=tx(b,112,w[4],B(w[4]==='✓'?'var(--ok)':'var(--no)',13)+';text-anchor:middle');});
+  s+=tx(X(42.005),112,'A',B('var(--h1)',12)+';text-anchor:middle')+tx(20,132,'A’s clock is 5 ms fast, so C’s next two writes vanish.',M12);
+  s+='<g transform="translate(0,14)">';
+  s+='<line x1="14" y1="130" x2="316" y2="130" style="stroke:var(--line)"/>'+tx(14,150,'2 · Blind to cause and effect',B('var(--ink)',13.5));
+  const pair=(x,cause,label)=>'<circle cx="'+(x+20)+'" cy="176" r="12" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2"/>'+tx(x+20,180,'A',B('var(--h1)',12)+';text-anchor:middle')+
+    '<circle cx="'+(x+110)+'" cy="176" r="12" style="fill:var(--h2-bg);stroke:var(--h2);stroke-width:2"/>'+tx(x+110,180,'B',B('var(--h2)',12)+';text-anchor:middle')+
+    (cause?arw(x+33,176,x+97,176,'var(--ink)',2):'<line x1="'+(x+40)+'" y1="176" x2="'+(x+90)+'" y2="176" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:3 4"/>')+tx(x+65,206,label,I12+';text-anchor:middle');
+  s+=pair(14,true,'B read A, then wrote')+pair(174,false,'neither saw the other');
+  s+=tx(165,226,'LWW sees two stamps either way',B('var(--no)',12)+';text-anchor:middle');
+  s+='<line x1="14" y1="238" x2="316" y2="238" style="stroke:var(--line)"/>'+tx(14,258,'3 · Ties',B('var(--ink)',13.5));
+  s+=box(20,268,92,30,'var(--h1-bg)','var(--h1)',8)+tx(66,288,'A: 42.003',B('var(--h1)',12)+';text-anchor:middle')+tx(124,288,'=',B('var(--ink)',15)+';text-anchor:middle');
+  s+=box(136,268,92,30,'var(--h2-bg)','var(--h2)',8)+tx(182,288,'C: 42.003',B('var(--h2)',12)+';text-anchor:middle');
+  s+='<circle cx="262" cy="283" r="16" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+tx(262,288,'?',B('var(--h3)',15)+';text-anchor:middle')+tx(20,318,'Random tiebreak: can break cause and effect',M12)+'</g>';
+  return '<svg viewBox="0 0 330 340" role="img" aria-label="Three problems with last write wins: writes vanish when a clock runs fast, it cannot tell cause from concurrency, and equal stamps need a random tiebreaker.">'+hatch('h13')+s+'</svg>';}
+function figConfidence(){
+  let s=tx(14,30,'10:00:10.4',B('var(--ink)',24)+';font-variant-numeric:tabular-nums')+tx(142,30,'17382',B('var(--faint)',24)+';font-variant-numeric:tabular-nums');
+  s+=tx(14,50,'looks exact, but the grey digits mean nothing',M12);
+  const v0=36010200,v1=36010600,X=t=>X0+(t-v0)/(v1-v0)*(X1-X0);
+  s+=rulerRow({name:'What the clock really knows',col:'var(--h2)',off:0,band:[36010300,36010500],lab:2},62,X,{v0,v1,step:50});
+  s+='<line x1="'+X(36010417).toFixed(1)+'" y1="78" x2="'+X(36010417).toFixed(1)+'" y2="108" style="stroke:var(--ink);stroke-width:2.5"/>'+tx(X(36010400),126,'95% sure the real time is in the band',B('var(--h2)',12)+';text-anchor:middle');
+  s+=tx(14,152,'How wide is the band?',B('var(--ink)',12.5));
+  [[14,'drift since sync','var(--h1)',120],[136,'server error','var(--h3)',86],[224,'round trip','var(--h4)',92]].forEach(p=>{s+=box(p[0],160,p[3]-2,28,'var(--soft)',p[2],6)+tx(p[0]+(p[3]-2)/2,179,p[1],B(p[2],12)+';text-anchor:middle');});
+  s+=box(14,198,302,30,'var(--h2-bg)','var(--h2)',8)+tx(165,218,'Google’s TrueTime returns [earliest, latest]',B('var(--h2)',12)+';text-anchor:middle');
+  return '<svg viewBox="0 0 330 234" role="img" aria-label="A reading of 10.417382 seconds is really a band from 10.3 to 10.5 seconds. The band’s width adds drift since the last sync, the server’s error and the round trip.">'+s+'</svg>';}
+function figPauses(){
+  const R=[['Garbage collection (stop the world)','can last minutes',150],['VM suspended or live-migrated','any length',190],['CPU shared: OS or host switches away','until rescheduled',130],
+           ['Slow disk, or a disk over the network','waits for I/O',110],['Paging: a memory read hits the disk','waits for a page',120],['SIGSTOP (e.g. Ctrl-Z)','until SIGCONT',150],['Laptop lid closed','until reopened',160]];
+  let s=hatch('h22')+tx(14,13,'Planner 1’s thread · gaps not to scale',M12);
+  R.forEach((r,j)=>{const y=20+j*42,gs=60+(j*23)%70,ge=Math.min(X1-14,gs+r[2]);
+    s+=tx(X0,y+13,r[0],B('var(--ink)',12.5));
+    s+=box(X0,y+19,gs-X0,18,'var(--h1)','none',4)+box(gs,y+19,ge-gs,18,'url(#h22)','var(--line2)',4)+box(ge,y+19,X1-ge,18,'var(--h1)','none',4);
+    s+=box((gs+ge)/2-r[1].length*3.4-5,y+20,r[1].length*6.8+10,16,'var(--card)','none',4)+tx((gs+ge)/2,y+32,r[1],B('var(--h4)',12)+';text-anchor:middle');});
+  return '<svg viewBox="0 0 330 316" role="img" aria-label="Seven ways a thread can be frozen mid-run: garbage collection, VM suspension, CPU switching, slow disks, paging, SIGSTOP, a closed laptop lid.">'+s+'</svg>';}
+function figRealtime(){
+  let s=tx(14,16,'Hard real-time: airbags, robots',B('var(--h4)',13));
+  s+='<line x1="14" y1="64" x2="170" y2="64" style="stroke:var(--line2);stroke-width:2"/>'+'<circle cx="26" cy="64" r="5" style="fill:var(--ink)"/>'+tx(26,84,'sensor',M12+';text-anchor:middle');
+  s+='<line x1="140" y1="42" x2="140" y2="76" style="stroke:var(--no);stroke-width:2;stroke-dasharray:4 3"/>'+tx(140,38,'deadline',B('var(--no)',12)+';text-anchor:middle');
+  s+=arw(30,56,112,56,'var(--ok-strong)',2.2)+tx(66,46,'every time',B('var(--ok)',12)+';text-anchor:middle');
+  [['real-time OS'],['worst-case timings'],['limited allocation'],['heavy testing']].forEach((b,j)=>{s+=box(186,26+j*22,130,20,'var(--h4-bg)','var(--h4)',5)+tx(251,40+j*22,b[0],B('var(--h4)',12)+';text-anchor:middle');});
+  s+=tx(251,128,'costly, often slower',M12+';text-anchor:middle');
+  s+='<line x1="14" y1="140" x2="316" y2="140" style="stroke:var(--line)"/>'+tx(14,162,'Most servers: soften GC pauses',B('var(--h2)',13));
+  s+=box(14,196,70,40,'var(--soft)','var(--line2)',8)+tx(49,220,'traffic',B('var(--ink)',12)+';text-anchor:middle');
+  [[178,1],[218,0],[258,1]].forEach((p,j)=>{const y=p[0];
+    s+=(p[1]?arw(84,216,196,y+14,'var(--h2)',2):'<line x1="84" y1="216" x2="190" y2="'+(y+14)+'" style="stroke:var(--line2);stroke-width:2;stroke-dasharray:3 4"/>');
+    s+=box(198,y,118,28,p[1]?'var(--h2-bg)':'url(#h24)',p[1]?'var(--h2)':'var(--line2)',7)+tx(257,y+18,p[1]?'server '+(j+1):'collecting garbage',B(p[1]?'var(--h2)':'var(--ink)',12)+';text-anchor:middle');});
+  s+=tx(14,186,'warned of a GC?',I12)+tx(14,256,'drain it first',I12);
+  /* variant: collect only short-lived objects, restart before long-lived ones need a full GC */
+  s+=tx(14,302,'Or: GC only short-lived objects (fast)',B('var(--h2)',12.5));
+  const base=386,lim=334;
+  s+='<line x1="30" y1="'+lim+'" x2="316" y2="'+lim+'" style="stroke:var(--no);stroke-width:1.6;stroke-dasharray:5 4"/>'+tx(316,lim-5,'full GC needed',B('var(--no)',12)+';text-anchor:end')+tx(30,lim-5,'long-lived memory',M12);
+  s+='<line x1="30" y1="'+base+'" x2="316" y2="'+base+'" style="stroke:var(--line2);stroke-width:1.5"/>';
+  s+='<polyline points="32,382 118,346 118,382 204,346 204,382 290,346 290,382 314,372" style="fill:none;stroke:var(--h2);stroke-width:2.6;stroke-linejoin:round"/>';
+  [118,204,290].forEach(x=>{s+='<circle cx="'+x+'" cy="382" r="4.5" style="fill:var(--ok-strong)"/>'+tx(x,402,'restart',B('var(--ok)',12)+';text-anchor:middle');});
+  s+=tx(14,424,'one node at a time, traffic moved away first',I12);
+  return '<svg viewBox="0 0 330 432" role="img" aria-label="Top: hard real-time systems meet every deadline, at the cost of a real-time OS, documented worst cases, limited allocation and testing. Middle: servers move traffic away from a node while it collects garbage. Bottom: a node collects only short-lived objects and is restarted before long-lived memory reaches the point where a full collection is needed.">'+hatch('h24')+s+'</svg>';}
+/* recap for the last screen: what a paused node lives through */
+function figWake(){
+  const st=[['Frozen','at any line','var(--no)','var(--no-bg)'],['Seen as dead','lease moves on','var(--h3)','var(--h3-bg)'],['Wakes up','unaware, writes','var(--no)','var(--no-bg)']];
+  let s='';
+  st.forEach((b,j)=>{const x=4+j*110;s+=box(x,4,100,46,b[3],b[2],10)+tx(x+50,24,b[0],B(b[2],12.5)+';text-anchor:middle')+tx(x+50,41,b[1],M12+';text-anchor:middle');
+    if(j<2)s+=arw(x+101,27,x+109,27,'var(--line2)',2);});
+  return '<svg viewBox="0 0 330 56" role="img" aria-label="A paused node: frozen at any line, seen as dead so its lease moves on, then wakes up unaware and writes.">'+s+'</svg>';}
+
+/* ---------- interval bands (confidence intervals) ---------- */
+function bandsFig(o){/* o:{lo,hi,step,fmt,rows:[{name,col,a,b}],overlap,wait:[a,b,label],budget} */
+  const X=v=>X0+(v-o.lo)/(o.hi-o.lo)*(X1-X0),RH=44,top=4,ys=o.rows.map((r,i)=>top+i*RH+(o.wait&&i>0?22:0)),ay=ys[ys.length-1]+RH+4;
+  let s=hatch('hb','var(--no-line)');
+  o.rows.forEach((r,i)=>{const y=ys[i];s+=tx(X0,y+12,r.name,B(r.col,12.5))+(r.read?tx(X1,y+12,r.read,M12+';text-anchor:end'):'');
+    s+=box(Math.max(X0-4,X(r.a)).toFixed(1),y+18,Math.max(3,Math.min(X1+4,X(r.b))-Math.max(X0-4,X(r.a))).toFixed(1),22,r.col,r.col,6,';fill-opacity:.25');
+    if(o.overlap){const a=Math.max(X0-4,X(o.overlap[0])),b=Math.min(X1+4,X(o.overlap[1]));s+=box(a.toFixed(1),y+18,Math.max(3,b-a).toFixed(1),22,'url(#hb)','var(--no)',4,';fill-opacity:.8');}
+    if(r.dot!=null)s+='<circle cx="'+X(r.dot).toFixed(1)+'" cy="'+(y+29)+'" r="4.5" style="fill:'+r.col+'"/>';});
+  if(o.wait&&o.wait[1]<=o.wait[0])s+=tx(X(o.wait[0])-4,ys[0]+RH+14,'no wait',B('var(--ink)',12)+';text-anchor:end');
+  else if(o.wait){const y=ys[0]+RH+10;s+=arw(X(o.wait[0]),y,Math.max(X(o.wait[1]),X(o.wait[0])+10),y,'var(--ink)',2)+tx(Math.min(X1,X(o.wait[1])+6),y+4,o.wait[2],B('var(--ink)',12)+(X(o.wait[1])>230?';text-anchor:end':''));}
+  s+='<line x1="'+X0+'" y1="'+ay+'" x2="'+X1+'" y2="'+ay+'" style="stroke:var(--line2);stroke-width:1.5"/>';
+  const st=o.step,k0=Math.ceil(o.lo/st-1e-9),k1=Math.floor(o.hi/st+1e-9),le=o.labEvery||Math.max(1,Math.ceil((String(o.fmt(k1*st)).length*7+10)/(st/(o.hi-o.lo)*(X1-X0))));
+  for(let k=k0;k<=k1;k++){const x=X(k*st);s+='<line x1="'+x.toFixed(1)+'" y1="'+ay+'" x2="'+x.toFixed(1)+'" y2="'+(ay+6)+'" style="stroke:var(--ink);stroke-width:1.3"/>';
+    if(((k%le)+le)%le===0&&x>X0+12&&x<X1-30)s+=tx(x,ay+20,o.fmt(k*st),I12+';text-anchor:middle');}
+  if(o.unit)s+=tx(X1,ay+20,o.unit,M12+';text-anchor:end');
+  if(o.budget!=null&&o.budget<o.hi){const x=X(o.budget);s+='<line x1="'+x.toFixed(1)+'" y1="'+(ys[0]+14)+'" x2="'+x.toFixed(1)+'" y2="'+ay+'" style="stroke:var(--h3);stroke-width:2;stroke-dasharray:5 3"/>'+tx(x+4,ys[0]+12,'15 ms budget',B('var(--h3)',12));}
+  if(o.overlap&&o.overLabel)s+=tx(Math.min(X1-4,Math.max(X0+60,X((o.overlap[0]+o.overlap[1])/2))),ay+38,o.overLabel,B('var(--no)',12)+';text-anchor:middle');
+  return '<svg viewBox="0 0 330 '+(ay+(o.overlap&&o.overLabel?46:28))+'" role="img" aria-label="'+(o.aria||'Time ranges drawn as bands on a time axis')+'">'+s+'</svg>';}
+
+/* =====================================================================
+   2. Lease bar. Planner 1's loop: check lease → compute routes → write routes.
+   The lease runs out at 12 s on the lock service's clock; Planner 2 then takes
+   over and writes at 13 s. A pause pin freezes the thread where it sits.
+   ===================================================================== */
+const DUR={check:0.1,compute:1.0,write:0.1,next:0.3},WID={check:82,compute:104,write:86,next:30};
+function codeSegs(moved){let x=X0,t=0;return (moved?['compute','check','write','next']:['check','compute','write','next']).map(n=>{const s={n,x0:x,w:WID[n],t0:t,du:DUR[n]};x+=WID[n];t+=DUR[n];return s;});}
+function pxToWork(segs,px){px=Math.max(X0,Math.min(X1-0.01,px));const s=segs.find(z=>px>=z.x0&&px<z.x0+z.w)||segs[segs.length-1];return s.t0+(px-s.x0)/s.w*s.du;}
+function pinFor(moved,where){const g=codeSegs(moved),seg=n=>g.find(z=>z.n===n);
+  if(where==='before')return moved?seg('compute').x0+52:seg('check').x0+16;
+  if(where==='between')return moved?seg('write').x0+43:seg('compute').x0+52;
+  return seg('next').x0+15;}
+function leaseSim(o){/* o:{moved,skew,pin,d} */
+  const g=codeSegs(o.moved),endOf=n=>{const s=g.find(z=>z.n===n);return s.t0+s.du;};
+  const p=o.pin==null?null:pxToWork(g,o.pin),cD=endOf('check'),wD=endOf('write');
+  const Rt=x=>x+(p!=null&&p<=x?o.d:0),tc=Rt(cD),tw=Rt(wD),left=12-(tc-(o.skew||0));
+  const r={p,d:o.d,tc,tw,skew:o.skew||0,E:12,renew:false,stop:false,takeover:false,where:p==null?'none':p<=cD?'before':p<=wD?'between':'after'};
+  if(left<10){if(tc<12){r.renew=true;r.E=tc+30;}else r.stop=true;}
+  if(!r.renew&&p!=null&&p<12&&p+o.d>12)r.takeover=true;
+  r.unsafe=!r.stop&&r.takeover&&tw>=12;
+  r.kind=r.unsafe?'two':r.stop?'stop':r.renew?'renew':'early';return r;}
+function leaseText(r){
+  const f=t=>(+t.toFixed(1))+' s';
+  if(r.kind==='two')return ['no','<b>Two writers!</b> Planner 1 wrote stale routes at '+f(r.tw)+', after the lease ran out at 12 s and Planner 2 took over.'];
+  if(r.kind==='stop')return ['ok','<b>Safe.</b> Planner 1 woke at '+f(r.tc)+'. Its check found the lease gone (renewal refused), so it didn’t write.'];
+  if(r.kind==='renew')return ['ok','<b>Safe.</b> The check at '+f(r.tc)+' saw under 10 s left and renewed the lease in time, then wrote.'];
+  return ['ok','<b>Safe.</b> Planner 1 wrote at '+f(r.tw)+', while it still held the lease.'+(r.takeover?' It froze across 12 s, so Planner 2 took over; Planner 1’s next check will fail.':'')];}
+function codeBar(o){/* o:{moved,pin,id,drag} */
+  const g=codeSegs(o.moved),C={check:['var(--h1-bg)','var(--h1)','check lease'],compute:['var(--soft)','var(--line2)','compute routes'],write:['var(--h3-bg)','var(--h3)','write routes'],next:['var(--card)','var(--line2)','…']};
+  let s=tx(X0,12,'Planner 1’s loop, one request · drag the pause pin',M12);
+  /* boxes, then the pin line, then the labels with a halo in the box colour, so the pin never runs through the words */
+  g.forEach(z=>{const c=C[z.n];s+=box(z.x0+1,20,z.w-2,32,c[0],c[1],7,z.n==='next'?';stroke-dasharray:3 3':'');});
+  if(o.pin!=null){const x=o.pin.toFixed(1);s+='<line x1="'+x+'" y1="16" x2="'+x+'" y2="58" style="stroke:var(--no);stroke-width:3"/>';}
+  g.forEach(z=>{const c=C[z.n];s+=tx(z.x0+z.w/2,41,c[2],B(z.n==='compute'||z.n==='next'?'var(--ink)':c[1],12)+';text-anchor:middle;paint-order:stroke;stroke:'+c[0]+';stroke-width:6px;stroke-linejoin:round');});
+  if(o.pin!=null){s+='<rect x="'+(o.pin-18)+'" y="58" width="36" height="20" rx="10" style="fill:var(--no)"/><path d="M'+(o.pin-4)+' 63v10M'+(o.pin+4)+' 63v10" style="stroke:var(--card);stroke-width:2.5;stroke-linecap:round"/>';}
+  return '<svg viewBox="0 0 330 82" '+(o.drag?'class="ck-svg-drag" ':'')+'id="'+o.id+'" role="img" aria-label="Planner 1’s loop: check lease, compute routes, write routes'+(o.pin!=null?', with a pause pin':'')+'">'+s+'</svg>';}
+function leaseFig(r,tNow,id){
+  tNow=tNow==null?99:tNow;const XT=t=>X0+Math.min(t,30)/30*(X1-X0),vis=t=>t<=tNow+1e-9;
+  let s=hatch(id+'h');
+  s+=tx(X0,12,'LEASE AT THE LOCK SERVICE',B('var(--muted)',12));
+  const e1=r.takeover?12:Math.min(r.E,30),c1=Math.min(e1,tNow);
+  s+=box(X0,18,Math.max(0,XT(c1)-X0),20,'var(--h1-bg)','var(--h1)',5)+(c1>3?tx(X0+6,32,r.renew&&tNow>=r.tc?'Planner 1 (renewed)':'Planner 1',B('var(--h1)',12)):'');
+  if(r.takeover&&tNow>12)s+=box(XT(12),18,XT(Math.min(30,tNow))-XT(12),20,'var(--h3-bg)','var(--h3)',5)+(tNow>16?tx(XT(12)+6,32,'Planner 2',B('var(--h3)',12)):'');
+  if(!r.renew){const x=XT(12).toFixed(1);s+='<line x1="'+x+'" y1="16" x2="'+x+'" y2="166" style="stroke:var(--ink);stroke-width:1.5;stroke-dasharray:4 3"/>';}
+  if(r.skew){const x=XT(12+r.skew).toFixed(1);s+='<line x1="'+x+'" y1="16" x2="'+x+'" y2="198" style="stroke:var(--h1);stroke-width:2;stroke-dasharray:2 3"/>'+tx(X1,210,'Planner 1’s clock',B('var(--h1)',12)+';text-anchor:end');}
+  s+=tx(X0,56,'PLANNER 1',B('var(--muted)',12))+'<line x1="'+X0+'" y1="76" x2="'+X1+'" y2="76" style="stroke:var(--line2);stroke-width:1.5;stroke-dasharray:2 4"/>';
+  if(r.p!=null&&vis(r.p)){const a=XT(r.p),b=XT(Math.min(r.p+r.d,tNow));s+=box(a.toFixed(1),66,Math.max(2,b-a).toFixed(1),20,'url(#'+id+'h)','var(--no)',4);
+    if(b-a>70)s+=box((a+b)/2-38,69,76,15,'var(--card)','none',3)+tx((a+b)/2,81,'paused '+(+Math.min(r.d,tNow-r.p).toFixed(1))+' s',B('var(--no)',12)+';text-anchor:middle');}
+  let lx=X0;
+  if(vis(r.tc)){const x=XT(r.tc),bad=r.stop;s+='<path d="M'+x.toFixed(1)+' 69l7 7-7 7-7-7z" style="fill:'+(bad?'var(--no)':'var(--h1)')+';stroke:var(--card);stroke-width:1.5"/>';
+    const lab=bad?'check ✗':'check',ax=x<70?x+2:x-2;s+=tx(Math.max(X0,ax),104,lab,B(bad?'var(--no)':'var(--h1)',12)+(x<70?'':';text-anchor:end'));lx=x<70?x+lab.length*7+8:x+6;}
+  if(!r.stop&&vis(r.tw)){const x=XT(r.tw),bad=r.unsafe;s+='<circle cx="'+x.toFixed(1)+'" cy="76" r="7" style="fill:'+(bad?'var(--no)':'var(--ok-strong)')+';stroke:var(--card);stroke-width:1.5"/>';
+    const lab=bad?'stale write!':'write',wx=Math.max(lx,x+4);s+=tx(Math.min(wx,X1-lab.length*7),104,lab,B(bad?'var(--no)':'var(--ok)',12));}
+  s+=tx(X0,126,'PLANNER 2',B('var(--muted)',12))+'<line x1="'+X0+'" y1="146" x2="'+X1+'" y2="146" style="stroke:var(--line2);stroke-width:1.5;stroke-dasharray:2 4"/>';
+  if(r.takeover&&tNow>=12){const x=XT(12);s+='<path d="M'+x.toFixed(1)+' 138l8 8-8 8z" style="fill:var(--h3)"/>'+tx(x-4,166,'takes over',B('var(--h3)',12)+';text-anchor:end');
+    if(tNow>=13){const w=XT(13);s+='<circle cx="'+w.toFixed(1)+'" cy="146" r="7" style="fill:var(--h3);stroke:var(--card);stroke-width:1.5"/>'+tx(w+10,166,'writes',B('var(--h3)',12));}}
+  else if(!r.takeover)s+=tx(X1,142,'waiting: lease is taken',M12+';text-anchor:end');
+  s+='<line x1="'+X0+'" y1="174" x2="'+X1+'" y2="174" style="stroke:var(--line2);stroke-width:1.5"/>';
+  for(let t=0;t<=30;t+=5){const x=XT(t);s+='<line x1="'+x.toFixed(1)+'" y1="174" x2="'+x.toFixed(1)+'" y2="180" style="stroke:var(--ink)"/>'+tx(Math.min(X1-8,Math.max(X0+8,x)),194,t+' s',I12+';text-anchor:middle');}
+  s+=tx(XT(12),210,'lease ends: 12 s',B('var(--ink)',12)+';text-anchor:middle');
+  if(tNow<30){const x=XT(tNow).toFixed(1);s+='<line x1="'+x+'" y1="14" x2="'+x+'" y2="176" style="stroke:var(--pri);stroke-width:2"/>';}
+  return '<svg viewBox="0 0 330 216" role="img" aria-label="Real time from 0 to 30 seconds: who holds the lease, and when each planner checks and writes">'+s+'</svg>';}
+
 Course.lesson({
-  id:'0019', title:'Unreliable clocks and process pauses', minutes:20, icon:'clock',
-  goals:['Pick the right clock for timing something versus stamping a moment','Explain how “newest timestamp wins” silently loses writes','Spot code that assumes a process can’t freeze mid-step'],
-  parts:['Two kinds of clock','Keeping clocks in sync','Trusting timestamps','Process pauses'],
-  read:'Read the “Unreliable Clocks” section of chapter 8 for the full list of clock pitfalls and the Spanner story.',
+  id:'0019', title:'Unreliable clocks and process pauses', minutes:22, icon:'clock',
+  goals:['Pick the right clock for timing something versus stamping a moment','Explain how “newest timestamp wins” silently loses writes, and why a clock reading is a range','Spot code that assumes a process can’t freeze mid-step'],
+  parts:['Two kinds of clock','Drift and sync','Ordering by timestamp','Process pauses'],
+  read:'Read the “Unreliable Clocks” section of chapter 8, from “Monotonic Versus Time-of-Day Clocks” to “Limiting the impact of garbage collection”, for the full list of clock pitfalls and the Spanner story.',
   glossary:{
     'tod-clock':'Time-of-day clock (wall-clock time): returns the current date and time. It is synced with NTP, so it can suddenly jump forward or backward.',
     'mono-clock':'Monotonic clock: a clock that only ever moves forward. Good for measuring how long something took on one machine. Its actual value means nothing on its own.',
@@ -25,32 +345,30 @@ Course.lesson({
     'drift':'Clock drift: a computer’s quartz clock running a little fast or slow, so it slowly moves away from the true time.',
     lww:'Last write wins (LWW): resolve a conflict by keeping the write with the latest timestamp and silently dropping the others. Everyone ends up the same, but data is lost.',
     'logical-clock':'Logical clock: a counter that goes up with each event. It shows which event came before which, not the time of day.',
+    'conf-interval':'Confidence interval: a range of times the clock is fairly sure contains the real time, such as “10.3 to 10.5 seconds into the minute”.',
     'lease':'Lease: a lock that expires after a set time. The holder must renew it before it runs out, or another node can take over.',
     'gc-pause':'Garbage-collection (GC) pause: a moment when a language runtime stops all of a program’s threads to clean up unused memory. It can last from milliseconds to minutes.'
   },
   cheatsheet:[
-    'Use a <b>monotonic clock</b> for durations and timeouts. Use a <b>time-of-day clock</b> for moments, knowing it can jump.',
-    'Clocks <b>drift</b> (Google assumes 200 ppm: about 17 seconds a day between syncs), and NTP can fail in many quiet ways.',
+    'Use a <b>monotonic clock</b> for durations and timeouts. Use a <b>time-of-day clock</b> for moments, knowing it can jump. Never compare monotonic values across machines.',
+    'Clocks <b>drift</b>: Google assumes up to 200 ppm, so 6 ms between syncs every 30 s, about 17 s with one sync a day. NTP fails quietly: firewalls, network delay, bad servers, leap seconds, VMs.',
     'Never trust the clock on a device you don’t control, like a courier’s phone.',
     'A broken clock causes <b>silent data loss</b>, not a crash. Monitor clock offsets and remove nodes that drift too far.',
-    '<b>Last write wins</b> by timestamp can drop a later write if the earlier one came from a node with a fast clock. Logical clocks are safer for ordering.',
-    'A clock reading is a <b>range</b>, not a point. Spanner waits out that range before committing.',
-    'Any process can <b>freeze</b> at any line (GC, VM pause, disk, paging, a stop signal) and wake up not knowing time passed.',
-    'Hard real-time guarantees are possible but very costly. Servers instead limit GC impact: drain before collecting, or restart on a schedule.'
+    '<b>Last write wins</b> by timestamp can drop a later write when the earlier writer’s clock runs ahead. Logical clocks are safer for ordering.',
+    'A clock reading is a <b>range</b>, not a point. Overlapping ranges can’t be ordered; Spanner waits out the range before committing.',
+    'Any process can <b>freeze</b> at any line (GC, VM suspension, CPU switching, disk, paging, a stop signal) and wake unaware. Checking a lease never proves you still hold it when you act.',
+    'Hard real-time guarantees are possible but costly. Servers instead soften GC: drain a node before it collects, or restart nodes in turn.'
   ],
   steps:[
 /* ---------- PART 1: TWO KINDS OF CLOCK ---------- */
 {part:0,src:'Warm-up',pts:1,run(L){
-  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two scans of the same parcel come from two different couriers’ phones. One is stamped 10:00:00.120, the other 10:00:00.118. Which scan happened first?</h1>');
+  L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">Two couriers’ phones scan the same parcel. Which scan happened first?</h1>'+CSS+'<div class="ck">'+phonesFig()+'</div>');
   L.mc(L.card,['The one stamped .118','You can’t be sure'],1,
-   'Two milliseconds apart, from two different clocks? Each phone keeps its own time, and they disagree by far more than that. This lesson is about why.',
+   'Two milliseconds apart, from two different clocks? Each phone keeps its own time, and they can disagree by far more than that. This lesson is about why.',
    'Only if both phones’ clocks agreed to within a millisecond, and they almost certainly don’t. Each machine has its own clock, and clocks drift apart.');}},
 {part:0,src:'Chapter 8 · Unreliable Clocks',run(L){
-  L.h(L.kick('learn','What we ask clocks')+'<h1 class="q">Software asks a clock two very different kinds of question</h1>'+
-   L.lanes([['clock','How long?','A <b>duration</b>: has this request timed out? How long did the query take? How many requests per second in the last five minutes?',2],
-            ['cal','When?','A <b>point in time</b>: when was this parcel delivered? When should the reminder email go out? When does this cache entry expire?',3]])+
-   L.prose('In a distributed system both are tricky. A message always arrives after it was sent, but because network delays vary, you don’t know <i>how much</i> later.')+
-   L.prose('And every machine has its own clock: a small quartz crystal that runs a little fast or slow. Machines can sync their clocks with '+L.g('ntp','NTP')+', which asks time servers for the time, but only to a degree.'));
+  L.h(L.kick('learn','What we ask clocks')+'<h1 class="q">Software asks a clock two different questions</h1>'+CSS+'<div class="ck">'+figQuestions()+'</div>'+
+   L.prose('Timeouts, response times and rates ask <b>how long</b>. Publish dates, reminder emails and cache expiry ask <b>when</b>. Across machines both get tricky: a message arrives after it was sent, but nobody knows how much later.'));
   L.done();}},
 {part:0,src:'Chapter 8 · Unreliable Clocks',pts:5,run(L){
   L.h(L.kick('try','Duration or moment?')+'<h1 class="q">Sort each of Otterpost’s clock uses.</h1><div id="bk"></div>');
@@ -62,166 +380,282 @@ Course.lesson({
    ['Average scans per second over the last five minutes',0,'A rate over an interval: it depends on elapsed time.']],
    'The two kinds of question need two different kinds of clock. That’s next.');}},
 {part:0,src:'Chapter 8 · Monotonic Versus Time-of-Day Clocks',run(L){
-  L.h(L.kick('learn','Two kinds of clock')+'<h1 class="q">Every modern computer has at least two clocks, built for different jobs</h1>'+
-   L.lanes([['cal','Time-of-day clock','The date and time, counted from 1 January 1970 (UTC). Synced with NTP, so a timestamp on one machine roughly matches another. But if it’s too far ahead, NTP may reset it and it <b>jumps backward</b>. It usually ignores leap seconds too.',3],
-            ['clock','Monotonic clock','Always moves <b>forward</b>. NTP may speed it up or slow it down slightly (by up to 0.05%), but never makes it jump. Its value alone means nothing, like “nanoseconds since boot”.',2]])+
-   L.prose('So: measure durations, like timeouts and response times, with the '+L.g('mono-clock','monotonic clock')+'. That works fine in a distributed system, because it doesn’t need other machines’ clocks to agree. Use the '+L.g('tod-clock','time-of-day clock')+' for moments, and remember it can jump.'));
+  L.h(L.kick('learn','Two kinds of clock')+'<h1 class="q">Every computer has at least two clocks, built for different jobs</h1>'+CSS+'<div class="ck">'+figTwoClocks()+'</div>'+
+   L.prose('Use the '+L.g('tod-clock','time-of-day clock')+' for moments: it can jump, and usually ignores leap seconds. Use the '+L.g('mono-clock','monotonic clock')+' for durations: it never jumps, but its value means nothing alone, so never compare it across machines.'));
   L.done();}},
 {part:0,src:'Chapter 8 · Time-of-day clocks',pts:1,
- solve:async L=>{L.$('#pp').children[1].click();L.$('#run').click();},
+ solve:async L=>{L.$('#t5p').children[1].click();await L.sleep(30);L.$('#t5go').click();await waitFor(L,'#t5done',5000);},
  run(L){
-  let p=null;const O=['About 3 s','About −2 s','About 8 s'];
-  const row=(id,lb)=>'<div style="display:flex;justify-content:space-between;gap:10px;background:var(--soft);border-radius:12px;padding:10px 12px;margin:6px 0"><span class="small" style="margin:0">'+lb+'</span><b id="'+id+'" style="font-variant-numeric:tabular-nums">…</b></div>';
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias times a Parcel DB query that really takes 3 seconds by subtracting two time-of-day readings. Halfway, NTP finds this server 5 s fast and resets it. What does Tobias’s code report?</h1><div id="pp"></div>'+
-   '<div id="sw" hidden>'+row('cw','Time-of-day clock')+row('cm','Monotonic clock')+'<div id="nt" class="small" style="min-height:22px"></div><button class="btn pri" id="run">'+L.ic('play')+'Run the query</button></div>');
-  O.forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#sw').hidden=false;};L.$('#pp').appendChild(b);});
-  const fw=t=>{const w=7+t-(t>=1.5?5:0);return '10:00:'+(w<10?'0':'')+w.toFixed(1);},fm=t=>(5000+t).toFixed(1);
-  L.$('#cw').textContent=fw(0);L.$('#cm').textContent=fm(0);
-  L.$('#run').onclick=function(){this.remove();let s=0;
-    const tm=setInterval(()=>{s++;const t=s*0.3;const cw=L.$('#cw');if(!cw){clearInterval(tm);return;}
-      cw.textContent=fw(t);L.$('#cm').textContent=fm(t);if(t>=1.5&&!L.$('#nt').textContent)L.$('#nt').innerHTML='<span style="color:var(--no)">'+L.ic('alert')+' NTP reset: the time-of-day clock jumped back 5 s</span>';
-      if(s>=10){clearInterval(tm);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'You called it!':'It reported about −2 seconds',
-         'Time-of-day: 10:00:05.0 − 10:00:07.0 = <b>−2.0 s</b>. Monotonic: 5003.0 − 5000.0 = <b>3.0 s</b>. A time-of-day clock can jump, so it’s unfit for measuring durations. The monotonic clock got it right.');L.done();}},150);};}},
-{part:0,src:'Chapter 8 · Monotonic clocks',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame’s dashboard shows monotonic clock readings from two Parcel DB servers: 1,000,000 and 5,000,000. What can Kwame conclude?</h1>');
-  L.mc(L.card,['Nothing: the two values can’t be compared','The second server’s clock is running fast','The second server booted earlier than the first'],0,
-   'A monotonic value is only meaningful compared with an earlier reading <i>on the same machine</i>. Across machines, the numbers don’t mean the same thing.',
-   'You can’t read anything into it. A monotonic clock’s value is arbitrary (perhaps time since some start point), so comparing two machines’ values tells you nothing.');}},
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Tobias times a Parcel DB query that really takes 3 s, by subtracting two time-of-day readings. Halfway, NTP finds the server 5 s fast and resets it. What does Tobias’s code report?</h1>'+CSS+
+   '<div class="ck" id="t5f"></div><div class="ck-row" id="t5p"></div><button class="btn pri" id="t5go" hidden>'+L.ic('play')+'Run the query</button><span id="t5x"></span>');
+  const draw=(t,fin)=>{const f=L.$('#t5f');if(f)f.innerHTML=timingFig(t,fin);};draw(0,false);
+  chipRow(L.$('#t5p'),['About 3 s','About −2 s','About 8 s'],(j,b)=>{if(pick!==null)return;pick=j;b.classList.add('sel');L.$('#t5go').hidden=false;});
+  L.$('#t5go').onclick=function(){this.remove();let k=0;
+    const step=()=>{if(!L.$('#t5f'))return;k++;const t=Math.min(3,k*0.1);draw(t,k>=30);
+      if(k<30){setTimeout(step,75);return;}
+      L.award(pick===1);L.$('#t5x').innerHTML='<span id="t5done"></span>';
+      L.sheet(pick===1?'ok':'no',pick===1?'You called it!':'It reported −2 seconds','Time-of-day: 10:00:05.0 − 10:00:07.0 = <b>−2.0 s</b>, because the reset moved the clock back mid-measurement. Monotonic: 5003 − 5000 = <b>3.0 s</b>. Measure durations with the monotonic clock.');L.done();};
+    step();};}},
 
-/* ---------- PART 2: KEEPING CLOCKS IN SYNC ---------- */
-{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',run(L){
-  L.h(L.kick('learn','Keeping clocks right is harder than it looks')+'<h1 class="q">Hardware clocks and NTP can be fickle. Tap each card.</h1>');
-  L.flips(L.card,[
-   ['Drift','Quartz runs fast or slow, more so as temperature changes. That limits accuracy even when all else works.'],
-   ['Forced reset','If a clock is too far from the NTP server, it may refuse to sync, or be reset so time jumps back or forward.'],
-   ['Blocked by a firewall','A node accidentally cut off from NTP servers may go unnoticed for a while, drifting all along.'],
-   ['Slow networks','NTP is only as good as the network delay. Over the internet, about 35 ms at best, with spikes near a second.'],
-   ['Wrong servers','Some NTP servers are off by hours. Clients ask several and ignore outliers, but you’re still trusting strangers.'],
-   ['Leap seconds','Some minutes have 59 or 61 seconds. That has crashed big systems. One fix: “smear” the extra second over a day.'],
-   ['Virtual machines','When a VM is paused so another can use the CPU, its clock seems to jump forward by tens of milliseconds.'],
-   ['Devices you don’t control','Phones and other user devices can be wildly wrong. Some users set the wrong date on purpose, for example to cheat in games.']],
-   'Very accurate clocks are possible, with GPS receivers, the Precision Time Protocol and careful monitoring. Rules for high-frequency traders demand clocks within 100 microseconds. But it takes real effort, and much can still go wrong.');}},
-{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',run(L){
-  L.h(L.kick('ex','Worked example')+'<h1 class="q">How far can a clock drift between syncs?</h1>');
-  L.beats(L.card,[
-   ['The rate','Google assumes its servers’ clocks drift by up to <b>200 ppm</b> (parts per million). That’s 0.0002 seconds of error for every second that passes.'],
-   ['Synced every 30 s','30 × 0.0002 = 0.006 s. Up to <b>6 ms</b> off by the time the next sync comes.'],
-   ['Synced once a day','86,400 seconds in a day × 0.0002 ≈ <b>17 seconds</b> off.'],
-   ['At Otterpost','Suppose a node in the courier location store is firewalled off from NTP and nobody notices for a week. At that rate it could be <b>about two minutes</b> off, while everything else seems to work.']],
-   'Drift adds up quietly. How often you sync, and whether syncing is actually working, decides how wrong a clock can get.');}},
+/* ---------- PART 2: DRIFT AND SYNC ---------- */
+{part:1,src:'Chapter 8 · Unreliable Clocks',run(L){
+  L.h(L.kick('learn','Where a machine’s time comes from')+'<h1 class="q">Every machine counts its own time</h1>'+CSS+'<div class="ck">'+figNTP()+'</div>'+
+   L.prose('A computer’s clock is a quartz crystal that runs slightly fast or slow. '+L.g('ntp','NTP')+' lets it correct itself from a group of time servers, which get their time from a better source such as a GPS receiver.'));
+  L.done();}},
+{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',
+ solve:async L=>{setRange(L,'e7',6);await L.sleep(40);L.$('#s7').click();await waitFor(L,'#e7done',4000);},
+ run(L){
+  const E=[0,1,30,300,3600,21600,86400],EL=['just synced','1 s','30 s','5 min','1 hour','6 hours','1 day'];
+  let ppm=200,idx=2,offA=0,offC=0,seenDay=false,synced=false,anim=false,jump='',fin=false;
+  L.h(L.kick('ex','Try it live · drifting clocks')+'<h1 class="q">Clocks drift between syncs. Let time pass, then sync with NTP.</h1>'+CSS+
+   tasks(L,'t7',['Let a whole day pass with no sync','Sync with NTP and watch the clocks jump'])+'<div class="ck" id="f7"></div><div class="ck-cap" id="r7"></div>'+
+   rng('d7','Drift (ppm)',0,400,200,50)+rng('e7','Since last sync',0,6,2,1)+'<div class="ck-row"><button class="btn pri" id="s7">'+L.ic('cycle')+'Sync with NTP</button></div>');
+  const calc=()=>{offA=ppm*E[idx]/1000;offC=-offA/2;};
+  function draw(half){const m=Math.max(Math.abs(offA),Math.abs(offC));half=half||pickHalf(Math.max(m,7));const st=pickStep(half*2/6);
+    L.$('#f7').innerHTML=rulers({v0:T0-half,v1:T0+half,step:st,needle:T0,rows:[trueRow(),{name:'Node A · runs fast',col:'var(--h1)',off:offA,read:fmtOff(offA)},{name:'Node C · runs slow',col:'var(--h2)',off:offC,read:fmtOff(offC)}]});
+    L.$('#r7').innerHTML='Node A is <b>'+fmtOff(offA)+'</b> off, node C <b>'+fmtOff(offC)+'</b>: they disagree by <b>'+fmtDur(offA-offC)+'</b>. <span class="small">Ruler window ±'+fmtDur(half)+'.</span>'+(jump?'<br><span style="color:var(--no)">'+jump+'</span>':'');}
+  function upd(){ppm=+L.$('#d7').value;idx=+L.$('#e7').value;L.$('#d7-v').textContent=ppm+' ppm';L.$('#e7-v').textContent=EL[idx];calc();jump='';
+    if(idx===6&&ppm>0){seenDay=true;tick(L,'t7',0);}draw();check();}
+  function check(){if(fin||!seenDay||!synced)return;fin=true;L.$('#r7').insertAdjacentHTML('beforeend','<span id="e7done"></span>');
+    L.sheet('info','Drift adds up, and syncing jumps','At 200 ppm a clock drifts about <b>6 ms</b> if it resyncs every 30 s, and about <b>17 s</b> with one sync a day. When NTP corrects a big gap, the time-of-day clock can jump, even backward. How often you sync, and whether syncing works at all, decides how wrong a clock gets.');L.done();}
+  L.$('#d7').oninput=upd;L.$('#e7').oninput=upd;
+  L.$('#s7').onclick=()=>{if(anim)return;anim=true;const a0=offA,c0=offC,half=pickHalf(Math.max(Math.abs(a0),Math.abs(c0),7));let f=0;
+    const fr=()=>{if(!L.$('#f7'))return;f++;offA=a0*(1-f/8);offC=c0*(1-f/8);draw(half);
+      if(f<8){setTimeout(fr,60);return;}
+      anim=false;offA=0;offC=0;L.$('#e7').value=0;idx=0;L.$('#e7-v').textContent=EL[0];
+      jump=Math.abs(a0)>0.0005?'NTP pulled node A back '+fmtDur(a0)+' and node C forward '+fmtDur(c0)+'. A time-of-day clock corrected like this jumps.':'Nothing to fix: the clocks were already in sync.';
+      if(Math.abs(a0)>=100){synced=true;tick(L,'t7',1);}draw();check();};fr();};
+  upd();}},
 {part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias wants to order scan events by the time on each courier’s phone. Which clock should Otterpost trust least?</h1>');
-  L.mc(L.card,['A server clock synced with NTP','A courier’s own phone clock','A GPS receiver in the datacenter'],1,
-   'Devices you don’t control can be set to any time, even wildly in the past or future. The book’s advice: you probably can’t trust them at all.',
-   'The phone is the weakest link. Couriers can set its clock to anything, by accident or on purpose. NTP-synced servers and GPS receivers are far better.');}},
-{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',pts:1,run(L){
-  L.h(L.kick('pr','Do the maths')+'<h1 class="q">A support search server re-syncs with NTP once an hour. At 200 ppm of drift, roughly how far off can it get just before a sync?</h1>');
+  L.h(L.kick('try','Do the maths')+'<h1 class="q">A support search server re-syncs with NTP once an hour. At 200 ppm of drift, roughly how far off can it get just before a sync?</h1>');
   L.mc(L.card,['About 7 seconds','About 0.7 milliseconds','About 0.7 seconds'],2,
-   '3,600 seconds × 0.0002 = 0.72 seconds. Long enough to put events from two servers in the wrong order.',
-   'An hour is 3,600 seconds. 3,600 × 0.0002 = 0.72, so about 0.7 seconds.');}},
+   '3,600 seconds × 0.0002 = 0.72 seconds. Plenty to put events from two servers in the wrong order.',
+   'An hour is 3,600 seconds, and 200 ppm is 0.0002 s of error per second. 3,600 × 0.0002 = 0.72, so about 0.7 seconds.');}},
+{part:1,src:'Chapter 8 · Clock Synchronization and Accuracy',
+ solve:async L=>{for(const j of [0,1,3,5]){L.$('#p9').children[j].click();await L.sleep(30);}await waitFor(L,'#p9done',2000);},
+ run(L){
+  const tried=new Set();let fin=false;
+  const P=[
+   {b:'Firewall blocks NTP',rows:[['A',362880],['C',0]],half:5e5,extra:'<span class="chip static ok">'+L.ic('check')+'Node A health checks: all green</span>',
+    cap:'<b>Node A can’t reach NTP for three weeks</b> (illustrative). At 200 ppm it drifts about 6 minutes, yet nothing alarms. Such mistakes do happen, and can go unnoticed.'},
+   {b:'Internet NTP',rows:[['A',2,' · local NTP'],['C',35,' · internet NTP']],half:50,
+    cap:'<b>Node C syncs over the internet.</b> About 35 ms of error is the best seen there. Delay spikes push it to around a second, and the client may give up. Node A syncs locally each minute: still a few ms off.'},
+   {b:'Wrong NTP server',rows:[['A',0]],half:10,extra:'<span class="chip static ok">Server 1: 10:00:42</span><span class="chip static ok">Server 2: 10:00:42</span><span class="chip static no">Server 3: 13:00:42 · ignored</span>',
+    cap:'<b>One of node A’s three NTP servers is 3 hours off.</b> The client asks several and ignores the outlier, so node A is fine. Still, you’re trusting strangers on the internet.'},
+   {b:'Leap second',leap:true,cap:'<b>This minute has 61 seconds.</b> Software that assumes 60 has crashed large systems. One fix: NTP servers “smear” the extra second over a day, though servers differ.'},
+   {b:'VM paused',rows:[['A',0],['C',40]],half:50,extra:'<span class="chip static no">'+L.ic('alert')+'Node C’s clock jumped forward 40 ms</span>',
+    cap:'<b>Node C is a virtual machine sharing a CPU core.</b> It was paused for tens of milliseconds while another VM ran. To the app, the clock suddenly jumped forward.'},
+   {b:'Ravi’s phone',rows:[['A',0],['P',-19043600]],half:6e5,
+    cap:'<b>Ravi’s phone is hours off, and its date could be anything.</b> Don’t trust clocks on devices you don’t control. Some people set wrong dates on purpose, for example to dodge time limits in games.'},
+   {b:'GPS + PTP',rows:[['A',0.04],['C',-0.03]],half:0.2,step:0.1,
+    cap:'<b>Trading-grade time.</b> Draft MiFID II rules require trading firms to stay within 100 µs of UTC. GPS receivers, the Precision Time Protocol and careful monitoring can do it, with real effort.'}];
+  const NM={A:['Node A','var(--h1)'],C:['Node C','var(--h2)'],P:['Ravi’s phone','var(--h4)']};
+  L.h(L.kick('ex','Edge cases · where syncing breaks')+'<h1 class="q">Clock sync fails in quiet ways. Try at least four of them.</h1>'+CSS+
+   '<div class="ck" id="f9"></div><div class="ck-row" id="x9"></div><div class="ck-cap" id="c9">Every clock here is synced. Pick a case below.</div><div class="ck-row" id="p9"></div><p class="small" id="n9">Cases tried: 0 of 4</p>');
+  function base(){L.$('#f9').innerHTML=rulers({v0:T0-10,v1:T0+10,step:2,needle:T0,rows:[trueRow(),{name:'Node A',col:'var(--h1)',off:0,read:'±0'},{name:'Node C',col:'var(--h2)',off:0,read:'±0'}]});}
+  function show(p){
+    if(p.leap){const T=['23:59:58','23:59:59','23:59:60','00:00:00','00:00:01'],A=['23:59:58','23:59:59','00:00:00','00:00:01','00:00:02'];
+      L.$('#f9').innerHTML=rulers({v0:-400,v1:4400,step:1000,lab:1,needle:2500,rows:[Object.assign(trueRow('a 61-second minute'),{fmt:r=>T[Math.round(r/1000)]||'',hot:r=>Math.round(r/1000)===2}),
+        {name:'Node A',col:'var(--h1)',off:0,read:'ignores it: now 1 s ahead',fmt:r=>A[Math.round(r/1000)]||'',hot:r=>Math.round(r/1000)>=2}]});
+      L.$('#x9').innerHTML='';}
+    else{const half=p.half,st=p.step||pickStep(half*2/6);
+      L.$('#f9').innerHTML=rulers({v0:T0-half,v1:T0+half,step:st,needle:T0,rows:[trueRow()].concat(p.rows.map(r=>({name:NM[r[0]][0]+(r[2]||''),col:NM[r[0]][1],off:r[1],read:(Math.abs(r[1])>36e5?'reads '+fmtFull(T0+r[1],0)+' · ':'')+fmtOff(r[1])})))});
+      L.$('#x9').innerHTML=p.extra||'';}
+    L.$('#c9').innerHTML=p.cap;}
+  chipRow(L.$('#p9'),P.map(p=>p.b),(j,b)=>{selOnly(L.$('#p9'),b);tried.add(j);show(P[j]);L.$('#n9').textContent='Cases tried: '+Math.min(tried.size,4)+' of 4'+(tried.size>4?' (+'+(tried.size-4)+' more)':'');
+    if(tried.size>=4&&!fin){fin=true;L.$('#n9').insertAdjacentHTML('afterend','<span id="p9done"></span>');
+      L.sheet('info','Clocks fail quietly','Drift, blocked NTP, slow networks, wrong servers, leap seconds, paused VMs and untrusted devices all bend the time a machine reports, usually without any error. Very accurate time is possible, but only with real investment and monitoring.');L.done();}});
+  base();}},
+{part:1,src:'Chapter 8 · Relying on Synchronized Clocks',run(L){
+  L.h(L.kick('learn','A quiet kind of broken')+'<h1 class="q">A bad clock doesn’t crash anything. That’s the problem.</h1>'+CSS+'<div class="ck">'+figSilent()+'</div>'+
+   L.prose('A broken clock usually causes silent, subtle data loss, not a crash. So if your software relies on synced clocks, <b>monitor every machine’s clock offset</b>, and declare dead any node that drifts too far.'));
+  L.done();}},
 
-/* ---------- PART 3: TRUSTING TIMESTAMPS ---------- */
-{part:2,src:'Chapter 8 · Relying on Synchronized Clocks',run(L){
-  L.h(L.kick('learn','A quiet kind of broken')+'<h1 class="q">A bad clock doesn’t crash anything. That’s the problem.</h1>'+
-   L.prose('A day may not have exactly 86,400 seconds, time-of-day clocks can move backward, and two nodes can disagree about the time. Clocks work well most of the time, but like networks, robust software must expect them to be wrong.')+
-   L.lanes([['x','Broken network card','The machine stops working. Alarms fire and someone fixes it quickly.',4],
-            ['clock','Broken clock','Everything seems fine while the clock drifts further away. Software that relies on it loses data quietly.',3]])+
-   L.note('If you use software that needs synced clocks, <b>monitor the clock offsets</b> between all machines. Declare any node that drifts too far dead and remove it from the cluster.','eye'));
+/* ---------- PART 3: ORDERING BY TIMESTAMP ---------- */
+{part:2,src:'Chapter 8 · Timestamps for ordering events',run(L){
+  L.h(L.kick('learn','Newest stamp wins')+'<h1 class="q">Last write wins trusts each node’s clock</h1>'+CSS+'<div class="ck">'+figLWW()+'</div>'+
+   L.prose(L.g('lww','Last write wins')+' tags each write with the time-of-day clock of the node where it started; replicas keep the highest stamp. Multi-leader and leaderless stores such as Cassandra and Riak use it. It works only while clocks agree.'));
   L.done();}},
 {part:2,src:'Chapter 8 · Timestamps for ordering events',pts:1,
- solve:async L=>{L.$('#lp').children[0].click();L.$('#rep').click();},
+ solve:async L=>{L.$('#l12p').children[0].click();await waitFor(L,'#l12done',4000);},
  run(L){
-  let p=null,skew=3;
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Courier location store. Node A sets van 12 to “loading”. Two milliseconds later, dispatch reads that and sets it to “departed” via node C. Node A’s clock is just 3 ms fast. Which status does node B keep?</h1>'+
-   '<p class="small">Each write carries the time on the node where it started. Node B uses '+L.g('lww','last write wins')+'.</p><div id="lp"></div><div id="lw" hidden><button class="btn pri" id="rep">'+L.ic('play')+'Replicate to node B</button></div><div id="lr"></div><div id="ls"></div>');
-  ['“Loading”, the earlier write','“Departed”, the later write'].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#lw').hidden=false;};L.$('#lp').appendChild(b);});
-  const show=()=>{const a=42000+skew,c=42002,keep=a>c?'loading':'departed';
-    L.$('#lr').innerHTML='<div style="background:var(--soft);border-radius:14px;padding:12px;margin-top:10px;font-size:14.5px;line-height:1.6">'+
-     'Node A: “loading”, stamped <b>42.'+String(a).slice(2)+' s</b><br>Node C: “departed”, stamped <b>42.'+String(c).slice(2)+' s</b><br>Node B keeps: <span class="chip static '+(keep==='departed'?'ok':'no')+'" style="margin:4px 0 0">'+(keep==='departed'?L.ic('check')+'departed':L.ic('x')+'loading. The later write is gone')+'</span></div>';};
-  L.$('#rep').onclick=function(){this.remove();show();L.award(p===0);
-    const s=L.$('#ls');s.innerHTML='<p class="small" style="margin-top:12px">Try other amounts of skew for node A:</p>';
-    [0,1,3,10].forEach(v=>{const b=document.createElement('button');b.className='chip'+(v===3?' sel':'');b.textContent=v+' ms fast';b.onclick=()=>{skew=v;[...s.querySelectorAll('.chip')].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');show();};s.appendChild(b);});
-    L.sheet(p===0?'ok':'no',p===0?'You called it!':'Node B kept “loading”','The later write had the <i>lower</i> timestamp, so last write wins threw it away, with no error anywhere. Any skew bigger than the 2 ms gap does this. Real NTP setups rarely do better than a few milliseconds.');L.done();};}},
+  let pick=null,skew=3,phase=0;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Node A sets van 12 to “loading”. 2 ms later, node C sets “departed”. Node A’s clock is 3 ms fast. Which does node B keep?</h1>'+CSS+
+   '<div class="ck" id="l12f"></div><div class="ck-row" id="l12p"></div><div id="l12s"></div><div id="l12r"></div>');
+  function draw(){const tA=T0+1,tC=T0+3,sA=tA+skew,sC=tC;
+    const rows=[trueRow(),{name:'Node C',col:'var(--h2)',off:0,read:phase>=1?'stamps “departed” '+fmtR(sC,1):''},{name:'Node A',col:'var(--h1)',off:skew,read:phase>=1?'stamps “loading” '+fmtR(sA,1):'+'+skew+' ms fast'}];
+    if(phase>=2)rows.push({name:'Node B sorts by stamp',col:'var(--ink)',off:0,bg:'var(--card)',stroke:'var(--line2)',read:'',extra:16});
+    L.$('#l12f').innerHTML=rulers({v0:T0-3,v1:T0+7,step:1,lab:2,rows,gaps:{3:26},pad:4,knock:true,aria:'True time, node C and node A rulers. Lines connect each write’s real moment to its stamp.',
+      under:(X,ys)=>{let s='';if(phase>=1){s+='<line x1="'+X(tC)+'" y1="'+(ys[0]+22)+'" x2="'+X(tC)+'" y2="'+(ys[1]+22)+'" style="stroke:var(--h2);stroke-width:2;stroke-dasharray:4 3"/>';
+        s+='<line x1="'+X(tA)+'" y1="'+(ys[0]+22)+'" x2="'+X(tA)+'" y2="'+(ys[2]+22)+'" style="stroke:var(--h1);stroke-width:2;stroke-dasharray:4 3"/>';}
+        if(phase>=2){s+='<line x1="'+X(tC)+'" y1="'+(ys[1]+46)+'" x2="'+X(sC)+'" y2="'+(ys[3]+22)+'" style="stroke:var(--h2);stroke-width:3"/>';
+          s+='<line x1="'+X(tA)+'" y1="'+(ys[2]+46)+'" x2="'+X(sA)+'" y2="'+(ys[3]+22)+'" style="stroke:var(--h1);stroke-width:3"/>';}return s;},
+      over:(X,ys)=>{let s='';const dot=(x,y,c)=>'<circle cx="'+x.toFixed(1)+'" cy="'+y+'" r="6.5" style="fill:'+c+';stroke:var(--card);stroke-width:2"/>';
+        s+=dot(X(tA),ys[0]+22,'var(--h1)')+dot(X(tC),ys[0]+22,'var(--h2)')+tx(X(tA),ys[0]+12,'loading',B('var(--h1)',12)+';text-anchor:middle')+tx(X(tC),ys[0]+12,'departed',B('var(--h2)',12)+';text-anchor:middle');
+        if(phase>=1)s+=dot(X(tC),ys[1]+22,'var(--h2)')+dot(X(tA),ys[2]+22,'var(--h1)');
+        if(phase>=2){const xa=X(sA),xc=X(sC),y=ys[3]+22,tie=sA===sC;s+=dot(xc,y,'var(--h2)')+dot(xa,y,'var(--h1)');
+          const ly=ys[3]+62;if(tie)s+=tx(xa,ly,'tie!',B('var(--h3)',12)+';text-anchor:middle');
+          else{const lo=sA<sC,lx=lo?xa:xc,hx=lo?xc:xa;s+=tx(lx-4,ly,(lo?'loading':'departed')+' ✗',B('var(--no)',12)+';text-anchor:end')+tx(hx+4,ly,(lo?'departed':'loading')+' kept',B(lo?'var(--ok)':'var(--no)',12));}}
+        return s;}});
+    const r=L.$('#l12r');if(phase<3){r.innerHTML='';return;}
+    const tie=sA===sC,lost=sA>sC;
+    r.innerHTML='<div class="ck-out '+(tie?'':lost?'no':'ok')+'">'+(tie?'<b>A tie</b> at '+fmtR(sC,1)+'. A random tiebreaker decides, so the later write may be lost.':lost?'<b>Node B keeps “loading”</b> ('+fmtR(sA,1)+'). “Departed” ('+fmtR(sC,1)+') is dropped, and no error is reported anywhere.':'<b>Node B keeps “departed”</b>: the later write also has the higher stamp. The lines don’t cross.')+'</div>';}
+  draw();
+  chipRow(L.$('#l12p'),['“Loading”, the earlier write','“Departed”, the later write'],(j,b)=>{if(pick!==null)return;pick=j;b.classList.add('sel');
+    const go=k=>{if(!L.$('#l12f'))return;phase=k;draw();if(k<3){setTimeout(()=>go(k+1),550);return;}
+      L.award(pick===0);
+      L.$('#l12s').innerHTML=rng('l12k','Node A’s clock',0,5,3,1);L.$('#l12k-v').textContent='+3 ms';
+      L.$('#l12k').oninput=e=>{skew=+e.target.value;L.$('#l12k-v').textContent='+'+skew+' ms';draw();};
+      L.$('#l12r').insertAdjacentHTML('afterend','<span id="l12done"></span>');
+      L.sheet(pick===0?'ok':'no',pick===0?'You called it!':'Node B kept “loading”','The later write got the <i>lower</i> stamp, so last write wins threw it away silently. Look at the crossing lines: real order and stamp order disagree. Drag node A’s clock: any skew above the 2 ms gap flips the order. The book’s version: x = 1 at 42.004 s beat x = 2 at 42.003 s.');L.done();};
+    go(1);});}},
 {part:2,src:'Chapter 8 · Timestamps for ordering events',run(L){
-  L.h(L.kick('learn','Why “newest timestamp wins” is risky')+'<h1 class="q">Last write wins is common, and it has three built-in problems</h1>'+
-   L.prose('Databases with multi-leader or leaderless replication, such as Cassandra and Riak, often resolve conflicts this way. Stamping on the client instead of the server doesn’t fix it.')+
-   L.list([['Writes vanish silently','A node with a slow clock can’t overwrite values from a node with a fast clock until the gap has passed. Any amount of data can be dropped, with no error reported.'],
-     ['It can’t see cause and effect','It can’t tell a write that came straight after another from two truly concurrent writes. That needs extra tracking, such as version vectors.'],
-     ['Ties happen','Two nodes can produce the same millisecond timestamp. A random tie-breaker settles it, but can also break cause and effect.']],4)+
-   L.prose('Better NTP won’t save it: NTP’s own accuracy is limited by network round-trip times, and ordering correctly would need a clock far more accurate than those network delays. A '+L.g('logical-clock','logical clock')+', a counter rather than a quartz crystal, is a safer way to order events. A later lesson covers it.'));
+  L.h(L.kick('learn','Why “newest stamp wins” is risky')+'<h1 class="q">Last write wins has three built-in problems</h1>'+CSS+'<div class="ck">'+figLWWProblems()+'</div>'+
+   L.prose('Stamping on the client instead of the server fixes none of them. Telling “B built on A” from “truly concurrent” needs extra causality tracking, such as version vectors.'));
   L.done();}},
-{part:2,src:'Chapter 8 · Relying on Synchronized Clocks',pts:5,run(L){
+{part:2,src:'Chapter 8 · Timestamps for ordering events',
+ solve:async L=>{setRange(L,'k14',2);await waitFor(L,'#k14done',2000);},
+ run(L){
+  let d=1,k=0,fin=false;
+  L.h(L.kick('ex','Try it live · can better NTP fix it?')+'<h1 class="q">Node A sends a scan event to node B. Make it arrive before it was sent.</h1>'+CSS+
+   '<div class="ck" id="f14"></div><div id="o14"></div>'+rng('d14','Network delay',0.2,2,1,0.1)+rng('k14','Node B’s clock behind by',0,3,0,0.1));
+  function draw(){const ts=T0+100,ta=ts+d,sent=ts,recv=ta-k;
+    L.$('#f14').innerHTML=rulers({v0:T0+98,v1:T0+104,step:1,lab:1,knock:true,aria:'True time, sender and receiver rulers, with the message as a slanted arrow',
+      rows:[trueRow(),{name:'Node A sends',col:'var(--h1)',off:0,read:'sent at '+(sent/1000%60).toFixed(4)},{name:'Node B receives',col:'var(--h2)',off:-k,read:'received at '+(recv/1000%60).toFixed(4)}],
+      over:(X,ys)=>arw(X(ts),ys[1]+31,X(ta),ys[2]+31,'var(--pri)',2.6)+'<circle cx="'+X(ts).toFixed(1)+'" cy="'+(ys[1]+31)+'" r="5" style="fill:var(--pri)"/>'});
+    const bad=recv<sent-1e-9,tie=Math.abs(recv-sent)<1e-9;
+    L.$('#o14').innerHTML='<div class="ck-out '+(bad?'no':tie?'':'ok')+'">'+(bad?'<b>Received '+fmtDur(sent-recv)+' before it was sent?</b> Impossible, but that’s what the stamps say: node B’s clock is behind by more than the network delay.':tie?'<b>Same stamp</b> for sending and receiving.':'Stamps look right: received '+fmtDur(recv-sent)+' after sending.')+'</div>';
+    if(bad&&!fin){fin=true;L.$('#o14').insertAdjacentHTML('beforeend','<span id="k14done"></span>');
+      L.sheet('info','Clocks would need to beat the network','To order events correctly, clocks must be far more accurate than network delays. But NTP’s own accuracy is limited by network round trips, so it can’t get there. '+L.g('logical-clock','Logical clocks')+', counters that only track before and after, are a safer way to order events. A later lesson covers them.');L.done();}}
+  function upd(){d=+L.$('#d14').value;k=+L.$('#k14').value;L.$('#d14-v').textContent=d.toFixed(1)+' ms';L.$('#k14-v').textContent=k.toFixed(1)+' ms';draw();}
+  L.$('#d14').oninput=upd;L.$('#k14').oninput=upd;upd();}},
+{part:2,src:'Chapter 8 · Relying on Synchronized Clocks',pts:6,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Sound or risky?',['Sound','Risky'],[
    ['The merchant API measures its timeouts with the monotonic clock.',0,'Durations on one machine are exactly what the monotonic clock is for.'],
    ['The courier location store settles conflicting writes by keeping the highest timestamp.',1,'Last write wins can silently drop the later write if clocks are skewed.'],
    ['A rate limiter works out “seconds since the last request” by subtracting time-of-day readings.',1,'If NTP resets the clock backward, that gap can come out negative or wrong.'],
+   ['Kwame compares two Parcel DB servers’ monotonic readings to see whose clock is ahead.',1,'A monotonic value means nothing on its own, so two machines’ values can’t be compared.'],
    ['The courier app orders a parcel’s scans by the courier phones’ own clocks.',1,'Phone clocks can be wildly off, and couriers can even change them.'],
    ['Kwame alerts on clock offsets and removes any Parcel DB node that drifts too far.',0,'That’s the book’s advice for any software that relies on synced clocks.']]);}},
 {part:2,src:'Chapter 8 · Clock readings have a confidence interval',run(L){
-  L.h(L.kick('learn','A reading is really a range')+'<h1 class="q">A clock can show nanoseconds without being accurate to nanoseconds</h1>'+
-   L.prose('Even syncing with a local NTP server every minute, quartz drift can leave a clock several milliseconds off. Over the public internet, tens of milliseconds is about the best you can do, and congestion can push the error past 100 ms.')+
-   L.quote('it doesn’t make sense to think of a clock reading as a point in time','Martin Kleppmann, chapter 8')+
-   L.prose('Think of it as a <b>confidence interval</b>: “95% sure it’s between 10.3 and 10.5 seconds past the minute.” The uncertainty is roughly drift since the last sync, plus the server’s own error, plus the round trip to it.')+
-   L.note('Most systems hide this: an ordinary call for the time doesn’t say whether it’s good to 5 milliseconds or 5 years. Google’s <b>TrueTime</b> API in Spanner is an exception. It returns two values, [earliest, latest], and the true time is somewhere in between.','info'));
+  L.h(L.kick('learn','A reading is really a range')+'<h1 class="q">A clock can show microseconds without being accurate to them</h1>'+CSS+'<div class="ck">'+figConfidence()+'</div>'+
+   L.prose('Even syncing locally every minute leaves milliseconds of error; over the internet, tens of milliseconds. So treat a reading as a '+L.g('conf-interval','confidence interval')+'. Most clock APIs hide it; Spanner’s TrueTime is the exception.'));
   L.done();}},
-{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',run(L){
-  L.h(L.kick('ex','How Spanner uses the range')+'<h1 class="q">Can clock timestamps put transactions in order across datacenters?</h1>');
-  L.beats(L.card,[
-   ['The need','Snapshot isolation (from the transactions lessons) needs transaction IDs that go up: a write with a higher ID than your snapshot is invisible to you. On one node, a simple counter does it.'],
-   ['The bottleneck','Across many partitions and datacenters, one shared counter needs coordination. With lots of small, fast transactions, it becomes a bottleneck.'],
-   ['The idea','Use synced clock timestamps as transaction IDs instead. Later transaction, higher timestamp. The catch: clocks are uncertain.'],
-   ['The trick','Compare ranges. If A’s range ends before B’s range starts, B definitely came after A. Only overlapping ranges leave the order in doubt.'],
-   ['The wait','Before committing a read-write transaction, Spanner deliberately <b>waits for the length of its uncertainty range</b>, so any later transaction’s range can’t overlap it.'],
-   ['The cost','A wider range means a longer wait. So Google puts a GPS receiver or atomic clock in each datacenter, keeping uncertainty to about 7 ms. When the book was written, mainstream databases outside Google didn’t do this.']],
-   'Clocks can order events safely only if you know their uncertainty and are willing to wait it out.');}},
-{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Transaction A’s timestamp range is [10.30, 10.37] s. Transaction B’s is [10.35, 10.42] s. Which came first?</h1>');
-  L.mc(L.card,['A, because its range starts earlier','B, because its range ends later','Can’t tell, since the ranges overlap'],2,
-   'Between 10.35 and 10.37, either could be first. Only ranges that don’t overlap give a certain order, which is why Spanner waits.',
-   'Where a range starts or ends doesn’t settle it. The two overlap (10.35 to 10.37), so either could have happened first.');}},
+{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',pts:3,
+ solve:async L=>{for(const [i,j] of [[0,0],[1,2],[2,1]]){L.$('#q17-'+i).children[j].click();await L.sleep(30);}},
+ run(L){
+  const P=[[10.30,10.34,10.36,10.41,0],[10.30,10.37,10.35,10.42,2],[10.48,10.55,10.40,10.46,1]];let n=0;
+  const W=['A’s range ends (10.34) before B’s starts (10.36): A certainly came first.','The ranges overlap from 10.35 to 10.37, so either could be first.','B’s range ends (10.46) before A’s starts (10.48): B certainly came first.'];
+  L.h(L.kick('try','Which came first?')+'<h1 class="q">Each transaction got a time range, not a point. For each pair, which came first?</h1>'+CSS+P.map((p,i)=>'<div class="ck-pair"><div class="ck" id="g17-'+i+'"></div><div class="ck-row" id="q17-'+i+'"></div><div id="w17-'+i+'"></div></div>').join(''));
+  const fmt=v=>(v/100).toFixed(2);
+  P.forEach((p,i)=>{L.$('#g17-'+i).innerHTML=bandsFig({lo:1026,hi:1058,step:5,labEvery:2,fmt,rows:[{name:'A ['+p[0].toFixed(2)+', '+p[1].toFixed(2)+'] s',col:'var(--h1)',a:p[0]*100,b:p[1]*100},{name:'B ['+p[2].toFixed(2)+', '+p[3].toFixed(2)+'] s',col:'var(--h2)',a:p[2]*100,b:p[3]*100}],aria:'Pair '+(i+1)+': two time ranges on a seconds axis'});
+    let done=false;chipRow(L.$('#q17-'+i),['A first','B first','Can’t tell'],(j,b)=>{if(done)return;done=true;const ok=j===p[4];b.classList.add(ok?'ok':'no');if(!ok)L.$('#q17-'+i).children[p[4]].classList.add('ok');
+      L.award(ok);L.fb(L.$('#w17-'+i),(ok?'':'Not quite. ')+W[i],ok?'ok':'no');n++;
+      if(n===3){L.sheet('info','Only gaps give certainty','If one range ends before the other starts, the order is certain. If they overlap, nobody can say. Spanner’s trick is to make sure they never overlap.');L.done();}});});}},
+{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',
+ solve:async L=>{for(let i=0;i<4;i++){L.$('#n18').click();await L.sleep(20);}},
+ run(L){
+  let st=0;
+  const CAP=[
+   '<b>The need.</b> Snapshot isolation needs transaction IDs that go up and respect cause: if B reads A’s write, B needs the higher ID. One shared counter across datacenters becomes a bottleneck.',
+   '<b>The idea.</b> Use synced clock timestamps as IDs instead: a later transaction gets a higher stamp. That works only if clocks are accurate.',
+   '<b>The catch.</b> Each stamp is really a range. When A’s and B’s ranges overlap, nobody can say which came first.',
+   '<b>Spanner’s trick.</b> Before committing a read-write transaction, it waits for the length of its range. Any B that reads A’s write then gets a range that starts after A’s ends.',
+   '<b>The cost.</b> A wider range means a longer wait, so Google gives every datacenter its own GPS or atomic clock: about 7 ms. Mainstream databases outside Google didn’t do this when the book was written.'];
+  L.h(L.kick('ex','How Spanner uses the range')+'<h1 class="q">Can clock stamps order transactions across datacenters?</h1>'+CSS+'<div class="ck" id="f18"></div><div class="ck-dots" id="d18"></div><div class="ck-cap" id="c18"></div><button class="btn pri" id="n18">Next '+L.ic('arrow')+'</button>');
+  const fmt=v=>(v>0?'+':'')+v;
+  function fig(){
+    if(st===0){let s='';['Datacenter 1','Datacenter 2','Datacenter 3'].forEach((d,j)=>{const y=8+j*46;s+=box(14,y,104,34,'var(--soft)','var(--line2)',8)+tx(66,y+22,d,B('var(--ink)',12)+';text-anchor:middle')+arw(118,y+17,206,74,'var(--line2)',1.8);});
+      s+=box(210,50,106,48,'var(--h3-bg)','var(--h3)',10)+tx(263,70,'one counter',B('var(--h3)',12.5)+';text-anchor:middle')+tx(263,88,'next ID 1042',I12+';text-anchor:middle');
+      [0,1,2,3].forEach(j=>{s+='<circle cx="'+(186-j*12)+'" cy="'+(112+0)+'" r="4.5" style="fill:var(--no)"/>';});s+=tx(196,116,'waiting',B('var(--no)',12));
+      return '<svg viewBox="0 0 330 150" role="img" aria-label="Three datacenters all wait on one shared counter for transaction IDs.">'+s+'</svg>';}
+    if(st===1)return bandsFig({lo:-20,hi:60,step:10,fmt,unit:'ms',rows:[{name:'Txn A’s stamp',col:'var(--h1)',a:9,b:11,dot:10},{name:'Txn B’s stamp (reads A’s write)',col:'var(--h2)',a:24,b:26,dot:25}],aria:'A stamp for A, then a later stamp for B.'});
+    if(st===2)return bandsFig({lo:-20,hi:60,step:10,fmt,unit:'ms',rows:[{name:'Txn A’s range',col:'var(--h1)',a:-5,b:25},{name:'Txn B’s range',col:'var(--h2)',a:10,b:40}],overlap:[10,25],overLabel:'overlap: order unknown',aria:'The two ranges overlap.'});
+    if(st===3)return bandsFig({lo:-20,hi:60,step:10,fmt,unit:'ms',rows:[{name:'Txn A’s range',col:'var(--h1)',a:-15,b:15},{name:'Txn B’s range',col:'var(--h2)',a:15,b:45}],wait:[0,30,'wait = range width'],aria:'A waits for the width of its range, so B’s range starts after A’s ends.'});
+    return bandsFig({lo:-20,hi:60,step:10,fmt,unit:'ms',rows:[{name:'Txn A’s range (GPS-synced)',col:'var(--h1)',a:-3.5,b:3.5},{name:'Txn B’s range',col:'var(--h2)',a:3.5,b:10.5}],wait:[0,7,'wait ≈ 7 ms'],aria:'With small ranges the wait is short.'});}
+  function draw(){L.$('#f18').innerHTML=fig();L.$('#c18').innerHTML=CAP[st];L.$('#d18').innerHTML=CAP.map((c,j)=>'<i class="'+(j<=st?'on':'')+'"></i>').join('');
+    if(st===CAP.length-1){L.$('#n18').disabled=true;L.$('#n18').style.opacity=.5;L.done();}}
+  L.$('#n18').onclick=()=>{if(st<CAP.length-1){st++;draw();}};draw();}},
+{part:2,src:'Chapter 8 · Synchronized clocks for global snapshots',pts:1,
+ solve:async L=>{L.$('#s19').children[1].click();L.$('#i19').children[0].click();setRange(L,'w19',6);await L.sleep(20);L.$('#g19').click();},
+ run(L){
+  const SRC=[['Internet NTP',35],['GPS in the datacenter',1]],SYN=[['every 5 s',5],['every 30 s',30],['every hour',3600]];
+  let si=0,ii=1,w=0,first=true;
+  L.h(L.kick('pr','Challenge · wait out the uncertainty')+'<h1 class="q">Make B, which reads A’s write, always get a later range than A, with each commit waiting at most 15 ms.</h1>'+CSS+
+   '<div class="ck" id="f19"></div><div class="ck-cap" id="r19"></div>'+rng('w19','Commit wait',0,120,0,1)+
+   '<div class="ck-lbl">Time source</div><div class="ck-row" id="s19"></div><div class="ck-lbl">Sync interval (200 ppm drift)</div><div class="ck-row" id="i19"></div><button class="btn pri" id="g19">'+L.ic('check')+'Commit A, then run B</button>');
+  const h=()=>SRC[si][1]+SYN[ii][1]*0.2;
+  function draw(){const u=h(),wd=2*u,lo=-u-4,hi=Math.max(w+u,wd,18)+6;
+    L.$('#w19-v').textContent=w+' ms';
+    L.$('#r19').innerHTML='Uncertainty <b>±'+(+u.toFixed(1))+' ms</b> ('+SRC[si][1]+' from the source + '+(+(SYN[ii][1]*0.2).toFixed(1))+' drift) → each range is <b>'+(+wd.toFixed(1))+' ms</b> wide. <span class="small">Source errors are illustrative.</span>';
+    const ov=w-u<u-1e-9;
+    L.$('#f19').innerHTML=bandsFig({lo,hi,step:pickStep((hi-lo)/6),unit:'ms',fmt:v=>(v>0?'+':'')+(+v.toFixed(1)),rows:[{name:'Txn A’s range',col:'var(--h1)',a:-u,b:u},{name:'Txn B’s range',col:'var(--h2)',a:w-u,b:w+u}],
+      wait:[0,w,'wait '+w+' ms'],overlap:ov?[w-u,u]:null,overLabel:ov?'overlap: B might look older than A':'',budget:15,aria:'Txn A’s range, the commit wait, and Txn B’s range'});}
+  chipRow(L.$('#s19'),SRC.map(s=>s[0]+' (±'+s[1]+' ms)'),(j,b)=>{si=j;selOnly(L.$('#s19'),b);draw();},0);
+  chipRow(L.$('#i19'),SYN.map(s=>s[0]),(j,b)=>{ii=j;selOnly(L.$('#i19'),b);draw();},1);
+  L.$('#w19').oninput=e=>{w=+e.target.value;draw();};draw();
+  L.$('#g19').onclick=()=>{const u=h(),okOrder=w>=2*u-1e-9,okFast=w<=15,ok=okOrder&&okFast;
+    if(first){first=false;L.award(ok);}
+    if(ok){L.$('#g19').disabled=true;L.sheet('ok','Order guaranteed, wait kept short','A waited at least the width of its range, so B’s range starts after A’s ends: B’s stamp is certainly later. That’s Spanner’s commit wait. A small range keeps the wait short, which is why Google puts GPS receivers or atomic clocks in each datacenter.');L.done();}
+    else L.sheet('no',okOrder?'Too slow':'The ranges still overlap',okOrder?'The order is safe, but every commit waits '+w+' ms. Shrink the range (a closer time source, more frequent syncs) so a shorter wait is enough.':'B’s range starts before A’s ends, so B might get the earlier stamp. The wait must be at least the range width ('+(+(2*u).toFixed(1))+' ms). If that’s over 15 ms, shrink the range first.');};}},
 
 /* ---------- PART 4: PROCESS PAUSES ---------- */
 {part:3,src:'Chapter 8 · Process Pauses',run(L){
-  L.h(L.kick('learn','Leases and the gap')+'<h1 class="q">How does a leader know it is still the leader?</h1>'+
-   L.prose('Westport has one route planner, and it must be the only process writing Westport’s routes. One way: it holds a '+L.g('lease','lease')+' from the other nodes, a lock with a timeout. It renews the lease before it runs out. If the planner dies, it stops renewing, and another can take over. Its loop looks roughly like this:')+
-   '<div style="background:var(--soft);border-radius:14px;padding:12px 14px;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.7;overflow-wrap:anywhere">repeat forever:<br>&nbsp;&nbsp;req = next request<br>&nbsp;&nbsp;if lease has under 10 s left: renew it<br>&nbsp;&nbsp;if lease is still valid: write routes(req)</div>'+
-   L.list([['Clocks again','The expiry time was set by another machine, but it’s compared with this machine’s clock. If they disagree by seconds, strange things happen.'],
-           ['The gap','Even with only the local monotonic clock, the code assumes almost no time passes between checking the lease and writing. Usually true. Not always.']],4));
+  const r=leaseSim({moved:false,skew:0,pin:null,d:0});
+  L.h(L.kick('learn','Leases')+'<h1 class="q">How does Westport’s route planner know it’s still in charge?</h1>'+CSS+
+   '<div class="ck">'+codeBar({moved:false,pin:null,id:'cb20'}).replace(' · drag the pause pin',' (renews if under 10 s left)')+'</div><div class="ck">'+leaseFig(r,null,'l20')+'</div>'+
+   L.prose('A '+L.g('lease','lease')+' is a lock that expires unless renewed, so only one planner writes routes. The loop bets that its clock agrees with the lock service’s, and that almost no time passes between check and write.'));
   L.done();}},
 {part:3,src:'Chapter 8 · Process Pauses',pts:1,
- solve:async L=>{L.$('#zp').children[1].click();L.$('#zr').click();},
+ solve:async L=>{L.$('#z21').children[1].click();await waitFor(L,'#z21done',4500);},
  run(L){
-  let p=null;const E=[['0 s','Planner 1 checks its lease: 12 s left. Valid.','ok'],['0.1 s','A garbage-collection pause freezes Planner 1 mid-loop.','no'],['12 s','The lease runs out. The lock service grants it to Planner 2.',''],['13 s','Planner 2 writes fresh Westport routes.',''],['15 s','Planner 1 wakes. To it, almost no time has passed.','no'],['15 s','Planner 1 writes its stale routes. Couriers get a mix of both plans.','no']];
-  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Planner 1 has just checked its lease: 12 s left. Then a 15-second pause hits before it writes. What happens when it wakes?</h1><div id="zp"></div>'+
-   '<div id="zw" hidden><button class="btn pri" id="zr">'+L.ic('play')+'Play the timeline</button></div><div class="ladder" id="zl"></div>');
-  ['It sees the lease expired and stops','It writes routes anyway, clashing with Planner 2'].forEach((o,j)=>{const b=document.createElement('button');b.className='chip';b.textContent=o;b.onclick=()=>{if(p!==null)return;p=j;b.classList.add('sel');L.$('#zw').hidden=false;};L.$('#zp').appendChild(b);});
-  L.$('#zr').onclick=function(){this.remove();let k=0;
-    const tm=setInterval(()=>{const zl=L.$('#zl');if(!zl){clearInterval(tm);return;}const e=E[k];
-      zl.insertAdjacentHTML('beforeend',(k?'<div class="conn"></div>':'')+'<div class="rung"'+(e[2]==='no'?' style="border-color:var(--no-line)"':'')+'><small>'+e[0]+'</small>'+e[1]+'</div>');k++;
-      if(k>=E.length){clearInterval(tm);L.award(p===1);
-        L.sheet(p===1?'ok':'no',p===1?'You called it!':'It wrote anyway','Nothing told the thread it had been frozen. It already passed the lease check, so it carries straight on and writes. It would only notice on the <i>next</i> loop, too late.');L.done();}},300);};}},
+  let pick=null;const pin=pinFor(false,'between'),r=leaseSim({moved:false,skew:0,pin,d:15});
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Planner 1 checks its lease: 12 s left. Then a 15-second GC pause hits before it writes. What happens when it wakes?</h1>'+CSS+
+   '<div class="ck">'+codeBar({moved:false,pin,id:'cb21'}).replace(' · drag the pause pin',' · the pause hits here')+'</div><div class="ck" id="f21"></div><div class="ck-row" id="z21"></div><div id="o21"></div>');
+  const draw=t=>{const f=L.$('#f21');if(f)f.innerHTML=leaseFig(r,t,'l21');};draw(0);
+  chipRow(L.$('#z21'),['It sees the lease ran out and stops','It writes its routes anyway'],(j,b)=>{if(pick!==null)return;pick=j;b.classList.add('sel');let t=0;
+    const step=()=>{if(!L.$('#f21'))return;t+=0.6;draw(Math.min(t,18));if(t<18){setTimeout(step,70);return;}
+      draw(null);const o=leaseText(r);L.$('#o21').innerHTML='<div class="ck-out '+o[0]+'">'+o[1]+'</div><span id="z21done"></span>';
+      L.award(pick===1);L.sheet(pick===1?'ok':'no',pick===1?'You called it!':'It wrote anyway','Nothing told the thread it had been frozen. It had already passed the lease check, so it carried straight on and wrote. It would notice only on the <i>next</i> loop, too late. Westport now has two writers.');L.done();};step();});}},
 {part:3,src:'Chapter 8 · Process Pauses',run(L){
-  L.h(L.kick('learn','Why a process can freeze')+'<h1 class="q">A 15-second pause sounds crazy. It isn’t.</h1>'+
-   L.list([['Garbage collection','Runtimes like Java’s sometimes stop every thread to clean up memory. Such pauses have lasted minutes.'],
-     ['Virtual machines','A VM can be suspended and resumed, for example to move it live to another host, for any length of time.'],
-     ['Busy CPUs','The OS or the VM host can switch away from your thread at any line. Under heavy load, getting it back takes a while.'],
-     ['Slow disks and paging','A thread may wait on disk, sometimes unexpectedly (like loading code on first use). If memory is short, even a plain memory read can wait for disk.'],
-     ['A stop signal','Pressing Ctrl-Z, even by accident, freezes a Unix process until it’s told to continue.'],
-     ['Closed laptop lids','On user devices, execution can be suspended and resumed at any time.']],3)+
-   L.prose('Unlike threads on one machine, nodes have no shared memory, so mutexes and similar tools don’t carry over. A node must assume it can be paused at <b>any</b> point, be declared dead, and wake up unaware it was ever asleep.'));
+  L.h(L.kick('learn','Why a process can freeze')+'<h1 class="q">A 15-second pause sounds crazy. It isn’t.</h1>'+CSS+'<div class="ck">'+figPauses()+'</div>'+
+   L.prose('Any of these can stop a thread at any line and resume it unaware. Machines share no memory, so mutexes don’t carry over. A node must expect to be paused, declared dead, and wake as if nothing happened.'));
   L.done();}},
-{part:3,src:'Chapter 8 · Process Pauses',pts:1,run(L){
-  L.h(L.kick('pr','Tobias’s fix')+'<h1 class="q">Tobias moves the lease check to the line just before the planner writes routes. “Now there’s no gap.” Is the zombie-planner bug fixed?</h1>');
-  L.mc(L.card,['Yes, the check now comes right before the write','Only if the planner uses the monotonic clock','No, a pause can still land between check and write'],2,
-   'Right. However short the gap, a pause can strike inside it, and the thread won’t know. Code alone can’t prove the lease is still held at the moment of writing. The next lesson shows how the storage side can catch this.',
-   'Moving the check shrinks the gap but doesn’t close it, and the right clock doesn’t help either. A pause can hit between any two lines, and the thread can’t tell afterwards.');}},
+{part:3,src:'Chapter 8 · Process Pauses',
+ solve:async L=>{L.$('#m23').click();await L.sleep(20);L.$('#w23').children[1].click();L.$('#len23').children[2].click();await L.sleep(30);
+   L.$('#m23').click();await L.sleep(20);L.$('#k23').click();await L.sleep(20);L.$('#w23').children[0].click();await waitFor(L,'#e23done',2000);},
+ run(L){
+  const LEN=[['Page fault',0.3],['Slow disk',2],['GC',15],['VM migration',25]];
+  let moved=false,skew=0,d=15,pin=pinFor(false,'between'),fin=false,drag=false;
+  L.h(L.kick('pr','Edge cases · break the lease')+'<h1 class="q">Drag the pause pin and try both “fixes”. Can Planner 1 still write after losing its lease?</h1>'+CSS+
+   tasks(L,'t23',['Two writers, with the check moved right before the write','Two writers from a pause <i>before</i> the check (needs the clock bug)'])+
+   '<div class="ck" id="c23"></div><div class="ck" id="f23"></div><div id="o23"></div>'+
+   '<div class="ck-lbl">A “fix” and a clock bug</div><div class="ck-row"><button class="chip" id="m23">Check just before the write</button><button class="chip" id="k23">Clock 15 s behind</button></div>'+
+   '<div class="ck-lbl">Pause hits</div><div class="ck-row" id="w23"></div><div class="ck-lbl">Pause length (illustrative)</div><div class="ck-row" id="len23"></div>');
+  function draw(){const r=leaseSim({moved,skew,pin,d});
+    L.$('#c23').innerHTML=codeBar({moved,pin,id:'cb23',drag:true});L.$('#f23').innerHTML=leaseFig(r,null,'l23');
+    const o=leaseText(r);L.$('#o23').innerHTML='<div class="ck-out '+o[0]+'">'+o[1]+'</div>';
+    [...L.$('#w23').children].forEach((b,j)=>b.classList.toggle('sel',['before','between','after'][j]===r.where));
+    if(r.unsafe&&moved&&r.where==='between')tick(L,'t23',0);
+    if(r.unsafe&&r.where==='before')tick(L,'t23',1);
+    if(!fin&&L.$('#t23-0').classList.contains('done')&&L.$('#t23-1').classList.contains('done')){fin=true;L.$('#o23').insertAdjacentHTML('beforeend','<span id="e23done"></span>');
+      L.sheet('info','No code-only fix','Moving the check shrinks the gap but can’t close it: a pause can land between any two lines. And when clocks disagree by seconds, a fresh check itself gives the wrong answer. Code alone can’t prove it still holds the lease at the moment it writes. The next lesson shows how the storage side can catch this.');L.done();}}
+  chipRow(L.$('#w23'),['Before check','Between','After write'],j=>{pin=pinFor(moved,['before','between','after'][j]);draw();});
+  chipRow(L.$('#len23'),LEN.map(x=>x[0]+' · '+x[1]+' s'),(j,b)=>{d=LEN[j][1];selOnly(L.$('#len23'),b);draw();},2);
+  L.$('#m23').onclick=e=>{const where=leaseSim({moved,skew,pin,d}).where;moved=!moved;e.currentTarget.classList.toggle('sel',moved);pin=pinFor(moved,where==='none'?'between':where);draw();};
+  L.$('#k23').onclick=e=>{skew=skew?0:15;e.currentTarget.classList.toggle('sel',!!skew);draw();};
+  const host=L.$('#c23');
+  const toX=ev=>{const sv=host.querySelector('svg'),b=sv.getBoundingClientRect();return Math.max(X0+1,Math.min(X1-1,(ev.clientX-b.left)/b.width*330));};
+  host.addEventListener('pointerdown',ev=>{drag=true;try{host.setPointerCapture(ev.pointerId);}catch(e){}pin=toX(ev);draw();});
+  host.addEventListener('pointermove',ev=>{if(!drag)return;pin=toX(ev);draw();});
+  const up=()=>{drag=false;};host.addEventListener('pointerup',up);host.addEventListener('pointercancel',up);
+  host.style.touchAction='none';
+  draw();}},
 {part:3,src:'Chapter 8 · Response time guarantees',run(L){
-  L.h(L.kick('learn','Can we just stop the pauses?')+'<h1 class="q">Yes, at great cost. Most servers settle for less.</h1>'+
-   L.lanes([['shield','Hard real-time','Systems that control aircraft, robots or cars must respond by a deadline, every time. That needs a real-time OS, documented worst-case timings, limited memory allocation and huge amounts of testing. Expensive, restrictive, and it may even handle less work overall.',4],
-            ['cycle','Limit the damage','If the runtime warns a GC is coming, stop sending that node requests, let it finish its work, then collect: a planned mini-outage. Or collect only short-lived objects and restart nodes one at a time before a big collection is needed.',2]])+
-   L.prose('On the web, “real-time” usually just means pushing data quickly to users, with no hard deadlines. For most server-side systems, true real-time guarantees aren’t worth the cost, so they live with pauses and clock trouble.'));
+  L.h(L.kick('learn','Can we just stop the pauses?')+'<h1 class="q">Yes, at great cost. Most servers settle for less.</h1>'+CSS+'<div class="ck">'+figRealtime()+'</div>'+
+   L.prose('Most servers can’t justify real-time guarantees, so they live with pauses and soften '+L.g('gc-pause','GC pauses')+': treat each as a brief planned outage, or collect only short-lived objects and restart nodes before a full collection. (On the web, “real-time” is looser.)'));
   L.done();}},
 {part:3,src:'Chapter 8 · Limiting the impact of garbage collection',pts:4,run(L){
   L.h('<div id="qk"></div>');
@@ -231,7 +665,8 @@ Course.lesson({
    ['Booking servers slowly pile up long-lived objects until a huge full collection hits every few days.',2,'Collect only the short-lived objects, and restart each node in turn before a full collection is needed.'],
    ['The automatic braking controller in an Otterpost van.',0,'A pause here is a safety incident, not just a slow page.']]);}},
 {part:3,src:'Chapter 8 · Process Pauses',pts:1,run(L){
-  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence states the lesson of process pauses.</h1>');
+  L.h(L.kick('pr','Build it yourself')+'<h1 class="q">Tap each piece until the sentence states the lesson of process pauses.</h1>'+CSS+
+   '<div class="ck">'+codeBar({moved:false,pin:pinFor(false,'between'),id:'cb26'}).replace(' · drag the pause pin',' · a pause can hit any line')+'</div><div class="ck">'+figWake()+'</div>');
   L.sentence(L.card,[['A node can be paused','A node is only paused'],['only between requests','at any point in its code'],['so checking a lease','so renewing a lease'],['guarantees nobody else writes','can’t prove it holds it when it acts']],[0,1,0,1],
    [['Pauses can strike any node, not just a special few.'],['A pause can land in the middle of a function, even between two lines.'],['Renewing has the same problem: the pause can come right after.'],['Nothing guarantees that. The lease may expire during a pause.']],
    'A node must assume it may freeze anywhere, be declared dead, and wake up unaware. That’s why the next lesson asks who decides what’s true.');}}

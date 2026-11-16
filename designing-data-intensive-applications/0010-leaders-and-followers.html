@@ -13,8 +13,347 @@
 <script src="../assets/course.js"></script>
 <script src="course-data.js"></script>
 <script>
+/* =====================================================================
+   Lesson 0010 only. Signature interactive: the LOG-POSITION RACE TRACK.
+   The leader’s replication log is a numbered track of bookings (B1, B2…).
+   Each follower is a runner on its own lane, standing at the next entry it
+   still needs. Green cells = the merchant was told “booked”.
+   Time moves in 1-second ticks, one booking per tick. Delays are illustrative.
+   Second, smaller interactive: the replication-log format lens (part 4).
+   ===================================================================== */
+const NS='http://www.w3.org/2000/svg';
+const SV=310,CW=25.5,X0=78,RH=38,WIN=9;
+const RT_COL={W:'var(--h2)',E:'var(--h4)',N:'var(--h3)'};
+const RT_NAME={W:'Westport',E:'Eastvale',N:'Nordhaven'};
+/* cell look: fill, stroke, text, dash */
+const CELL={
+  ok:['var(--ok-bg)','var(--ok-line)','var(--ok)',''],
+  pend:['var(--h3-bg)','var(--h3)','var(--h3)','3 2'],
+  lostc:['var(--no-bg)','var(--no)','var(--no)',''],
+  lost:['var(--soft2)','var(--line2)','var(--muted)','3 2'],
+  have:['var(--pri-bg)','var(--pri)','var(--pri-deep)',''],
+  new:['var(--pri)','var(--pri)','var(--pri-ink)',''],
+  clash:['var(--no-bg)','var(--no)','var(--no)',''],
+  split:['var(--no-bg)','var(--no)','var(--no)','3 2'],
+  snap:['var(--soft2)','var(--line2)','var(--muted)',''],
+  dup:['var(--no-bg)','var(--no)','var(--no)',''],
+  gap:['none','var(--no)','var(--no)','3 2'],
+  empty:['none','var(--line2)','var(--muted)','3 3'],
+  refused:['none','var(--no)','var(--no)','2 2']
+};
+const CSS='<style>'+
+ '.rt svg{width:100%;display:block;overflow:visible}.rt svg text,.pic text{font-family:var(--sans)}'+
+ '.rtr g{transition:transform .45s cubic-bezier(.3,.8,.3,1)}'+
+ '.pic{width:100%;display:block;margin:4px 0 12px}'+
+ '.rt-leg{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:12.5px;color:var(--muted);margin:6px 0 10px}.rt-leg i{display:inline-block;width:12px;height:12px;border-radius:3px;vertical-align:-2px;margin-right:4px;border:1.5px solid}'+
+ '.rt-fc{display:flex;flex-direction:column;gap:8px;margin:10px 0 4px}'+
+ '.rt-f{background:var(--soft);border-radius:14px;padding:8px 10px}'+
+ '.rt-fh{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.rt-fh b{font-size:14.5px;min-width:72px}'+
+ '.rt-dot{width:26px;height:26px;border-radius:50%;border:2.5px solid;display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;background:var(--card);flex:none}'+
+ '.rt-seg{display:inline-flex;gap:6px;margin-left:auto}.rt-seg .chip{margin:0;padding:6px 11px;min-height:38px;font-size:14px}'+
+ '.rt-rng{display:grid;grid-template-columns:44px 1fr 34px;gap:8px;align-items:center;font-size:13.5px;color:var(--muted);margin-top:4px}.rt-rng input{width:100%;accent-color:var(--pri);height:30px}.rt-rng b{color:var(--ink);text-align:right;font-variant-numeric:tabular-nums}'+
+ '.rt-btns{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 4px}.rt-btns .btn,.rt-btns .chip{min-height:42px;margin:0}'+
+ '.rt-read{background:var(--soft);border-radius:14px;padding:10px 13px;font-size:14.5px;line-height:1.55;margin:8px 0;min-height:46px}'+
+ '.rt-read .no-t{color:var(--no);font-weight:700}.rt-read .ok-t{color:var(--ok);font-weight:700}.rt-read .am-t{color:var(--h3);font-weight:700}'+
+ '.rt-tasks{margin:4px 0 6px;padding:0;list-style:none}.rt-tasks li{display:flex;gap:8px;align-items:center;font-size:14.5px;margin:5px 0;color:var(--muted)}'+
+ '.rt-tasks li .bx{width:20px;height:20px;border-radius:6px;border:2px solid var(--line2);flex:none;display:inline-flex;align-items:center;justify-content:center}'+
+ '.rt-tasks li.done{color:var(--ok)}.rt-tasks li.done .bx{background:var(--ok-strong);border-color:var(--ok-strong);color:var(--card)}.rt-tasks li .bx svg.i{width:13px;height:13px;stroke-width:3}'+
+ '.rt-lbl{font-size:13px;font-weight:600;color:var(--muted);margin:10px 0 4px}'+
+ '.cap{font-size:15.5px;line-height:1.55;margin:4px 0 10px}'+
+ '.mini3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:4px 0 12px}.mini3>div{background:var(--soft);border-radius:14px;padding:8px 6px 9px;text-align:center;min-width:0}'+
+ '.mini3 svg{width:100%;display:block}.mini3 b{display:block;font-size:13.5px;margin-top:4px}.mini3 span{display:block;font-size:12.5px;color:var(--muted);line-height:1.35;margin-top:2px}'+
+ '.ord{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:8px 0}.ord>div{border-radius:14px;padding:10px;background:var(--soft);min-width:0}'+
+ '.ord h4{margin:0 0 6px;font-size:13.5px;color:var(--muted)}.stp{display:inline-block;border-radius:99px;padding:4px 10px;font-weight:700;font-size:14px;margin:4px 0}'+
+ '.stp.hub{background:var(--h3-bg);color:var(--h3)}.stp.out{background:var(--h2-bg);color:var(--h2)}.stp.none{background:var(--card);color:var(--muted);border:1.5px dashed var(--line2)}'+
+ '.ordlog{font-size:13px;color:var(--muted);margin-top:4px;min-height:18px}'+
+ '.fmt{border-radius:14px;padding:9px 11px;margin:7px 0;background:var(--soft);border-left:5px solid}'+
+ '.fmt .ft{display:flex;justify-content:space-between;gap:6px;align-items:baseline;font-size:14px;font-weight:700}.fmt .ft span{font-size:12.5px;font-weight:600}'+
+ '.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.5;background:var(--card);border-radius:9px;padding:6px 8px;margin-top:5px;white-space:pre-wrap;word-break:break-word}'+
+ '.lz-row{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}.lz-row .chip{margin:0;min-height:38px;padding:6px 10px;font-size:14px}'+
+ '.lz-out{border-radius:14px;padding:10px 12px;margin:8px 0;font-size:14.5px;line-height:1.5}'+
+ '.lz-out.ok{background:var(--ok-bg)}.lz-out.no{background:var(--no-bg)}.lz-out.na{background:var(--soft)}'+
+ '.lz-out .vd{font-weight:700}.lz-out.ok .vd{color:var(--ok)}.lz-out.no .vd{color:var(--no)}.lz-out.na .vd{color:var(--muted)}'+
+ '.lz-grid{display:grid;grid-template-columns:86px repeat(4,1fr);gap:4px;font-size:12.5px;margin-top:8px}'+
+ '.lz-grid div{border-radius:8px;padding:6px 2px;text-align:center;min-width:0}.lz-grid .h{font-weight:700;color:var(--muted)}.lz-grid .rh{text-align:left;font-weight:600;padding-left:4px;color:var(--ink)}'+
+ '.lz-grid .c{background:var(--soft);color:var(--muted);font-weight:700;cursor:pointer;border:2px solid transparent}.lz-grid .c.ok{background:var(--ok-bg);color:var(--ok)}.lz-grid .c.no{background:var(--no-bg);color:var(--no)}.lz-grid .c.na{background:var(--soft2);color:var(--muted)}.lz-grid .c.cur{border-color:var(--pri)}'+
+ '.chal td{padding:4px 0;font-size:14.5px}'+
+ '.rt-pre{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:4px 0 10px}.rt-pre .chip{margin:0;justify-content:center;text-align:center;font-size:13.5px;padding:7px 8px;min-height:46px;line-height:1.25}'+
+ '.rt-pick{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:6px 0;flex-wrap:wrap}.rt-pick>span{font-size:13.5px;font-weight:600;color:var(--muted)}.rt-pick .lz-row{margin:0}'+
+ '</style>';
+
+/* ---------- small helpers ---------- */
+const tx=(x,y,s,st)=>'<text x="'+x+'" y="'+y+'" style="'+st+'">'+s+'</text>';
+function setR(L,id,v){const e=L.$('#'+id);e.value=v;e.dispatchEvent(new Event('input'));}
+function tasks(id,items){return '<ul class="rt-tasks" id="'+id+'">'+items.map((t,j)=>'<li data-j="'+j+'"><span class="bx"></span><span>'+t+'</span></li>').join('')+'</ul>';}
+function tdone(L,id,j){const li=L.$('#'+id+' li[data-j="'+j+'"]');if(li&&!li.classList.contains('done')){li.classList.add('done');li.querySelector('.bx').innerHTML=L.ic('check');}}
+function allDone(L,id){return L.$$('#'+id+' li').every(li=>li.classList.contains('done'));}
+async function waitFor(L,fn,ms){for(let i=0;i<(ms||4000)/40&&!fn();i++)await L.sleep(40);}
+function legend(keys){const M={ok:['var(--ok-bg)','var(--ok-line)','merchant told “booked”'],pend:['var(--h3-bg)','var(--h3)','merchant still waiting'],have:['var(--pri-bg)','var(--pri)','follower has it'],
+  lostc:['var(--no-bg)','var(--no)','“booked”, then lost'],lost:['var(--soft2)','var(--line2)','lost, never confirmed'],new:['var(--pri)','var(--pri)','written by new leader'],snap:['var(--soft2)','var(--line2)','from the snapshot'],run:['var(--card)','var(--h2)','runner: next booking it needs',1]};
+  return '<div class="rt-leg">'+keys.map(k=>'<span><i style="background:'+M[k][0]+';border-color:'+M[k][1]+(M[k][3]?';border-radius:50%;border-width:2.5px':'')+'"></i>'+M[k][2]+'</span>').join('')+'</div>';}
+
+/* ---------- the race-track renderer ---------- */
+function Track(host,id,label){
+  host.insertAdjacentHTML('beforeend','<div class="rt"><svg id="'+id+'" viewBox="0 0 '+SV+' 120" role="img" aria-label="'+label+'"><g class="rtb"></g><g class="rtr"></g></svg></div>');
+  const svg=host.querySelector('#'+id);
+  return {svg,draw:vm=>drawTrack(svg,vm),alive:()=>svg.isConnected};
+}
+function drawTrack(svg,vm){
+  if(!svg||!svg.isConnected)return;
+  const rows=vm.rows,H=rows.length*RH+4;
+  svg.setAttribute('viewBox','0 0 '+SV+' '+H);
+  let s='';
+  rows.forEach((r,j)=>{const y=2+j*RH;
+    s+='<rect x="0" y="'+y+'" width="'+SV+'" height="'+(RH-4)+'" rx="10" style="fill:'+(r.bg||'var(--soft)')+'"/>';
+    s+=tx(7,y+14.5,r.l1,'font-size:12.5px;font-weight:700;fill:'+(r.c1||'var(--ink)'));
+    s+=tx(7,y+28.5,r.l2,'font-size:11.5px;font-weight:600;fill:'+(r.c2||'var(--muted)'));
+    for(let c=0;c<WIN;c++){const id=vm.start+c,st=r.cells[id];if(!st)continue;const k=CELL[st],x=X0+c*CW;
+      s+='<rect x="'+(x+1)+'" y="'+(y+4.5)+'" width="'+(CW-3)+'" height="25" rx="5" style="fill:'+k[0]+';stroke:'+k[1]+';stroke-width:1.5'+(k[3]?';stroke-dasharray:'+k[3]:'')+'"/>';
+      const t=st==='dup'?'×2':st==='gap'?'?':st==='refused'?'✗':st==='empty'?'':'B'+id;
+      if(t)s+=tx(x+CW/2-0.5,y+21.5,t,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+k[2]);
+      if(st==='lost'||st==='lostc')s+='<line x1="'+(x+4)+'" y1="'+(y+17.5)+'" x2="'+(x+CW-6)+'" y2="'+(y+17.5)+'" style="stroke:'+k[2]+';stroke-width:1.7"/>';
+    }
+    if(r.mark!=null){const c=r.mark-vm.start;if(c>=0&&c<WIN){const cx=X0+c*CW+CW/2-1.5,cy=y+17;
+      if(r.markKind==='slow')s+='<circle cx="'+cx+'" cy="'+cy+'" r="9.5" style="fill:var(--h3-bg);stroke:var(--h3);stroke-width:2"/>'+tx(cx,cy+4.5,'…','font-size:13px;font-weight:700;text-anchor:middle;fill:var(--h3)');
+      else s+='<circle cx="'+cx+'" cy="'+cy+'" r="9.5" style="fill:var(--no-bg);stroke:var(--no);stroke-width:2"/><path d="M'+(cx-4)+' '+(cy-4)+'l8 8m0 -8l-8 8" style="stroke:var(--no);stroke-width:2.2;stroke-linecap:round"/>';}}
+    if(r.cam!=null){const c=r.cam-vm.start+1;if(c>=0&&c<=WIN){const x=X0+c*CW-1.2;
+      s+='<line x1="'+x+'" y1="'+(y+3)+'" x2="'+x+'" y2="'+(y+31)+'" style="stroke:var(--pri);stroke-width:2.5"/><rect x="'+(x-7)+'" y="'+(y-3)+'" width="14" height="10" rx="2.5" style="fill:var(--pri)"/><circle cx="'+x+'" cy="'+(y+2)+'" r="2.6" style="fill:var(--card)"/>';}}
+  });
+  svg.querySelector('.rtb').innerHTML=s;
+  const rl=svg.querySelector('.rtr'),keep=new Set();
+  rows.forEach((r,j)=>{if(r.run==null)return;keep.add(r.key);const y=2+j*RH;
+    let c=r.run-vm.start;c=Math.max(0,Math.min(WIN-1,c));
+    const cx=X0+c*CW+CW/2-1.5,cy=y+17;
+    let g=rl.querySelector('g[data-k="'+r.key+'"]');const fresh=!g;
+    if(!g){g=document.createElementNS(NS,'g');g.setAttribute('data-k',r.key);rl.appendChild(g);}
+    const col=r.dn?'var(--muted)':r.rc;
+    g.innerHTML='<circle r="10.5" style="fill:var(--card);stroke:'+col+';stroke-width:2.6'+(r.dn?';stroke-dasharray:3 2':'')+'"/>'+tx(0,4.5,r.key,'font-size:12.5px;font-weight:700;text-anchor:middle;fill:'+col);
+    if(fresh){g.style.transition='none';g.style.transform='translate('+cx+'px,'+cy+'px)';void g.getBoundingClientRect();g.style.transition='';}
+    else g.style.transform='translate('+cx+'px,'+cy+'px)';
+  });
+  [...rl.children].forEach(g=>{if(!keep.has(g.getAttribute('data-k')))g.remove();});
+}
+
+/* ---------- the replication model behind the track ---------- */
+function Sim(fols){
+  const S={now:0,ent:[],crash:null,prom:null,keep:0,pc:{},tp:0,nw:[],bk:[],back:false,slow:false,
+    fol:fols.map(f=>Object.assign({mode:'async',d:1,down:null},f))};
+  const F=k=>S.fol.find(f=>f.k===k);
+  /* when each old-leader entry reaches follower f (1e9 = never) */
+  function arrs(f){let p=-1e9;return S.ent.map(e=>{let a=Math.max(p,e.t+e.d[f.k]);
+    if(f.down&&a>f.down.a)a=f.down.b==null?1e9:Math.max(a,f.down.b);
+    if(S.crash!=null&&a>S.crash)a=1e9;return p=a;});}
+  /* the new leader’s log after a failover: the entries it kept, then its own */
+  function nlog(){return S.ent.slice(0,S.keep).map(e=>({n:e.n,t:S.tp,kept:true})).concat(S.nw);}
+  function arrsN(f){const have=Math.min(S.pc[f.k],S.keep);let p=-1e9;return nlog().map((e,i)=>{if(i<have)return -1e9;
+    let a=Math.max(p,e.t+f.d);if(f.down&&a>f.down.a)a=f.down.b==null?1e9:Math.max(a,f.down.b);return p=a;});}
+  const cnt=a=>a.filter(x=>x<=S.now).length;
+  function pos(f){if(typeof f==='string')f=F(f);if(S.prom==null)return cnt(arrs(f));if(f.k===S.prom)return S.keep+S.nw.length;return cnt(arrsN(f));}
+  /* a booking is confirmed once every synchronous follower has it */
+  function settle(){if(S.prom!=null)return;if(S.crash!=null&&S.now>S.crash)return;
+    const A=S.fol.filter(f=>f.mode==='sync').map(arrs);
+    S.ent.forEach((e,i)=>{if(e.c==null&&A.every(a=>a[i]<=S.now))e.c=S.now;});}
+  function write(){
+    if(S.prom!=null){S.nw.push({n:S.keep+S.nw.length+1,t:S.now});if(S.back)S.bk.push({n:S.ent.length+S.bk.length+1,t:S.now});return true;}
+    if(S.crash!=null)return false;
+    const d={};S.fol.forEach(f=>d[f.k]=f.d);S.ent.push({n:S.ent.length+1,t:S.now,d,c:null});settle();return true;}
+  function tick(book){S.now++;if(book!==false)write();settle();}
+  function crash(slow){S.crash=S.now;S.slow=!!slow;}
+  function promote(k){S.fol.forEach(f=>S.pc[f.k]=pos(f));S.keep=S.pc[k];S.prom=k;S.tp=S.now;}
+  function down(k){F(k).down={a:S.now,b:null};}
+  function up(k){const f=F(k);if(f.down)f.down.b=S.now;settle();}
+  const isDown=k=>{const f=F(k);return !!(f.down&&f.down.b==null);};
+  function info(){const p={};S.fol.forEach(f=>p[f.k]=pos(f));const sy=S.fol.filter(f=>f.mode==='sync');
+    return {n:S.ent.length,p,sy,wait:sy.length?Math.max(...sy.map(f=>f.d)):0,stalled:sy.some(f=>isDown(f.k)),
+      pend:S.ent.filter(e=>e.c==null).length,
+      lostC:S.prom!=null?S.ent.filter(e=>e.n>S.keep&&e.c!=null).map(e=>e.n):[],
+      lostP:S.prom!=null?S.ent.filter(e=>e.n>S.keep&&e.c==null).map(e=>e.n):[],
+      reused:S.prom!=null?S.nw.filter(e=>{const o=S.ent[e.n-1];return o&&o.c!=null;}).map(e=>e.n):[]};}
+  function vm(o){o=o||{};
+    const oldN=S.ent.length+S.bk.length+(o.refused||0),newN=S.prom!=null?S.keep+S.nw.length:0;
+    const maxID=Math.max(oldN,newN,o.min||0);const start=Math.max(1,maxID+2-WIN);
+    const lc={};
+    S.ent.forEach(e=>{let st=e.c!=null?'ok':'pend';if(S.prom!=null&&e.n>S.keep)st=e.c!=null?'lostc':'lost';lc[e.n]=st;});
+    const newIds=new Set(S.prom!=null?nlog().map(e=>e.n):[]);
+    S.bk.forEach(e=>{lc[e.n]=newIds.has(e.n)?'clash':'split';});
+    for(let j=0;j<(o.refused||0);j++)lc[S.ent.length+1+j]='refused';
+    const lead={key:'L',l1:'Leader',cells:lc,bg:'var(--soft)'};
+    if(S.back){lead.l2='2nd leader!';lead.c2='var(--no)';}
+    else if(S.slow){lead.l2='slow, alive';lead.c2='var(--h3)';lead.mark=S.ent.length+1;lead.markKind='slow';}
+    else if(S.crash!=null){lead.l2='crashed';lead.c2='var(--no)';if(!o.refused)lead.mark=S.ent.length+1;}
+    else lead.l2='Westport';
+    const rows=[lead];
+    S.fol.forEach(f=>{const p=pos(f),cells={},isP=f.k===S.prom,dn=isDown(f.k);
+      if(S.prom==null)S.ent.forEach(e=>{cells[e.n]=e.n<=p?'have':'empty';});
+      else nlog().forEach((e,i)=>{let st=i<p?(e.kept?'have':'new'):'empty';
+        if(isP&&st==='new'&&(lc[e.n]==='lostc'||lc[e.n]==='clash'))st='clash';cells[e.n]=st;});
+      rows.push({key:f.k,l1:RT_NAME[f.k],l2:isP?'new leader':dn?'down':(f.mode+' · '+f.d+' s'),
+        c2:isP?'var(--h1)':dn?'var(--no)':(f.mode==='sync'?'var(--pri)':'var(--muted)'),
+        cells,run:isP?null:p+1,rc:RT_COL[f.k],dn,bg:isP?'var(--h1-bg)':'var(--soft)'});});
+    return {start,rows};}
+  return {S,F,pos,tick,write,crash,promote,down,up,isDown,settle,info,vm,nlog};
+}
+const fol2=(wm,wd,em,ed)=>Sim([{k:'W',mode:wm,d:wd},{k:'E',mode:em,d:ed}]);
+function best(sim){const ks=sim.S.fol.filter(f=>!sim.isDown(f.k)).map(f=>f.k);return ks.sort((a,b)=>sim.pos(b)-sim.pos(a))[0];}
+
+/* ---------- static pictures for the Learn screens ---------- */
+function srv(x,y,w,h,load,col){return '<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="4" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5"/>'+
+  '<rect x="'+(x+3)+'" y="'+(y+h-3-(h-6)*load)+'" width="'+(w-6)+'" height="'+((h-6)*load)+'" rx="2" style="fill:'+col+'"/>';}
+const PIC_WHY='<div class="mini3">'+
+ '<div><svg viewBox="0 0 96 58" role="img" aria-label="One overloaded server, then three servers sharing the load">'+srv(4,10,16,40,1,'var(--no)')+'<path d="M26 30h10m-4 -4l4 4l-4 4" style="stroke:var(--muted);stroke-width:2;fill:none"/>'+srv(42,10,14,40,.36,'var(--ok-strong)')+srv(60,10,14,40,.36,'var(--ok-strong)')+srv(78,10,14,40,.36,'var(--ok-strong)')+'</svg><b>Scalability</b><span>More load than one machine can take</span></div>'+
+ '<div><svg viewBox="0 0 96 58" role="img" aria-label="One server down, another takes over">'+srv(12,10,22,40,0,'var(--no)')+'<path d="M17 24l12 12m0 -12l-12 12" style="stroke:var(--no);stroke-width:2.6;stroke-linecap:round"/><path d="M40 30h12m-4 -4l4 4l-4 4" style="stroke:var(--muted);stroke-width:2;fill:none"/>'+srv(60,10,22,40,.6,'var(--ok-strong)')+'</svg><b>Fault tolerance</b><span>One machine dies, another takes over</span></div>'+
+ '<div><svg viewBox="0 0 96 58" role="img" aria-label="A user near a server gets a short trip; a far server means a long trip"><circle cx="16" cy="40" r="6" style="fill:var(--h2)"/>'+srv(30,30,12,20,.5,'var(--ok-strong)')+'<path d="M22 40h7" style="stroke:var(--ok-strong);stroke-width:2.4"/><path d="M16 33 C30 4,64 4,80 20" style="stroke:var(--no);stroke-width:2;fill:none;stroke-dasharray:3 3"/>'+srv(74,20,14,24,.5,'var(--muted)')+'</svg><b>Latency</b><span>Data near each group of users</span></div>'+
+ '</div>';
+
+function picArch(){
+  const box=(x,y,w,h,st)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="'+h+'" rx="5" style="'+(st||'fill:var(--card);stroke:var(--line2);stroke-width:1.5')+'"/>';
+  const cpu=(x,y)=>'<rect x="'+x+'" y="'+y+'" width="9" height="9" rx="2" style="fill:var(--h1)"/>';
+  const ram=(x,y,w)=>'<rect x="'+x+'" y="'+y+'" width="'+w+'" height="5" rx="2" style="fill:var(--h2)"/>';
+  const dsk=(x,y)=>'<ellipse cx="'+(x+5)+'" cy="'+(y+3)+'" rx="5" ry="2.5" style="fill:var(--h3)"/><rect x="'+x+'" y="'+(y+3)+'" width="10" height="7" style="fill:var(--h3)"/>';
+  let s='';
+  // shared memory
+  s+=tx(50,14,'Shared memory','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  s+=box(10,24,80,74);[0,1,2,3].forEach(j=>s+=cpu(18+j*16,32));s+=ram(18,50,64)+ram(18,58,64);[0,1,2,3].forEach(j=>s+=dsk(18+j*16,70));
+  s+=tx(50,116,'one big machine','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+tx(50,132,'2× size: over 2×','font-size:11.5px;text-anchor:middle;fill:var(--no)')+tx(50,147,'the price','font-size:11.5px;text-anchor:middle;fill:var(--no)');
+  // shared disk
+  s+=tx(155,14,'Shared disk','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');
+  [0,1,2].forEach(j=>{const x=114+j*28;s+=box(x,24,24,30)+cpu(x+7.5,29)+ram(x+4,42,16);s+='<path d="M'+(x+12)+' 54V74" style="stroke:var(--line2);stroke-width:1.5"/>';});
+  s+=box(114,74,80,24,'fill:var(--h3-bg);stroke:var(--h3);stroke-width:1.5');[0,1,2,3,4].forEach(j=>s+=dsk(122+j*14,80));
+  s+=tx(155,116,'one disk array','font-size:11.5px;text-anchor:middle;fill:var(--muted)')+tx(155,132,'locking limits','font-size:11.5px;text-anchor:middle;fill:var(--no)')+tx(155,147,'how far it grows','font-size:11.5px;text-anchor:middle;fill:var(--no)');
+  // shared nothing
+  s+='<rect x="212" y="2" width="96" height="152" rx="10" style="fill:var(--pri-bg)"/>';
+  s+=tx(260,14,'Shared nothing','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)');
+  [0,1,2].forEach(j=>{const x=219+j*28;s+=box(x,24,24,54)+cpu(x+7.5,29)+ram(x+4,42,16)+dsk(x+7,54);s+='<path d="M'+(x+12)+' 78V90" style="stroke:var(--pri);stroke-width:1.5"/>';});
+  s+='<path d="M231 90H287" style="stroke:var(--pri);stroke-width:2;stroke-dasharray:4 3"/>'+tx(260,103,'network','font-size:11.5px;text-anchor:middle;fill:var(--pri-deep)');
+  s+=tx(260,124,'each node owns','font-size:11.5px;text-anchor:middle;fill:var(--pri-deep)')+tx(260,139,'CPU, RAM, disk','font-size:11.5px;text-anchor:middle;fill:var(--pri-deep)');
+  return '<svg class="pic" viewBox="0 0 310 156" role="img" aria-label="Three ways to grow: one big machine, machines sharing a disk array, and separate machines linked by a network">'+s+'</svg>';
+}
+
+function picParts(){
+  let s='';
+  const blk=(x,y,p)=>'<rect x="'+x+'" y="'+y+'" width="76" height="32" rx="7" style="fill:var(--'+(p===1?'h1':'h2')+'-bg);stroke:var(--'+(p===1?'h1':'h2')+');stroke-width:1.5"/>'+
+    tx(x+38,y+14,'P'+p,'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--'+(p===1?'h1':'h2')+')')+tx(x+38,y+27,p===1?'codes 0–4':'codes 5–9','font-size:11.5px;text-anchor:middle;fill:var(--'+(p===1?'h1':'h2')+')');
+  [0,1,2].forEach(j=>{const x=8+j*102;s+='<rect x="'+x+'" y="22" width="92" height="92" rx="10" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+tx(x+46,15,'Node '+(j+1),'font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)');});
+  s+=blk(16,32,1)+blk(118,32,1)+blk(118,72,2)+blk(220,72,2);
+  s+='<path d="M54 126h102" style="stroke:var(--h1);stroke-width:2.5"/><path d="M54 120v6M156 120v6" style="stroke:var(--h1);stroke-width:2.5"/>';
+  s+=tx(8,144,'P1 on two nodes = replication (copies)','font-size:11.5px;font-weight:600;fill:var(--h1)');
+  s+=tx(8,161,'P1 and P2 = partitioning (pieces)','font-size:11.5px;font-weight:600;fill:var(--h2)');
+  return '<svg class="pic" viewBox="0 0 310 166" role="img" aria-label="Three nodes. Partition P1 is on nodes 1 and 2, partition P2 on nodes 2 and 3.">'+s+'</svg>';
+}
+
+function arw(x1,y1,x2,y2,c){const a=Math.atan2(y2-y1,x2-x1),h=7,w=.5;
+  const p=(r,t)=>(x2-h*Math.cos(a+t)).toFixed(1)+' '+(y2-h*Math.sin(a+t)).toFixed(1);
+  return '<path d="M'+x1+' '+y1+'L'+(x2-4*Math.cos(a)).toFixed(1)+' '+(y2-4*Math.sin(a)).toFixed(1)+'" style="stroke:'+c+';stroke-width:2"/><path d="M'+x2+' '+y2+'L'+p(0,w)+'L'+p(0,-w)+'z" style="fill:'+c+'"/>';}
+function picLeader(){
+  const cells=(x,y,n,have,w)=>{let s='';for(let j=0;j<n;j++){const h=j<have;s+='<rect x="'+(x+j*(w+2))+'" y="'+y+'" width="'+w+'" height="20" rx="4" style="fill:'+(h?'var(--pri-bg)':'none')+';stroke:'+(h?'var(--pri)':'var(--line2)')+';stroke-width:1.4'+(h?'':';stroke-dasharray:3 3')+'"/>'+(h?tx(x+j*(w+2)+w/2,y+14,'B'+(j+1),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--pri-deep)'):'');}return s;};
+  let s='';
+  s+='<rect x="4" y="10" width="84" height="44" rx="10" style="fill:var(--h1-bg)"/>'+tx(46,29,'Merchant','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+tx(46,44,'API: writes','font-size:11.5px;text-anchor:middle;fill:var(--h1)');
+  s+=arw(90,32,113,32,'var(--muted)');
+  s+='<rect x="116" y="4" width="190" height="58" rx="10" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.5"/>'+tx(211,20,'Leader · Westport','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ok)')+cells(124,30,6,6,28);
+  s+=arw(170,64,96,97,'var(--muted)')+arw(250,64,234,97,'var(--muted)');
+  s+=tx(155,86,'replication log, in order','font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--muted)');
+  s+='<rect x="4" y="100" width="148" height="56" rx="10" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+tx(78,116,'Follower · Westport','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+cells(10,126,6,5,21);
+  s+='<rect x="158" y="100" width="148" height="56" rx="10" style="fill:var(--soft);stroke:var(--line2);stroke-width:1.5"/>'+tx(232,116,'Follower · Eastvale','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--ink)')+cells(164,126,6,3,21);
+  s+=arw(90,160,118,182,'var(--h2)')+arw(220,160,192,182,'var(--h2)');
+  s+='<rect x="90" y="184" width="130" height="30" rx="10" style="fill:var(--h2-bg)"/>'+tx(155,203,'Tracking page: reads','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h2)');
+  return '<svg class="pic" viewBox="0 0 310 218" role="img" aria-label="The merchant API writes to the leader. The leader’s log B1 to B6 flows in order to two followers, which are a little behind. The tracking page reads from the followers.">'+s+'</svg>';
+}
+
+function picNewFollower(){
+  let s='';
+  const row=(y,ok,t1,t2)=>'<circle cx="294" cy="'+(y+16)+'" r="10" style="fill:var(--'+(ok?'ok':'no')+'-bg);stroke:var(--'+(ok?'ok-line':'no')+');stroke-width:1.8"/>'+
+    (ok?'<path d="M289 '+(y+16)+'l3.5 3.5l6.5 -7" style="stroke:var(--ok);stroke-width:2.4;fill:none;stroke-linecap:round"/>':'<path d="M290 '+(y+12)+'l8 8m0 -8l-8 8" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>')+
+    tx(170,y+12,t1,'font-size:12px;font-weight:700;fill:var(--ink)')+tx(170,y+27,t2,'font-size:11.5px;fill:var(--muted)');
+  // 1 copy files while busy
+  s+='<rect x="4" y="4" width="70" height="34" rx="6" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5"/>'+tx(39,18,'parcels','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(39,32,'at 09:00','font-size:11.5px;text-anchor:middle;fill:var(--h1)');
+  s+='<rect x="80" y="4" width="70" height="34" rx="6" style="fill:var(--card);stroke:var(--line2);stroke-width:1.5"/>'+tx(115,18,'scans','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(115,32,'at 09:03','font-size:11.5px;text-anchor:middle;fill:var(--h4)');
+  s+=row(4,false,'Copy the files','a mix of moments');
+  // 2 lock
+  s+='<rect x="6" y="64" width="18" height="15" rx="3" style="fill:var(--muted)"/><path d="M10 64v-5a5 5 0 0 1 10 0v5" style="stroke:var(--muted);stroke-width:2.4;fill:none"/>';
+  for(let j=0;j<4;j++){const x=32+j*29;s+='<rect x="'+x+'" y="58" width="26" height="24" rx="5" style="fill:none;stroke:var(--no);stroke-width:1.5;stroke-dasharray:2 2"/>'+tx(x+13,74,'✗','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--no)');}
+  s+=row(54,false,'Lock, then copy','bookings stop');
+  // 3 snapshot at a position
+  for(let j=0;j<5;j++){const x=4+j*29;s+='<rect x="'+x+'" y="108" width="26" height="24" rx="5" style="fill:var(--ok-bg);stroke:var(--ok-line);stroke-width:1.5"/>'+tx(x+13,124,'B'+(j+2),'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ok)');}
+  s+='<line x1="88.5" y1="102" x2="88.5" y2="138" style="stroke:var(--pri);stroke-width:2.5"/><rect x="81.5" y="97" width="14" height="10" rx="2.5" style="fill:var(--pri)"/><circle cx="88.5" cy="102" r="2.6" style="fill:var(--card)"/>';
+  s+=tx(84,150,'snapshot at B4','font-size:11.5px;font-weight:600;text-anchor:end;fill:var(--pri-deep)')+tx(94,150,'+ B5, B6…','font-size:11.5px;font-weight:600;fill:var(--pri-deep)');
+  s+=row(104,true,'Snapshot at B4','then catch up');
+  return '<svg class="pic" viewBox="0 0 310 156" role="img" aria-label="Three ways to copy a busy database. Copying files mixes moments. Locking stops bookings. A snapshot tied to a log position, then catching up, works.">'+s+'</svg>';
+}
+
+function picOutage(){
+  let s='';
+  const cell=(x,y,id,st)=>{const k=CELL[st];return '<rect x="'+x+'" y="'+y+'" width="22" height="22" rx="4" style="fill:'+k[0]+';stroke:'+k[1]+';stroke-width:1.4'+(k[3]?';stroke-dasharray:'+k[3]:'')+'"/>'+(st==='empty'?'':tx(x+11,y+15,'B'+id,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:'+k[2]));};
+  const run=(x,y,dn)=>'<circle cx="'+x+'" cy="'+y+'" r="10" style="fill:var(--card);stroke:'+(dn?'var(--muted)':'var(--h4)')+';stroke-width:2.4'+(dn?';stroke-dasharray:3 2':'')+'"/>'+tx(x,y+4.5,'E','font-size:12px;font-weight:700;text-anchor:middle;fill:'+(dn?'var(--muted)':'var(--h4)'));
+  s+=tx(4,13,'A follower fails: catch-up recovery','font-size:12.5px;font-weight:700;fill:var(--h2)');
+  s+=tx(4,38,'down','font-size:11.5px;font-weight:700;fill:var(--no)');
+  for(let j=1;j<=8;j++)s+=cell(48+(j-1)*25,24,j,j<=4?'have':'empty');s+=run(48+4*25+11,35,true);
+  s+=tx(4,78,'restart','font-size:11.5px;font-weight:700;fill:var(--ok)');
+  for(let j=1;j<=8;j++)s+=cell(48+(j-1)*25,64,j,'have');
+  s+=tx(48,104,'“Send me everything after B4”','font-size:11.5px;font-weight:600;fill:var(--muted)');
+  s+='<path d="M4 116H306" style="stroke:var(--line);stroke-width:1.5"/>';
+  s+=tx(4,136,'The leader fails: failover','font-size:12.5px;font-weight:700;fill:var(--no)');
+  // three scenes
+  const scene=(x,n,t1,t2)=>'<rect x="'+x+'" y="146" width="98" height="104" rx="10" style="fill:var(--soft)"/>'+'<circle cx="'+(x+12)+'" cy="158" r="8" style="fill:var(--card);stroke:var(--line2)"/>'+tx(x+12,162,n,'font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--ink)')+tx(x+49,230,t1,'font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--ink)')+tx(x+49,244,t2,'font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  s+=scene(4,'1','Detect','no reply in 30 s')+scene(106,'2','Choose','most up to date')+scene(208,'3','Reconfigure','writes go to it');
+  // 1: leader with X and stopwatch
+  s+='<rect x="30" y="170" width="40" height="34" rx="7" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.5"/><path d="M43 180l14 14m0 -14l-14 14" style="stroke:var(--no);stroke-width:2.4;stroke-linecap:round"/>';
+  s+='<circle cx="80" cy="172" r="9" style="fill:var(--card);stroke:var(--h3);stroke-width:2"/><path d="M80 172v-5M80 172l4 2" style="stroke:var(--h3);stroke-width:2;stroke-linecap:round"/>';
+  // 2: two runners, W wins
+  s+='<circle cx="135" cy="188" r="12" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2.4"/>'+tx(135,192.5,'W','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)')+tx(135,214,'B9','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h1)');
+  s+='<path d="M128 170l3 4l4 -6l4 6l3 -4v6h-14z" style="fill:var(--h1)"/>';
+  s+='<circle cx="178" cy="188" r="12" style="fill:var(--card);stroke:var(--h4);stroke-width:2.4"/>'+tx(178,192.5,'E','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h4)')+tx(178,214,'B7','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--muted)');
+  // 3: API arrow to new leader, old leader greyed
+  s+='<rect x="214" y="166" width="38" height="22" rx="6" style="fill:var(--h1-bg)"/>'+tx(233,181,'API','font-size:11.5px;font-weight:700;text-anchor:middle;fill:var(--h1)');
+  s+='<path d="M252 177H276" style="stroke:var(--h1);stroke-width:2"/><path d="M272 172l5 5l-5 5" style="stroke:var(--h1);stroke-width:2;fill:none"/>';
+  s+='<circle cx="290" cy="177" r="11" style="fill:var(--h1-bg);stroke:var(--h1);stroke-width:2.2"/>'+tx(290,181.5,'W','font-size:12px;font-weight:700;text-anchor:middle;fill:var(--h1)');
+  s+='<rect x="236" y="196" width="40" height="18" rx="5" style="fill:var(--soft2);stroke:var(--line2);stroke-dasharray:3 2"/>'+tx(256,209,'old','font-size:11.5px;text-anchor:middle;fill:var(--muted)');
+  return '<svg class="pic" viewBox="0 0 310 252" role="img" aria-label="Top: a follower that was down asks for everything after B4 and catches up. Bottom: failover in three steps: detect by timeout, choose the most up-to-date follower, send writes to it.">'+s+'</svg>';
+}
+
+/* ---------- the format lens (part 4) ---------- */
+const LZ_S=[['RAND()','Pickup code is RAND()','B7’s pickup code is picked at random on the leader: 4821.'],
+  ['Autoinc','Two bookings at once, autoincrement IDs','B7 and B8 arrive at the same moment. The leader’s counter gives them IDs 7 and 8.'],
+  ['Upgrade','Followers upgraded first','Kwame moves the followers to a newer major version before the leader.'],
+  ['Warehouse','Linh’s warehouse reads it','Linh wants every Parcel DB change fed into the analytics warehouse.'],
+  ['Subset','Nordhaven only, other DB','Only Nordhaven parcels must go to a partner’s different kind of database.']];
+const LZ_F=[['Stmt','Statement'],['WAL','WAL shipping'],['Row','Logical row'],['Trig','Trigger']];
+const LZ_SEND=[
+  'INSERT INTO parcels (id, pickup_code)\nVALUES (7, RAND())',
+  'block 4711, offset 0x1c:\n00 07 12 d5 9a 40 …',
+  'insert parcels: id=7, pickup_code=4821\ncommit',
+  'trigger on parcels → changes table:\nid=7, pickup_code=4821\n→ copied out by a separate process'];
+/* what the leader sends, where a situation needs its own example */
+const LZ_SEND_S={1:[
+  'INSERT INTO parcels (size) VALUES (\'S\')\nINSERT INTO parcels (size) VALUES (\'L\')\n-- id comes from the counter',
+  'block 4711, offset 0x1c:\n00 07 … 00 08 …',
+  'insert parcels: id=7, size=S\ninsert parcels: id=8, size=L\ncommit',
+  'trigger on parcels → changes table:\nid=7, size=S · id=8, size=L\n→ copied out by a separate process']};
+/* [verdict ok|no|na, short result, why] per scenario × format */
+const LZ=[
+ [['no','Followers get 5190 and 0377','Each follower runs RAND() again and gets its own code. NOW() breaks the same way, and so can side effects (triggers, stored procedures, user-defined functions) unless they are fully deterministic. The leader could send fixed values instead, but with so many edge cases other methods are now preferred; MySQL switches to row-based for such statements.'],
+  ['ok','Same code: 4821','The changed bytes are copied, so the follower builds exactly the same data.'],
+  ['ok','Same code: 4821','The log carries the row’s actual values, not the statement that made them.'],
+  ['na','Not the point here','The book weighs triggers on flexibility and cost, not on RAND(). Look at the last two scenarios.']],
+ [['no','IDs can swap: 8 and 7','A follower that runs the two INSERTs in the other order hands the IDs out the other way round. Statements that use an autoincrement column, or depend on data already there, must run in exactly the same order on every follower, which is limiting when many transactions run at once.'],
+  ['ok','Same IDs: 7 and 8','The bytes already hold the IDs the leader picked, so order on the follower can’t change them.'],
+  ['ok','Same IDs: 7 and 8','Each row arrives with its actual ID, so nothing is recounted on the follower.'],
+  ['na','Not the point here','The book doesn’t weigh triggers on this. Look at the last two scenarios.']],
+ [['na','Not the point here','The book makes this upgrade point about the other two formats.'],
+  ['no','Upgrade needs downtime','A WAL says which bytes changed in which disk blocks. If the new version stores data differently, followers can’t run a different version from the leader.'],
+  ['ok','Zero-downtime upgrade','Rows, not disk blocks: the format can stay backward compatible. Upgrade the followers, fail over to one of them, then upgrade the old leader.'],
+  ['na','Not the point here','The book makes this upgrade point about WAL shipping and the logical log.']],
+ [['na','Not the point here','The book makes this point about the logical log.'],
+  ['no','Hard to use outside','Low-level bytes tied to the storage engine. The book points to the logical log as the format outside programs can parse easily.'],
+  ['ok','Change data capture','A row-based log is easy for outside programs to parse. Feeding a warehouse, index or cache this way is called change data capture.'],
+  ['ok','Changes table, read out','The trigger logs each change to a separate table that an outside process reads and copies on.']],
+ [['no','Built in, not for this','The built-in methods are run by the database itself. For only some of the data, or another kind of database, the book says you may need to move replication up into application code.'],
+  ['no','Built in, not for this','The built-in methods are run by the database itself. For only some of the data, or another kind of database, the book says you may need to move replication up into application code.'],
+  ['no','Built in, not for this','The built-in methods are run by the database itself. For only some of the data, or another kind of database, the book says you may need to move replication up into application code.'],
+  ['ok','Your code picks the rows','Replication moves up to the application: a trigger logs the change and your process copies only the rows you want, into any kind of database. Flexible, but slower and more bug-prone.']]];
+
+/* ======================================================================= */
 Course.lesson({
-  id:'0010', title:'Leaders and followers', minutes:20, icon:'layers',
+  id:'0010', title:'Leaders and followers', minutes:22, icon:'layers',
   goals:['Say why and how data gets spread across several machines','Weigh synchronous against asynchronous followers, and plan a failover','Pick the right kind of replication log for a job'],
   parts:['Why distribute','Leaders and followers','Outages and failover','Replication logs'],
   read:'Read the Part II introduction and the first section of chapter 5 (“Leaders and Followers”) for the full detail, including the GitHub failover incident.',
@@ -22,7 +361,7 @@ Course.lesson({
     'shared-nothing':'Shared-nothing architecture: spreading the load over several machines, each with its own processor, memory and disks, that coordinate only over the network.',
     'sync':'Synchronous replication: the leader waits until a follower confirms it has the write before telling the client the write succeeded. Asynchronous replication: the leader sends the change and does not wait.',
     'semi-sync':'Semi-synchronous: one follower is synchronous and the rest are asynchronous, so every confirmed write is on at least two nodes.',
-    'snapshot':'Consistent snapshot: a copy of the whole database as it was at one exact moment, tied to a position in the leader’s replication log.',
+    'snapshot':'Consistent snapshot: a copy of the whole database as it was at one exact moment, tied to a position in the leader’s replication log (PostgreSQL calls it the log sequence number; MySQL, the binlog coordinates).',
     'failover':'Failover: when the leader fails, a follower is promoted to be the new leader, clients send their writes to it, and the other followers start copying from it.',
     'split-brain':'Split brain: two nodes both believe they are the leader and both accept writes, which can lose or corrupt data.',
     'wal':'Write-ahead log (WAL, also called a redo log): an append-only file where every change is written before it is applied, so the database can repair itself after a crash.',
@@ -33,9 +372,9 @@ Course.lesson({
     '<b>Replication</b> = the same data on several nodes. <b>Partitioning</b> = splitting data into pieces on different nodes. They often go together.',
     '<b>Leader-based replication:</b> all writes go to the leader; followers apply its log <b>in the same order</b>; reads can go anywhere.',
     '<b>Synchronous</b> followers are safe but can block writes. <b>Asynchronous</b> never blocks, but a confirmed write can be lost if the leader dies. <b>Semi-synchronous</b> = one sync follower.',
-    'New follower: <b>consistent snapshot</b> + its log position, then catch up on everything since.',
-    'Follower failure: <b>catch-up recovery</b> from its own log. Leader failure: <b>failover</b> (detect by timeout, choose, reconfigure).',
-    'Failover risks: lost writes, clashes with other systems, <b>split brain</b>, and a timeout that is too long or too short.',
+    'New follower: <b>consistent snapshot</b> + its log position, then catch up on everything after that position.',
+    'Follower failure: <b>catch-up recovery</b> from its own log. Leader failure: <b>failover</b> (detect by timeout, choose the most up-to-date follower, reconfigure).',
+    'Failover risks: lost writes, reused IDs that clash with other systems, <b>split brain</b>, and a timeout that is too long or too short.',
     'Log formats: <b>statement-based</b> (breaks on NOW(), RAND()), <b>WAL shipping</b> (tied to the storage engine), <b>logical row-based</b> (decoupled, good for change data capture), <b>trigger-based</b> (flexible, slower).'
   ],
   steps:[
@@ -43,21 +382,16 @@ Course.lesson({
 {part:0,src:'Warm-up',pts:1,run(L){
   L.h(L.kick('try','Warm-up · common sense only')+'<h1 class="q">All of Otterpost’s parcel data lives on one Parcel DB server in Westport. At 9 a.m. on a Monday its power supply dies. What happens to merchants trying to book parcels?</h1>');
   L.mc(L.card,['Bookings slow down a little','Bookings stop until it’s fixed'],1,
-   'With one server there is no spare to take over. This chapter is about keeping copies on several machines so one failure doesn’t stop the business.',
+   'With one server there is no spare to take over. This lesson is about keeping copies on several machines so one failure doesn’t stop the business.',
    'There’s no other machine holding the data, so nothing can answer. Bookings stop until the server is back. That’s the problem replication solves.');}},
 {part:0,src:'Part II · Distributed Data',run(L){
-  L.h(L.kick('learn','Why use more than one machine?')+'<h1 class="q">Three reasons to spread a database across machines</h1>'+
-   L.prose('Part I of the book looked at data on a single machine. Part II asks what changes when several machines store and serve the data. The book gives three reasons to go there:')+
-   L.list([['trend','Scalability','The data, the reads or the writes grow beyond what one machine can handle, so you share the load. Otterpost: Peak Week triples parcel volume.'],
-     ['shield','Fault tolerance (high availability)','If one machine, the network or a whole datacenter goes down, another machine takes over. Otterpost: the Monday power cut.'],
-     ['map','Latency','Servers near each group of users answer faster, because data doesn’t cross the world. Otterpost: Nordhaven is overseas.']],1));
+  L.h(L.kick('learn','Why use more than one machine?')+'<h1 class="q">Three reasons to spread a database across machines</h1>'+CSS+PIC_WHY+
+   '<p class="cap">Part I kept data on one machine. Part II spreads it out: to handle Peak Week’s tripled load, to keep booking when a server dies, and to serve Nordhaven from nearby.</p>');
   L.done();}},
 {part:0,src:'Part II · Shared-Nothing Architectures',run(L){
-  L.h(L.kick('learn','Three ways to grow')+'<h1 class="q">Bigger machine, shared disks, or many separate machines?</h1>'+
-   L.tiers([['box','Shared memory (scaling up)','Buy one more powerful machine. Simple, but cost grows <b>faster than linearly</b>, a machine twice the size can’t always handle twice the load, and it sits in one place.','Twice the hardware, more than twice the price'],
-            ['layers','Shared disk','Several machines with their own CPUs and memory share one array of disks. Used for some data warehouses, but locking and contention limit how far it scales.','Rare outside warehouses'],
-            ['people','Shared nothing (scaling out)','Each '+L.g('node','node')+' has its own CPUs, memory and disks. Nodes coordinate in software over a normal network. Any hardware works, and nodes can sit in different regions.','The focus of Part II',true,'This part']])+
-   L.note('The book focuses on '+L.g('shared-nothing','shared-nothing')+' not because it’s always best, but because it needs the most care from you. It adds complexity, and a simple single-threaded program can sometimes beat a cluster with over 100 CPU cores.','alert'));
+  L.h(L.kick('learn','Three ways to grow')+'<h1 class="q">Bigger machine, shared disks, or many separate machines?</h1>'+CSS+picArch()+
+   '<p class="cap">A bigger machine costs more than it gains and sits in one place. Shared disks hit locking limits. Part II focuses on '+L.g('shared-nothing','shared-nothing')+': any hardware, any region.</p>'+
+   L.note('Not because it’s always best: it needs the most care from you. A simple single-threaded program can sometimes beat a cluster with over 100 CPU cores.','alert'));
   L.done();}},
 {part:0,src:'Part II · Scaling to Higher Load',pts:1,run(L){
   L.h(L.kick('try','Check your understanding')+'<h1 class="q">For Peak Week, Femi suggests replacing the Parcel DB server with one that has twice the CPUs, memory and disks. What does the book warn about this?</h1>');
@@ -65,11 +399,8 @@ Course.lesson({
    'Right. Bigger machines get expensive faster than they get powerful, bottlenecks mean double size isn’t double capacity, and it’s still one machine in one place.',
    'A bigger machine still sits in one datacenter, so it can’t survive that datacenter going down. And because of bottlenecks, twice the size doesn’t mean twice the load. Its cost also grows faster than linearly.');}},
 {part:0,src:'Part II · Replication Versus Partitioning',run(L){
-  L.h(L.kick('learn','Two ways to spread data')+'<h1 class="q">Copies of the same data, or pieces of the data?</h1>'+
-   L.lanes([['layers','Replication','Keep a copy of the <b>same</b> data on several nodes, maybe in different places. If some nodes are down, the others still serve it. Copies can also share the read load. (Chapter 5)',1],
-            ['box','Partitioning','Split a big database into smaller pieces called '+L.g('partition','partitions')+' (also called shards) and give each node some of them. (Chapter 6)',2]])+
-   L.prose('The two often go together: a database split into two partitions, with two copies of each.')+
-   L.prose('In this chapter, assume each machine can hold the whole dataset. If the data never changed, replication would be easy: copy it once and you’re done. <b>All the difficulty is in handling changes.</b> Almost every distributed database uses one of three ways to copy changes: <b>single-leader</b>, <b>multi-leader</b> or <b>leaderless</b> replication.'));
+  L.h(L.kick('learn','Two ways to spread data')+'<h1 class="q">Copies of the same data, or pieces of the data?</h1>'+CSS+picParts()+
+   '<p class="cap">'+L.g('replication','Replication')+' keeps copies; '+L.g('partition','partitioning')+' splits data into pieces. They often go together. The hard part is handling changes. This lesson: <b>single-leader</b> replication, the most common kind.</p>');
   L.done();}},
 {part:0,src:'Part II · Replication Versus Partitioning',pts:4,run(L){
   L.h(L.kick('pr','Copies or pieces?')+'<h1 class="q">Kwame lists ideas for Otterpost’s data. Is each one replication or partitioning?</h1><div id="bk"></div>');
@@ -82,107 +413,237 @@ Course.lesson({
 
 /* ---------- PART 2: LEADERS AND FOLLOWERS ---------- */
 {part:1,src:'Chapter 5 · Leaders and Followers',run(L){
-  L.h(L.kick('learn','Leader-based replication')+'<h1 class="q">One node takes the writes. The others copy it.</h1>'+
-   L.prose('Each node holding a copy of the database is a <b>replica</b>. Every write has to reach every replica. The most common way to do that is '+L.g('leader','leader-based replication')+':')+
-   L.flow([['pencil','1 · Leader','Clients send every write here. It saves the change to its own storage first.','also: primary, master'],
-           ['list','2 · Replication log','The leader sends each change to the followers, in order.','also: change stream'],
-           ['layers','3 · Followers','Each applies the changes <b>in the same order</b> as the leader. Clients can read from them but not write.','also: read replicas']])+
-   L.prose('PostgreSQL, MySQL, MongoDB and even message brokers like Kafka work this way.'));
+  L.h(L.kick('learn','Leader-based replication')+'<h1 class="q">One node takes the writes. The others copy its log.</h1>'+CSS+picLeader()+
+   '<p class="cap">Every write goes to the '+L.g('leader','leader')+' (primary), which adds it to the replication '+L.g('log','log')+'. Followers (read replicas) apply that log <b>in exactly the same order</b>. Reads can go to any copy; only the leader takes writes.</p>');
   L.done();}},
-{part:1,src:'Chapter 5 · Leaders and Followers',pts:1,
- solve:async L=>{L.$('#play').click();},
+{part:1,src:'Chapter 5 · Leaders and Followers',
+ solve:async L=>{L.$('#o1').click();L.$('#o2').click();L.$('#ors').click();L.$('#o2').click();L.$('#o1').click();},
  run(L){
-  L.h(L.kick('pr','See it happen')+'<h1 class="q">The leader’s log has two changes for parcel OP-4471. Follower B gets them over the network in the wrong order and applies them as they arrive. Play the log.</h1>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:12px 14px;margin-bottom:12px;font-size:14.5px"><b>Leader’s log</b><div>#1 · status = At hub</div><div>#2 · status = Out for delivery</div></div>'+
-   L.lanes([['layers','Follower A','Applies #1, then #2 (log order)<div class="res" id="fa"></div>',2],
-            ['layers','Follower B','Applies #2, then #1 (arrival order)<div class="res" id="fb2"></div>',4]])+
-   '<button class="btn pri" id="play" style="margin-top:14px">'+L.ic('play')+'Play the log</button><div id="pq"></div>');
-  L.$('#play').onclick=function(){this.remove();
-    L.$('#fa').innerHTML='<span style="color:var(--ok)">Ends at “Out for delivery”, same as the leader.</span>';
-    L.$('#fb2').innerHTML='<span style="color:var(--no)">Ends at “At hub”. The recipient is told the parcel went backwards.</span>';
-    const q=L.$('#pq');q.innerHTML='<h2 class="sub">Why must followers follow the leader’s order?</h2>';
-    L.mc(q,['Applying the same writes in a different order can give different data','Applying changes in order is faster for the follower’s disk'],0,
-     'Same writes, different order, different result. The leader decides the order, and every follower replays it exactly.',
-     'Speed isn’t the issue. Follower B ended with different data from the same two writes. Order is what keeps the copies identical.');};}},
+  const seen=new Set();let applied=[];
+  L.h(L.kick('ex','Hands on · why order matters')+'<h1 class="q">The leader’s log has two changes for parcel OP-48213. Tap them to apply them on the follower, in any order you like.</h1>'+CSS+
+   '<div class="ord"><div><h4>Leader (the log)</h4><div class="small">#1 status → At hub<br>#2 status → Out for delivery</div><div class="stp out">Out for delivery</div></div>'+
+   '<div><h4>Follower</h4><div class="stp none" id="ost">no status yet</div><div class="ordlog" id="olg"></div></div></div>'+
+   '<div class="rt-btns"><button class="btn" id="o1">Apply #1 · At hub</button><button class="btn" id="o2">Apply #2 · Out for delivery</button><button class="btn" id="ors">'+L.ic('cycle')+'Reset</button></div>'+
+   '<div class="rt-read" id="ord" aria-live="polite">Try the log’s order, then try the other order.</div>');
+  const ST={1:['hub','At hub'],2:['out','Out for delivery']};
+  function draw(){const last=applied[applied.length-1];const el=L.$('#ost');
+    if(!last){el.className='stp none';el.textContent='no status yet';}else{el.className='stp '+ST[last][0];el.textContent=ST[last][1];}
+    L.$('#olg').textContent=applied.length?'Applied: '+applied.map(n=>'#'+n).join(' then '):'';
+    L.$('#o1').disabled=applied.includes(1);L.$('#o2').disabled=applied.includes(2);}
+  function ap(n){if(applied.includes(n))return;applied.push(n);draw();
+    if(applied.length===2){const inOrder=applied[0]===1;seen.add(inOrder?'in':'out');
+      L.$('#ord').innerHTML=inOrder?'<span class="ok-t">Same as the leader.</span> Log order gives the same final status.':'<span class="no-t">Different from the leader.</span> Same two changes, other order: the follower ends at “At hub”, and recipients reading from it see the parcel go backwards.';
+      if(seen.size===2){L.sheet('info','Same writes, different order, different data','That’s why the leader fixes one order in its log and every follower replays it exactly. Keep this in mind: the order of the log is the whole game.');L.done();}}}
+  L.$('#o1').onclick=()=>ap(1);L.$('#o2').onclick=()=>ap(2);
+  L.$('#ors').onclick=()=>{applied=[];draw();L.$('#ord').textContent=seen.size?'Now try the other order.':'Try the log’s order, then try the other order.';};
+  draw();}},
 {part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',run(L){
-  L.h(L.kick('learn','Wait or don’t wait?')+'<h1 class="q">When does the leader say “done”?</h1>'+
-   L.lanes([['clock','Synchronous follower','The leader waits until this follower confirms it has the write, <i>then</i> tells the client it worked.<div class="res" style="color:var(--ok)">+ The follower is guaranteed to be up to date.</div><div class="res" style="color:var(--no)">− If it doesn’t answer, the leader must block all writes.</div>',2],
-            ['arrow','Asynchronous follower','The leader sends the change and doesn’t wait for a reply.<div class="res" style="color:var(--ok)">+ The leader keeps taking writes even if followers fall behind.</div><div class="res" style="color:var(--no)">− If the leader dies, writes not yet copied are lost, even ones the client was told succeeded.</div>',3]])+
-   L.prose('Copying is usually fast, under a second in most databases. But there’s <b>no guarantee</b>: a follower can fall minutes behind while it recovers from a failure, when the system is near capacity, or when the network has problems.'));
+  L.h(L.kick('learn','Wait or don’t wait?')+'<h1 class="q">When does the leader tell the merchant “booked”?</h1>'+CSS+'<div id="w9"></div>');
+  const sim=fol2('sync',1,'async',3);for(let j=0;j<6;j++)sim.tick();
+  const T=Track(L.$('#w9'),'w9s','The leader’s log B1 to B6. B1 to B5 are green, B6 is amber. Westport, synchronous, has B1 to B5. Eastvale, asynchronous, has B1 to B3.');T.draw(sim.vm());
+  L.$('#w9').insertAdjacentHTML('beforeend',legend(['ok','pend','have','run'])+
+   '<p class="cap">Westport is '+L.g('sync','synchronous')+': a booking turns green only once Westport has it. Eastvale is asynchronous: the leader doesn’t wait, so it trails, usually by under a second, but with no upper limit.</p>'+
+   '<p class="small">Delays here are illustrative.</p>');
   L.done();}},
-{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Kwame adds followers to the Parcel DB</h1>');
-  L.beats(L.card,[
-   ['The plan','Kwame keeps the leader in Westport and adds two followers: one in Westport, one in Eastvale. The tracking page now reads from the followers, which takes load off the leader.'],
-   ['The setting','The database’s default is <b>fully asynchronous</b>. A merchant books a parcel, the leader saves it and answers “booked” at once. The followers apply it a fraction of a second later.'],
-   ['The rehearsal','In a Peak Week load test, the link to Eastvale gets congested. That follower falls <b>four minutes</b> behind. The leader doesn’t notice and keeps taking bookings.'],
-   ['The question','Kwame asks: “If the leader died right now, what would we lose?” With fully async, the answer is: every booking the followers haven’t got yet, even though merchants were told “booked.”']],
-   'Fully asynchronous replication keeps writes flowing, but it weakens '+L.g('sync','durability')+': a confirmed write isn’t guaranteed to survive a leader crash.');}},
+{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',
+ solve:async L=>{setR(L,'x1dE',3);for(let j=0;j<4;j++)L.$('#x1st').click();L.$('#x1mWs').click();setR(L,'x1dW',2);for(let j=0;j<3;j++)L.$('#x1st').click();},
+ run(L){
+  L.h(L.kick('ex','Explore the track')+'<h1 class="q">One booking arrives every second. Change how each follower replicates and watch what the merchant sees.</h1>'+CSS+
+   tasks('x1t',['Make a follower <b>sync</b> with a delay of 2 s or more, and run','Let an <b>async</b> follower fall 3 or more bookings behind'])+'<div id="x1"></div>');
+  const sim=fol2('async',1,'async',1);let running=false,doneOnce=false;
+  const box=L.$('#x1'),T=Track(box,'x1s','The race track: the leader’s log and each follower’s position');
+  box.insertAdjacentHTML('beforeend','<div class="rt-read" id="x1r" aria-live="polite"></div>'+legend(['ok','pend','have'])+
+   '<div class="rt-btns"><button class="btn pri" id="x1run">'+L.ic('play')+'Run</button><button class="btn" id="x1st">+1 s</button><button class="btn" id="x1rs">'+L.ic('cycle')+'Reset</button></div>'+
+   folCtl('x1',sim,['W','E']));
+  function draw(){T.draw(sim.vm());const I=sim.info();
+    if(!I.n){L.$('#x1r').innerHTML='No bookings yet. Press <b>Run</b> or <b>+1 s</b>.';return;}
+    let h='Leader log ends at <b>B'+I.n+'</b>. '+['W','E'].map(k=>RT_NAME[k]+' has '+(I.p[k]?'B'+I.p[k]:'nothing')+' ('+(I.n-I.p[k])+' behind)').join(' · ')+'. ';
+    h+=I.wait?'<span class="am-t">Each booking waits '+I.wait+' s</span> before “booked”.':'<span class="ok-t">Merchants never wait:</span> no follower is synchronous.';
+    L.$('#x1r').innerHTML=h;
+    if(I.n&&sim.S.fol.some(f=>f.mode==='sync'&&f.d>=2)&&I.pend>0)tdone(L,'x1t',0);
+    if(sim.S.fol.some(f=>f.mode==='async'&&I.n-I.p[f.k]>=3))tdone(L,'x1t',1);
+    if(allDone(L,'x1t')&&!doneOnce){doneOnce=true;
+      L.sheet('info','What you just saw','<b>Sync:</b> the merchant waits as long as that follower takes, but every green booking is already on it. <b>Async:</b> the merchant never waits, but the follower can trail, so it may be missing bookings that were confirmed.');L.done();}}
+  function step(){if(sim.S.ent.length>=90){running=false;L.$('#x1run').innerHTML=L.ic('play')+'Run';return;}sim.tick();draw();}
+  bindFol(L,'x1',sim,['W','E'],draw);
+  L.$('#x1st').onclick=step;
+  L.$('#x1run').onclick=async()=>{running=!running;L.$('#x1run').innerHTML=running?'Pause':L.ic('play')+'Run';
+    while(running&&T.alive()){step();await L.sleep(850);}};
+  L.$('#x1rs').onclick=()=>{const S=sim.S;S.now=0;S.ent=[];draw();};
+  draw();}},
 {part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',pts:1,
- solve:async L=>{const c=L.$('#modes').children;c[0].click();c[1].click();},
+ solve:async L=>{L.$('#p2c1').click();await waitFor(L,()=>L.$('#p2rp'));L.$('#p2rp').click();await waitFor(L,()=>L.$('#p2dn'));},
  run(L){
-  const M=[['Fully asynchronous','<div>Follower 1 has: B1, B2</div><div>Follower 2 has: B1</div><div style="margin-top:6px">Promote follower 1 → <b style="color:var(--no)">B3 is gone</b>, though its merchant was told “booked.”</div>'],
-           ['Semi-synchronous','<div>Follower 1 (sync) has: B1, B2, B3</div><div>Follower 2 (async) has: B1</div><div style="margin-top:6px">Promote follower 1 → <b style="color:var(--ok)">nothing confirmed is lost.</b> Each booking was confirmed only after follower 1 had it.</div>']];
-  const seen=new Set();
-  L.h(L.kick('pr','Toggle and compare')+'<h1 class="q">The leader confirms bookings B1, B2 and B3, then crashes. Pick a setting to see what survives.</h1><div id="modes"></div>'+
-   '<div style="background:var(--soft);border-radius:16px;padding:14px;margin:8px 0;min-height:110px;font-size:14.5px;line-height:1.55" id="mo"><span class="small">Choose a setting above.</span></div><div id="mq"></div>');
-  M.forEach((m,j)=>{const b=document.createElement('button');b.className='chip';b.innerHTML=L.ic(j?'shield':'arrow')+m[0];
-    b.onclick=()=>{[...L.$('#modes').children].forEach(x=>x.classList.remove('sel'));b.classList.add('sel');L.$('#mo').innerHTML=m[1];seen.add(j);
-      if(seen.size===2&&!L.$('#mq').innerHTML){const q=L.$('#mq');q.innerHTML='<h2 class="sub">So why is fully asynchronous still so widely used?</h2>';
-        L.mc(q,['Reads from followers are always up to date','Followers can never fall behind the leader','The leader keeps taking writes even if followers lag'],2,
-         'That’s the trade. Async never makes writes wait for a slow or distant follower, which matters when there are many followers or they’re far apart.',
-         'Async followers <i>can</i> fall behind, so their reads can be stale. What async buys is that the leader never waits for them.');}};
-    L.$('#modes').appendChild(b);});}},
+  let pick=null;
+  L.h(L.kick('pr','Predict, then watch')+'<h1 class="q">Both followers are async: Westport 1&nbsp;s behind, Eastvale 2&nbsp;s. The leader confirms B1 to B5, then crashes. Kwame promotes the most up-to-date follower. Which confirmed bookings are lost?</h1>'+CSS+
+   '<div class="lz-row" id="p2c"></div><div id="p2"></div><div id="p2x"></div>');
+  const box=L.$('#p2'),T=Track(box,'p2s','The race track for the crash');
+  box.insertAdjacentHTML('beforeend','<div class="rt-read" id="p2r" aria-live="polite">Pick your prediction to run it.</div>'+legend(['ok','have','lostc','lost']));
+  let sim=fol2('async',1,'async',2);T.draw(sim.vm({min:7}));
+  async function play(wm){sim=fol2(wm,1,'async',2);T.draw(sim.vm({min:7}));
+    for(let j=0;j<5;j++){await L.sleep(300);if(!T.alive())return null;sim.tick();T.draw(sim.vm({min:7}));}
+    await L.sleep(350);if(!T.alive())return null;sim.crash();T.draw(sim.vm({min:7}));L.$('#p2r').innerHTML='<span class="no-t">The leader crashes.</span> Failover picks the follower with the most bookings…';
+    await L.sleep(550);if(!T.alive())return null;sim.promote(best(sim));T.draw(sim.vm({min:7}));return sim.info();}
+  ['Nothing is lost','Only B5','B4 and B5','B3, B4 and B5'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.id='p2c'+j;b.textContent=t;
+    b.onclick=async()=>{if(pick!==null)return;pick=j;b.classList.add('sel');const I=await play('async');if(!I)return;
+      const ok=j===1;L.award(ok);
+      L.$('#p2r').innerHTML='Westport had B1 to B4. <span class="no-t">B5 is gone</span>, though its merchant was told “booked”. Eastvale was even further behind.';
+      L.sheet(ok?'ok':'no',ok?'Right: only B5':'Only B5 was lost','Async means the leader says “booked” before any follower has the booking. Westport, 1 s behind, was missing just the last one. With async replication a confirmed write is not guaranteed to survive a leader crash.');
+      L.$('#p2x').innerHTML='<button class="btn pri" id="p2rp" style="margin-top:6px">'+L.ic('play')+'Replay with Westport synchronous</button>';
+      L.$('#p2rp').onclick=async function(){this.remove();const I2=await play('sync');if(!I2)return;
+        L.$('#p2r').innerHTML='Same crash. B5 was still amber: the leader hadn’t said “booked” yet, so its merchant never got a promise that was then broken. <span class="ok-t">No confirmed booking lost.</span>';
+        L.$('#p2x').innerHTML='<div class="fb ok" id="p2dn">That’s '+L.g('semi-sync','semi-synchronous')+': one sync follower, so every confirmed booking is on at least two nodes, the leader and Westport.</div>';L.done();};};
+    L.$('#p2c').appendChild(b);});}},
+{part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#e3p'+j).click();await L.sleep(20);}},
+ run(L){
+  const tried=new Set();
+  L.h(L.kick('pr','Edge cases')+'<h1 class="q">Push the settings to the extremes. Where does each one stop protecting you?</h1>'+CSS+'<div class="rt-pre" id="e3b"></div><div id="e3"></div>');
+  const box=L.$('#e3'),T=Track(box,'e3s','The race track for the chosen edge case');
+  box.insertAdjacentHTML('beforeend','<div class="rt-read" id="e3r" aria-live="polite">Tap a case above. Try at least three.</div>'+legend(['ok','pend','have']));
+  T.draw(fol2('async',1,'async',1).vm({min:7}));
+  const P=[
+   ['All sync, one slow disk',()=>{const s=fol2('sync',1,'sync',4);for(let j=0;j<7;j++)s.tick();return s;},
+    '<span class="am-t">Every booking waits 4 s.</span> With every follower synchronous, the slowest one sets the pace for all writes. If any one stopped answering, nothing could be confirmed. That’s why “synchronous” in practice usually means just one follower.'],
+   ['Sync follower goes down',()=>{const s=fol2('sync',1,'async',2);for(let j=0;j<3;j++)s.tick();s.down('W');for(let j=0;j<4;j++)s.tick();return s;},
+    '<span class="no-t">Bookings stall.</span> Westport is the synchronous follower and it’s down, so the leader can’t confirm anything. It must block writes until Westport is back.'],
+   ['Make another one sync',()=>{const s=fol2('sync',1,'async',2);for(let j=0;j<3;j++)s.tick();s.down('W');for(let j=0;j<4;j++)s.tick();s.F('W').mode='async';s.F('E').mode='sync';s.settle();for(let j=0;j<2;j++)s.tick();return s;},
+    '<span class="ok-t">Unstuck.</span> When the synchronous follower fails, an asynchronous one is made synchronous. That keeps an up-to-date copy on two nodes: '+L.g('semi-sync','semi-synchronous')+' replication.'],
+   ['Async, lag grows',()=>{const s=fol2('async',1,'async',1);for(let j=0;j<3;j++)s.tick();s.F('E').d=12;for(let j=0;j<7;j++)s.tick();return s;},
+    '<span class="am-t">Eastvale falls far behind</span> and the leader doesn’t care. Lag is usually under a second, but there’s no guarantee: recovering from a failure, running near capacity or network trouble can push it to minutes.']];
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='e3p'+j;b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#e3b').children].forEach(x=>x.classList.toggle('sel',x===b));const s=p[1]();T.draw(s.vm({min:7}));L.$('#e3r').innerHTML=p[2];tried.add(j);
+      if(tried.size>=3&&!L.$('#e3ok')){L.$('#e3').insertAdjacentHTML('beforeend','<span id="e3ok"></span>');
+        L.sheet('info','The trade-off in one line','Sync buys durability and costs availability: one slow or dead sync follower holds up every write. Async keeps writes flowing but weakens durability. Semi-sync is the usual middle.');L.done();}};
+    L.$('#e3b').appendChild(b);});}},
 {part:1,src:'Chapter 5 · Synchronous Versus Asynchronous Replication',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias says: “Let’s make all the followers synchronous so we never lose a booking.” What happens if one follower’s disk gets slow?</h1>');
-  L.mc(L.card,['Every booking waits for that one slow disk','Bookings get faster because all copies agree','Only reads from that follower slow down'],0,
-   'Right. If every follower is synchronous, any one slow or dead node blocks all writes. That’s why turning on synchronous replication usually means just one synchronous follower: '+L.g('semi-sync','semi-synchronous')+'.',
-   'With every follower synchronous, the leader can’t confirm a write until <i>all</i> of them answer. One slow disk stalls every booking. In practice only one follower is synchronous (semi-synchronous).');}},
+  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Kwame plans six followers for the tracking page, spread over Westport, Eastvale and Nordhaven. Why does the book say fully asynchronous replication is common in setups like this?</h1>');
+  L.mc(L.card,['Async followers are never behind the leader','With many or far-away followers, waiting for them would stall writes','Async replication never loses a confirmed write'],1,
+   'Right. The more followers and the further away they are, the more likely one is slow. Async lets the leader keep taking writes even if every follower falls behind. The price is weaker durability.',
+   'Async followers can fall behind, and async can lose confirmed writes if the leader dies. What it buys is that the leader never waits, which matters most with many or distant followers.');}},
 {part:1,src:'Chapter 5 · Setting Up New Followers',run(L){
-  L.h(L.kick('learn','Adding a follower')+'<h1 class="q">You can’t just copy the files while the database is busy</h1>'+
-   L.prose('Writes keep arriving while you copy, so a plain file copy would catch different parts of the database at different moments. The result might make no sense. Locking the database for the copy would stop writes, which defeats the point. Instead:')+
-   L.list([['Take a consistent snapshot','A '+L.g('snapshot','snapshot')+' of the leader at one moment, ideally without locking. Most databases can do this because backups need it too.'],
-     ['Copy it to the new node','The snapshot is tied to an exact position in the leader’s log (PostgreSQL calls it the log sequence number; MySQL, the binlog coordinates).'],
-     ['Ask for everything since','The follower requests all changes after that position.'],
-     ['Caught up','Once it has worked through the backlog, it follows live changes like any other follower.']],2));
+  L.h(L.kick('learn','Adding a follower')+'<h1 class="q">You can’t just copy the files while bookings keep coming</h1>'+CSS+picNewFollower()+
+   '<p class="cap">A plain file copy mixes moments. Locking stops bookings. Instead, take a '+L.g('snapshot','consistent snapshot')+' tied to an exact log position, copy it, then fetch every change after that position.</p>');
   L.done();}},
-{part:1,src:'Chapter 5 · Setting Up New Followers',pts:1,run(L){
-  L.h(L.kick('pr','Put it in order')+'<h1 class="q">Kwame is adding a third follower for Nordhaven. Tap the steps in order.</h1>');
-  L.order(L.card,['Take a snapshot of the leader, noting its log position','Copy the snapshot to the Nordhaven node','Request every change since that log position','Apply the backlog until caught up','Follow live changes from the leader'],
-   'No downtime: the leader keeps taking bookings throughout, and the log position tells the new follower exactly where to pick up.');}},
+{part:1,src:'Chapter 5 · Setting Up New Followers',pts:1,
+ solve:async L=>{L.$('#n4a').click();L.$('#n4b').click();await waitFor(L,()=>L.$('#n4c1'));L.$('#n4c1').click();},
+ run(L){
+  let ph=0,n=6,snapCells=0,pick=null,first=true;
+  L.h(L.kick('pr','Hands on · new follower')+'<h1 class="q">Kwame adds a Nordhaven follower without stopping bookings. Do the steps, then choose where Nordhaven picks up.</h1>'+CSS+'<div id="n4"></div>');
+  const box=L.$('#n4'),T=Track(box,'n4s','The leader’s log, the Westport follower and the new Nordhaven follower');
+  box.insertAdjacentHTML('beforeend',legend(['ok','have','snap'])+
+   '<div class="rt-btns"><button class="btn pri" id="n4a">1 · Snapshot the leader</button><button class="btn" id="n4b" disabled>2 · Copy it to Nordhaven</button></div>'+
+   '<div id="n4q"></div><div class="rt-read" id="n4r" aria-live="polite">Bookings keep arriving the whole time.</div>');
+  function vm(){const lc={},wc={},nc={};for(let j=1;j<=n;j++){lc[j]='ok';wc[j]=j<n?'have':'empty';}
+    let run=null,l2=ph>=1?'snapshot B6':'new, empty';
+    for(let j=1;j<=snapCells;j++)nc[j]='snap';
+    if(ph>=1)for(let j=snapCells+1;j<=n;j++)nc[j]='empty';
+    if(ph>=2)run=7;
+    if(pick!==null){l2=['applied twice','caught up','has a hole'][pick];run=n+1;
+      for(let j=7;j<=9;j++)nc[j]=pick===2?'gap':'have';
+      if(pick===0)for(let j=1;j<=6;j++)nc[j]='dup';}
+    return {start:pick!==null?2:1,rows:[{key:'L',l1:'Leader',l2:'Westport',cells:lc,cam:ph>=1?6:null},
+      {key:'W',l1:'Westport',l2:'async · 1 s',c2:'var(--muted)',cells:wc,run:n,rc:RT_COL.W},
+      {key:'N',l1:'Nordhaven',l2,c2:pick===null?'var(--h3)':pick===1?'var(--ok)':'var(--no)',cells:nc,run,rc:RT_COL.N,cam:snapCells>=6?6:null}]};}
+  T.draw(vm());
+  L.$('#n4a').onclick=function(){if(ph)return;ph=1;this.disabled=true;L.$('#n4b').disabled=false;T.draw(vm());
+    L.$('#n4r').innerHTML='A consistent snapshot of the leader at log position <b>B6</b>, taken without locking. Bookings carry on.';};
+  L.$('#n4b').onclick=async function(){if(ph!==1)return;ph=2;this.disabled=true;
+    for(let j=0;j<3;j++){await L.sleep(320);if(!T.alive())return;n++;snapCells=Math.min(6,snapCells+2);T.draw(vm());}
+    L.$('#n4r').innerHTML='Copying took a while: the leader is now at <b>B9</b>. Nordhaven holds B1 to B6 from the snapshot.';
+    L.$('#n4q').innerHTML='<div class="rt-lbl">3 · Nordhaven asks the leader for changes. Which ones?</div><div class="lz-row" id="n4c"></div>';
+    ['Everything from B1','Everything after B6','Only new ones, after B9'].forEach((t,j)=>{const b=document.createElement('button');b.className='chip';b.id='n4c'+j;b.textContent=t;
+      b.onclick=()=>{pick=j;[...L.$('#n4c').children].forEach(x=>x.classList.toggle('sel',x===b));T.draw(vm());
+        const ok=j===1;
+        const R=['<span class="no-t">B1 to B6 applied twice</span> on top of the snapshot: duplicate parcels and double charges.',
+          '<span class="ok-t">Caught up.</span> Nordhaven applies B7 to B9, the backlog since the snapshot, and now follows live like any follower.',
+          '<span class="no-t">B7 to B9 never arrive.</span> A silent hole: Nordhaven looks healthy but is missing three bookings for good.'];
+        L.$('#n4r').innerHTML=R[j];
+        if(first){first=false;L.award(ok);
+          L.sheet(ok?'ok':'no',ok?'Right: after B6':'Pick up exactly where the snapshot ends','The snapshot is tied to an exact log position, B6. The new follower asks for every change <i>after</i> that position, works through the backlog, and then it has <b>caught up</b>. You can tap the other choices to see what they break.');L.done();}};
+      L.$('#n4c').appendChild(b);});};}},
 
 /* ---------- PART 3: OUTAGES AND FAILOVER ---------- */
 {part:2,src:'Chapter 5 · Handling Node Outages',run(L){
-  L.h(L.kick('learn','When a node goes down')+'<h1 class="q">A follower failing is easy. A leader failing is not.</h1>'+
-   L.prose('Nodes go down from faults, but just as often for planned work, like a reboot to install a security patch. The goal is to keep the whole system running while single nodes come and go.')+
-   L.lanes([['layers','Follower fails','<b>Catch-up recovery.</b> Each follower keeps a log of changes it received. After a restart, it knows the last transaction it processed, asks the leader for everything since, and catches up.',2],
-            ['alert','Leader fails','<b>'+L.g('failover','Failover')+'.</b> A follower must become the new leader, clients must send writes to it, and other followers must copy from it. Done by hand or automatically.',4]])+
-   L.list([['Detect it','There’s no foolproof test, so most systems use a <b>timeout</b>: no answer for, say, 30 seconds means “dead.”'],
-     ['Choose a new leader','By election among the remaining replicas or by a controller node. The best pick is usually the most up-to-date follower. Agreeing on it is a '+L.g('consensus','consensus')+' problem (chapter 9).'],
-     ['Reconfigure','Send writes to the new leader. If the old leader comes back, it must step down and become a follower.']],4));
+  L.h(L.kick('learn','When a node goes down')+'<h1 class="q">A follower failing is easy. A leader failing is not.</h1>'+CSS+picOutage()+
+   '<p class="cap">A restarted follower knows from its own log where it stopped and fetches the rest. When the leader dies, '+L.g('failover','failover')+' detects it by timeout, promotes the most up-to-date follower and sends writes there.</p>'+
+   L.quote('Failover is fraught with things that can go wrong.','Martin Kleppmann, chapter 5'));
   L.done();}},
-{part:2,src:'Chapter 5 · Handling Node Outages',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">The Eastvale follower was offline for 10 minutes for a security patch. Bookings carried on meanwhile. What does it do when it restarts?</h1>');
-  L.mc(L.card,['Copy a fresh snapshot of the whole database','Ask for every change since its last processed one','Take over as leader, since it’s the newest node'],1,
-   'Catch-up recovery: its own log says where it stopped, so it only fetches the missing 10 minutes.',
-   'A restarted follower doesn’t need a full copy and doesn’t become leader. Its own log tells it the last change it processed, so it fetches only what it missed.');}},
-{part:2,src:'Chapter 5 · Handling Node Outages',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">The night the Parcel DB failed over</h1>');
-  L.beats(L.card,[
-   ['02:10','The Westport follower is rebooting for a kernel patch. Then the Westport <b>leader</b> crashes. After the 30-second timeout, automatic failover promotes the only follower left: Eastvale, which is 3 seconds behind.'],
-   ['Lost writes','The last 3 seconds of bookings never reached Eastvale. They’re discarded, though merchants were told “booked.”'],
-   ['Reused IDs','Eastvale’s parcel-ID counter was behind, so it hands out IDs the old leader had already used. The tracking-page cache still holds the old parcels under those IDs. Some recipients briefly see a stranger’s name and address.'],
-   ['The book’s case','This mirrors a real incident the book describes at GitHub: a lagging MySQL follower was promoted, reused primary keys that a Redis store also used, and private data reached the wrong users.'],
-   ['02:40','The old leader restarts and still thinks it’s the leader. One merchant API server with old settings keeps writing to it. Now two nodes accept writes. Kwame shuts the old leader down by hand.']],
-   'Failover can lose confirmed writes, break other systems that depend on the database, and leave two leaders. Afterwards Kwame makes one follower synchronous.');}},
-{part:2,src:'Chapter 5 · Handling Node Outages',run(L){
-  L.h(L.kick('learn','What goes wrong in failover')+L.quote('Failover is fraught with things that can go wrong.','Martin Kleppmann, chapter 5')+'<h1 class="q" style="margin-top:12px">Tap each card to see one of the four classic problems.</h1>');
-  L.flips(L.card,[
-   ['Lost writes','With async replication the new leader may lack the old leader’s last writes. Usually they’re just discarded, which breaks clients’ expectation that confirmed writes last.'],
-   ['Other systems out of step','Discarding writes is worse when other systems, like a cache, already used that data. The GitHub key reuse is the example.'],
-   ['Split brain','Two nodes both believe they’re the leader. If both accept writes with no way to resolve conflicts, data is lost or corrupted. A safety catch that shuts one down can, if badly designed, shut down both.'],
-   ['The wrong timeout','Too long: slow recovery after a real failure. Too short: needless failovers, say during a load spike or a network glitch, which make a struggling system worse.']],
-   'There are no easy fixes, which is why some teams prefer to fail over by hand even when the software can do it automatically.');}},
+{part:2,src:'Chapter 5 · Handling Node Outages',
+ solve:async L=>{L.$('#x5dW').click();for(let j=0;j<3;j++)L.$('#x5st').click();L.$('#x5dW').click();L.$('#x5L').click();await waitFor(L,()=>L.$('#x5pW'));L.$('#x5pW').click();},
+ run(L){
+  let sim,running=false,doneOnce=false,detecting=false;
+  L.h(L.kick('ex','Hands on · outages')+'<h1 class="q">Knock nodes over and watch the system recover.</h1>'+CSS+
+   tasks('x5t',['Crash a <b>follower</b>, let 2+ bookings pass, then restart it','Crash the <b>leader</b> and promote a follower'])+'<div id="x5"></div>');
+  const box=L.$('#x5'),T=Track(box,'x5s','The race track with crash and restart controls');
+  box.insertAdjacentHTML('beforeend','<div class="rt-read" id="x5r" aria-live="polite"></div><div class="lz-row" id="x5p"></div>'+legend(['ok','have','lostc','new'])+
+   '<div class="rt-btns"><button class="btn pri" id="x5run">'+L.ic('play')+'Run</button><button class="btn" id="x5st">+1 s</button><button class="btn" id="x5rs">'+L.ic('cycle')+'Reset</button></div>'+
+   '<div class="rt-btns"><button class="btn" id="x5dW">Crash W</button><button class="btn" id="x5dE">Crash E</button><button class="btn" id="x5L">Crash leader</button></div>');
+  function reset(){sim=fol2('async',1,'async',2);for(let j=0;j<3;j++)sim.tick();L.$('#x5p').innerHTML='';detecting=false;draw('Bookings flow: press Run or +1 s.');}
+  function draw(msg){T.draw(sim.vm());const S=sim.S,I=sim.info();
+    ['W','E'].forEach(k=>{const b=L.$('#x5d'+k);b.textContent=(sim.isDown(k)?'Restart ':'Crash ')+k;b.disabled=S.prom===k;});
+    L.$('#x5L').disabled=S.crash!=null;
+    if(msg)L.$('#x5r').innerHTML=msg;}
+  function step(){if(sim.S.now>=80)return;sim.tick();
+    let m=null;const S=sim.S;
+    if(S.crash!=null&&S.prom==null)m='<span class="no-t">No leader:</span> bookings fail until a follower is promoted.';
+    else if(S.prom!=null){const I=sim.info();m=RT_NAME[S.prom]+' leads now. '+(I.lostC.length?'<span class="no-t">Lost after “booked”: '+I.lostC.map(x=>'B'+x).join(', ')+'.</span> ':'')+(I.reused.length?'Its counter handed out '+I.reused.map(x=>'B'+x).join(', ')+' again.':'');}
+    else{const dn=['W','E'].filter(k=>sim.isDown(k));if(dn.length)m=dn.map(k=>RT_NAME[k]).join(' and ')+' is down and missing bookings. The leader carries on.';}
+    draw(m);}
+  bindRun();
+  function bindRun(){
+    L.$('#x5st').onclick=step;
+    L.$('#x5run').onclick=async()=>{running=!running;L.$('#x5run').innerHTML=running?'Pause':L.ic('play')+'Run';while(running&&T.alive()){step();await L.sleep(900);}};
+    L.$('#x5rs').onclick=reset;
+    ['W','E'].forEach(k=>{L.$('#x5d'+k).onclick=()=>{const f=sim.F(k);
+      if(sim.isDown(k)){const missed=sim.S.ent.filter(e=>e.t>f.down.a).length+sim.S.nw.filter(e=>e.t>f.down.a).length;sim.up(k);
+        draw(missed?'<span class="ok-t">Catch-up recovery:</span> '+RT_NAME[k]+'’s own log says where it stopped. It asks for everything after that and jumps forward.':RT_NAME[k]+' is back, but it missed nothing. Next time let some bookings pass while it’s down.');
+        if(missed>=2)tdone(L,'x5t',0);}
+      else{sim.down(k);draw(RT_NAME[k]+' is down. Let a few bookings pass, then restart it.');}
+      check();};});
+    L.$('#x5L').onclick=async()=>{if(sim.S.crash!=null||detecting)return;sim.crash();detecting=true;
+      draw('<span class="no-t">The leader crashed.</span> No reply… after the timeout (30 s, sped up here) it’s presumed dead.');
+      await L.sleep(500);if(!T.alive())return;detecting=false;
+      const ups=['W','E'].filter(k=>!sim.isDown(k));
+      if(!ups.length){draw('Both followers are down too, so nobody can take over. Press Reset.');return;}
+      L.$('#x5p').innerHTML='<div class="rt-lbl" style="width:100%">Choose the new leader</div>'+ups.map(k=>'<button class="chip" id="x5p'+k+'">Promote '+RT_NAME[k]+' (has B'+sim.pos(k)+')</button>').join('');
+      ups.forEach(k=>{L.$('#x5p'+k).onclick=()=>{sim.promote(k);L.$('#x5p').innerHTML='';const I=sim.info();
+        draw(RT_NAME[k]+' is the new leader. Writes go to it and the other follower copies from it. '+(I.lostC.length?'<span class="no-t">'+I.lostC.map(x=>'B'+x).join(', ')+(I.lostC.length>1?' were':' was')+' confirmed but never reached it: discarded.</span>':'<span class="ok-t">It had every confirmed booking.</span>'));
+        tdone(L,'x5t',1);check();};});
+      draw();};
+  }
+  function check(){if(allDone(L,'x5t')&&!doneOnce){doneOnce=true;
+    L.sheet('info','Two very different recoveries','A follower just catches up from its log position: nothing to decide. Losing the leader needs a decision (who leads now?) and can lose bookings the old leader confirmed. Choosing the most up-to-date follower keeps the loss smallest; getting all nodes to agree on it is a '+L.g('consensus','consensus')+' problem (chapter 9).');L.done();}}
+  reset();}},
+{part:2,src:'Chapter 5 · Handling Node Outages',
+ solve:async L=>{for(let j=0;j<4;j++){L.$('#f6p'+j).click();await L.sleep(20);}},
+ run(L){
+  const tried=new Set();
+  L.h(L.kick('pr','Edge cases · failover')+'<h1 class="q">Replay four nights that went wrong at Otterpost. What broke each time?</h1>'+CSS+'<div class="rt-pre" id="f6b"></div><div id="f6"></div>');
+  const box=L.$('#f6'),T=Track(box,'f6s','The race track for the chosen failover case');
+  box.insertAdjacentHTML('beforeend','<div class="rt-read" id="f6r" aria-live="polite">Tap a night above. Try at least three.</div>'+legend(['ok','lostc','new','have']));
+  T.draw(fol2('async',1,'async',2).vm({min:7}));
+  const bar=(a,b,t,bl,ll)=>'<svg viewBox="0 0 300 44" style="width:100%;display:block;margin:2px 0 6px" role="img" aria-label="'+t+'"><rect x="0" y="24" width="300" height="12" rx="4" style="fill:var(--card)"/><rect x="0" y="24" width="'+a+'" height="12" rx="4" style="fill:var(--h3)"/><line x1="'+b+'" y1="18" x2="'+b+'" y2="42" style="stroke:var(--no);stroke-width:2.5"/>'+
+    tx(0,14,bl,'font-size:12px;font-weight:600;fill:var(--h3)')+tx(b>250?b:b+5,14,ll,'font-size:12px;font-weight:600;fill:var(--no)'+(b>250?';text-anchor:end':''))+'</svg>';
+  const P=[
+   ['Promote a lagging follower',()=>{const s=fol2('async',1,'async',2);for(let j=0;j<2;j++)s.tick();s.down('W');for(let j=0;j<4;j++)s.tick();s.crash();s.promote('E');s.tick();s.tick();return [s,{}];},
+    'Westport was rebooting for a patch, so Eastvale, 2 behind, was promoted. Its ID counter was at B4, so it handed out <span class="no-t">B5 and B6 again</span>. The tracking-page cache still held the old B5 and B6: two recipients could see a stranger’s name and address.',
+    'This mirrors the book’s GitHub incident: an out-of-date MySQL follower became leader, reused primary keys that a Redis store also used, and private data reached the wrong users.'],
+   ['Old leader comes back',()=>{const s=fol2('async',1,'async',2);for(let j=0;j<5;j++)s.tick();s.crash();s.promote('W');s.tick();s.S.back=true;s.tick();return [s,{}];},
+    'The old leader restarts still believing it leads. One merchant API server with old settings keeps writing to it. Now <span class="no-t">two different B6s</span> exist on two leaders: '+L.g('split-brain','split brain')+'.',
+    'With no way to resolve the conflict, data is lost or corrupted. Some systems shut one node down when they see two leaders, but a badly designed safety catch can shut down both.'],
+   ['Timeout too short, load spike',()=>{const s=fol2('async',1,'async',2);for(let j=0;j<5;j++)s.tick();s.crash(true);s.promote('W');return [s,{}];},
+    bar(240,150,'Leader silent 8 seconds; the timeout line sits at 5 seconds','busy 8 s','timeout 5 s')+'Peak Week spike: the leader was <span class="am-t">busy, not dead</span>, silent for 8 s with a 5 s timeout (illustrative numbers). A needless failover, which also dropped B5.',
+    'An unnecessary failover adds work to a system that is already struggling with load or network trouble, making things worse, not better.'],
+   ['Timeout too long, real crash',()=>{const s=fol2('async',1,'async',2);for(let j=0;j<5;j++)s.tick();s.crash();return [s,{refused:3}];},
+    bar(230,298,'The leader is dead and the 5-minute timeout has not run out yet','dead, still waiting…','timeout 5 min')+'The leader really died, but the timeout is 5 minutes (illustrative). <span class="no-t">Every booking fails</span> until it runs out and someone is promoted.',
+    'The longer the timeout, the longer recovery takes after a real failure. There is no setting that is both quick and safe.']];
+  P.forEach((p,j)=>{const b=document.createElement('button');b.className='chip';b.id='f6p'+j;b.textContent=p[0];
+    b.onclick=()=>{[...L.$('#f6b').children].forEach(x=>x.classList.toggle('sel',x===b));const r=p[1]();T.draw(r[0].vm(Object.assign({min:7},r[1])));
+      L.$('#f6r').innerHTML=p[2]+'<div class="small" style="margin-top:6px">'+p[3]+'</div>';tried.add(j);
+      if(tried.size>=3&&!L.$('#f6ok')){L.$('#f6').insertAdjacentHTML('beforeend','<span id="f6ok"></span>');
+        L.sheet('info','No easy fixes','Lost writes, reused IDs, two leaders, and a timeout that is wrong either way. That’s why some operations teams fail over by hand, even when the software can do it automatically.');L.done();}};
+    L.$('#f6b').appendChild(b);});}},
 {part:2,src:'Chapter 5 · Handling Node Outages',pts:4,run(L){
   L.h('<div id="qk"></div>');
   L.quick(L.$('#qk'),'Which failover problem?',['Lost writes','Split brain','Timeout too short','Timeout too long'],[
@@ -190,29 +651,74 @@ Course.lesson({
    ['The leader really died, but nothing happened for 5 minutes. No bookings could be made the whole time.',3,'A long timeout means a long wait before recovery starts after a real failure.'],
    ['After failover, a merchant finds that a parcel they booked just before the crash doesn’t exist.',0,'The new leader never received it, and the old leader’s unreplicated writes were discarded.'],
    ['A network glitch cuts the leader off. A follower is promoted, but the old leader is still running and taking writes from some servers.',1,'Two nodes both acting as leader is split brain. Writes on both sides can clash or get lost.']]);}},
+{part:2,src:'Chapter 5 · Handling Node Outages',pts:1,
+ solve:async L=>{L.$('#c7Ws').click();L.$('#c7Ea').click();L.$('#c7t1').click();L.$('#c7go').click();await waitFor(L,()=>L.$('#c7ok'),5000);},
+ run(L){
+  const C={W:'async',E:'async',t:0},TO=['5 s','30 s','5 min'];let first=true,running=false;
+  L.h(L.kick('pr','Challenge')+'<h1 class="q">Set up the Parcel DB for a rough night: a load spike at 01:00 (leader silent 10&nbsp;s), then a real leader crash at 03:00. The Eastvale link is slow (3&nbsp;s).</h1>'+CSS+
+   '<div class="small">Pass all four (limits are illustrative): no confirmed booking lost · no booking waits over 2 s · no needless failover · bookings down at most a minute.</div>'+
+   '<div class="rt-pick"><span>Westport (1 s)</span><div class="lz-row"><button class="chip" id="c7Ws">Sync</button><button class="chip sel" id="c7Wa">Async</button></div></div>'+
+   '<div class="rt-pick"><span>Eastvale (3 s)</span><div class="lz-row"><button class="chip" id="c7Es">Sync</button><button class="chip sel" id="c7Ea">Async</button></div></div>'+
+   '<div class="rt-pick"><span>Timeout</span><div class="lz-row">'+TO.map((t,j)=>'<button class="chip'+(j===0?' sel':'')+'" id="c7t'+j+'">'+t+'</button>').join('')+'</div></div>'+
+   '<div class="rt-btns"><button class="btn pri" id="c7go">'+L.ic('play')+'Run the night</button></div><div id="c7"></div><div id="c7res"></div>');
+  const T=Track(L.$('#c7'),'c7s','The race track for the scripted night');
+  T.draw(fol2('async',1,'async',3).vm({min:7}));
+  ['W','E'].forEach(k=>{const s=L.$('#c7'+k+'s'),a=L.$('#c7'+k+'a');s.onclick=()=>{C[k]='sync';s.classList.add('sel');a.classList.remove('sel');};a.onclick=()=>{C[k]='async';a.classList.add('sel');s.classList.remove('sel');};});
+  TO.forEach((t,j)=>{L.$('#c7t'+j).onclick=()=>{C.t=j;TO.forEach((x,i)=>L.$('#c7t'+i).classList.toggle('sel',i===j));};});
+  L.$('#c7go').onclick=async()=>{if(running)return;running=true;L.$('#c7go').disabled=true;L.$('#c7res').innerHTML='';
+    const sim=fol2(C.W,1,C.E,3);
+    for(let j=0;j<6;j++){sim.tick();T.draw(sim.vm({min:7}));await L.sleep(220);if(!T.alive())return;}
+    sim.crash();T.draw(sim.vm({min:7}));await L.sleep(350);if(!T.alive())return;
+    if(C.t!==2)sim.promote(best(sim));T.draw(sim.vm(C.t===2?{min:7,refused:2}:{min:7}));
+    const I=sim.info(),wait=Math.max(0,...['W','E'].filter(k=>C[k]==='sync').map(k=>k==='W'?1:3));
+    const rows=[[I.lostC.length===0,'No confirmed booking lost',I.lostC.length?'lost '+I.lostC.map(x=>'B'+x).join(', '):''],
+      [wait<=2,'No booking waits over 2 s',wait>2?'each waits '+wait+' s for Eastvale':''],
+      [C.t!==0,'No needless failover at 01:00',C.t===0?'10 s of silence beat the 5 s timeout':''],
+      [C.t!==2,'Bookings down at most a minute',C.t===2?'down for 5 minutes':'']];
+    if(C.t===2){const s2=fol2(C.W,1,C.E,3);for(let j=0;j<6;j++)s2.tick();s2.crash();s2.promote(best(s2));rows[0][0]=s2.info().lostC.length===0;rows[0][2]=rows[0][0]?'':'lost '+s2.info().lostC.map(x=>'B'+x).join(', ')+' once someone is promoted';}
+    const sx=v=>(12+Math.log10(v)/Math.log10(300)*284).toFixed(1),tv=[5,30,300][C.t],tx0=sx(tv);
+    const night='<svg viewBox="0 0 310 92" style="width:100%;display:block;margin:8px 0 2px" role="img" aria-label="The night against the timeout: the 10 second spike, then the real crash, which lasts until the timeout of '+TO[C.t]+'">'+
+      tx(12,13,'01:00 spike · silent 10 s','font-size:11.5px;font-weight:700;fill:var(--h3)')+'<rect x="12" y="19" width="'+(sx(10)-12)+'" height="12" rx="4" style="fill:var(--h3)"/>'+
+      tx(12,51,'03:00 crash · no leader until the timeout','font-size:11.5px;font-weight:700;fill:var(--no)')+'<rect x="12" y="57" width="'+(tx0-12)+'" height="12" rx="4" style="fill:var(--no-bg);stroke:var(--no);stroke-width:1.2"/>'+
+      '<path d="M'+tx0+' 16V34M'+tx0+' 54V74" style="stroke:var(--pri);stroke-width:2.5;stroke-dasharray:4 3"/>'+
+      tx(tx0,88,'timeout '+TO[C.t],'font-size:11.5px;font-weight:700;fill:var(--pri-deep);text-anchor:'+(C.t===2?'end':'middle'))+'</svg>';
+    L.$('#c7res').innerHTML=night+'<div class="rt-read"><table class="chal">'+rows.map(r=>'<tr><td style="width:24px">'+(r[0]?'<span class="ok-t">✓</span>':'<span class="no-t">✗</span>')+'</td><td>'+r[1]+(r[2]?' <span class="small">('+r[2]+')</span>':'')+'</td></tr>').join('')+'</table></div>';
+    const pass=rows.every(r=>r[0]);if(first){first=false;L.award(pass);}
+    running=false;L.$('#c7go').disabled=false;
+    if(pass){L.$('#c7go').disabled=true;L.$('#c7res').insertAdjacentHTML('beforeend','<span id="c7ok"></span>');
+      L.sheet('ok','The night passes','Westport sync, Eastvale async: semi-synchronous, so every confirmed booking is on Westport, the follower failover promotes. Eastvale’s slow link never holds up a booking. A 30 s timeout rides out the 10 s spike but recovers quickly from the real crash.');L.done();}
+    else L.sheet('no','Not yet','Look at the red lines. One sync follower protects confirmed bookings, but a slow sync follower makes every booking wait. The timeout has to sit between the spike and a minute. Change a setting and run it again.');};}},
 
 /* ---------- PART 4: REPLICATION LOGS ---------- */
 {part:3,src:'Chapter 5 · Implementation of Replication Logs',run(L){
-  L.h(L.kick('learn','What goes in the log?')+'<h1 class="q">Four ways to describe changes to followers</h1>'+
-   L.tiers([['pencil','Statement-based','Send each write statement (INSERT, UPDATE, DELETE) to followers to run again. Compact, but breaks on <b>NOW()</b> or <b>RAND()</b>, on auto-incrementing columns or statements that depend on existing data (they must run in exactly the same order), and on triggers or other side effects. MySQL used it before version 5.1.','Same statement, maybe different data'],
-            ['list','Write-ahead log shipping','Send the storage engine’s own '+L.g('wal','write-ahead log')+': which bytes changed in which disk blocks. PostgreSQL and Oracle do this. But it ties replication to the storage format, so leader and followers usually must run the same database version.','Exact copy, tightly coupled'],
-            ['layers','Logical (row-based) log','A separate log of row changes: the new values for an inserted row, the key of a deleted row, the key and new values of an updated row, then a “committed” record. MySQL’s binlog can do this.','Decoupled from the engine',true,'Most flexible'],
-            ['cycle','Trigger-based','Application code runs on each change (a trigger) and logs it to a table that another process copies out. Lets you copy only some data, or into a different kind of database. Slower and buggier than built-in replication.','Replication in your own code']]));
+  const F=[['var(--h4)','Statement-based','SQL text','UPDATE parcels SET pickup_code = RAND()\nWHERE id = 7','Compact; RAND() or a new run order breaks it.'],
+    ['var(--h3)',L.g('wal','WAL')+' shipping','disk bytes','block 4711 +0x1c: 12 d5 9a 40','Exact; tied to engine version. PostgreSQL.'],
+    ['var(--h2)','Logical log','row values','update parcels id=7: pickup_code=4821\ncommit','Decoupled, easy to read. MySQL binlog.'],
+    ['var(--h1)','Trigger-based','your code','trigger → changes table → copier','Flexible; slower, buggier. Bucardo.']];
+  L.h(L.kick('learn','What goes in the log?')+'<h1 class="q">Four ways to write the same change into the log</h1>'+CSS+
+   F.map(f=>'<div class="fmt" style="border-color:'+f[0]+'"><div class="ft"><span style="color:'+f[0]+';font-size:14px;font-weight:700">'+f[1]+'</span><span style="color:var(--muted)">'+f[2]+'</span></div><div class="mono">'+f[3]+'</div><div class="small" style="margin-top:4px">'+f[4]+'</div></div>').join('')+
+   '<p class="cap">One change, four encodings. The choice decides if followers rebuild the same row, can run another version, and if other systems can read along.</p>');
   L.done();}},
-{part:3,src:'Chapter 5 · Implementation of Replication Logs',pts:1,run(L){
-  L.h(L.kick('try','Check your understanding')+'<h1 class="q">Tobias’s booking code runs this on the leader: “set the pickup code to RAND()”. With statement-based replication, what do followers get?</h1>');
-  L.mc(L.card,['The same pickup code as the leader','No pickup code, since RAND() isn’t replicated','Probably a different random code each'],2,
-   'Each follower runs RAND() again and gets its own value. The leader could pin the value when logging, but there are so many edge cases that other methods are now preferred.',
-   'The statement is replayed, not its result. Each follower runs RAND() itself and almost certainly gets a different code. A row-based log would send the actual value.');}},
-{part:3,src:'Chapter 5 · Write-ahead log (WAL) shipping',run(L){
-  L.h(L.kick('ex','Otterpost')+'<h1 class="q">Upgrade day: why the log format matters</h1>');
-  L.beats(L.card,[
-   ['The goal','Kwame wants to move the Parcel DB to a new major version of the database software with <b>no downtime</b>.'],
-   ['The plan','Upgrade the followers first while the old leader keeps working, then fail over to an upgraded follower. Finally upgrade the old leader.'],
-   ['With WAL shipping','The log describes bytes in disk blocks. If the new version changes the storage format, the followers can’t read the leader’s log. The plan fails, and the upgrade needs downtime.'],
-   ['With a logical log','The log describes rows, not disk blocks, so it can stay compatible across versions, or even across storage engines. The rolling plan works.'],
-   ['A bonus','Linh notices that a row-based log is easy for other programs to read. They could feed every Parcel DB change into the analytics warehouse. That’s '+L.g('cdc','change data capture')+', which comes back in chapter 11.']],
-   'Log format looks like an internal detail, but it decides whether upgrades need downtime and whether other systems can follow your changes.');}},
+{part:3,src:'Chapter 5 · Implementation of Replication Logs',
+ solve:async L=>{for(let s=0;s<5;s++)for(let f=0;f<4;f++){L.$('#lz'+s+f).click();await L.sleep(5);}},
+ run(L){
+  let cur=[0,0];const seen=new Set();
+  L.h(L.kick('pr','Hands on · the format lens')+'<h1 class="q">Tap a cell to run booking B7 through a format in a situation. Where does each format break?</h1>'+CSS+
+   '<p class="small" style="margin:0">Rows are situations; columns are the four log formats. Reveal 8+ cells, including Stmt × RAND() and WAL × Upgrade.</p>'+
+   '<div class="lz-grid" id="lzg"></div><div id="lzo" class="lz-out na" aria-live="polite"></div><div id="lzw" class="rt-read" style="background:var(--card);border:2px solid var(--line)"></div>');
+  let g='<div></div>'+LZ_F.map(f=>'<div class="h">'+f[0]+'</div>').join('');
+  LZ_S.forEach((sc,s)=>{g+='<div class="rh">'+sc[0]+'</div>'+LZ_F.map((f,fi)=>'<div class="c" role="button" tabindex="0" id="lz'+s+fi+'" aria-label="'+f[1]+' with '+sc[1]+'">'+(s===0&&fi===0?'tap':'?')+'</div>').join('');});
+  L.$('#lzg').innerHTML=g;L.$('#lz00').classList.add('cur');
+  function show(s,fi){cur=[s,fi];const r=LZ[s][fi],sc=LZ_S[s];seen.add(s+'-'+fi);
+    const c=L.$('#lz'+s+fi);c.className='c '+r[0];c.textContent=r[0]==='ok'?'✓':r[0]==='no'?'✗':'–';
+    L.$$('#lzg .c').forEach(x=>x.classList.toggle('cur',x===c));
+    L.$('#lzw').innerHTML='<div class="small"><b>'+sc[1]+'.</b> '+sc[2]+'</div><div class="rt-lbl" style="margin:8px 0 0">'+LZ_F[fi][1]+': the leader sends</div><div class="mono" style="background:var(--soft)">'+(LZ_SEND_S[s]||LZ_SEND)[fi]+'</div>';
+    const o=L.$('#lzo');o.className='lz-out '+r[0];o.innerHTML='<span class="vd">'+(r[0]==='ok'?'✓ ':r[0]==='no'?'✗ ':'– ')+r[1]+'.</span> '+r[2];
+    if(seen.size>=8&&seen.has('0-0')&&seen.has('2-1')&&!L.$('#lzdone')){L.$('#lzw').insertAdjacentHTML('afterend','<span id="lzdone"></span>');
+      L.sheet('info','Each format has its breaking point','Statement-based breaks on anything nondeterministic or order-dependent. WAL shipping ties leader and followers to one storage format. The logical log avoids both and doubles as change data capture. Triggers trade speed and safety for flexibility.');L.done();}}
+  LZ_S.forEach((sc,s)=>LZ_F.forEach((f,fi)=>{const c=L.$('#lz'+s+fi);c.onclick=()=>show(s,fi);c.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();show(s,fi);}};}));
+  L.$('#lzw').innerHTML='<div class="small">What the leader sends shows here. “–” means the book doesn’t weigh that case.</div>';
+  L.$('#lzo').innerHTML='Start with the top-left cell: a statement log meets RAND().';}},
 {part:3,src:'Chapter 5 · Implementation of Replication Logs',pts:4,run(L){
   L.h(L.kick('pr','Pick the log')+'<h1 class="q">Which replication method fits, or explains, each situation?</h1><div id="bk"></div>');
   L.buckets(L.$('#bk'),['Statement','WAL shipping','Logical','Trigger'],[
@@ -228,6 +734,18 @@ Course.lesson({
    'A logical log describes rows, not storage internals, so followers can run newer software, which makes zero-downtime upgrades possible.');}}
   ]
 });
+
+/* follower controls for the explore screen (defined after use is fine: function declarations hoist) */
+function folCtl(p,sim,ks){
+  return '<div class="rt-fc">'+ks.map(k=>{const f=sim.F(k);return '<div class="rt-f"><div class="rt-fh"><span class="rt-dot" style="border-color:'+RT_COL[k]+';color:'+RT_COL[k]+'">'+k+'</span><b>'+RT_NAME[k]+'</b>'+
+    '<span class="rt-seg"><button class="chip'+(f.mode==='sync'?' sel':'')+'" id="'+p+'m'+k+'s">Sync</button><button class="chip'+(f.mode==='async'?' sel':'')+'" id="'+p+'m'+k+'a">Async</button></span></div>'+
+    '<label class="rt-rng"><span>Delay</span><input type="range" min="0" max="4" step="1" value="'+f.d+'" id="'+p+'d'+k+'" aria-label="'+RT_NAME[k]+' delay in seconds"><b id="'+p+'d'+k+'v">'+f.d+' s</b></label></div>';}).join('')+'</div>';
+}
+function bindFol(L,p,sim,ks,onCh){ks.forEach(k=>{const f=sim.F(k);
+  const s=L.$('#'+p+'m'+k+'s'),a=L.$('#'+p+'m'+k+'a');
+  const set=m=>{f.mode=m;s.classList.toggle('sel',m==='sync');a.classList.toggle('sel',m==='async');sim.settle();onCh();};
+  s.onclick=()=>set('sync');a.onclick=()=>set('async');
+  const r=L.$('#'+p+'d'+k);r.oninput=()=>{f.d=+r.value;L.$('#'+p+'d'+k+'v').textContent=f.d+' s';onCh();};});}
 </script>
 </body>
 </html>
